@@ -6,7 +6,7 @@ import ts from "typescript";
 const root = new URL("../", import.meta.url).pathname;
 const migrationDir = join(root, "supabase/migrations");
 const migrations = (await readdir(migrationDir)).filter((name) => name.endsWith(".sql")).sort();
-assert.ok(migrations.length >= 18, "Expected at least eighteen migrations");
+assert.ok(migrations.length >= 22, "Expected at least twenty-two migrations");
 for (let i = 1; i < migrations.length; i++) assert.ok(migrations[i] > migrations[i - 1], "Migrations must be ordered");
 const sql = (await Promise.all(migrations.map((name) => readFile(join(migrationDir, name), "utf8")))).join("\n");
 
@@ -18,6 +18,9 @@ for (const table of [
   "provider_permissions", "provider_field_permissions", "ingestion_jobs", "raw_payloads", "master_entities",
   "source_entities", "source_facts", "field_values", "entity_freshness", "enrichment_jobs", "enrichment_errors",
   "segments", "segment_rules", "nix_checks", "contact_permissions", "retention_policies",
+  "source_priority_policies", "identity_keys", "merge_decisions", "parser_observations", "segment_refresh_jobs", "tenant_entities", "retention_runs", "data_subject_requests",
+  "nix_provider_configurations", "nix_check_jobs", "campaign_contact_candidates",
+  "geographic_areas", "geographic_normalization_results", "legal_holds", "data_subject_request_events",
 ]) assert.match(sql, new RegExp(`create table(?: if not exists)? public\\.${table}\\b`, "i"), `Missing ${table}`);
 
 for (const [pattern, message] of [
@@ -42,7 +45,28 @@ for (const [pattern, message] of [
   [/complete_enrichment_job/i, "atomic source-fact resolution is required"],
   [/fail_enrichment_job/i, "enrichment retry/dead-end handling is required"],
   [/configure_generic_json_provider/i, "atomic provider configuration is required"],
+  [/schedule_due_ingestion_jobs/i, "five-day ingestion scheduling is required"],
+  [/claim_ingestion_runs/i, "ingestion worker leasing is required"],
+  [/record_ingestion_raw_payload/i, "raw-before-parse storage is required"],
+  [/complete_ingestion_record/i, "identity resolution and source-fact ingestion are required"],
+  [/directory_visible_fields_for_tenant/i, "licensed field visibility is required"],
+  [/directory_search_summary_for_tenant/i, "full-filter counts are required"],
+  [/refresh_segment_materialization/i, "dynamic segment materialization is required"],
+  [/materialize_segment_to_campaign/i, "directory-to-campaign flow is required"],
+  [/run_retention_maintenance/i, "retention execution is required"],
+  [/ensure_tenant_import_provider/i, "tenant import provider isolation is required"],
+  [/sync_tenant_import_to_directory/i, "CRM imports must synchronize to tenant catalogue masterdata"],
+  [/scan_status text not null default 'pending'/i, "import security scan state is required"],
   [/provider_network_allowlists/i, "provider webhook allowlist must be data driven"],
+  [/queue_due_nix_checks/i, "scheduled NIX checks are required"],
+  [/claim_nix_check_jobs/i, "atomic NIX worker leasing is required"],
+  [/complete_nix_check_job/i, "NIX completion and campaign resumption are required"],
+  [/fail_nix_check_job/i, "NIX retry/dead-letter handling is required"],
+  [/upsert_geographic_reference_batch/i, "versioned geographic reference ingestion is required"],
+  [/normalize_master_entity_geography/i, "geographic normalization is required"],
+  [/data_subject_export_for_request/i, "data subject export is required"],
+  [/execute_data_subject_erasure/i, "controlled erasure is required"],
+  [/anonymize_customer_record/i, "retention anonymization with suppression is required"],
   [/revoke all on function public\.claim_outbox_jobs[\s\S]*from public, ?anon, ?authenticated/i, "outbox worker RPC must be service-only"],
   [/revoke all on function public\.claim_enrichment_jobs[\s\S]*from public, ?anon, ?authenticated/i, "enrichment worker RPC must be service-only"],
 ]) assert.match(sql, pattern, message);
@@ -71,6 +95,9 @@ const edgeFiles = [
   "supabase/functions/process-outbox/index.ts",
   "supabase/functions/automation-runner/index.ts",
   "supabase/functions/data-worker/index.ts",
+  "supabase/functions/ingestion-worker/index.ts",
+  "supabase/functions/maintenance-worker/index.ts",
+  "supabase/functions/compliance-worker/index.ts",
   "supabase/functions/_shared/crypto.ts",
 ];
 for (const relative of edgeFiles) {
@@ -107,6 +134,17 @@ for (const pattern of [/claim_enrichment_jobs/, /complete_enrichment_job/, /fail
   assert.match(dataWorker, pattern, `Data worker invariant missing: ${pattern}`);
 }
 
+
+const ingestionWorker = await readFile(join(root, "supabase/functions/ingestion-worker/index.ts"), "utf8");
+for (const pattern of [/schedule_due_ingestion_jobs/, /claim_ingestion_runs/, /record_ingestion_raw_payload/, /complete_ingestion_record/, /provider_domain_not_permitted/, /parseCsv/, /parseHtmlRegex/]) assert.match(ingestionWorker, pattern, `Ingestion worker invariant missing: ${pattern}`);
+assert.ok(ingestionWorker.indexOf("record_ingestion_raw_payload") < ingestionWorker.indexOf("complete_ingestion_record"), "Raw payload must be persisted before normalized records");
+const maintenanceWorker = await readFile(join(root, "supabase/functions/maintenance-worker/index.ts"), "utf8");
+assert.match(maintenanceWorker, /claim_segment_refresh_jobs/, "Maintenance worker must materialize dynamic segments");
+assert.match(maintenanceWorker, /run_retention_maintenance/, "Maintenance worker must execute retention");
+assert.match(maintenanceWorker, /normalize_due_geographies/, "Maintenance worker must normalize geographic reference data");
+const complianceWorker = await readFile(join(root, "supabase/functions/compliance-worker/index.ts"), "utf8");
+for (const pattern of [/queue_due_nix_checks/, /claim_nix_check_jobs/, /complete_nix_check_job/, /fail_nix_check_job/, /redirect: "manual"/, /nix_private_network_forbidden/, /decryptJson/]) assert.match(complianceWorker, pattern, `Compliance worker invariant missing: ${pattern}`);
+
 const apiAuth = await readFile(join(root, "src/lib/api-auth.ts"), "utf8");
 assert.match(apiAuth, /identity\.source === "api_key" \? createAdminClient\(\) : createClient\(\)/, "Session API calls must retain RLS");
 const directoryLib = await readFile(join(root, "src/lib/directory.ts"), "utf8");
@@ -114,13 +152,32 @@ assert.match(directoryLib, /shared_entity_refresh_managed_by_license_owner/, "Cr
 
 for (const relative of [
   "src/app/api/v1/directory/search/route.ts",
+  "src/app/api/v1/imports/file/route.ts",
+  "src/lib/imports/file-parser.ts",
+  "src/lib/imports/malware-scan.ts",
+  "src/lib/imports/normalize-row.ts",
   "src/app/api/v1/directory/entities/[id]/route.ts",
   "src/app/api/v1/directory/entities/[id]/refresh/route.ts",
+  "src/app/api/v1/directory/discover/route.ts",
   "src/app/api/v1/enrichment/jobs/route.ts",
   "src/app/api/v1/segments/route.ts",
   "src/app/api/v1/segments/preview/route.ts",
+  "src/app/api/v1/segments/[id]/refresh/route.ts",
+  "src/app/api/v1/segments/[id]/campaign/route.ts",
+  "src/app/(dashboard)/app/directory/page.tsx",
   "src/lib/domain/template.ts",
+  "scripts/import-geography.mjs",
+  "src/app/(dashboard)/app/compliance/page.tsx",
 ]) assert.ok((await stat(join(root, relative))).size > 100, `Missing implementation ${relative}`);
+
+const importRoute = await readFile(join(root, "src/app/api/v1/imports/file/route.ts"), "utf8");
+assert.match(importRoute, /scanImportFile/, "Import files must be security scanned before parsing and storage");
+assert.ok(importRoute.indexOf("const scan = await scanImportFile") < importRoute.indexOf("const parsed = parseImportFile"), "Malware scan must run before parser execution");
+const importParser = await readFile(join(root, "src/lib/imports/file-parser.ts"), "utf8");
+for (const format of ["parseXlsx", "parseXmlRows", "ndjson", "Papa.parse"]) assert.match(importParser, new RegExp(format), `Import parser must support ${format}`);
+const projectionSql = sql.match(/create or replace function public\.directory_entity_projection_for_tenant[\s\S]*?\$\$;/i)?.[0] ?? "";
+assert.match(projectionSql, /directory_visible_fields_for_tenant/, "Directory projection must be based on licensed visible fields");
+assert.doesNotMatch(projectionSql, /current_master/, "Directory projection must not expose the internal master payload");
 
 const templatesAction = await readFile(join(root, "src/app/actions/contracts.ts"), "utf8");
 assert.match(templatesAction, /renderStrictTemplate/, "Contract creation must render the approved version, not hard-coded terms");
@@ -143,8 +200,9 @@ assert.equal(packageJson.dependencies["@supabase/supabase-js"], "2.110.7");
 assert.equal(packageJson.engines.node, ">=22.0.0");
 assert.equal(packageJson.overrides.postcss, "8.5.19");
 assert.equal(packageJson.scripts["functions:deploy"], "node scripts/deploy-functions.mjs");
+assert.equal(packageJson.scripts["geography:import"], "node scripts/import-geography.mjs");
 const deployFunctions = await readFile(join(root, "scripts/deploy-functions.mjs"), "utf8");
-for (const worker of ["process-outbox", "automation-runner", "data-worker"]) assert.match(deployFunctions, new RegExp(worker), `Deployment must include ${worker}`);
+for (const worker of ["process-outbox", "automation-runner", "data-worker", "ingestion-worker", "maintenance-worker", "compliance-worker"]) assert.match(deployFunctions, new RegExp(worker), `Deployment must include ${worker}`);
 assert.match(packageJson.scripts.verify, /typecheck:edge/, "Full verification must type-check Edge Functions");
 
-console.log(`Verified ${migrations.length} migrations, central tenant/contact policy, contracts, imports, communications, provider licensing, local directory, enrichment worker and API scopes.`);
+console.log(`Verified ${migrations.length} migrations, tenant/contact policy, contracts, communications, licensed directory, raw-before-parse ingestion, parser quarantine, identity resolution, dynamic segments, secure multi-format imports, NIX campaign compliance, geographic normalization, DSAR, retention and worker deployment.`);

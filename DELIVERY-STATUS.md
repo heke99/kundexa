@@ -1,17 +1,13 @@
 # Leveransstatus
 
-Den här mappen innehåller endast tidigare framtagna arkitekturdokument.
+Detta är ett körbart Kundexa-projekt med Next.js, Supabase, 22 ordnade migrationer, sex Edge Function-workers, versionerat API, tester och produktionsbuild.
 
-Den innehåller inte en körbar Kundexa-applikation och saknar bland annat:
+Kodnivån är verifierad genom:
 
-- package.json
-- Next.js-webbapp
-- Supabase-klient och serverintegration
-- Supabase-migrationer
-- API-rutter
-- workers
-- 46elks-adapter
-- tester
-- byggkonfiguration
+- TypeScript för webbappen
+- Deno typecheck för samtliga workers
+- full migrationskedja och runtime-RPC-flöden i PostgreSQL-kompatibel PGlite
+- statiska tenant-, RLS-, licens- och säkerhetsinvarianter
+- Next.js produktionsbuild
 
-Mappen ska därför inte beskrivas som ett färdigt eller startbart projekt.
+Projektet ska inte beskrivas som skarpt produktionsgodkänt förrän externa integrationer, avtal och staging-/produktionsgrindar i `docs/PRODUCTION_GATES.md` är genomförda.

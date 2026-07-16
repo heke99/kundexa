@@ -10,9 +10,9 @@
     "build": "npm run typecheck && npm run build:next",
     "build:next": "node scripts/build-next.mjs",
     "start": "next start",
-    "lint": "tsc --noEmit",
-    "typecheck": "tsc --noEmit",
-    "typecheck:edge": "deno check supabase/functions/_shared/crypto.ts supabase/functions/data-worker/index.ts supabase/functions/process-outbox/index.ts supabase/functions/automation-runner/index.ts",
+    "lint": "tsc --noEmit --pretty false --incremental false",
+    "typecheck": "tsc --noEmit --pretty false --incremental false",
+    "typecheck:edge": "deno check supabase/functions/_shared/crypto.ts supabase/functions/data-worker/index.ts supabase/functions/ingestion-worker/index.ts supabase/functions/maintenance-worker/index.ts supabase/functions/compliance-worker/index.ts supabase/functions/process-outbox/index.ts supabase/functions/automation-runner/index.ts",
     "test": "node scripts/verify.mjs && node scripts/verify-sql.mjs",
     "test:watch": "node scripts/verify.mjs",
     "verify": "npm run typecheck:edge && npm run test && npm run build",
@@ -22,7 +22,8 @@
     "db:reset:local": "npx supabase@2.109.1 db reset",
     "functions:serve": "npx supabase@2.109.1 functions serve --env-file .env.local",
     "functions:deploy": "node scripts/deploy-functions.mjs",
-    "types:generate": "npx supabase@2.109.1 gen types typescript --linked > src/lib/supabase/database.types.ts"
+    "types:generate": "npx supabase@2.109.1 gen types typescript --linked > src/lib/supabase/database.types.ts",
+    "geography:import": "node scripts/import-geography.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.3",

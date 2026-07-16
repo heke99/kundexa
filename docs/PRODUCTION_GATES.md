@@ -2,38 +2,43 @@
 
 Följande måste godkännas före försäljning eller skarp kundtrafik.
 
-## Leverantörer
+## Leverantörer och data
 
-- Signerat kommersiellt upplägg med 46elks, inklusive subkonton, krediter, nummer, portering, caller ID och WebRTC.
-- Verifierade 46elks-callbacknät i `provider_network_allowlists`.
-- Verifierad e-postdomän, SPF, DKIM och DMARC.
-- Avtal och användningsändamål för Merinfo eller annan prospektleverantör.
-- Vald BankID/e-signleverantör för avtal där starkare identitet krävs.
+- Signerat upplägg och livecredentials för 46elks, e-postleverantör, dataleverantör och NIX-källa.
+- Exakta providerfält, kvoter, cacheomfattning, lagring, filtrering, visning, export och retention registrerade från avtalet.
+- Officiellt och aktuellt geografiskt referensregister importerat och verifierat.
+- Verifierade callbackpayloads och providerfel mot staging.
+- NIX-resultatmapping, giltighet och omkontroll testad med verklig källa.
+- SPF, DKIM och DMARC verifierade för alla avsändardomäner.
+- Vald BankID/e-signleverantör där stark identitet krävs.
 
 ## Juridik och dataskydd
 
 - Juristgodkända B2C- och B2B-mallar per bransch.
 - Kontroll av distansavtals-, telefonförsäljnings-, ångerrätts- och informationskrav.
-- DPIA, registerförteckning, rättslig grund och retention per datakälla.
+- DPIA, registerförteckning, rättslig grund och retention per datakälla och tenant.
 - Personuppgiftsbiträdesavtal med samtliga underleverantörer.
 - Inspelningsinformation, rättslig grund och gallring.
-- NIX-/invändningsprocess och dokumenterad spärrhantering.
+- DSAR-process, identitetsverifiering, legal hold, registerutdrag och radering genomförda i testfall.
+- NIX-/invändningsprocess och minimal suppression-post juridiskt fastställda.
 
 ## Teknik och säkerhet
 
-- Full migration körd i staging och ny tom produktion.
+- Full `db push` körd i ren Supabase staging och ny tom produktionsmiljö.
+- Genererade Supabase-typer incheckade efter den riktiga databasen.
 - RLS-penetrationstest med minst två tenants och samtliga roller.
 - Backup/restore-test med dokumenterad RTO och RPO.
-- Malware-scanning för uppladdningar.
+- Extern malware-scanner konfigurerad; `REQUIRE_IMPORT_MALWARE_SCAN=true`; ren och infekterad testfil verifierade.
 - MFA-enforcement för adminroller.
 - Key rotation, incidentprocess, loggexport och larm.
-- Lasttest av dialer, webhook retries, outbox, automationer och importvolymer.
-- Browser- och tillgänglighetstest.
-- Verifiering av faktiska 46elks/Resend-callbackpayloads mot staging.
+- Lasttest av dialer, webhook retries, outbox, automationer, katalogsökning, segment och importvolymer.
+- Browser-, tillgänglighets-, SAST-, DAST- och penetrationstest.
+- Retention- och DSAR-worker provkörd mot anonymiserad stagingdata.
 
-## Produkt
+## Produkt och drift
 
 - Slutlig branding, domän och bolagsinformation.
 - Abonnemang, usage limits, överdebitering och avstängningsregler.
 - Support-, SLA-, status- och incidentkommunikation.
 - Onboardingmaterial och administratörsutbildning.
+- Schedulerövervakning för samtliga sex workers och larm på dead-letter/kvarstående jobb.

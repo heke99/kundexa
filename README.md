@@ -1,35 +1,38 @@
 # Kundexa
 
-Kundexa är en responsiv, multi-tenant SaaS-webbplattform för CRM, prospektering, databerikning, telefoni, SMS, e-post, kampanjer, avtal, acceptbevis, automationer, rapportering och integrations-API.
+Kundexa är en responsiv, multi-tenant SaaS-webbplattform för CRM, prospektering, lokal företags- och personkatalog, datainsamling, telefoni, SMS, e-post, kampanjer, avtal, acceptbevis, automationer, compliance, rapportering och integrations-API.
 
-Detta repository innehåller en **webbapp**, inte en native mobilapp. Normal utveckling och produktion använder **Supabase Cloud**; Docker krävs inte.
+Repositoryt innehåller en körbar webbapplikation för Supabase Cloud. Docker krävs inte för normal utveckling eller deployment.
 
 ## Teknisk grund
 
 - Next.js 16, React 19 och TypeScript 5.9
-- Supabase Auth, PostgreSQL, Row Level Security, Storage och Edge Functions
-- Central katalog med source facts, provenance, freshness, segment och berikningskö
-- Generisk JSON-provideradapter med tillstånd, kvoter, domän-/pathkontroll och krypterade credentials
-- 46elks-adapter för telefoni, SMS, inkommande callbacks och WebRTC/SIP-konfiguration
+- Supabase Auth, PostgreSQL, RLS, Storage och sex Edge Function-workers
+- Central katalog med rådata, source facts, provenance, freshness, identitetsnycklar, konflikter, datakvalitet och materialiserade segment
+- Tillståndsstyrd ingestion med paginering, kontrollpunkter, kvoter, retry/dead-letter och parserkarantän
+- Discoveryadaptrar för JSON, NDJSON, CSV och uttryckligen tillåten HTML-regex; leverantörsspecifika kontrakt konfigureras separat
+- Separat licensstyrning för lagring, lokal filtrering och visning
+- Multi-formatimport för CSV, JSON, NDJSON, XML och grundläggande tabulär XLSX med malware-scan-gate
+- NIX-adapterram, separat giltighet och automatisk återupptagning av kampanjposter efter godkänd kontroll
+- Geografiskt referensregister, kommun/län-normalisering och radiesökning med PostGIS när tillgängligt samt Haversine-fallback
+- 46elks-adapter för telefoni, SMS, callbacks och WebRTC/SIP-konfiguration
 - Resend-adapter för tenantbrandad e-post
-- Transaktionell outbox, idempotens, atomisk usage-reservation, återförsök och dead-letter-status
+- Transaktionell outbox, idempotens, atomisk usage-reservation, retry och dead letter
 - Versionslåsta avtalsmallar, pris-/juridiksnapshots och manipulationsupptäckande acceptbevis
+- DSAR-export/radering, legal hold och retentionworker
 - OpenAPI 3.1 på `/api/openapi.json`
 
-## Snabbstart med Supabase Cloud
+## Snabbstart
 
-### 1. Krav
+### Krav
 
 - Node.js 22 eller senare
 - npm 10 eller senare
 - Ett Supabase Cloud-projekt
-- Supabase CLI via `npx`; ingen global installation krävs
 
-### 2. Installera
+### Installera
 
 ```bash
-unzip kundexa-main-updated.zip
-cd kundexa-main
 npm ci
 cp .env.example .env.local
 ```
@@ -42,9 +45,7 @@ openssl rand -hex 48      # KUNDEXA_WEBHOOK_PEPPER
 openssl rand -hex 48      # CRON_SECRET
 ```
 
-Fyll i `.env.local` med projektets URL, anon key och service-role key från Supabase.
-
-### 3. Koppla och migrera databasen
+### Koppla och migrera Supabase
 
 ```bash
 npm run supabase:login
@@ -53,75 +54,64 @@ npm run db:push
 npm run types:generate
 ```
 
-Migrationerna skapar databasmodellen, RLS, privata Storage-buckets, atomiska PostgreSQL-funktioner, audit, outbox, automationer, katalog/berikning, NIX-/spärrmodell och webhookrouting.
-
-### 4. Lägg Edge Function-hemligheter i Supabase
-
-```bash
-npx supabase@2.109.1 secrets set \
-  KUNDEXA_ENCRYPTION_KEY="DIN_KRYPTERINGSNYCKEL" \
-  APP_URL="https://din-kundexa-domän.se" \
-  CRON_SECRET="DIN_CRON_SECRET" \
-  RESEND_API_KEY="VALFRI_GLOBAL_RESEND_KEY" \
-  DEFAULT_EMAIL_FROM="no-reply@din-domän.se" \
-  --project-ref DIN_PROJECT_REF
-```
-
-Deploya samtliga workers:
+### Deploya workers
 
 ```bash
 npm run functions:deploy -- --project-ref DIN_PROJECT_REF
 ```
 
-Anropa funktionerna minst en gång per minut från Supabase Cron eller annan betrodd scheduler:
+Schemalägg betrodda anrop med `x-cron-secret` till:
 
 ```text
-POST https://DIN_PROJECT_REF.supabase.co/functions/v1/process-outbox
-POST https://DIN_PROJECT_REF.supabase.co/functions/v1/automation-runner
-POST https://DIN_PROJECT_REF.supabase.co/functions/v1/data-worker
-Header: x-cron-secret: DIN_CRON_SECRET
+/functions/v1/process-outbox
+/functions/v1/automation-runner
+/functions/v1/data-worker
+/functions/v1/ingestion-worker
+/functions/v1/maintenance-worker
+/functions/v1/compliance-worker
 ```
 
-### 5. Verifiera och starta webbappen
+`process-outbox`, `automation-runner`, `data-worker`, `ingestion-worker` och `compliance-worker` kan köras varje minut. `maintenance-worker` kan köras med lägre frekvens, exempelvis varje timme, eftersom den materialiserar segment, kör retention och normaliserar geografi.
+
+### Importera geografiskt referensregister
+
+Förbered en JSON- eller NDJSON-fil med officiella kommuner, län, postorter/postnummer och koordinater och kör:
+
+```bash
+npm run geography:import -- ./geography.json "SCB" "2026-07"
+```
+
+### Verifiera
 
 ```bash
 npm run verify
+npm audit
 npm run dev
 ```
 
-Öppna `http://localhost:3000/register`, skapa första användaren och följ onboarding.
+`npm run verify` kör Deno-kontroll av samtliga workers, statiska arkitekturtester, hela migrationskedjan med runtime-RPC-test, TypeScript och produktionsbuild.
 
-## Byggverifiering
+## Implementerade huvudflöden
 
-`npm run build` kör först `tsc --noEmit`. Endast Next 16:s duplicerade interna typkontroll är avstängd eftersom dess worker kan låsa sig i begränsade Linux-byggmiljöer. Typfel stoppar fortfarande alltid builden.
-
-```bash
-npm run typecheck
-npm run typecheck:edge
-npm test
-npm run build
-```
-
-SQL-testet exekverar samtliga ordnade migrationer i en PostgreSQL-kompatibel PGlite-motor och kontrollerar tabeller, funktioner och RLS-policyer.
-
-## Huvudflöden som ingår
-
-- Tenant, medlemskap, roller, team, juridiska bolag, feature-flaggor och databasbaserad RLS
-- Kundregister, företag, prospekt, kundkort, anteckningar, aktiviteter och historik
-- CSV-import med preview, normalisering, deduplicering, spärrkontroll, commit och mjuk rollback
-- Lokal katalogsökning, source facts, mastervärden, fältprovenance, freshness och segment
-- Providerkonton, tillstånd, fältregler, kvoter, parserövervakning och berikningsjobb
-- Produkter, versionshanterade priser, kampanjer, pipeline och rapporter
+- Tenant, juridiska bolag, kontor, avdelningar, medlemskap, roller, team, feature-flaggor och RLS
+- CRM-kunder, företag, prospekt, kundkort, aktiviteter, listor, kampanjer och pipeline
+- Säker multi-formatimport som synkroniserar tenant-CRM och tenantisolerad katalog i samma genomförande
+- Lokal katalogsökning med korrekta totalantal, freshnessfördelning, licensprojektion och avancerade filter
+- Discovery från tom katalog, femdagarsschema, crawlplan, kontrollpunkt och rådata före parser
+- Source facts, masterresolver, fälthistorik, källprioritet, konflikter, identitetsnycklar, dublettförslag och merge/undo
+- Dynamiska segment, snapshots, materialisering och policykontrollerad överföring till kampanj
+- Providerkonton, tillstånd, cacheomfattning, fältregler, kvoter, parserobservationer och karantän
+- NIX-kö, provideradapterram, pre-contact-policy och kampanjresume
 - WebRTC-dialer, samtalskö, samtalsresultat, 46elks-callbacks och inspelningshämtning
-- SMS- och e-postköer med central kontaktpolicy, usage-reservation och tenantbranding
-- Avtalsutkast från godkänd mallversion, låsta snapshots, PDF-lagring och kanalutskick
-- Acceptmanifest, evidence-PDF, SHA-256, bekräftelse och signerad kopia
-- Automationer med testläge, godkännande, fördröjning, idempotens, loopskydd och dead letter
+- SMS/e-post med central spärrpolicy, idempotens, usage-reservation och tenantbranding
+- Produkter, prisversioner, avtalsmallar, utskick, acceptmanifest, bevis-PDF och SHA-256
+- Automationer med testläge, godkännande, loopskydd, retry och dead letter
+- Retention, legal hold, DSAR-export och kontrollerad anonymisering med minimal spärrpost
 - Hashade API-nycklar, scopes, rate limits, audit och signerade webhooks
 
-## Viktigt före produktion
+## Produktionsgrindar
 
-Koden är en verifierad produktgrund, men externa och juridiska produktionsgrindar måste fortfarande slutföras. Det gäller bland annat faktiska 46elks-/dataleverantörsavtal och credentials, NIX-källa, verifierade e-postdomäner, juridisk granskning, BankID/e-signleverantör där stark identitet krävs, malware scanning, backup/restore-övning, lasttest och penetrationstest. Se [Produktionsgrindar](docs/PRODUCTION_GATES.md).
+Koden är en verifierad produktgrund. Skarp drift kräver fortfarande externa avtal, credentials och miljöprov, bland annat livekonfiguration av dataleverantör, NIX-källa, officiellt geografiregister, malware-scanner, 46elks/Resend, juridisk granskning, backup/restore, lasttest och penetrationstest. Se [Produktionsgrindar](docs/PRODUCTION_GATES.md).
 
 ## Dokumentation
 

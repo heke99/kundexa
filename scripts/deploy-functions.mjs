@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 
-const functions = ["process-outbox", "automation-runner", "data-worker"];
+const functions = ["process-outbox", "automation-runner", "data-worker", "ingestion-worker", "maintenance-worker", "compliance-worker"];
 const extraArgs = process.argv.slice(2);
 const npx = process.platform === "win32" ? "npx.cmd" : "npx";
 

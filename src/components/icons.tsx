@@ -51,7 +51,7 @@ const definitions = {
   FileCheck2: 1, FileSignature: 0, FileText: 0, Gauge: 1, Headphones: 1,
   Import: 1, Inbox: 3, KeyRound: 1, LayoutList: 0, ListFilter: 0,
   LockKeyhole: 1, Mail: 3, Megaphone: 1, MessageSquareText: 3, Package: 2,
-  Phone: 1, PhoneCall: 1, PhoneForwarded: 1, PhoneOff: 1, Plug: 0, Plus: 0,
+  Pause: 1, Play: 1, Phone: 1, PhoneCall: 1, PhoneForwarded: 1, PhoneOff: 1, Plug: 0, Plus: 0, RefreshCw: 1,
   Radio: 1, ScrollText: 0, Search: 1, Send: 1, Settings: 0, ShieldCheck: 1,
   StickyNote: 0, Target: 1, TrendingUp: 1, Upload: 1, UserPlus: 1, Users: 2,
   Webhook: 0,
@@ -92,6 +92,8 @@ export const Mail: IconComponent = createIcon("Mail", definitions.Mail);
 export const Megaphone: IconComponent = createIcon("Megaphone", definitions.Megaphone);
 export const MessageSquareText: IconComponent = createIcon("MessageSquareText", definitions.MessageSquareText);
 export const Package: IconComponent = createIcon("Package", definitions.Package);
+export const Pause: IconComponent = createIcon("Pause", definitions.Pause);
+export const Play: IconComponent = createIcon("Play", definitions.Play);
 export const Phone: IconComponent = createIcon("Phone", definitions.Phone);
 export const PhoneCall: IconComponent = createIcon("PhoneCall", definitions.PhoneCall);
 export const PhoneForwarded: IconComponent = createIcon("PhoneForwarded", definitions.PhoneForwarded);
@@ -99,6 +101,7 @@ export const PhoneOff: IconComponent = createIcon("PhoneOff", definitions.PhoneO
 export const Plug: IconComponent = createIcon("Plug", definitions.Plug);
 export const Plus: IconComponent = createIcon("Plus", definitions.Plus);
 export const Radio: IconComponent = createIcon("Radio", definitions.Radio);
+export const RefreshCw: IconComponent = createIcon("RefreshCw", definitions.RefreshCw);
 export const ScrollText: IconComponent = createIcon("ScrollText", definitions.ScrollText);
 export const Search: IconComponent = createIcon("Search", definitions.Search);
 export const Send: IconComponent = createIcon("Send", definitions.Send);

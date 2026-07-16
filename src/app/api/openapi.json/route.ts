@@ -18,8 +18,8 @@ export async function GET() {
     openapi: "3.1.0",
     info: {
       title: "Kundexa API",
-      version: "1.0.0",
-      description: "Tenant-isolerat API för kunddata, avtal, import och telefoni. API-nycklar lagras endast hashade.",
+      version: "1.1.0",
+      description: "Tenant-isolerat API för CRM, licensstyrd katalog, datainsamling, segment, avtal, import och telefoni. API-nycklar lagras endast hashade.",
     },
     servers: [{ url: "/api/v1" }],
     security: [{ bearerAuth: [] }],
@@ -55,8 +55,8 @@ export async function GET() {
       "/contracts": {
         get: { operationId: "listContracts", summary: "Lista avtal", responses: { "200": { description: "Avtalslista" } } },
       },
-      "/imports/csv": {
-        post: { operationId: "previewCsvImport", summary: "Ladda upp och validera CSV", security: [{ bearerAuth: [] }], requestBody: { required: true, content: { "multipart/form-data": { schema: { type: "object", required: ["name", "file"], properties: { name: { type: "string" }, file: { type: "string", format: "binary" }, simulate: { type: "boolean" } } } } } }, responses: { "303": { description: "Resultat visas i webbappen" } } },
+      "/imports/file": {
+        post: { operationId: "previewFileImport", summary: "Säkerhetsskanna, ladda upp och validera CSV, JSON, NDJSON, XML eller XLSX", security: [{ bearerAuth: [] }], requestBody: { required: true, content: { "multipart/form-data": { schema: { type: "object", required: ["name", "file"], properties: { name: { type: "string" }, file: { type: "string", format: "binary", description: "Högst 50 MB" }, simulate: { type: "boolean" } } } } } }, responses: { "303": { description: "Resultat visas i webbappen" } } },
       },
       "/calls": {
         post: { operationId: "startBrowserCall", summary: "Köa ett WebRTC-bryggat samtal för inloggad användare", requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["customerId"], properties: { customerId: { type: "string", format: "uuid" } } } } } }, responses: { "202": { description: "Samtalet är köat" }, "409": { description: "Telefoni saknas eller kunden är spärrad" } } },
@@ -65,8 +65,17 @@ export async function GET() {
         get: { operationId: "getVoiceClient", summary: "Hämta kortlivad WebRTC-konfiguration för aktuell användare", responses: { "200": { description: "WebRTC-konfiguration" } } },
       },
 
+      "/directory/discover": {
+        post: { operationId: "discoverDirectoryEntities", summary: "Starta tillståndsstyrd discovery/ingestion från en konfigurerad källa", "x-required-scope": "directory:refresh", responses: { "202": { description: "Ingestionjobb schemalagt" } } },
+      },
+      "/segments/{id}/refresh": {
+        post: { operationId: "refreshSegment", summary: "Materialisera ett dynamiskt segment", "x-required-scope": "segments:write", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], responses: { "200": { description: "Nytt snapshot" } } },
+      },
+      "/segments/{id}/campaign": {
+        post: { operationId: "sendSegmentToCampaign", summary: "Skapa tenantkunder och lägg policygodkända medlemmar i kampanj", "x-required-scope": "segments:write", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], responses: { "200": { description: "Materialiseringsresultat" } } },
+      },
       "/directory/search": {
-        post: { operationId: "searchDirectory", summary: "Sök lokalt i den licensstyrda katalogen", "x-required-scope": "directory:read", requestBody: { required: true, content: { "application/json": { schema: { type: "object", properties: { entityType: { type: "string", enum: ["organization", "establishment", "person"] }, query: { type: ["string", "null"] }, county: { type: ["string", "null"] }, municipality: { type: ["string", "null"] }, city: { type: ["string", "null"] }, sniCode: { type: ["string", "null"] }, employeeMin: { type: ["integer", "null"] }, employeeMax: { type: ["integer", "null"] }, hasPhone: { type: ["boolean", "null"] }, hasEmail: { type: ["boolean", "null"] }, freshOnly: { type: "boolean", default: false }, limit: { type: "integer", maximum: 200, default: 50 }, offset: { type: "integer", default: 0 } } } } } }, responses: { "200": { description: "Lokala katalogträffar med freshness-sammanställning" } } },
+        post: { operationId: "searchDirectory", summary: "Sök lokalt i den licensstyrda katalogen", "x-required-scope": "directory:read", requestBody: { required: true, content: { "application/json": { schema: { type: "object", properties: { entityType: { type: "string", enum: ["organization", "establishment", "person"] }, query: { type: ["string", "null"] }, county: { type: ["string", "null"] }, municipality: { type: ["string", "null"] }, city: { type: ["string", "null"] }, sniCode: { type: ["string", "null"] }, postalCode: { type: ["string", "null"] }, legalForm: { type: ["string", "null"] }, organizationStatus: { type: ["string", "null"] }, dataProviderId: { type: ["string", "null"], format: "uuid" }, ageMin: { type: ["integer", "null"] }, ageMax: { type: ["integer", "null"] }, employeeMin: { type: ["integer", "null"] }, employeeMax: { type: ["integer", "null"] }, hasPhone: { type: ["boolean", "null"] }, hasEmail: { type: ["boolean", "null"] }, hasWebsite: { type: ["boolean", "null"] }, revenueMin: { type: ["number", "null"] }, revenueMax: { type: ["number", "null"] }, nixStatus: { type: ["string", "null"] }, blocked: { type: ["boolean", "null"] }, allowedChannel: { type: ["string", "null"], enum: ["call", "sms", "email", null] }, contractStatus: { type: ["string", "null"] }, activeContract: { type: ["boolean", "null"] }, freshOnly: { type: "boolean", default: false }, limit: { type: "integer", maximum: 200, default: 50 }, offset: { type: "integer", default: 0 } } } } } }, responses: { "200": { description: "Lokala katalogträffar med freshness-sammanställning" } } },
       },
       "/directory/entities/{id}": {
         get: { operationId: "getDirectoryEntity", summary: "Hämta en licensierad katalogentitet", "x-required-scope": "directory:read", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], responses: { "200": { description: "Katalogentitet" }, "404": { description: "Saknas eller inte licensierad för tenanten" } } },

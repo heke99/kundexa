@@ -2,7 +2,7 @@ import {
   Activity, BarChart3, Blocks, BookUser, Bot, BriefcaseBusiness, Building2, CalendarDays,
   CircleDollarSign, ClipboardList, Contact, FileSignature, FileText, Gauge, Headphones,
   Import, Inbox, KeyRound, LayoutList, ListFilter, Megaphone, MessageSquareText, Package,
-  PhoneCall, PhoneForwarded, Plug, ScrollText, Settings, ShieldCheck, Users, Webhook,
+  PhoneCall, PhoneForwarded, Plug, ScrollText, Search, Settings, ShieldCheck, Users, Webhook,
 } from "@/components/icons";
 
 export const navGroups = [
@@ -17,6 +17,7 @@ export const navGroups = [
   { label: "CRM", items: [
     { href: "/app/customers", label: "Kunder", icon: Contact },
     { href: "/app/companies", label: "Företag", icon: Building2 },
+    { href: "/app/directory", label: "Katalog & målgrupper", icon: Search },
     { href: "/app/prospects", label: "Prospekt", icon: BookUser },
     { href: "/app/lists", label: "Listor", icon: ListFilter },
     { href: "/app/imports", label: "Importer", icon: Import },

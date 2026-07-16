@@ -4,28 +4,28 @@
 
 - Ren `npm ci` från `package-lock.json`
 - Next/React TypeScript: `tsc --noEmit`
-- Supabase Edge Functions: `deno check`
-- Statiska arkitektur- och säkerhetsinvarianter: `node scripts/verify.mjs`
+- Samtliga Supabase Edge Functions: `deno check`
+- Statiska arkitektur-, licens-, RLS- och säkerhetsinvarianter: `node scripts/verify.mjs`
 - Exekvering av samtliga SQL-migrationer: `node scripts/verify-sql.mjs`
+- Runtime-RPC-flöden för scheduler, raw-before-parse, resolver, licensprojektion, geografi, segment, import, NIX, DSAR och retention
 - Next.js 16 produktionsbuild med Turbopack
 - `npm audit`
-- `git diff --check`
-- Enkel secretsökning och kontroll av `SECURITY DEFINER`/`search_path`
+- Secretsökning och kontroll av `SECURITY DEFINER`/`search_path`
 
 ## Resultat
 
-- 18 migrationer exekverade utan SQL-fel i PostgreSQL-kompatibel PGlite-motor
-- 108 publika tabeller
-- 140 publika funktioner
-- 220 RLS-policyer
+- 22 migrationer exekverade i ordning utan SQL-fel i PostgreSQL-kompatibel PGlite
+- 123 publika tabeller
+- 183 publika funktioner
+- 249 RLS-policyer
 - Web TypeScript: godkänd
 - Edge Functions/Deno: godkänd
 - Produktionsbuild: godkänd
-- npm audit: 0 kända sårbarheter i installerat dependencyträd
-- Diff whitespace: godkänd
+- Runtimeflöde: godkänt för ingestion, katalog, licensseparation, segment, säker import, NIX-kampanjresume, DSAR och retention
+- `npm audit`: 0 kända sårbarheter i installerat dependencyträd
 
-PGlite-testet hoppar över själva `CREATE EXTENSION pgcrypto` eftersom PGlite saknar Supabases extension control-filer. Migrationernas övriga SQL körs. Slutlig `db push` ska fortfarande köras mot en riktig Supabase stagingmiljö före produktion.
+PGlite kan inte fullständigt efterlikna alla Supabase extensions och nätverksintegrationer. Slutlig `db push`, genererade typer och liveintegrationer ska därför verifieras i riktig Supabase staging före produktion.
 
-## Avgränsningar
+## Externa avgränsningar
 
-Följande kan inte verifieras från källkoden ensam: livecredentials, leverantörsavtal, faktiska callbackpayloads, NIX-/BankID-provider, e-postdomänens DNS, juridiskt godkännande, backup/restore, malware scanning, lasttest och externt penetrationstest.
+Följande kan inte verifieras från repositoryt ensamt: livecredentials, leverantörsavtal, faktiska provider-/callbackpayloads, NIX-källa, officiellt geografiregister, scannerendpoint, e-post-DNS, juridiskt godkännande, backup/restore, lasttest och externt penetrationstest.

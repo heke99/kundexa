@@ -298,11 +298,13 @@ function csvValues(raw: string) {
 }
 
 export async function configureGenericJsonProvider(form: FormData) {
-  await adminContext();
+  const context = await adminContext();
   const provider = value(form, "provider").toLowerCase();
   const name = value(form, "name");
   const endpointTemplate = value(form, "endpoint_template");
+  const discoveryEndpoint = value(form, "discovery_endpoint_template");
   const method = (value(form, "method") || "GET").toUpperCase();
+  const discoveryMethod = (value(form, "discovery_method") || "GET").toUpperCase();
   const apiKey = value(form, "api_key");
   const apiKeyHeader = value(form, "api_key_header") || "Authorization";
   const allowedDomains = csvValues(value(form, "allowed_domains")).map((domain) => domain.toLowerCase());
@@ -329,15 +331,18 @@ export async function configureGenericJsonProvider(form: FormData) {
       .replaceAll("{{purpose}}", "crm_refresh")
       .replaceAll("{{entity_type}}", "organization");
     publicHttpsUrl(testUrl);
+    if (discoveryEndpoint) {
+      publicHttpsUrl(discoveryEndpoint
+        .replaceAll("{{page}}", "1").replaceAll("{{limit}}", "100").replaceAll("{{entity_type}}", "organization")
+        .replace(/\{\{[a-zA-Z0-9_]+\}\}/g, "test"));
+    }
   } catch (error) {
     redirect(`/app/data-sources?error=${encodeURIComponent(error instanceof Error ? error.message : "Ogiltig endpoint")}`);
   }
   const env = serverEnv();
-  const credentialsCiphertext = apiKey
-    ? encryptJson({ apiKey, apiKeyHeader }, env.KUNDEXA_ENCRYPTION_KEY)
-    : "";
+  const credentialsCiphertext = apiKey ? encryptJson({ apiKey, apiKeyHeader }, env.KUNDEXA_ENCRYPTION_KEY) : "";
   const supabase = await createClient();
-  const { error } = await supabase.rpc("configure_generic_json_provider", {
+  const { data: configured, error } = await supabase.rpc("configure_generic_json_provider", {
     p_provider: provider,
     p_name: name,
     p_permission_name: value(form, "permission_name") || `${name} produktionsrätt`,
@@ -367,6 +372,317 @@ export async function configureGenericJsonProvider(form: FormData) {
     p_estimated_cost_per_call: Math.max(0, Number(value(form, "estimated_cost_per_call") || 0)),
   });
   if (error) redirect(`/app/data-sources?error=${encodeURIComponent(error.message)}`);
+  const ids = configured as { provider_id: string; account_id: string; permission_id: string } | null;
+  if (!ids?.provider_id || !ids.account_id || !ids.permission_id) redirect("/app/data-sources?error=Leverantörskonfigurationen returnerade inga identifierare");
+
+  const discoveryConfiguration = discoveryEndpoint ? {
+    endpoint_template: discoveryEndpoint,
+    method: discoveryMethod,
+    format: value(form, "discovery_format") || "json",
+    items_path: value(form, "items_path") || undefined,
+    next_page_path: value(form, "next_page_path") || undefined,
+    external_id_path: value(form, "external_id_path") || "id",
+    source_timestamp_path: value(form, "source_timestamp_path") || undefined,
+    page_parameter: value(form, "page_parameter") || undefined,
+    page_start: Math.max(0, Number(value(form, "page_start") || 1)),
+    page_size: Math.max(1, Math.min(Number(value(form, "page_size") || 100), 1000)),
+    max_pages_per_run: Math.max(1, Math.min(Number(value(form, "max_pages_per_run") || 100), 1000)),
+    field_mapping: fieldMapping,
+    timeout_ms: Math.max(1000, Number(value(form, "timeout_ms") || 30000)),
+  } : {};
+  const sourceClass = value(form, "source_class") || "licensed_provider";
+  const { error: providerUpdateError } = await supabase.from("data_providers").update({ source_class: sourceClass, discovery_configuration: discoveryConfiguration }).eq("tenant_id", context.tenantId).eq("id", ids.provider_id);
+  if (providerUpdateError) redirect(`/app/data-sources?error=${encodeURIComponent(providerUpdateError.message)}`);
+
+  for (const entityType of entityTypes) {
+    const expectedFields = Object.keys(fieldMapping);
+    const { data: activeParser } = await supabase.from("parser_versions").select("id,version").eq("tenant_id", context.tenantId).eq("data_provider_id", ids.provider_id).eq("entity_type", entityType).eq("status", "active").order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (activeParser) {
+      const { error: parserError } = await supabase.from("parser_versions").update({ expected_fields: expectedFields, minimum_match_rate: Number(value(form, "minimum_match_rate") || 0.9), disappearance_threshold: Number(value(form, "disappearance_threshold") || 0.1) }).eq("id", activeParser.id);
+      if (parserError) redirect(`/app/data-sources?error=${encodeURIComponent(parserError.message)}`);
+    } else {
+      const { error: parserError } = await supabase.from("parser_versions").insert({ tenant_id: context.tenantId, data_provider_id: ids.provider_id, entity_type: entityType, version: "1", expected_fields: expectedFields, minimum_match_rate: Number(value(form, "minimum_match_rate") || 0.9), disappearance_threshold: Number(value(form, "disappearance_threshold") || 0.1), status: "active", created_by: context.userId });
+      if (parserError) redirect(`/app/data-sources?error=${encodeURIComponent(parserError.message)}`);
+    }
+
+    if (discoveryEndpoint) {
+      const jobName = `${name} – ${entityType} – femdagarsinsamling`;
+      const { data: existingJob } = await supabase.from("ingestion_jobs").select("id").eq("tenant_id", context.tenantId).eq("data_provider_id", ids.provider_id).eq("name", jobName).maybeSingle();
+      const payload = {
+        tenant_id: context.tenantId, data_provider_id: ids.provider_id, provider_account_id: ids.account_id, permission_id: ids.permission_id,
+        name: jobName, entity_type: entityType, schedule_expression: "every 5 days", schedule_interval_seconds: Math.max(3600, Number(value(form, "schedule_interval_seconds") || 432000)),
+        priority: 100, max_records: Math.max(1, Math.min(Number(value(form, "ingestion_max_records") || 5000), 5000)), quota_interpretation: value(form, "quota_interpretation") || "per_run",
+        filter_definition: {}, status: "active", next_run_at: form.get("start_ingestion_now") === "on" ? new Date().toISOString() : new Date(Date.now() + 432000000).toISOString(),
+        adapter_key: "generic_json", adapter_configuration: discoveryConfiguration, created_by: context.userId,
+      };
+      const jobQuery = existingJob ? supabase.from("ingestion_jobs").update(payload).eq("id", existingJob.id) : supabase.from("ingestion_jobs").insert(payload);
+      const { error: jobError } = await jobQuery;
+      if (jobError) redirect(`/app/data-sources?error=${encodeURIComponent(jobError.message)}`);
+    }
+  }
   revalidatePath("/app/data-sources");
-  redirect("/app/data-sources?message=Dataleverantören och dess tillstånd är sparade atomiskt");
+  revalidatePath("/app/directory");
+  redirect("/app/data-sources?message=Leverantör, parser, tillstånd och femdagarsinsamling är sparade atomiskt");
+}
+
+export async function setProviderStatus(form: FormData) {
+  const context = await adminContext();
+  const providerId = value(form, "provider_id");
+  const status = value(form, "status");
+  if (!providerId || !["active", "paused"].includes(status)) return;
+  const supabase = await createClient();
+  const { error } = await supabase.from("data_providers").update({ status, paused_reason: status === "paused" ? value(form, "reason") || "Manuellt pausad" : null }).eq("tenant_id", context.tenantId).eq("id", providerId);
+  if (error) redirect(`/app/data-sources?error=${encodeURIComponent(error.message)}`);
+  await supabase.from("provider_accounts").update({ status: status === "active" ? "active" : "paused" }).eq("tenant_id", context.tenantId).eq("data_provider_id", providerId);
+  revalidatePath("/app/data-sources");
+}
+
+export async function runIngestionNow(form: FormData) {
+  const context = await adminContext();
+  const jobId = value(form, "ingestion_job_id");
+  if (!jobId) return;
+  const supabase = await createClient();
+  const { error } = await supabase.from("ingestion_jobs").update({ next_run_at: new Date().toISOString(), status: "active" }).eq("tenant_id", context.tenantId).eq("id", jobId);
+  if (error) redirect(`/app/data-sources?error=${encodeURIComponent(error.message)}`);
+  revalidatePath("/app/data-sources");
+  redirect("/app/data-sources?message=Insamlingen är köad för nästa worker-körning");
+}
+
+export async function approveParserObservation(form: FormData) {
+  const context = await adminContext();
+  const observationId = value(form, "observation_id");
+  const parserId = value(form, "parser_version_id");
+  if (!observationId || !parserId) return;
+  const supabase = await createClient();
+  const { data: observation, error } = await supabase.from("parser_observations").update({ status: "approved", reviewed_by: context.userId, reviewed_at: new Date().toISOString() }).eq("tenant_id", context.tenantId).eq("id", observationId).select("page_fingerprint").single();
+  if (error) redirect(`/app/data-sources?error=${encodeURIComponent(error.message)}`);
+  const { error: parserError } = await supabase.from("parser_versions").update({ status: "active", page_fingerprint: observation.page_fingerprint }).eq("tenant_id", context.tenantId).eq("id", parserId);
+  if (parserError) redirect(`/app/data-sources?error=${encodeURIComponent(parserError.message)}`);
+  revalidatePath("/app/data-sources");
+}
+
+function parseJsonObject(raw: string, label: string) {
+  if (!raw.trim()) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+    return parsed as Record<string, unknown>;
+  } catch {
+    throw new Error(`${label} måste vara ett giltigt JSON-objekt`);
+  }
+}
+
+export async function configureNixProvider(form: FormData) {
+  const context = await adminContext();
+  const name = value(form, "name");
+  const endpointTemplate = value(form, "endpoint_template");
+  const method = (value(form, "method") || "GET").toUpperCase();
+  const allowedDomains = csvValues(value(form, "allowed_domains")).map((domain) => domain.toLowerCase());
+  const allowedPaths = csvValues(value(form, "allowed_paths"));
+  const apiKey = value(form, "api_key");
+  const apiKeyHeader = value(form, "api_key_header") || "Authorization";
+  if (!name || !endpointTemplate || !allowedDomains.length || !["GET", "POST"].includes(method)) {
+    redirect("/app/compliance?error=Namn, HTTPS-endpoint, metod och minst en tillåten domän krävs");
+  }
+  try {
+    publicHttpsUrl(endpointTemplate.replaceAll("{{phone_e164}}", "%2B46700000000").replaceAll("{{phone}}", "46700000000").replaceAll("{{customer_id}}", crypto.randomUUID()));
+  } catch (error) {
+    redirect(`/app/compliance?error=${encodeURIComponent(error instanceof Error ? error.message : "Ogiltig NIX-endpoint")}`);
+  }
+  let resultMapping: Record<string, unknown>;
+  let requestHeaders: Record<string, unknown>;
+  let requestQuery: Record<string, unknown>;
+  let requestBody: Record<string, unknown>;
+  try {
+    resultMapping = parseJsonObject(value(form, "result_mapping") || '{"listed":"listed","not_listed":"not_listed","unknown":"unknown"}', "Resultatmappningen");
+    requestHeaders = parseJsonObject(value(form, "request_headers"), "Request headers");
+    requestQuery = parseJsonObject(value(form, "request_query"), "Query-parametrarna");
+    requestBody = parseJsonObject(value(form, "request_body"), "Request body");
+  } catch (error) {
+    redirect(`/app/compliance?error=${encodeURIComponent(error instanceof Error ? error.message : "Ogiltig JSON-konfiguration")}`);
+  }
+  const env = serverEnv();
+  const credentialsCiphertext = apiKey
+    ? encryptJson({ apiKey, apiKeyHeader }, env.KUNDEXA_ENCRYPTION_KEY)
+    : null;
+  const admin = createAdminClient();
+  const { error } = await admin.from("nix_provider_configurations").upsert({
+    tenant_id: context.tenantId,
+    name,
+    status: "active",
+    endpoint_template: endpointTemplate,
+    method,
+    allowed_domains: allowedDomains,
+    allowed_paths: allowedPaths,
+    credentials_ciphertext: credentialsCiphertext,
+    request_configuration: {
+      headers: requestHeaders,
+      query: requestQuery,
+      body: requestBody,
+      source_version_path: value(form, "source_version_path") || undefined,
+    },
+    result_path: value(form, "result_path") || "result",
+    result_mapping: resultMapping,
+    validity_days: Math.max(1, Math.min(Number(value(form, "validity_days") || 60), 365)),
+    timeout_ms: Math.max(1000, Math.min(Number(value(form, "timeout_ms") || 15000), 120000)),
+    max_retries: Math.max(0, Math.min(Number(value(form, "max_retries") || 5), 20)),
+    created_by: context.userId,
+  }, { onConflict: "tenant_id,name" });
+  if (error) redirect(`/app/compliance?error=${encodeURIComponent(error.message)}`);
+  await admin.from("audit_logs").insert({
+    tenant_id: context.tenantId,
+    actor_user_id: context.userId,
+    action: "nix_provider.configured",
+    entity_type: "nix_provider_configuration",
+    after_data: { name, method, allowedDomains, allowedPaths },
+  });
+  revalidatePath("/app/compliance");
+  redirect("/app/compliance?message=NIX-leverantören är sparad och aktiverad");
+}
+
+export async function setNixProviderStatus(form: FormData) {
+  const context = await adminContext();
+  const id = value(form, "id");
+  const status = value(form, "status");
+  if (!id || !["active", "paused", "inactive"].includes(status)) return;
+  const admin = createAdminClient();
+  const { error } = await admin.from("nix_provider_configurations").update({ status }).eq("tenant_id", context.tenantId).eq("id", id);
+  if (error) redirect(`/app/compliance?error=${encodeURIComponent(error.message)}`);
+  await admin.from("audit_logs").insert({
+    tenant_id: context.tenantId,
+    actor_user_id: context.userId,
+    action: "nix_provider.status_changed",
+    entity_type: "nix_provider_configuration",
+    entity_id: id,
+    after_data: { status },
+  });
+  revalidatePath("/app/compliance");
+}
+
+export async function queueCustomerNixCheck(form: FormData) {
+  const context = await adminContext();
+  const customerId = value(form, "customer_id");
+  if (!customerId) redirect("/app/compliance?error=Kund-ID krävs");
+  const admin = createAdminClient();
+  const { error } = await admin.rpc("queue_nix_check_for_customer", {
+    p_tenant_id: context.tenantId,
+    p_customer_id: customerId,
+    p_requested_by: context.userId,
+    p_force: form.get("force") === "on",
+  });
+  if (error) redirect(`/app/compliance?error=${encodeURIComponent(error.message)}`);
+  revalidatePath("/app/compliance");
+  redirect("/app/compliance?message=NIX-kontrollen har lagts i kön");
+}
+
+export async function createDataSubjectRequest(form: FormData) {
+  const context = await adminContext();
+  const customerId = value(form, "customer_id");
+  const requestType = value(form, "request_type");
+  const subjectReference = value(form, "subject_reference");
+  if (!customerId || !subjectReference || !["access", "rectification", "erasure", "portability", "restriction", "objection"].includes(requestType)) {
+    redirect("/app/compliance?error=Kund, referens och giltig begärantyp krävs");
+  }
+  const admin = createAdminClient();
+  const { data: customer } = await admin.from("customers").select("id").eq("tenant_id", context.tenantId).eq("id", customerId).is("deleted_at", null).maybeSingle();
+  if (!customer) redirect("/app/compliance?error=Kunden hittades inte i denna tenant");
+  const dueAt = value(form, "due_at") || new Date(Date.now() + 30 * 86400000).toISOString();
+  const { data: request, error } = await admin.from("data_subject_requests").insert({
+    tenant_id: context.tenantId,
+    customer_id: customerId,
+    request_type: requestType,
+    subject_reference: subjectReference,
+    status: "identity_verification",
+    due_at: dueAt,
+    evidence: {},
+    created_by: context.userId,
+  }).select("id").single();
+  if (error || !request) redirect(`/app/compliance?error=${encodeURIComponent(error?.message ?? "Begäran kunde inte skapas")}`);
+  await admin.from("data_subject_request_events").insert({ tenant_id: context.tenantId, request_id: request.id, event_type: "request_received", actor_user_id: context.userId, details: { requestType } });
+  revalidatePath("/app/compliance");
+  redirect("/app/compliance?message=Integritetsbegäran skapad och väntar på identitetskontroll");
+}
+
+export async function verifyDataSubjectIdentity(form: FormData) {
+  const context = await adminContext();
+  const requestId = value(form, "request_id");
+  if (!requestId) return;
+  const admin = createAdminClient();
+  const { error } = await admin.from("data_subject_requests").update({
+    status: "processing",
+    identity_verified_at: new Date().toISOString(),
+    handled_by: context.userId,
+    evidence: { verificationMethod: value(form, "verification_method") || "manual_admin_verification" },
+  }).eq("tenant_id", context.tenantId).eq("id", requestId).eq("status", "identity_verification");
+  if (error) redirect(`/app/compliance?error=${encodeURIComponent(error.message)}`);
+  await admin.from("data_subject_request_events").insert({ tenant_id: context.tenantId, request_id: requestId, event_type: "identity_verified", actor_user_id: context.userId, details: { method: value(form, "verification_method") || "manual_admin_verification" } });
+  revalidatePath("/app/compliance");
+}
+
+export async function exportDataSubjectRequest(form: FormData) {
+  const context = await adminContext();
+  const requestId = value(form, "request_id");
+  if (!requestId) return;
+  const admin = createAdminClient();
+  const { data: request } = await admin.from("data_subject_requests").select("id,request_type,status,identity_verified_at").eq("tenant_id", context.tenantId).eq("id", requestId).single();
+  if (!request?.identity_verified_at || !["access", "portability"].includes(request.request_type)) redirect("/app/compliance?error=Identiteten måste vara verifierad och typen måste vara registerutdrag eller dataportabilitet");
+  const { data, error } = await admin.rpc("data_subject_export_for_request", { p_request_id: requestId });
+  if (error) redirect(`/app/compliance?error=${encodeURIComponent(error.message)}`);
+  const serialized = JSON.stringify(data, null, 2);
+  const path = `${context.tenantId}/dsar/${requestId}/${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+  const { error: uploadError } = await admin.storage.from("compliance-exports").upload(path, Buffer.from(serialized, "utf8"), { contentType: "application/json", upsert: false });
+  if (uploadError) redirect(`/app/compliance?error=${encodeURIComponent(uploadError.message)}`);
+  const resultHash = sha256(serialized);
+  await admin.from("data_subject_requests").update({ status: "completed", completed_at: new Date().toISOString(), handled_by: context.userId, result_storage_path: path, result_hash: resultHash }).eq("tenant_id", context.tenantId).eq("id", requestId);
+  await admin.from("data_subject_request_events").insert({ tenant_id: context.tenantId, request_id: requestId, event_type: "export_generated", actor_user_id: context.userId, details: { path, sha256: resultHash } });
+  revalidatePath("/app/compliance");
+  redirect("/app/compliance?message=Integritetsexport skapad i privat lagring");
+}
+
+export async function executeDataSubjectErasure(form: FormData) {
+  const context = await adminContext();
+  const requestId = value(form, "request_id");
+  if (!requestId) return;
+  const admin = createAdminClient();
+  const { error } = await admin.rpc("execute_data_subject_erasure", { p_request_id: requestId, p_actor: context.userId });
+  if (error) redirect(`/app/compliance?error=${encodeURIComponent(error.message)}`);
+  revalidatePath("/app/compliance");
+  redirect("/app/compliance?message=Raderingsbegäran har genomförts med juridisk retention och minimal spärrpost");
+}
+
+export async function executeDataSubjectRestriction(form: FormData) {
+  const context = await adminContext();
+  const requestId = value(form, "request_id");
+  if (!requestId) return;
+  const admin = createAdminClient();
+  const { data: request } = await admin.from("data_subject_requests").select("id,customer_id,request_type,identity_verified_at").eq("tenant_id", context.tenantId).eq("id", requestId).single();
+  if (!request?.customer_id || !request.identity_verified_at || !["restriction", "objection"].includes(request.request_type)) redirect("/app/compliance?error=Begäran är inte verifierad eller saknar kund");
+  const reason = request.request_type === "objection" ? "Invändning mot direktmarknadsföring" : "Behandlingsbegränsning";
+  const { data: customer } = await admin.from("customers").select("phone_e164,email").eq("tenant_id", context.tenantId).eq("id", request.customer_id).single();
+  await admin.from("customers").update({ marketing_allowed: false, do_not_call: true, do_not_sms: true, do_not_email: true, lifecycle: "blocked", blocked_reason: reason }).eq("tenant_id", context.tenantId).eq("id", request.customer_id);
+  await admin.from("compliance_blocks").insert({ tenant_id: context.tenantId, customer_id: request.customer_id, phone_e164: customer?.phone_e164, email: customer?.email, channels: ["call", "sms", "email"], reason, source: "data_subject_request", active: true, created_by: context.userId });
+  await admin.from("data_subject_requests").update({ status: "completed", completed_at: new Date().toISOString(), handled_by: context.userId, processing_notes: reason }).eq("tenant_id", context.tenantId).eq("id", requestId);
+  await admin.from("data_subject_request_events").insert({ tenant_id: context.tenantId, request_id: requestId, event_type: request.request_type === "objection" ? "objection_applied" : "restriction_applied", actor_user_id: context.userId, details: { reason } });
+  revalidatePath("/app/compliance");
+}
+
+export async function createLegalHold(form: FormData) {
+  const context = await adminContext();
+  const customerId = value(form, "customer_id");
+  const reason = value(form, "reason");
+  if (!customerId || !reason) redirect("/app/compliance?error=Kund och skäl krävs för juridisk spärr");
+  const admin = createAdminClient();
+  const { error } = await admin.from("legal_holds").insert({ tenant_id: context.tenantId, customer_id: customerId, reason, scope: csvValues(value(form, "scope") || "all"), active: true, created_by: context.userId });
+  if (error) redirect(`/app/compliance?error=${encodeURIComponent(error.message)}`);
+  revalidatePath("/app/compliance");
+}
+
+export async function releaseLegalHold(form: FormData) {
+  const context = await adminContext();
+  const id = value(form, "id");
+  if (!id) return;
+  const admin = createAdminClient();
+  const { error } = await admin.from("legal_holds").update({ active: false, released_by: context.userId, released_at: new Date().toISOString() }).eq("tenant_id", context.tenantId).eq("id", id);
+  if (error) redirect(`/app/compliance?error=${encodeURIComponent(error.message)}`);
+  revalidatePath("/app/compliance");
 }

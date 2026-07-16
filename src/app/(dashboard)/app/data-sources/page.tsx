@@ -1,4 +1,4 @@
-import { ClipboardList } from "@/components/icons";
+import { ClipboardList, Pause, Play, RefreshCw, ShieldCheck } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
 import { getAppContext, isAdmin } from "@/lib/auth";
 import { PageHeader } from "@/components/ui/page-header";
@@ -6,102 +6,48 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
-import { configureGenericJsonProvider } from "@/app/actions/admin";
+import { approveParserObservation, configureGenericJsonProvider, runIngestionNow, setProviderStatus } from "@/app/actions/admin";
 import { formatDate } from "@/lib/utils";
 
 export default async function DataSourcesPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string }> }) {
-  const params = await searchParams;
-  const context = await getAppContext();
-  const supabase = await createClient();
-  const [{ data: providers }, { data: accounts }, { data: permissions }, { data: jobs }] = await Promise.all([
-    supabase.from("data_providers").select("id,provider,name,status,adapter_key,integration_type,cache_scope,field_mapping,updated_at").order("name"),
+  const params = await searchParams; const context = await getAppContext(); const supabase = await createClient();
+  const [{ data: providers }, { data: accounts }, { data: permissions }, { data: enrichmentJobs }, { data: ingestionJobs }, { data: ingestionRuns }, { data: observations }] = await Promise.all([
+    supabase.from("data_providers").select("id,provider,name,status,adapter_key,integration_type,cache_scope,source_class,field_mapping,discovery_configuration,paused_reason,updated_at").order("name"),
     supabase.from("provider_accounts").select("id,data_provider_id,name,status,configuration,updated_at").order("created_at", { ascending: false }),
     supabase.from("provider_permissions").select("id,data_provider_id,permission_name,status,cache_scope,allowed_domains,allowed_entity_types,raw_storage_allowed,tenant_display_allowed,expires_at").order("created_at", { ascending: false }),
     supabase.from("enrichment_jobs").select("id,status,estimated_cost,actual_cost,last_error,created_at,completed_at").order("created_at", { ascending: false }).limit(10),
+    supabase.from("ingestion_jobs").select("id,data_provider_id,name,entity_type,status,max_records,next_run_at,last_completed_at,schedule_interval_seconds").order("created_at", { ascending: false }).limit(50),
+    supabase.from("ingestion_runs").select("id,ingestion_job_id,status,requested_records,fetched_records,new_records,changed_records,unchanged_records,error_records,quarantined_records,last_error,started_at,completed_at").order("created_at", { ascending: false }).limit(30),
+    supabase.from("parser_observations").select("id,parser_version_id,status,match_rate,disappearance_rate,page_fingerprint,missing_fields,details,created_at").in("status", ["warning", "quarantined"]).order("created_at", { ascending: false }).limit(20),
   ]);
   const accountByProvider = new Map((accounts ?? []).map((account) => [account.data_provider_id, account]));
   const permissionByProvider = new Map((permissions ?? []).map((permission) => [permission.data_provider_id, permission]));
-
+  const jobById = new Map((ingestionJobs ?? []).map((job) => [job.id, job]));
   return <>
-    <PageHeader title="Datakällor" description="Licensstyrda provideradaptrar, kvoter, fältregler, rådata och 20-dagars freshness utan dubbla externa anrop." />
-    {params.error ? <p className="form-error">{params.error}</p> : null}
-    {params.message ? <div className="notice success">{params.message}</div> : null}
+    <PageHeader title="Datakällor" description="Tillstånd, API-adaptrar, femdagarsinsamling, rådata, parserkarantän, kvoter och 20-dagars freshness." />
+    {params.error ? <p className="form-error">{params.error}</p> : null}{params.message ? <div className="notice success">{params.message}</div> : null}
     <div className="grid">
-      <Card>
-        <CardHeader><h2><ClipboardList size={17} /> Leverantörer och tillstånd</h2><Badge>{providers?.length ?? 0}</Badge></CardHeader>
-        <CardContent style={{ padding: 0 }}>
-          <DataTable headers={["Leverantör", "Adapter", "Konto", "Cache", "Tillstånd", "Fält", "Uppdaterad"]}>
-            {providers?.map((provider) => {
-              const account = accountByProvider.get(provider.id);
-              const permission = permissionByProvider.get(provider.id);
-              return <tr key={provider.id}>
-                <td><strong>{provider.name}</strong><div className="muted">{provider.provider}</div></td>
-                <td>{provider.adapter_key ?? "—"}<div className="muted">{provider.integration_type}</div></td>
-                <td><Badge className={account?.status === "active" ? "badge-success" : ""}>{account?.status ?? "saknas"}</Badge></td>
-                <td>{provider.cache_scope}</td>
-                <td><Badge className={permission?.status === "active" ? "badge-success" : "badge-danger"}>{permission?.status ?? "saknas"}</Badge><div className="muted">{permission?.allowed_domains?.join(", ") ?? ""}</div></td>
-                <td>{Object.keys(provider.field_mapping ?? {}).length}</td>
-                <td>{formatDate(provider.updated_at)}</td>
-              </tr>;
-            })}
-          </DataTable>
-          <div className="notice warning" style={{ margin: 18 }}>
-            API och strukturerad filöverföring ska användas först. Skrapning kräver ett separat granskat adapterpaket och ett dokumenterat tillstånd; formuläret nedan aktiverar inte skrapning.
-          </div>
-        </CardContent>
-      </Card>
+      <Card><CardHeader><h2><ClipboardList size={17}/> Leverantörer och tillstånd</h2><Badge>{providers?.length ?? 0}</Badge></CardHeader><CardContent style={{padding:0}}>
+        <DataTable headers={["Leverantör","Adapter","Konto","Cache","Tillstånd","Discovery","Status","Åtgärd"]}>{providers?.map(provider=>{const account=accountByProvider.get(provider.id);const permission=permissionByProvider.get(provider.id);const discovery=provider.discovery_configuration as Record<string,unknown>|null;return <tr key={provider.id}><td><strong>{provider.name}</strong><div className="muted">{provider.provider} · {provider.source_class}</div></td><td>{provider.adapter_key??"—"}<div className="muted">{provider.integration_type}</div></td><td><Badge className={account?.status==="active"?"badge-success":""}>{account?.status??"saknas"}</Badge></td><td>{provider.cache_scope}</td><td><Badge className={permission?.status==="active"?"badge-success":"badge-danger"}>{permission?.status??"saknas"}</Badge><div className="muted">{permission?.allowed_domains?.join(", ")??""}</div></td><td>{discovery?.endpoint_template?"Konfigurerad":"Saknas"}<div className="muted">{Object.keys(provider.field_mapping??{}).length} fält</div></td><td><Badge className={provider.status==="active"?"badge-success":"badge-danger"}>{provider.status}</Badge><div className="muted">{provider.paused_reason??""}</div></td><td>{isAdmin(context.role)?<form action={setProviderStatus}><input type="hidden" name="provider_id" value={provider.id}/><input type="hidden" name="status" value={provider.status==="active"?"paused":"active"}/><button className="button button-secondary button-sm">{provider.status==="active"?<><Pause size={14}/> Pausa</>:<><Play size={14}/> Aktivera</>}</button></form>:null}</td></tr>})}</DataTable>
+      </CardContent></Card>
 
-      {isAdmin(context.role) ? <Card>
-        <CardHeader><h2>Konfigurera JSON-API</h2><Badge>Atomisk</Badge></CardHeader>
-        <CardContent>
-          <form action={configureGenericJsonProvider} className="form-stack">
-            <div className="grid grid-2">
-              <Field label="Leverantörsnyckel" name="provider" placeholder="merinfo" required />
-              <Field label="Visningsnamn" name="name" placeholder="Merinfo API" required />
-              <Field label="Tillståndets namn" name="permission_name" placeholder="Produktionsavtal 2026" required />
-              <SelectField label="HTTP-metod" name="method" defaultValue="GET"><option>GET</option><option>POST</option></SelectField>
-            </div>
-            <Field label="Endpoint-mall" name="endpoint_template" placeholder="https://api.exempel.se/v1/company/{{external_identifier}}" required hint="Måste vara HTTPS och innehålla {{external_identifier}} eller {{organization_number}}." />
-            <div className="grid grid-2">
-              <Field label="Tillåtna domäner" name="allowed_domains" placeholder="api.exempel.se" required />
-              <Field label="Tillåtna sökvägar" name="allowed_paths" placeholder="/v1/company" />
-              <Field label="API-nyckel" name="api_key" type="password" hint="Lämna tomt vid uppdatering för att behålla befintlig nyckel." />
-              <Field label="API-key header" name="api_key_header" defaultValue="Authorization" />
-            </div>
-            <TextareaField label="Fältmappning (JSON)" name="field_mapping" required rows={8} defaultValue={'{\n  "canonical_name": "name",\n  "organization_number": "organizationNumber",\n  "phone_e164": "phone",\n  "email": "email",\n  "city": "address.city",\n  "sni_code": "industry.sni"\n}'} />
-            <div className="grid grid-2">
-              <SelectField label="Cacheomfattning" name="cache_scope" defaultValue="tenant">
-                <option value="tenant">Endast tenant</option><option value="provider_account">Leverantörskonto</option><option value="global">Global</option><option value="one_time">Engångsflöde</option>
-              </SelectField>
-              <Field label="Tillåtna ändamål" name="allowed_purposes" defaultValue="crm_refresh,contract_verification" />
-              <Field label="Skriftligt godkännande / avtalsreferens" name="written_approval_reference" placeholder="Avtal 2026-07-16" />
-              <Field label="Rådataretention, dagar" name="retention_days" type="number" min="0" defaultValue="30" />
-              <Field label="Freshness TTL, dagar" name="ttl_days" type="number" min="0" max="3650" defaultValue="20" />
-              <Field label="Beräknad kostnad per anrop" name="estimated_cost_per_call" type="number" min="0" step="0.0001" defaultValue="0" />
-            </div>
-            <fieldset className="field"><span>Entitetstyper</span><label><input type="checkbox" name="entity_types" value="organization" defaultChecked /> Företag</label><label><input type="checkbox" name="entity_types" value="establishment" /> Arbetsställen</label><label><input type="checkbox" name="entity_types" value="person" /> Privatpersoner</label></fieldset>
-            <fieldset className="field"><span>Licensrättigheter</span><label><input type="checkbox" name="tenant_display_allowed" defaultChecked /> Visa fälten i tenantens katalog</label><label><input type="checkbox" name="raw_storage_allowed" /> Lagra krypterad rådata</label><label><input type="checkbox" name="cross_tenant_reuse_allowed" /> Tillåt uttryckligen återanvändning mellan tenants</label><label><input type="checkbox" name="export_allowed" /> Tillåt export</label><label><input type="checkbox" name="attribution_required" /> Kräv källangivelse</label></fieldset>
-            <div className="grid grid-2">
-              <Field label="Kvot per fönster" name="quota_units" type="number" min="1" defaultValue="5000" />
-              <Field label="Kvotfönster, sekunder" name="quota_window_seconds" type="number" min="1" defaultValue="432000" hint="432000 = fem dagar." />
-              <Field label="Max samtidighet" name="max_concurrency" type="number" min="1" defaultValue="1" />
-              <Field label="Minsta fördröjning, ms" name="minimum_delay_ms" type="number" min="0" defaultValue="250" />
-              <Field label="Timeout, ms" name="timeout_ms" type="number" min="1000" max="120000" defaultValue="30000" />
-              <Field label="Max återförsök" name="max_retries" type="number" min="0" max="20" defaultValue="5" />
-            </div>
-            <button className="button button-primary">Spara leverantör och tillstånd</button>
-          </form>
-        </CardContent>
-      </Card> : null}
+      {isAdmin(context.role)?<Card><CardHeader><h2>Konfigurera API och discovery</h2><Badge>Atomiskt</Badge></CardHeader><CardContent><form action={configureGenericJsonProvider} className="form-stack">
+        <div className="grid grid-4"><Field label="Leverantörsnyckel" name="provider" placeholder="merinfo" required/><Field label="Visningsnamn" name="name" placeholder="Merinfo API" required/><Field label="Tillståndets namn" name="permission_name" placeholder="Produktionsavtal 2026" required/><SelectField label="Källklass" name="source_class" defaultValue="licensed_provider"><option value="authority">Myndighetskälla</option><option value="licensed_provider">Licensierad leverantör</option><option value="permitted_scrape">Tillåten skrapning</option><option value="tenant_import">Tenantimport</option><option value="derived">Härledd</option></SelectField></div>
+        <Field label="Endpoint för enskild berikning" name="endpoint_template" placeholder="https://api.exempel.se/v1/company/{{external_identifier}}" required hint="HTTPS och identifierar-placeholder krävs."/>
+        <div className="grid grid-4"><SelectField label="Metod" name="method" defaultValue="GET"><option>GET</option><option>POST</option></SelectField><Field label="Tillåtna domäner" name="allowed_domains" placeholder="api.exempel.se" required/><Field label="Tillåtna paths" name="allowed_paths" placeholder="/v1/company,/v1/search"/><Field label="API-key header" name="api_key_header" defaultValue="Authorization"/></div><Field label="API-nyckel" name="api_key" type="password" hint="Lämna tomt vid uppdatering för att behålla befintlig nyckel."/>
+        <TextareaField label="Fältmappning (JSON)" name="field_mapping" required rows={10} defaultValue={'{\n  "canonical_name": "name",\n  "organization_number": "organizationNumber",\n  "phone_e164": "phone",\n  "email": "email",\n  "city": "address.city",\n  "municipality": "address.municipality",\n  "county": "address.county",\n  "sni_code": "industry.sni",\n  "employee_count": "employees",\n  "revenue": "revenue"\n}'}/>
+        <h3>Discovery och femdagarsinsamling</h3><Field label="Discovery-endpoint" name="discovery_endpoint_template" placeholder="https://api.exempel.se/v1/search?page={{page}}&limit={{limit}}" hint="Tomt lämnar discovery avstängt men enskild berikning fungerar."/>
+        <div className="grid grid-4"><SelectField label="Discoveryformat" name="discovery_format" defaultValue="json"><option value="json">JSON</option><option value="ndjson">NDJSON</option><option value="csv">CSV</option><option value="html_regex">HTML via avtalad regexparser</option></SelectField><SelectField label="Metod" name="discovery_method" defaultValue="GET"><option>GET</option><option>POST</option></SelectField><Field label="Array-path" name="items_path" placeholder="results.items"/><Field label="Externt ID-path" name="external_id_path" defaultValue="id"/><Field label="Next page-path" name="next_page_path" placeholder="pagination.nextPage"/><Field label="Page parameter" name="page_parameter" placeholder="page"/><Field label="Start page" name="page_start" type="number" defaultValue="1"/><Field label="Page size" name="page_size" type="number" defaultValue="100" min="1" max="1000"/><Field label="Max sidor/körning" name="max_pages_per_run" type="number" defaultValue="100" min="1" max="1000"/><Field label="Max poster/körning" name="ingestion_max_records" type="number" defaultValue="5000" min="1" max="5000"/><Field label="Schema, sekunder" name="schedule_interval_seconds" type="number" defaultValue="432000" min="3600"/><SelectField label="Kvottolkning" name="quota_interpretation" defaultValue="per_run"><option value="per_run">Per körning</option><option value="per_period">Per period</option><option value="combined_entities">Sammanslagna entiteter</option><option value="per_entity_type">Per entitetstyp</option><option value="per_tenant">Per tenant</option></SelectField></div><label><input type="checkbox" name="start_ingestion_now"/> Starta första insamlingen direkt</label>
+        <div className="grid grid-4"><SelectField label="Cache" name="cache_scope" defaultValue="tenant"><option value="tenant">Tenant</option><option value="provider_account">Leverantörskonto</option><option value="global">Global</option><option value="one_time">Engångsflöde</option></SelectField><Field label="Ändamål" name="allowed_purposes" defaultValue="crm_refresh,contract_verification,prospecting"/><Field label="Avtalsreferens" name="written_approval_reference"/><Field label="Rådataretention dagar" name="retention_days" type="number" min="0" defaultValue="30"/><Field label="Freshness TTL dagar" name="ttl_days" type="number" min="0" max="3650" defaultValue="20"/><Field label="Min match rate" name="minimum_match_rate" type="number" min="0" max="1" step="0.01" defaultValue="0.90"/><Field label="Max fältbortfall" name="disappearance_threshold" type="number" min="0" max="1" step="0.01" defaultValue="0.10"/><Field label="Kostnad per anrop" name="estimated_cost_per_call" type="number" min="0" step="0.0001" defaultValue="0"/></div>
+        <fieldset className="field"><span>Entitetstyper</span><label><input type="checkbox" name="entity_types" value="organization" defaultChecked/> Företag</label><label><input type="checkbox" name="entity_types" value="establishment"/> Arbetsställen</label><label><input type="checkbox" name="entity_types" value="person"/> Privatpersoner</label></fieldset>
+        <fieldset className="field"><span>Licensrättigheter</span><label><input type="checkbox" name="tenant_display_allowed" defaultChecked/> Visa fält</label><label><input type="checkbox" name="raw_storage_allowed"/> Krypterad rådata</label><label><input type="checkbox" name="cross_tenant_reuse_allowed"/> Cross-tenant</label><label><input type="checkbox" name="export_allowed"/> Export</label><label><input type="checkbox" name="attribution_required"/> Källangivelse</label></fieldset>
+        <div className="grid grid-4"><Field label="Kvot" name="quota_units" type="number" min="1" defaultValue="5000"/><Field label="Kvotfönster sek" name="quota_window_seconds" type="number" min="1" defaultValue="432000"/><Field label="Max samtidighet" name="max_concurrency" type="number" min="1" defaultValue="1"/><Field label="Min delay ms" name="minimum_delay_ms" type="number" min="0" defaultValue="250"/><Field label="Timeout ms" name="timeout_ms" type="number" min="1000" max="120000" defaultValue="30000"/><Field label="Max retries" name="max_retries" type="number" min="0" max="20" defaultValue="5"/></div>
+        <button className="button button-primary"><ShieldCheck size={16}/> Spara hela providerflödet</button></form></CardContent></Card>:null}
 
-      <Card>
-        <CardHeader><h2>Senaste berikningsjobb</h2><Badge>{jobs?.length ?? 0}</Badge></CardHeader>
-        <CardContent style={{ padding: 0 }}>
-          <DataTable headers={["Status", "Skapad", "Kostnad", "Slutförd", "Fel"]}>
-            {jobs?.map((job) => <tr key={job.id}><td><Badge className={job.status === "completed" ? "badge-success" : job.status === "failed" ? "badge-danger" : ""}>{job.status}</Badge></td><td>{formatDate(job.created_at)}</td><td>{Number(job.actual_cost ?? job.estimated_cost ?? 0).toFixed(2)}</td><td>{formatDate(job.completed_at)}</td><td>{job.last_error ?? "—"}</td></tr>)}
-          </DataTable>
-        </CardContent>
-      </Card>
+      <Card><CardHeader><h2>Femdagarsjobb</h2><Badge>{ingestionJobs?.length??0}</Badge></CardHeader><CardContent style={{padding:0}}><DataTable headers={["Jobb","Entitet","Tak","Nästa körning","Senast klar","Status","Åtgärd"]}>{ingestionJobs?.map(job=><tr key={job.id}><td><strong>{job.name}</strong></td><td>{job.entity_type}</td><td>{job.max_records}</td><td>{formatDate(job.next_run_at)}</td><td>{formatDate(job.last_completed_at)}</td><td><Badge className={job.status==="active"?"badge-success":""}>{job.status}</Badge></td><td><form action={runIngestionNow}><input type="hidden" name="ingestion_job_id" value={job.id}/><button className="button button-secondary button-sm"><Play size={14}/> Kör nu</button></form></td></tr>)}</DataTable></CardContent></Card>
+      <Card><CardHeader><h2>Ingestionkörningar</h2><Badge>{ingestionRuns?.length??0}</Badge></CardHeader><CardContent style={{padding:0}}><DataTable headers={["Jobb","Status","Hämtade","Nya","Ändrade","Oförändrade","Fel","Tid"]}>{ingestionRuns?.map(run=><tr key={run.id}><td>{jobById.get(run.ingestion_job_id)?.name??run.ingestion_job_id}</td><td><Badge className={run.status==="completed"?"badge-success":run.status==="quarantined"||run.status==="failed"?"badge-danger":""}>{run.status}</Badge><div className="muted">{run.last_error??""}</div></td><td>{run.fetched_records}/{run.requested_records}</td><td>{run.new_records}</td><td>{run.changed_records}</td><td>{run.unchanged_records}</td><td>{run.error_records}</td><td>{formatDate(run.completed_at??run.started_at)}</td></tr>)}</DataTable></CardContent></Card>
+      {observations?.length?<Card><CardHeader><h2>Parserkarantän</h2><Badge className="badge-danger">{observations.length}</Badge></CardHeader><CardContent style={{padding:0}}><DataTable headers={["Status","Match","Bortfall","Saknade fält","Skapad","Granska"]}>{observations.map(ob=><tr key={ob.id}><td><Badge className="badge-danger">{ob.status}</Badge></td><td>{Math.round(Number(ob.match_rate)*100)}%</td><td>{Math.round(Number(ob.disappearance_rate)*100)}%</td><td>{ob.missing_fields?.join(", ")||"—"}</td><td>{formatDate(ob.created_at)}</td><td><form action={approveParserObservation}><input type="hidden" name="observation_id" value={ob.id}/><input type="hidden" name="parser_version_id" value={ob.parser_version_id}/><button className="button button-secondary button-sm"><RefreshCw size={14}/> Godkänn ny struktur</button></form></td></tr>)}</DataTable></CardContent></Card>:null}
+      <Card><CardHeader><h2>Senaste berikningsjobb</h2><Badge>{enrichmentJobs?.length??0}</Badge></CardHeader><CardContent style={{padding:0}}><DataTable headers={["Status","Skapad","Kostnad","Slutförd","Fel"]}>{enrichmentJobs?.map(job=><tr key={job.id}><td><Badge className={job.status==="completed"?"badge-success":job.status==="failed"?"badge-danger":""}>{job.status}</Badge></td><td>{formatDate(job.created_at)}</td><td>{Number(job.actual_cost??job.estimated_cost??0).toFixed(2)}</td><td>{formatDate(job.completed_at)}</td><td>{job.last_error??"—"}</td></tr>)}</DataTable></CardContent></Card>
     </div>
   </>;
 }

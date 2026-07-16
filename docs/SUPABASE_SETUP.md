@@ -15,17 +15,21 @@ ENFORCE_46ELKS_IP_ALLOWLIST=false
 CRON_SECRET=...
 RESEND_API_KEY=
 DEFAULT_EMAIL_FROM=no-reply@dindomän.se
+IMPORT_SCANNER_URL=https://scanner.internal.example/scan
+IMPORT_SCANNER_TOKEN=...
+IMPORT_SCANNER_TIMEOUT_MS=20000
+REQUIRE_IMPORT_MALWARE_SCAN=true
 ```
 
-Service-role och krypteringsnyckel får endast finnas i servermiljö och Edge Function secrets.
+Service-role, scanner-token och krypteringsnycklar får endast finnas i servermiljö och Edge Function secrets.
 
 ## Databas
 
 ```bash
-npx supabase@2.109.1 login
-npx supabase@2.109.1 link --project-ref PROJECT_REF
-npx supabase@2.109.1 db push
-npx supabase@2.109.1 gen types typescript --linked > src/lib/supabase/database.types.ts
+npm run supabase:login
+npm run supabase:link -- --project-ref PROJECT_REF
+npm run db:push
+npm run types:generate
 ```
 
 ## Auth
@@ -38,7 +42,7 @@ npx supabase@2.109.1 gen types typescript --linked > src/lib/supabase/database.t
 
 ## Storage
 
-Migrationerna skapar privata buckets för avtalsdokument, samtalsinspelningar och importer. Paths är tenantbundna och åtkomst sker genom RLS eller tidsbegränsad signerad URL.
+Migrationerna skapar privata buckets för avtalsdokument, inspelningar, importer och compliance-exporter. Paths är tenantbundna och åtkomst sker genom RLS eller tidsbegränsad signerad URL.
 
 ## Edge Functions
 
@@ -46,12 +50,56 @@ Migrationerna skapar privata buckets för avtalsdokument, samtalsinspelningar oc
 npm run functions:deploy -- --project-ref PROJECT_REF
 ```
 
-Funktionerna deployas med `--no-verify-jwt` eftersom scheduler anropar dem, men varje request kräver korrekt `x-cron-secret`.
+Deployskriptet publicerar sex funktioner:
+
+```text
+process-outbox
+automation-runner
+data-worker
+ingestion-worker
+maintenance-worker
+compliance-worker
+```
+
+Funktionerna deployas med `--no-verify-jwt` för scheduleranrop, men varje request kräver korrekt `x-cron-secret`.
+
+## Scheduler
+
+Anropa med `POST` och headern `x-cron-secret`:
+
+```text
+/functions/v1/process-outbox      varje minut
+/functions/v1/automation-runner  varje minut
+/functions/v1/data-worker        varje minut
+/functions/v1/ingestion-worker   varje minut
+/functions/v1/compliance-worker  varje minut
+/functions/v1/maintenance-worker varje timme
+```
+
+Frekvensen kan sänkas när volymen är låg, men övervaka köålder, retries och dead-letter-status.
 
 ## Providerkonfiguration
 
-Datakällor konfigureras i adminvyn och sparas atomiskt via `configure_generic_json_provider`. Lägg bara till domäner, paths, fält, lagringsrätt, cacheomfattning och kvoter som omfattas av ett dokumenterat avtal. Providercredentials krypteras innan lagring.
+Datakällor konfigureras i adminvyn. Registrera endast domäner, paths, fält, ändamål, lagrings-/filter-/visningsrätt, cacheomfattning, retention och kvoter som omfattas av dokumenterat tillstånd. Credentials krypteras före lagring.
+
+## NIX
+
+Konfigurera vald NIX-provider i compliancevyn med publik HTTPS-endpoint, tillåtna domäner/paths, credentials, resultatmapping, TTL och retrygräns. Testa både spärrat, ej spärrat och providerfel i staging.
+
+## Geografi
+
+Importera ett versionsstyrt officiellt referensregister:
+
+```bash
+npm run geography:import -- ./geography.json "SCB" "2026-07"
+```
+
+Filen kan vara JSON eller NDJSON och bör innehålla stabil kod, områdestyp, namn, län/kommun/postuppgifter och koordinater.
+
+## Malware-scanner
+
+I produktion ska `REQUIRE_IMPORT_MALWARE_SCAN=true`. Scanner-endpointen ska returnera ett maskinläsbart rent/infekterat resultat. Importen får inte commitas om scanning saknas, misslyckas eller markerar filen som osäker.
 
 ## 46elks callbacks
 
-Registrera callbacktoken per tenant/nummer och konfigurera 46elks mot de URL:er som visas i webbappen. Aktivera IP-allowlist först efter att aktuella nät har verifierats bakom rätt proxy.
+Registrera callbacktoken per tenant/nummer och konfigurera 46elks mot URL:erna i webbappen. Aktivera IP-allowlist först efter att aktuella nät verifierats bakom rätt proxy.

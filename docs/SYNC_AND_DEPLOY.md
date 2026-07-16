@@ -1,24 +1,40 @@
 # Synk och deployment
 
-## Synka patchen till befintligt projekt
+## Synka patchen till projektet
+
+Kör exakt:
 
 ```bash
 cd ~/Downloads
-unzip kundexa-canonical-platform-2026-07-16-patch.zip
-rsync -av --checksum \
-  kundexa-canonical-platform-2026-07-16-patch/payload/ \
-  /DIN/BEFINTLIGA/PATH/kundexa-main/
+
+rm -rf kundexa-canonical-finalization-2026-07-16-patch
+
+unzip -o kundexa-canonical-finalization-2026-07-16-patch.zip
+
+mkdir -p /Users/hekmath/Desktop/Projects/kundexa
+
+rsync -av --checksum --itemize-changes \
+  kundexa-canonical-finalization-2026-07-16-patch/payload/ \
+  /Users/hekmath/Desktop/Projects/kundexa/
 ```
 
-Radera inte egna `.env.local`-filer. Patchen innehåller inte `node_modules`, `.next`, `.git` eller hemligheter.
+Patchen innehåller inte `node_modules`, `.next`, `.git`, `.env.local` eller hemligheter.
+
+Alternativt:
+
+```bash
+cd ~/Downloads/kundexa-canonical-finalization-2026-07-16-patch
+./sync-to-project.sh /Users/hekmath/Desktop/Projects/kundexa
+```
 
 ## Installera och verifiera
 
 ```bash
-cd /DIN/BEFINTLIGA/PATH/kundexa-main
+cd /Users/hekmath/Desktop/Projects/kundexa
 node --version   # ska vara 22+
 npm ci
 npm run verify
+npm audit
 ```
 
 ## Koppla och migrera Supabase
@@ -30,7 +46,7 @@ npm run db:push
 npm run types:generate
 ```
 
-Ändra aldrig en migration som redan har körts i produktion. Skapa en ny tidsstämplad migration för framtida ändringar.
+Ändra aldrig en migration som redan körts i produktion. Skapa alltid en ny tidsstämplad migration.
 
 ## Deploya Edge Functions
 
@@ -38,19 +54,22 @@ npm run types:generate
 npm run functions:deploy -- --project-ref PROJECT_REF
 ```
 
-Kommandot deployar `process-outbox`, `automation-runner` och `data-worker` och vidarebefordrar projektflaggan till samtliga tre funktioner.
+Kommandot deployar alla sex workers.
 
 ## Scheduler
 
-Kör följande endpoints minst varje minut med `x-cron-secret`:
+Skicka `POST` med `x-cron-secret` till:
 
 ```text
-POST /functions/v1/process-outbox
-POST /functions/v1/automation-runner
-POST /functions/v1/data-worker
+/functions/v1/process-outbox
+/functions/v1/automation-runner
+/functions/v1/data-worker
+/functions/v1/ingestion-worker
+/functions/v1/maintenance-worker
+/functions/v1/compliance-worker
 ```
 
-Lägg inte cron-hemligheten i klientkod.
+Lägg aldrig cron-hemligheten i klientkod.
 
 ## Webbdeployment
 
@@ -60,4 +79,4 @@ npm run verify
 npm run start
 ```
 
-`npm run build` kör först den kanoniska TypeScript-kontrollen och därefter Next/Turbopack-build med en worker. Det undviker en Next 16-worker-deadlock utan att tillåta typfel.
+`npm run build` kör först kanonisk TypeScript-kontroll och därefter Next/Turbopack-build med en kontrollerad worker.

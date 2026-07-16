@@ -7,16 +7,18 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const identity = await authenticateRequest(request, "directory:read");
     const { id } = await params;
     const admin = createAdminClient();
-    const { data, error } = await admin.rpc("directory_entity_for_tenant", { p_tenant_id: identity.tenantId, p_entity_id: id });
+    const { data, error } = await admin.rpc("directory_entity_projection_for_tenant", { p_tenant_id: identity.tenantId, p_entity_id: id });
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-    const entity = data?.[0];
+    const entity = data;
     if (!entity) return NextResponse.json({ error: "not_found" }, { status: 404 });
-    const [{ data: fields }, { data: freshness }, { data: sources }] = await Promise.all([
-      admin.from("field_values").select("field_key,value,confidence,source_fact_id,verified_at,updated_at").eq("master_entity_id", id).order("field_key"),
+    const [{ data: fields, error: fieldError }, { data: freshness }, { data: sources }, { data: quality }] = await Promise.all([
+      admin.rpc("directory_visible_fields_for_tenant", { p_tenant_id: identity.tenantId, p_entity_id: id }),
       admin.from("field_freshness").select("field_key,verified_at,fresh_until,next_refresh_at,state").eq("master_entity_id", id).order("field_key"),
-      admin.from("entity_source_links").select("match_method,confidence,manually_verified,source_entities(data_provider_id,external_identifier,last_seen_at,removed_at)").eq("master_entity_id", id),
+      admin.rpc("directory_source_attribution_for_tenant", { p_tenant_id: identity.tenantId, p_entity_id: id }),
+      admin.from("data_quality_scores").select("completeness,freshness,consistency,provenance,overall,details,calculated_at").eq("master_entity_id", id).maybeSingle(),
     ]);
-    return NextResponse.json({ data: { ...entity, fields: fields ?? [], fieldFreshness: freshness ?? [], sources: sources ?? [] } });
+    if (fieldError) return NextResponse.json({ error: fieldError.message }, { status: 400 });
+    return NextResponse.json({ data: { ...entity, fields: fields ?? [], fieldFreshness: freshness ?? [], sources: sources ?? [], quality: quality ?? null } });
   } catch (error) {
     if (error instanceof Response) return error;
     return NextResponse.json({ error: error instanceof Error ? error.message : "internal_error" }, { status: 500 });
