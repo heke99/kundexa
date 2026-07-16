@@ -1,0 +1,6 @@
+import { CircleDollarSign } from "@/components/icons";
+import { createClient } from "@/lib/supabase/server";
+import { ModuleOverview } from "@/components/module-overview";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { DataTable } from "@/components/ui/data-table";
+export default async function BillingPage(){const s=await createClient();const {data}=await s.from('usage_limits').select('*').order('metric');return <ModuleOverview title="Fakturering och användning" description="Förbrukning och gränser per tenant för samtal, SMS, e-post, lagring och API." icon={CircleDollarSign} features={['Hårda och mjuka usage limits','Kostnad per samtal och SMS','Tenant- och teamgränser','Providerkostnad mot kundpris','Stopp innan överskridande','Exporterbart fakturaunderlag']}><Card><CardHeader><h2>Aktuell användning</h2></CardHeader><CardContent style={{padding:0}}><DataTable headers={['Mätetal','Period','Använt','Mjuk gräns','Hård gräns']}>{data?.map(x=><tr key={`${x.metric}-${x.period}`}><td><strong>{x.metric}</strong></td><td>{x.period}</td><td>{x.current_value}</td><td>{x.soft_limit??'—'}</td><td>{x.hard_limit??'—'}</td></tr>)}</DataTable></CardContent></Card></ModuleOverview>}

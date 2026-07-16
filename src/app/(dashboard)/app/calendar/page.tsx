@@ -1,0 +1,7 @@
+import { CalendarDays } from "@/components/icons";
+import { createClient } from "@/lib/supabase/server";
+import { PageHeader } from "@/components/ui/page-header";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { formatDate } from "@/lib/utils";
+export default async function CalendarPage(){const s=await createClient();const start=new Date();const end=new Date(Date.now()+30*86400000);const {data}=await s.from('activities').select('*,customers(display_name)').gte('due_at',start.toISOString()).lte('due_at',end.toISOString()).order('due_at');const grouped=(data??[]).reduce<Record<string,typeof data>>((acc,a)=>{const key=a.due_at?new Date(a.due_at).toISOString().slice(0,10):'utan-datum';(acc[key]??=[]).push(a);return acc},{});return <><PageHeader title="Kalender" description="Kommande aktiviteter de närmaste 30 dagarna."/>{Object.entries(grouped).map(([day,items])=><Card key={day} style={{marginBottom:14}}><CardHeader><h2><CalendarDays size={17}/> {day==='utan-datum'?'Utan datum':formatDate(day)}</h2><Badge>{items?.length??0}</Badge></CardHeader><CardContent>{items?.map(a=>{const c=Array.isArray(a.customers)?a.customers[0]:a.customers;return <div className="activity-line" key={a.id}><span className="activity-dot"><CalendarDays size={14}/></span><div><strong>{a.title}</strong><p>{c?.display_name??'Intern aktivitet'} · {a.type}</p></div><time>{a.due_at?new Date(a.due_at).toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit'}):''}</time></div>})}</CardContent></Card>)}</>}

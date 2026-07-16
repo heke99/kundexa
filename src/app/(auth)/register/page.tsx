@@ -1,0 +1,6 @@
+import Link from "next/link";
+import { Logo } from "@/components/logo";
+import { signUp } from "@/app/actions/auth";
+import { Field } from "@/components/ui/form-field";
+
+export default async function RegisterPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) { const params=await searchParams; return <main className="auth-page"><section className="auth-brand"><Logo /><div><h1>Bygg er försäljning runt kunden.</h1><p>Skapa organisationen, bjud in teamet och anslut telefoni, SMS, e-post och avtal när ni är redo.</p></div><small>Webbaserat system · Ingen mobilapp krävs</small></section><section className="auth-form-wrap"><div className="auth-form"><h2>Skapa konto</h2><p>Första användaren blir organisationsägare.</p>{params.error?<p className="form-error">{params.error}</p>:null}<form action={signUp} className="form-stack"><Field label="Namn" name="full_name" autoComplete="name" required /><Field label="E-post" name="email" type="email" autoComplete="email" required /><Field label="Lösenord" name="password" type="password" minLength={10} autoComplete="new-password" required hint="Minst 10 tecken." /><button className="button button-primary" type="submit">Fortsätt</button></form><p className="auth-switch">Har du redan konto? <Link href="/login">Logga in</Link></p></div></section></main>; }

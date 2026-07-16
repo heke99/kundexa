@@ -1,0 +1,3 @@
+import { NextResponse } from "next/server";
+import { authenticateRequest, dataClientForIdentity } from "@/lib/api-auth";
+export async function GET(request:Request){try{const id=await authenticateRequest(request,'contracts:read');const db=await dataClientForIdentity(id);const {data,error}=await db.from('contracts').select('id,contract_number,title,status,audience,value,currency,starts_on,ends_on,signed_at,created_at,customers(display_name)').eq('tenant_id',id.tenantId).order('created_at',{ascending:false}).limit(200);if(error)return NextResponse.json({error:error.message},{status:400});return NextResponse.json({data})}catch(e){if(e instanceof Response)return e;return NextResponse.json({error:'internal_error'},{status:500})}}

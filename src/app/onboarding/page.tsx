@@ -1,0 +1,7 @@
+import { redirect } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
+import { createOrganization } from "@/app/actions/auth";
+import { Field } from "@/components/ui/form-field";
+import { Logo } from "@/components/logo";
+
+export default async function OnboardingPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) { const params=await searchParams; const supabase=await createClient(); const {data:{user}}=await supabase.auth.getUser(); if(!user) redirect('/login'); return <main className="auth-page"><section className="auth-brand"><Logo /><div><h1>Skapa er Kundexa-organisation.</h1><p>Varje organisation får egen tenant, egna team, kunder, nummer, avtal, inställningar och fullständig dataisolering.</p></div><small>Du kan bjuda in fler användare efter installationen.</small></section><section className="auth-form-wrap"><div className="auth-form"><h2>Organisation</h2><p>Det juridiska namnet används i avtal och kundkommunikation.</p>{params.error?<p className="form-error">{params.error}</p>:null}<form action={createOrganization} className="form-stack"><Field label="Visningsnamn" name="name" placeholder="Exempel Energi" required /><Field label="Juridiskt företagsnamn" name="legal_name" placeholder="Exempel Energi AB" required /><Field label="Organisationsnummer" name="organization_number" placeholder="559000-0000" /><button className="button button-primary">Skapa organisation</button></form></div></section></main>; }

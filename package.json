@@ -1,0 +1,43 @@
+{
+  "name": "kundexa",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build --webpack",
+    "start": "next start",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/verify.mjs",
+    "test:watch": "node scripts/verify.mjs",
+    "verify": "npm run typecheck && npm run test && npm run build",
+    "supabase:login": "npx supabase@2.109.1 login",
+    "supabase:link": "npx supabase@2.109.1 link",
+    "db:push": "npx supabase@2.109.1 db push",
+    "db:reset:local": "npx supabase@2.109.1 db reset",
+    "functions:serve": "npx supabase@2.109.1 functions serve --env-file .env.local",
+    "functions:deploy": "npx supabase@2.109.1 functions deploy process-outbox --no-verify-jwt && npx supabase@2.109.1 functions deploy automation-runner --no-verify-jwt",
+    "types:generate": "npx supabase@2.109.1 gen types typescript --linked > src/lib/supabase/database.types.ts"
+  },
+  "dependencies": {
+    "@supabase/ssr": "0.12.3",
+    "@supabase/supabase-js": "2.110.7",
+    "libphonenumber-js": "1.12.29",
+    "next": "16.2.10",
+    "papaparse": "5.5.4",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.3",
+    "@types/papaparse": "5.3.16",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "typescript": "5.9.3"
+  },
+  "packageManager": "npm@10.9.2"
+}

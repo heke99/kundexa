@@ -1,0 +1,69 @@
+import { NextResponse } from "next/server";
+
+const customerSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string", format: "uuid" },
+    customer_type: { type: "string", enum: ["person", "company"] },
+    lifecycle: { type: "string", enum: ["prospect", "lead", "customer", "former_customer", "lost", "blocked"] },
+    display_name: { type: "string" },
+    email: { type: ["string", "null"], format: "email" },
+    phone_e164: { type: ["string", "null"] },
+    organization_number: { type: ["string", "null"] },
+  },
+};
+
+export async function GET() {
+  return NextResponse.json({
+    openapi: "3.1.0",
+    info: {
+      title: "Kundexa API",
+      version: "1.0.0",
+      description: "Tenant-isolerat API för kunddata, avtal, import och telefoni. API-nycklar lagras endast hashade.",
+    },
+    servers: [{ url: "/api/v1" }],
+    security: [{ bearerAuth: [] }],
+    components: {
+      securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "Kundexa API key or Supabase session" } },
+      schemas: {
+        Customer: customerSchema,
+        Error: { type: "object", properties: { error: { type: "string" }, details: { type: "array", items: {} } }, required: ["error"] },
+      },
+    },
+    paths: {
+      "/customers": {
+        get: {
+          operationId: "listCustomers",
+          summary: "Lista och sök kunder",
+          parameters: [
+            { name: "q", in: "query", schema: { type: "string" } },
+            { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 200, default: 50 } },
+          ],
+          responses: { "200": { description: "Kundlista", content: { "application/json": { schema: { type: "object", properties: { data: { type: "array", items: { $ref: "#/components/schemas/Customer" } } } } } } } },
+        },
+        post: {
+          operationId: "createCustomer",
+          summary: "Skapa kund idempotent",
+          requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["customer_type", "display_name"], properties: { customer_type: { type: "string", enum: ["person", "company"] }, display_name: { type: "string", minLength: 2 }, lifecycle: { type: "string", enum: ["prospect", "lead", "customer"] }, email: { type: "string", format: "email" }, phone: { type: "string" }, organization_number: { type: "string" }, city: { type: "string" }, idempotency_key: { type: "string", minLength: 8 } } } } } },
+          responses: { "201": { description: "Skapad" }, "422": { description: "Valideringsfel" } },
+        },
+      },
+      "/customers/{id}": {
+        get: { operationId: "getCustomer", summary: "Hämta komplett kundkort", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], responses: { "200": { description: "Kundkort" }, "404": { description: "Saknas" } } },
+        patch: { operationId: "updateCustomer", summary: "Uppdatera tillåtna kundfält", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], requestBody: { required: true, content: { "application/json": { schema: { type: "object", additionalProperties: false } } } }, responses: { "200": { description: "Uppdaterad" } } },
+      },
+      "/contracts": {
+        get: { operationId: "listContracts", summary: "Lista avtal", responses: { "200": { description: "Avtalslista" } } },
+      },
+      "/imports/csv": {
+        post: { operationId: "previewCsvImport", summary: "Ladda upp och validera CSV", security: [{ bearerAuth: [] }], requestBody: { required: true, content: { "multipart/form-data": { schema: { type: "object", required: ["name", "file"], properties: { name: { type: "string" }, file: { type: "string", format: "binary" }, simulate: { type: "boolean" } } } } } }, responses: { "303": { description: "Resultat visas i webbappen" } } },
+      },
+      "/calls": {
+        post: { operationId: "startBrowserCall", summary: "Köa ett WebRTC-bryggat samtal för inloggad användare", requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["customerId"], properties: { customerId: { type: "string", format: "uuid" } } } } } }, responses: { "202": { description: "Samtalet är köat" }, "409": { description: "Telefoni saknas eller kunden är spärrad" } } },
+      },
+      "/voice-client": {
+        get: { operationId: "getVoiceClient", summary: "Hämta kortlivad WebRTC-konfiguration för aktuell användare", responses: { "200": { description: "WebRTC-konfiguration" } } },
+      },
+    },
+  }, { headers: { "cache-control": "public, max-age=300" } });
+}
