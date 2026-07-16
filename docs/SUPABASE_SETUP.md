@@ -1,6 +1,6 @@
 # Supabase Cloud-installation
 
-Docker krävs inte. Skapa ett nytt Supabase Cloud-projekt och använd CLI-kommandona från projektroten.
+Docker krävs inte. Skapa ett Supabase Cloud-projekt och kör kommandona från projektroten.
 
 ## Miljövariabler för Next.js
 
@@ -17,7 +17,7 @@ RESEND_API_KEY=
 DEFAULT_EMAIL_FROM=no-reply@dindomän.se
 ```
 
-Service-role-nyckeln får endast finnas i servermiljö och Supabase Edge Function secrets. Den får aldrig exponeras som `NEXT_PUBLIC_*`.
+Service-role och krypteringsnyckel får endast finnas i servermiljö och Edge Function secrets.
 
 ## Databas
 
@@ -28,46 +28,30 @@ npx supabase@2.109.1 db push
 npx supabase@2.109.1 gen types typescript --linked > src/lib/supabase/database.types.ts
 ```
 
-Databasversionen består av ordnade migrationer i `supabase/migrations`. Ändra inte redan körda migrationer i en produktionsmiljö; skapa en ny tidsstämplad migration.
-
 ## Auth
 
-I Supabase Dashboard:
-
-1. Sätt Site URL till den riktiga Kundexa-domänen.
-2. Lägg till `/auth/callback` som redirect URL för lokal och produktionsdomän.
-3. Konfigurera SMTP för inbjudningar och auth-mail.
-4. Slå på MFA-policy när pilotflödet är verifierat.
-5. Begränsa eller stäng publik signup när organisationerna ska provisioneras kontrollerat.
+1. Sätt Site URL till Kundexa-domänen.
+2. Lägg till lokal och produktionsdomän för `/auth/callback`.
+3. Konfigurera SMTP för auth-mail.
+4. Aktivera MFA-policy för adminroller före produktion.
+5. Begränsa publik signup när tenants ska provisioneras kontrollerat.
 
 ## Storage
 
-Migrationerna skapar privata buckets:
-
-- `contract-documents`
-- `call-recordings`
-- `imports`
-
-Alla paths börjar med tenant-ID. Åtkomst sker genom RLS eller tidsbegränsad signerad URL.
+Migrationerna skapar privata buckets för avtalsdokument, samtalsinspelningar och importer. Paths är tenantbundna och åtkomst sker genom RLS eller tidsbegränsad signerad URL.
 
 ## Edge Functions
 
 ```bash
-npx supabase@2.109.1 functions deploy process-outbox --no-verify-jwt --project-ref PROJECT_REF
-npx supabase@2.109.1 functions deploy automation-runner --no-verify-jwt --project-ref PROJECT_REF
+npm run functions:deploy -- --project-ref PROJECT_REF
 ```
 
-Funktionerna saknar JWT-verifiering eftersom de anropas av scheduler, men varje anrop måste ha korrekt `x-cron-secret`. Använd en lång slumpad secret och rotera den vid misstanke om läckage.
+Funktionerna deployas med `--no-verify-jwt` eftersom scheduler anropar dem, men varje request kräver korrekt `x-cron-secret`.
+
+## Providerkonfiguration
+
+Datakällor konfigureras i adminvyn och sparas atomiskt via `configure_generic_json_provider`. Lägg bara till domäner, paths, fält, lagringsrätt, cacheomfattning och kvoter som omfattas av ett dokumenterat avtal. Providercredentials krypteras innan lagring.
 
 ## 46elks callbacks
 
-När ett nummer registreras i webbappen visas en callback-token en gång. Konfigurera numret mot:
-
-```text
-SMS inbound:  https://APP_URL/api/webhooks/46elks/sms/inbound?token=TOKEN
-Voice start:  https://APP_URL/api/webhooks/46elks/voice/start?token=TOKEN
-```
-
-Leverans-, hangup- och inspelningscallbacks skapas av systemet per meddelande/samtal.
-
-IP-allowlist är avstängd under initial installation. Före produktion ska aktuella 46elks-nät läggas i `provider_network_allowlists`, applikationen köras bakom en betrodd proxy som sätter klient-IP korrekt och `ENFORCE_46ELKS_IP_ALLOWLIST=true` aktiveras.
+Registrera callbacktoken per tenant/nummer och konfigurera 46elks mot de URL:er som visas i webbappen. Aktivera IP-allowlist först efter att aktuella nät har verifierats bakom rätt proxy.

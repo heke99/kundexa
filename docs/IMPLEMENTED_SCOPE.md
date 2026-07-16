@@ -1,34 +1,38 @@
 # Implementerad omfattning
 
-## Körbart i leveransen
+## Verifierat i denna leverans
 
-- Responsiv Next.js-webbapp; ingen mobilapp
-- Register/login/onboarding och första tenant
-- Roller, användarinbjudningar och team
-- CRM-kunder, företag, prospekt, kundkort, anteckningar, aktiviteter och historik
-- CSV-import: preview, normalisering, felrader, dedupe, spärrkontroll, commit och mjuk rollback
-- List-, kampanj-, pipeline-, produkt- och prisdatamodeller med användbara webbmoduler
-- Dialergränssnitt, WebRTC-klient, calls/outbox och 46elks callbacks
-- SMS- och e-postregister samt utskickskö
-- Avtal, versionslåsning, PDF-upload, kanalutskick, accept och aktivering
-- SMS-/webbaccept med exakt matchning och B2C-telefonkontroll
-- Evidence manifest, accepterad PDF, evidence PDF och bekräftelsemeddelande
-- Automationsregler, testläge, aktivering, databas-events, worker, retry och dead letter
-- Rapporter och dashboard från riktig tenantdata
-- API-nycklar, scopes, rate limits och OpenAPI
-- Signerade utgående webhooks och leveranslogg
-- Audit, security events, compliance blocks och usage limits
-- Supabase RLS, Storage och Edge Functions
+- Next.js/TypeScript-webbapp med server actions och versionerat REST-API
+- 18 reproducerbara SQL-migrationer med 108 publika tabeller, 140 funktioner och 220 RLS-policyer i SQL-testmiljön
+- Tenant, juridiska bolag, kontor/avdelningar, medlemskap, roller, team och feature-flaggor
+- CRM-kunder, företag, prospekt, anteckningar, aktiviteter, listor, kampanjer och pipeline
+- CSV-import med simulering, normalisering, deduplicering, spärrkontroll, commit och rollback
+- Central katalog: master entities, source entities/facts, field provenance/history och freshness
+- Providerkonton, permissions, tillåtna fält/domäner/paths, kvoter och parser-versioner
+- Lokal katalogsökning, entitetsvisning, stale-while-revalidate, segment och bulkberikningsjobb
+- Generisk JSON-provideradapter med krypterade credentials/raw payloads, SSRF-skydd, timeout och karantän
+- 20-dagars standard-TTL samt konfigurerbar freshness per fält/provider
+- Atomiska refresh-lås, providerkvoter, concurrency, retries och enrichment usage
+- Dialergränssnitt, WebRTC-klient, samtalskö, calls/outbox och 46elks-callbacks
+- SMS/e-post med idempotens, central spärrpolicy, NIX/freshnessmodell, usage-reservation och kostnadstak
+- Produkter, prisversioner, avtalsmallar, godkännande, versionslås och legal/commercial snapshots
+- Avtalsutskick, accept, evidence manifest/PDF/hash och kundbekräftelse
+- Automationer, testläge, godkännande, loopskydd, retry och dead letter
+- API-nycklar, scopes, rate limits, OpenAPI och signerade webhooks
+- TypeScript-, Deno-, statiska arkitektur-, SQL-exekverings- och produktionsbuildkontroller
 
-## Modellerat men kräver extern anslutning eller fortsatt produktarbete
+## Finns som plattform men kräver leverantörsspecifik anslutning
 
-- Merinfo/annan kommersiell dataleverantör: adapter- och provenance-modell finns, men ingen credential eller leverantörsspecifik klient ingår.
-- Bolagsverket/SCB/Nominatim: adapterplats och datakällesmodul finns, men liveintegrationer måste implementeras mot valda avtal och användningsgränser.
-- BankID och avancerad e-signering: statusmodell och providergränssnitt finns; konkret BankID/Documenso/DocuSeal-integration ingår inte.
-- Prediktiv dialer, supervisor-medlyssning och coachning: datamodell/menyer finns delvis, men kräver särskild telefonimotor, juridisk kontroll och realtidsmedia.
-- Excel, SFTP och schemalagda importer: databasen stödjer importkörningar; leveransen genomför CSV i webbappen.
-- Full drag-and-drop PDF-fälteditor: PDF kan lagras och kopplas; visuell signaturfältseditor kräver vald signeringsmotor.
-- Extern kalender-/mailboxsynk: aktivitets- och kalendermodul finns, OAuth-integration är inte kopplad.
-- Fakturering: usage- och limitmodell finns; betalprovider och kommersiella planer måste kopplas.
+- Merinfo/Alla Bolag/annan kommersiell datakälla: generisk adapter och permissionsmodell finns; deras exakta API-/fil-/parserkontrakt och credentials måste konfigureras enligt skriftligt tillstånd.
+- Bolagsverket, SCB och geokodning: datamodellen är förberedd men respektive liveadapter ingår inte utan valt avtal/API.
+- NIX: tabell, freshness och central pre-contact-kontroll finns; faktisk NIX-leverantör/import måste anslutas.
+- BankID/avancerad e-signering: avtals- och bevismodellen finns; konkret BankID/Documenso/DocuSeal-provider måste väljas och implementeras.
+- Prediktiv dialer, supervisor-medlyssning och coachning kräver särskild mediamotor och juridisk kontroll.
+- Excel, SFTP och leverantörsspecifika schemalagda importer kräver respektive adapter; webbappen genomför CSV.
+- Visuell drag-and-drop-editor för signaturfält kräver vald e-signmotor.
+- Extern kalender-/mailboxsynk kräver OAuth-provider.
+- Betalprovider och kommersiell abonnemangsdebitering är inte inkopplad, men usage/limits/faktureringsunderlag finns.
 
-Detta dokument är avsiktligt strikt: systemet ska inte beskrivas som externt produktionsfärdigt innan punkterna i `PRODUCTION_GATES.md` är godkända.
+## Produktionsstatus
+
+Det är fel att beskriva hela kravbilden som färdig enbart för att build och migrationer är gröna. Leveransen är en sammanhängande, körbar produktgrund. Skarp försäljning kräver att samtliga relevanta punkter i `PRODUCTION_GATES.md` verifieras i staging och produktion.

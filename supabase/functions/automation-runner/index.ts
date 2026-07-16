@@ -88,75 +88,56 @@ async function getCustomer(run: Run): Promise<Customer | null> {
   return data as Customer | null;
 }
 
-async function complianceBlocked(tenantId: string, customer: Customer, channel: "call" | "sms" | "email") {
-  if ((channel === "call" && customer.do_not_call) || (channel === "sms" && customer.do_not_sms) || (channel === "email" && customer.do_not_email)) return true;
-  const now = new Date().toISOString();
-  const { data, error } = await supabase.from("compliance_blocks").select("id")
-    .eq("tenant_id", tenantId).eq("active", true).contains("channels", [channel])
-    .or(`customer_id.eq.${customer.id}${customer.phone_e164 ? `,phone_e164.eq.${customer.phone_e164}` : ""}${customer.email ? `,email.eq.${customer.email}` : ""}`)
-    .or(`expires_at.is.null,expires_at.gt.${now}`).limit(1);
-  if (error) throw error;
-  return Boolean(data?.length);
-}
-
 async function queueSms(run: Run, customer: Customer, action: Action, index: number) {
-  if (!customer.phone_e164 || await complianceBlocked(run.tenant_id, customer, "sms")) return { skipped: "sms_not_allowed" };
-  const { data: number, error: numberError } = await supabase.from("phone_numbers").select("number_e164")
-    .eq("tenant_id", run.tenant_id).eq("supports_sms", true).eq("status", "active").order("created_at").limit(1).maybeSingle();
-  if (numberError) throw numberError;
-  if (!number) return { skipped: "sms_number_missing" };
-  const body = String(action.body ?? action.message ?? "Automatiserad uppföljning från {{tenant}}.").replaceAll("{{customer}}", customer.display_name);
+  if (!customer.phone_e164) return { skipped: "sms_recipient_missing" };
+  const body = String(action.body ?? action.message ?? "Automatiserad uppföljning från Kundexa.")
+    .replaceAll("{{customer}}", customer.display_name);
   const idempotencyKey = `automation:${run.id}:sms:${index}`;
-  const { data: message, error } = await supabase.from("sms_messages").upsert({
-    tenant_id: run.tenant_id,
-    customer_id: customer.id,
-    direction: "outbound",
-    from_number: number.number_e164,
-    to_number: customer.phone_e164,
-    body,
-    status: "queued",
-    idempotency_key: idempotencyKey,
-  }, { onConflict: "tenant_id,idempotency_key" }).select("id").single();
-  if (error) throw error;
-  const { error: outboxError } = await supabase.from("outbox_jobs").upsert({
-    tenant_id: run.tenant_id,
-    job_type: "sms.send",
-    aggregate_type: "sms_message",
-    aggregate_id: message.id,
-    payload: { automation_run_id: run.id },
-    idempotency_key: `sms.send:${message.id}`,
-  }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true });
-  if (outboxError) throw outboxError;
-  return { queued: "sms", id: message.id };
+  const { data, error } = await supabase.rpc("queue_sms_message_for_tenant", {
+    p_tenant_id: run.tenant_id,
+    p_customer_id: customer.id,
+    p_body: body,
+    p_idempotency_key: idempotencyKey,
+    p_purpose: "automation_marketing",
+    p_contract_id: null,
+    p_to_number: null,
+    p_created_by: null,
+    p_payload: { automation_run_id: run.id, action_index: index },
+  });
+  if (error) {
+    if (error.message.includes("contact_not_allowed") || error.message.includes("feature_disabled")) {
+      return { skipped: error.message };
+    }
+    throw error;
+  }
+  return { queued: "sms", id: data };
 }
 
 async function queueEmail(run: Run, customer: Customer, action: Action, index: number) {
-  if (!customer.email || await complianceBlocked(run.tenant_id, customer, "email")) return { skipped: "email_not_allowed" };
+  if (!customer.email) return { skipped: "email_recipient_missing" };
   const subject = String(action.subject ?? "Uppföljning").replaceAll("{{customer}}", customer.display_name);
-  const body = String(action.body ?? "Hej {{customer}}, vi följer upp vårt tidigare ärende.").replaceAll("{{customer}}", customer.display_name);
+  const body = String(action.body ?? "Hej {{customer}}, vi följer upp vårt tidigare ärende.")
+    .replaceAll("{{customer}}", customer.display_name);
   const idempotencyKey = `automation:${run.id}:email:${index}`;
-  const { data: message, error } = await supabase.from("email_messages").upsert({
-    tenant_id: run.tenant_id,
-    customer_id: customer.id,
-    direction: "outbound",
-    from_address: "pending@kundexa.local",
-    to_addresses: [customer.email],
-    subject,
-    body_text: body,
-    status: "queued",
-    idempotency_key: idempotencyKey,
-  }, { onConflict: "tenant_id,idempotency_key" }).select("id").single();
-  if (error) throw error;
-  const { error: outboxError } = await supabase.from("outbox_jobs").upsert({
-    tenant_id: run.tenant_id,
-    job_type: "email.send",
-    aggregate_type: "email_message",
-    aggregate_id: message.id,
-    payload: { automation_run_id: run.id },
-    idempotency_key: `email.send:${message.id}`,
-  }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true });
-  if (outboxError) throw outboxError;
-  return { queued: "email", id: message.id };
+  const { data, error } = await supabase.rpc("queue_email_message_for_tenant", {
+    p_tenant_id: run.tenant_id,
+    p_customer_id: customer.id,
+    p_subject: subject,
+    p_body: body,
+    p_idempotency_key: idempotencyKey,
+    p_purpose: "automation_marketing",
+    p_contract_id: null,
+    p_to_address: null,
+    p_created_by: null,
+    p_payload: { automation_run_id: run.id, action_index: index },
+  });
+  if (error) {
+    if (error.message.includes("contact_not_allowed") || error.message.includes("feature_disabled")) {
+      return { skipped: error.message };
+    }
+    throw error;
+  }
+  return { queued: "email", id: data };
 }
 
 async function executeAction(run: Run, customer: Customer | null, action: Action, index: number) {

@@ -1,39 +1,58 @@
 # Synk och deployment
 
-## Första synk mot Supabase Cloud
+## Synka patchen till befintligt projekt
 
 ```bash
-cd kundexa
+cd ~/Downloads
+unzip kundexa-canonical-platform-2026-07-16-patch.zip
+rsync -av --checksum \
+  kundexa-canonical-platform-2026-07-16-patch/payload/ \
+  /DIN/BEFINTLIGA/PATH/kundexa-main/
+```
+
+Radera inte egna `.env.local`-filer. Patchen innehåller inte `node_modules`, `.next`, `.git` eller hemligheter.
+
+## Installera och verifiera
+
+```bash
+cd /DIN/BEFINTLIGA/PATH/kundexa-main
+node --version   # ska vara 22+
 npm ci
-cp .env.example .env.local
+npm run verify
+```
+
+## Koppla och migrera Supabase
+
+```bash
 npm run supabase:login
 npm run supabase:link -- --project-ref PROJECT_REF
 npm run db:push
 npm run types:generate
+```
+
+Ändra aldrig en migration som redan har körts i produktion. Skapa en ny tidsstämplad migration för framtida ändringar.
+
+## Deploya Edge Functions
+
+```bash
 npm run functions:deploy -- --project-ref PROJECT_REF
-npm run verify
 ```
 
-## Efter en ny SQL-migration
+Kommandot deployar `process-outbox`, `automation-runner` och `data-worker` och vidarebefordrar projektflaggan till samtliga tre funktioner.
 
-```bash
-npm run db:push
-npm run types:generate
-npm run typecheck
-npm test
-npm run build
+## Scheduler
+
+Kör följande endpoints minst varje minut med `x-cron-secret`:
+
+```text
+POST /functions/v1/process-outbox
+POST /functions/v1/automation-runner
+POST /functions/v1/data-worker
 ```
 
-## Efter ändring i en Edge Function
+Lägg inte cron-hemligheten i klientkod.
 
-```bash
-npx supabase@2.109.1 functions deploy process-outbox --no-verify-jwt --project-ref PROJECT_REF
-npx supabase@2.109.1 functions deploy automation-runner --no-verify-jwt --project-ref PROJECT_REF
-```
-
-## Deployment av webbappen
-
-Kundexa kan köras på en vanlig Node-host eller Vercel. Lägg samtliga servervariabler i hostens krypterade environment settings och kör:
+## Webbdeployment
 
 ```bash
 npm ci
@@ -41,24 +60,4 @@ npm run verify
 npm run start
 ```
 
-För en ny build:
-
-```bash
-npm ci
-npm run typecheck
-npm test
-npm run build
-npm run start
-```
-
-`next.config.ts` exkluderar Next.js-paketets egna filer från output file tracing för att undvika extremt lång tracing i begränsade byggmiljöer. Deploymentmiljön ska alltid köra `npm ci`, så runtime-paketen finns på plats.
-
-## Ingen GitHub krävs
-
-Projektet levereras utan `.git`. För lokal versionshantering kan du senare själv köra:
-
-```bash
-git init
-git add .
-git commit -m "Initial Kundexa platform"
-```
+`npm run build` kör först den kanoniska TypeScript-kontrollen och därefter Next/Turbopack-build med en worker. Det undviker en Next 16-worker-deadlock utan att tillåta typfel.

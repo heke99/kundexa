@@ -9,6 +9,7 @@ import { randomToken, sha256, sha256Bytes } from "@/lib/crypto";
 import { serverEnv } from "@/lib/env";
 import { normalizePhone } from "@/lib/domain/phone";
 import { assertPermission } from "@/lib/permissions";
+import { renderStrictTemplate } from "@/lib/domain/template";
 
 const value = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
 const contractNumber = () => `KX-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
@@ -20,66 +21,160 @@ export async function createContract(form: FormData) {
   const parsed = z.object({
     customerId: z.uuid(),
     productId: z.union([z.uuid(), z.literal("")]),
+    templateVersionId: z.uuid(),
+    legalEntityId: z.uuid(),
     title: z.string().min(2).max(200),
     salesChannel: z.enum(["telephone", "web", "email", "in_person", "partner", "api", "other"]),
   }).safeParse({
     customerId: value(form, "customer_id"),
     productId: value(form, "product_id"),
+    templateVersionId: value(form, "template_version_id"),
+    legalEntityId: value(form, "legal_entity_id"),
     title: value(form, "title"),
     salesChannel: value(form, "sales_channel") || "other",
   });
-  if (!parsed.success) redirect("/app/contracts?error=Kontrollera avtalsuppgifterna");
+  if (!parsed.success) redirect("/app/contracts?error=Kund, juridiskt bolag, godkänd mall och avtalstitel krävs");
 
   const supabase = await createClient();
-  const { data: customer } = await supabase
-    .from("customers")
-    .select("display_name,customer_type")
-    .eq("id", parsed.data.customerId)
-    .single();
+  const [{ data: customer }, { data: legalEntity }, { data: templateVersion }] = await Promise.all([
+    supabase.from("customers").select("id,display_name,customer_type,first_name,last_name,company_name,personal_identity_number,organization_number,email,phone_e164,address_line1,postal_code,city,country_code").eq("id", parsed.data.customerId).is("deleted_at", null).single(),
+    supabase.from("tenant_legal_entities").select("id,legal_name,organization_number,address_line1,postal_code,city,country_code,email,phone_e164,website,branding").eq("id", parsed.data.legalEntityId).eq("active", true).single(),
+    supabase.from("contract_template_versions").select("id,template_id,status,title_template,body_template,terms_template,variables,approved_at").eq("id", parsed.data.templateVersionId).single(),
+  ]);
   if (!customer) redirect("/app/contracts?error=Kunden saknas eller är inte tillgänglig");
+  if (!legalEntity) redirect("/app/contracts?error=Det juridiska avsändarbolaget saknas eller är inaktivt");
+  if (!templateVersion || templateVersion.status !== "approved") redirect("/app/contracts?error=En godkänd avtalsmall krävs");
 
-  let price: null | {
+  const { data: template } = await supabase.from("contract_templates")
+    .select("id,name,audience,active,current_version_id,legal_entity_id")
+    .eq("id", templateVersion.template_id).single();
+  const audience = customer.customer_type === "person" ? "B2C" : "B2B";
+  if (!template?.active || template.current_version_id !== templateVersion.id || ![audience, "BOTH"].includes(template.audience)) {
+    redirect("/app/contracts?error=Mallversionen är inte den aktuella godkända versionen för denna kundtyp");
+  }
+  if (template.legal_entity_id && template.legal_entity_id !== legalEntity.id) {
+    redirect("/app/contracts?error=Mallen är bunden till ett annat juridiskt bolag");
+  }
+
+  type ProductRecord = { id: string; name: string; sku: string | null; description: string | null };
+  type PriceRecord = {
     id: string;
+    version: number;
     setup_fee: number;
     recurring_fee: number;
+    variable_fee: number;
     currency: string;
     binding_months: number | null;
     notice_months: number | null;
-  } = null;
+    payment_terms_days: number;
+    terms: Record<string, unknown> | null;
+  };
+  let product: ProductRecord | null = null;
+  let price: PriceRecord | null = null;
   if (parsed.data.productId) {
-    const { data } = await supabase
-      .from("product_price_versions")
-      .select("id,setup_fee,recurring_fee,currency,binding_months,notice_months")
-      .eq("product_id", parsed.data.productId)
-      .eq("active", true)
-      .order("version", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    price = data;
+    const [{ data: productData }, { data: priceData }] = await Promise.all([
+      supabase.from("products").select("id,name,sku,description").eq("id", parsed.data.productId).eq("active", true).single(),
+      supabase.from("product_price_versions").select("id,version,setup_fee,recurring_fee,variable_fee,currency,binding_months,notice_months,payment_terms_days,terms").eq("product_id", parsed.data.productId).eq("active", true).order("version", { ascending: false }).limit(1).maybeSingle(),
+    ]);
+    if (!productData) redirect("/app/contracts?error=Produkten saknas eller är inaktiv");
+    if (!priceData) redirect("/app/contracts?error=Produkten saknar en aktiv prisversion");
+    product = productData as ProductRecord;
+    price = priceData as PriceRecord;
   }
 
   const commercialTerms = {
     currency: price?.currency ?? "SEK",
     setup_fee: Number(price?.setup_fee ?? 0),
     recurring_fee: Number(price?.recurring_fee ?? 0),
+    variable_fee: Number(price?.variable_fee ?? 0),
     binding_months: price?.binding_months ?? null,
     notice_months: price?.notice_months ?? null,
+    payment_terms_days: price?.payment_terms_days ?? null,
+    product_id: product?.id ?? null,
+    product_name: product?.name ?? null,
+    price_version: price?.version ?? null,
+    additional_terms: price?.terms ?? {},
   };
-  const renderedBody = `Avtal mellan ${ctx.tenantLegalName} och ${customer.display_name}. Avtalet gäller ${parsed.data.title}. Pris: ${commercialTerms.recurring_fee} ${commercialTerms.currency} per månad. Startavgift: ${commercialTerms.setup_fee} ${commercialTerms.currency}.`;
-  const renderedTerms = "Fullständiga villkor ska granskas och godkännas av tenantens juridiskt ansvariga före produktionsanvändning.";
-  const documentHash = sha256(`${renderedBody}\n${renderedTerms}\n${JSON.stringify(commercialTerms)}`);
+  const sellerSnapshot = {
+    id: legalEntity.id,
+    legal_name: legalEntity.legal_name,
+    organization_number: legalEntity.organization_number,
+    address_line1: legalEntity.address_line1,
+    postal_code: legalEntity.postal_code,
+    city: legalEntity.city,
+    country_code: legalEntity.country_code,
+    email: legalEntity.email,
+    phone_e164: legalEntity.phone_e164,
+    website: legalEntity.website,
+    branding: legalEntity.branding,
+  };
+  const counterpartySnapshot = {
+    id: customer.id,
+    customer_type: customer.customer_type,
+    display_name: customer.display_name,
+    first_name: customer.first_name,
+    last_name: customer.last_name,
+    company_name: customer.company_name,
+    personal_identity_number: customer.personal_identity_number,
+    organization_number: customer.organization_number,
+    email: customer.email,
+    phone_e164: customer.phone_e164,
+    address_line1: customer.address_line1,
+    postal_code: customer.postal_code,
+    city: customer.city,
+    country_code: customer.country_code,
+  };
+  const context = {
+    seller: sellerSnapshot,
+    customer: counterpartySnapshot,
+    product: {
+      id: product?.id ?? "Ingen produkt",
+      name: product?.name ?? "Ingen produkt",
+      sku: product?.sku ?? "—",
+      description: product?.description ?? "—",
+    },
+    price: {
+      currency: commercialTerms.currency,
+      setup_fee: commercialTerms.setup_fee,
+      recurring_fee: commercialTerms.recurring_fee,
+      variable_fee: commercialTerms.variable_fee,
+      binding_months: commercialTerms.binding_months ?? "Ingen bindningstid",
+      notice_months: commercialTerms.notice_months ?? "Ej angivet",
+      payment_terms_days: commercialTerms.payment_terms_days ?? "Ej angivet",
+    },
+    contract: { title: parsed.data.title, sales_channel: parsed.data.salesChannel, audience },
+    today: new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeZone: "Europe/Stockholm" }).format(new Date()),
+  };
 
-  const { data: contractId, error } = await supabase.rpc("create_contract_draft", {
+  let renderedTitle: string;
+  let renderedBody: string;
+  let renderedTerms: string;
+  try {
+    renderedTitle = renderStrictTemplate(templateVersion.title_template, context);
+    renderedBody = renderStrictTemplate(templateVersion.body_template, context);
+    renderedTerms = renderStrictTemplate(templateVersion.terms_template ?? "", context);
+  } catch (error) {
+    const message = error instanceof Error ? error.message.replace("unresolved_template_variables:", "Mallen saknar kund- eller avtalsdata för: ") : "Mallrenderingen misslyckades";
+    redirect(`/app/contracts?error=${encodeURIComponent(message)}`);
+  }
+  const documentHash = sha256(`${renderedTitle}\n${renderedBody}\n${renderedTerms}\n${JSON.stringify(commercialTerms)}\n${JSON.stringify(sellerSnapshot)}\n${JSON.stringify(counterpartySnapshot)}`);
+
+  const { data: contractId, error } = await supabase.rpc("create_contract_draft_v2", {
     p_contract_number: contractNumber(),
     p_customer_id: parsed.data.customerId,
     p_product_id: parsed.data.productId || null,
     p_price_version_id: price?.id ?? null,
-    p_title: parsed.data.title,
+    p_template_id: template.id,
+    p_template_version_id: templateVersion.id,
+    p_legal_entity_id: legalEntity.id,
+    p_title: renderedTitle,
     p_rendered_body: renderedBody,
     p_rendered_terms: renderedTerms,
     p_commercial_terms: commercialTerms,
     p_document_hash: documentHash,
     p_sales_channel: parsed.data.salesChannel,
+    p_seller_snapshot: sellerSnapshot,
+    p_counterparty_snapshot: counterpartySnapshot,
   });
   if (error || !contractId) redirect(`/app/contracts?error=${encodeURIComponent(error?.message ?? "Avtalet kunde inte skapas")}`);
 

@@ -88,11 +88,6 @@ async function processSms(job: Job) {
   const token = await decryptJson<{ token: string }>(number.webhook_token_ciphertext, encryptionKey);
 
   await supabase.from("sms_messages").update({ status: "submitting" }).eq("id", sms.id);
-  await supabase.rpc("increment_usage", {
-    p_tenant_id: job.tenant_id,
-    p_metric: "sms_parts",
-    p_amount: Math.max(1, Math.ceil(sms.body.length / 160)),
-  });
   const result = await post46Elks("sms", await get46ElksCredentials(job.tenant_id), {
     from: sms.from_number,
     to: sms.to_number,
@@ -119,7 +114,6 @@ async function processCall(job: Job) {
   const clientNumber = String(job.payload.voice_client_number ?? "");
   const callbackToken = String(job.payload.callback_token ?? "");
   if (!clientNumber || !callbackToken) throw new Error("webrtc_bridge_configuration_missing");
-  await supabase.rpc("increment_usage", { p_tenant_id: job.tenant_id, p_metric: "calls_started", p_amount: 1 });
 
   const action: Record<string, unknown> = { connect: call.to_number, callerid: call.from_number };
   if (call.recording_enabled) action.recordcall = `${appUrl}/api/webhooks/46elks/voice/recording?token=${encodeURIComponent(callbackToken)}`;
@@ -145,7 +139,6 @@ async function processEmail(job: Job) {
 
   const config = await getEmailConfig(job.tenant_id);
   await supabase.from("email_messages").update({ status: "submitting" }).eq("id", email.id);
-  await supabase.rpc("increment_usage", { p_tenant_id: job.tenant_id, p_metric: "emails_sent", p_amount: 1 });
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -245,7 +238,7 @@ function createTextPdf(title: string, sections: Array<{ heading: string; text: s
 }
 
 async function sha256Bytes(bytes: Uint8Array) {
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(bytes).buffer);
   return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
@@ -363,27 +356,19 @@ async function processContractConfirmation(job: Job) {
 
   if (recipient.email) {
     const idempotencyKey = `confirmation.email:${request.id}`;
-    const { data: emailMessage, error: emailError } = await supabase.from("email_messages").upsert({
-      tenant_id: job.tenant_id,
-      customer_id: contract.customer_id,
-      contract_id: request.contract_id,
-      direction: "outbound",
-      from_address: "pending@kundexa.local",
-      to_addresses: [recipient.email],
-      subject: `Bekräftelse på avtal ${contract.contract_number}`,
-      body_text: text,
-      status: "queued",
-      idempotency_key: idempotencyKey,
-    }, { onConflict: "tenant_id,idempotency_key" }).select("id").single();
+    const { error: emailError } = await supabase.rpc("queue_email_message_for_tenant", {
+      p_tenant_id: job.tenant_id,
+      p_customer_id: contract.customer_id,
+      p_subject: `Bekräftelse på avtal ${contract.contract_number}`,
+      p_body: text,
+      p_idempotency_key: idempotencyKey,
+      p_purpose: "contract_confirmation",
+      p_contract_id: request.contract_id,
+      p_to_address: recipient.email,
+      p_created_by: null,
+      p_payload: { confirmation_for_request: request.id },
+    });
     if (emailError) throw emailError;
-    await supabase.from("outbox_jobs").upsert({
-      tenant_id: job.tenant_id,
-      job_type: "email.send",
-      aggregate_type: "email_message",
-      aggregate_id: emailMessage.id,
-      payload: { email_message_id: emailMessage.id, confirmation_for_request: request.id },
-      idempotency_key: `email.send:${emailMessage.id}`,
-    }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true });
   }
 
   if (recipient.phone_e164) {
@@ -391,26 +376,18 @@ async function processContractConfirmation(job: Job) {
       .eq("tenant_id", job.tenant_id).eq("supports_sms", true).eq("status", "active").limit(1).maybeSingle();
     if (number) {
       const idempotencyKey = `confirmation.sms:${request.id}`;
-      const { data: smsMessage, error: smsError } = await supabase.from("sms_messages").upsert({
-        tenant_id: job.tenant_id,
-        customer_id: contract.customer_id,
-        contract_id: request.contract_id,
-        direction: "outbound",
-        from_number: number.number_e164,
-        to_number: recipient.phone_e164,
-        body: text,
-        status: "queued",
-        idempotency_key: idempotencyKey,
-      }, { onConflict: "tenant_id,idempotency_key" }).select("id").single();
+      const { error: smsError } = await supabase.rpc("queue_sms_message_for_tenant", {
+        p_tenant_id: job.tenant_id,
+        p_customer_id: contract.customer_id,
+        p_body: text,
+        p_idempotency_key: idempotencyKey,
+        p_purpose: "contract_confirmation",
+        p_contract_id: request.contract_id,
+        p_to_number: recipient.phone_e164,
+        p_created_by: null,
+        p_payload: { confirmation_for_request: request.id },
+      });
       if (smsError) throw smsError;
-      await supabase.from("outbox_jobs").upsert({
-        tenant_id: job.tenant_id,
-        job_type: "sms.send",
-        aggregate_type: "sms_message",
-        aggregate_id: smsMessage.id,
-        payload: { sms_message_id: smsMessage.id, confirmation_for_request: request.id },
-        idempotency_key: `sms.send:${smsMessage.id}`,
-      }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true });
     }
   }
 }

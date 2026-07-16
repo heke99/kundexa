@@ -3,23 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=20.9.0"
+    "node": ">=22.0.0"
   },
   "scripts": {
     "dev": "next dev",
-    "build": "next build --webpack",
+    "build": "npm run typecheck && npm run build:next",
+    "build:next": "node scripts/build-next.mjs",
     "start": "next start",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/verify.mjs",
+    "typecheck:edge": "deno check supabase/functions/_shared/crypto.ts supabase/functions/data-worker/index.ts supabase/functions/process-outbox/index.ts supabase/functions/automation-runner/index.ts",
+    "test": "node scripts/verify.mjs && node scripts/verify-sql.mjs",
     "test:watch": "node scripts/verify.mjs",
-    "verify": "npm run typecheck && npm run test && npm run build",
+    "verify": "npm run typecheck:edge && npm run test && npm run build",
     "supabase:login": "npx supabase@2.109.1 login",
     "supabase:link": "npx supabase@2.109.1 link",
     "db:push": "npx supabase@2.109.1 db push",
     "db:reset:local": "npx supabase@2.109.1 db reset",
     "functions:serve": "npx supabase@2.109.1 functions serve --env-file .env.local",
-    "functions:deploy": "npx supabase@2.109.1 functions deploy process-outbox --no-verify-jwt && npx supabase@2.109.1 functions deploy automation-runner --no-verify-jwt",
+    "functions:deploy": "node scripts/deploy-functions.mjs",
     "types:generate": "npx supabase@2.109.1 gen types typescript --linked > src/lib/supabase/database.types.ts"
   },
   "dependencies": {
@@ -33,11 +35,19 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.3.14",
     "@types/node": "22.15.3",
     "@types/papaparse": "5.3.16",
     "@types/react": "19.2.2",
     "@types/react-dom": "19.2.2",
+    "deno": "2.9.3",
     "typescript": "5.9.3"
   },
-  "packageManager": "npm@10.9.2"
+  "packageManager": "npm@10.9.2",
+  "optionalDependencies": {
+    "@next/swc-linux-x64-gnu": "^16.2.10"
+  },
+  "overrides": {
+    "postcss": "8.5.19"
+  }
 }

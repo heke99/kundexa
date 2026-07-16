@@ -1,33 +1,35 @@
 # Kundexa
 
-Kundexa är en multi-tenant webbplattform för CRM, prospektering, telefoni, SMS, e-post, kampanjer, avtal, acceptbevis, automationer, rapportering och integrations-API.
+Kundexa är en responsiv, multi-tenant SaaS-webbplattform för CRM, prospektering, databerikning, telefoni, SMS, e-post, kampanjer, avtal, acceptbevis, automationer, rapportering och integrations-API.
 
-Detta repository innehåller en **webbapp**, inte en mobilapp. Normal utveckling och produktion använder **Supabase Cloud**; Docker krävs inte.
+Detta repository innehåller en **webbapp**, inte en native mobilapp. Normal utveckling och produktion använder **Supabase Cloud**; Docker krävs inte.
 
 ## Teknisk grund
 
-- Next.js 16 + React 19 + TypeScript
+- Next.js 16, React 19 och TypeScript 5.9
 - Supabase Auth, PostgreSQL, Row Level Security, Storage och Edge Functions
+- Central katalog med source facts, provenance, freshness, segment och berikningskö
+- Generisk JSON-provideradapter med tillstånd, kvoter, domän-/pathkontroll och krypterade credentials
 - 46elks-adapter för telefoni, SMS, inkommande callbacks och WebRTC/SIP-konfiguration
 - Resend-adapter för tenantbrandad e-post
-- Transaktionell outbox, idempotens, återförsök och dead-letter-status
-- Atomiska avtals-, accept-, import- och automationsflöden i PostgreSQL
+- Transaktionell outbox, idempotens, atomisk usage-reservation, återförsök och dead-letter-status
+- Versionslåsta avtalsmallar, pris-/juridiksnapshots och manipulationsupptäckande acceptbevis
 - OpenAPI 3.1 på `/api/openapi.json`
 
 ## Snabbstart med Supabase Cloud
 
 ### 1. Krav
 
-- Node.js 20.9 eller senare
+- Node.js 22 eller senare
 - npm 10 eller senare
-- Ett tomt Supabase Cloud-projekt
-- Supabase CLI via `npx` – ingen global installation krävs
+- Ett Supabase Cloud-projekt
+- Supabase CLI via `npx`; ingen global installation krävs
 
 ### 2. Installera
 
 ```bash
-unzip kundexa-full.zip
-cd kundexa
+unzip kundexa-main-updated.zip
+cd kundexa-main
 npm ci
 cp .env.example .env.local
 ```
@@ -51,13 +53,13 @@ npm run db:push
 npm run types:generate
 ```
 
-Migrationerna skapar hela databasen, RLS, Storage-buckets, atomiska PostgreSQL-funktioner, audit, outbox, automationer och webhookrouting.
+Migrationerna skapar databasmodellen, RLS, privata Storage-buckets, atomiska PostgreSQL-funktioner, audit, outbox, automationer, katalog/berikning, NIX-/spärrmodell och webhookrouting.
 
 ### 4. Lägg Edge Function-hemligheter i Supabase
 
 ```bash
 npx supabase@2.109.1 secrets set \
-  KUNDEXA_ENCRYPTION_KEY="DIN_KRYTERINGSNYCKEL" \
+  KUNDEXA_ENCRYPTION_KEY="DIN_KRYPTERINGSNYCKEL" \
   APP_URL="https://din-kundexa-domän.se" \
   CRON_SECRET="DIN_CRON_SECRET" \
   RESEND_API_KEY="VALFRI_GLOBAL_RESEND_KEY" \
@@ -65,68 +67,70 @@ npx supabase@2.109.1 secrets set \
   --project-ref DIN_PROJECT_REF
 ```
 
-Deploya workers:
+Deploya samtliga workers:
 
 ```bash
 npm run functions:deploy -- --project-ref DIN_PROJECT_REF
 ```
 
-Anropa båda funktionerna minst en gång per minut från Supabase Cron eller en annan betrodd scheduler:
+Anropa funktionerna minst en gång per minut från Supabase Cron eller annan betrodd scheduler:
 
 ```text
 POST https://DIN_PROJECT_REF.supabase.co/functions/v1/process-outbox
 POST https://DIN_PROJECT_REF.supabase.co/functions/v1/automation-runner
+POST https://DIN_PROJECT_REF.supabase.co/functions/v1/data-worker
 Header: x-cron-secret: DIN_CRON_SECRET
 ```
 
 ### 5. Verifiera och starta webbappen
 
 ```bash
-npm run typecheck
-npm test
-npm run build
+npm run verify
 npm run dev
 ```
 
-Öppna `http://localhost:3000/register`, skapa första användaren och följ onboarding för att skapa den första tenanten.
+Öppna `http://localhost:3000/register`, skapa första användaren och följ onboarding.
 
-## Synk efter nya filer eller migrationer
+## Byggverifiering
+
+`npm run build` kör först `tsc --noEmit`. Endast Next 16:s duplicerade interna typkontroll är avstängd eftersom dess worker kan låsa sig i begränsade Linux-byggmiljöer. Typfel stoppar fortfarande alltid builden.
 
 ```bash
-cd kundexa
-npm ci
-npm run supabase:link -- --project-ref DIN_PROJECT_REF
-npm run db:push
-npm run types:generate
-npm run functions:deploy -- --project-ref DIN_PROJECT_REF
-npm run verify
+npm run typecheck
+npm run typecheck:edge
+npm test
+npm run build
 ```
+
+SQL-testet exekverar samtliga ordnade migrationer i en PostgreSQL-kompatibel PGlite-motor och kontrollerar tabeller, funktioner och RLS-policyer.
 
 ## Huvudflöden som ingår
 
-- Tenant, medlemskap, roller, team och databasbaserad RLS
-- Kundregister, företag, prospekt, aktiviteter, anteckningar och kundhistorik
-- CSV-simulering, normalisering, deduplicering, spärrkontroll, genomförande och mjuk återställning
+- Tenant, medlemskap, roller, team, juridiska bolag, feature-flaggor och databasbaserad RLS
+- Kundregister, företag, prospekt, kundkort, anteckningar, aktiviteter och historik
+- CSV-import med preview, normalisering, deduplicering, spärrkontroll, commit och mjuk rollback
+- Lokal katalogsökning, source facts, mastervärden, fältprovenance, freshness och segment
+- Providerkonton, tillstånd, fältregler, kvoter, parserövervakning och berikningsjobb
 - Produkter, versionshanterade priser, kampanjer, pipeline och rapporter
-- WebRTC-dialer, samtalskö, samtalsresultat, inkommande/utgående 46elks-callbacks och inspelningshämtning
-- SMS- och e-postköer med provider-ID, leveransstatus, kostnad och tenantbranding
-- Avtalsutkast, låsta versioner, PDF-lagring, SMS/e-postutskick och exakta acceptfraser
-- B2C-kontroll att telefonförsäljningssamtalet avslutats före skriftlig accept
-- Accepterad avtalskopia, JSON-manifest, evidence-PDF, SHA-256 och bekräftelseutskick
-- Adminstyrda automationer med testläge, godkännande, fördröjning, idempotens, loopskydd och dead letter
-- Hashade API-nycklar, scopes, rate limits, audit och signerade utgående webhooks
+- WebRTC-dialer, samtalskö, samtalsresultat, 46elks-callbacks och inspelningshämtning
+- SMS- och e-postköer med central kontaktpolicy, usage-reservation och tenantbranding
+- Avtalsutkast från godkänd mallversion, låsta snapshots, PDF-lagring och kanalutskick
+- Acceptmanifest, evidence-PDF, SHA-256, bekräftelse och signerad kopia
+- Automationer med testläge, godkännande, fördröjning, idempotens, loopskydd och dead letter
+- Hashade API-nycklar, scopes, rate limits, audit och signerade webhooks
 
 ## Viktigt före produktion
 
-Koden är en körbar och byggverifierad produktgrund. Externa och juridiska produktionsgrindar måste fortfarande slutföras, bland annat avtal med 46elks och dataleverantörer, verifierade e-postdomäner, juridisk granskning av B2C-mallar, BankID/e-signleverantör där det krävs, antivirus för uppladdningar, backup/DR-test och penetrationstest. Se [Produktionsgrindar](docs/PRODUCTION_GATES.md).
+Koden är en verifierad produktgrund, men externa och juridiska produktionsgrindar måste fortfarande slutföras. Det gäller bland annat faktiska 46elks-/dataleverantörsavtal och credentials, NIX-källa, verifierade e-postdomäner, juridisk granskning, BankID/e-signleverantör där stark identitet krävs, malware scanning, backup/restore-övning, lasttest och penetrationstest. Se [Produktionsgrindar](docs/PRODUCTION_GATES.md).
 
 ## Dokumentation
 
 - [Fastställda krav](docs/PRODUCT_REQUIREMENTS.md)
 - [Systemarkitektur](docs/ARCHITECTURE.md)
+- [Implementerad omfattning](docs/IMPLEMENTED_SCOPE.md)
 - [Supabase-installation](docs/SUPABASE_SETUP.md)
 - [Synk och deployment](docs/SYNC_AND_DEPLOY.md)
 - [Säkerhet](docs/SECURITY.md)
-- [Implementerad omfattning](docs/IMPLEMENTED_SCOPE.md)
 - [Produktionsgrindar](docs/PRODUCTION_GATES.md)
+- [Verifieringsrapport](docs/VERIFICATION_2026-07-16.md)
 - [Leveransmanifest](DELIVERY-MANIFEST.md)

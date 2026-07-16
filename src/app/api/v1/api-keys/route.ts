@@ -14,6 +14,10 @@ const scopeSchema = z.enum([
   "messages:send",
   "imports:write",
   "reports:read",
+  "directory:read",
+  "directory:refresh",
+  "segments:write",
+  "providers:manage",
 ]);
 
 export async function POST(request: Request) {

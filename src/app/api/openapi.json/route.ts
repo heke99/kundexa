@@ -64,6 +64,26 @@ export async function GET() {
       "/voice-client": {
         get: { operationId: "getVoiceClient", summary: "Hämta kortlivad WebRTC-konfiguration för aktuell användare", responses: { "200": { description: "WebRTC-konfiguration" } } },
       },
+
+      "/directory/search": {
+        post: { operationId: "searchDirectory", summary: "Sök lokalt i den licensstyrda katalogen", "x-required-scope": "directory:read", requestBody: { required: true, content: { "application/json": { schema: { type: "object", properties: { entityType: { type: "string", enum: ["organization", "establishment", "person"] }, query: { type: ["string", "null"] }, county: { type: ["string", "null"] }, municipality: { type: ["string", "null"] }, city: { type: ["string", "null"] }, sniCode: { type: ["string", "null"] }, employeeMin: { type: ["integer", "null"] }, employeeMax: { type: ["integer", "null"] }, hasPhone: { type: ["boolean", "null"] }, hasEmail: { type: ["boolean", "null"] }, freshOnly: { type: "boolean", default: false }, limit: { type: "integer", maximum: 200, default: 50 }, offset: { type: "integer", default: 0 } } } } } }, responses: { "200": { description: "Lokala katalogträffar med freshness-sammanställning" } } },
+      },
+      "/directory/entities/{id}": {
+        get: { operationId: "getDirectoryEntity", summary: "Hämta en licensierad katalogentitet", "x-required-scope": "directory:read", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], responses: { "200": { description: "Katalogentitet" }, "404": { description: "Saknas eller inte licensierad för tenanten" } } },
+      },
+      "/directory/entities/{id}/refresh": {
+        post: { operationId: "refreshDirectoryEntity", summary: "Köa idempotent berikning", "x-required-scope": "directory:refresh", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], requestBody: { content: { "application/json": { schema: { type: "object", properties: { purpose: { type: "string", default: "crm_refresh" }, enrichmentType: { type: "string", default: "full" }, requestedFields: { type: "array", items: { type: "string" } }, force: { type: "boolean", default: false }, idempotencyKey: { type: "string" } } } } } }, responses: { "202": { description: "Berikningsjobb köat" }, "409": { description: "Tillstånd, feature eller licensägarskap blockerar uppdateringen" } } },
+      },
+      "/enrichment/jobs": {
+        post: { operationId: "createEnrichmentJobs", summary: "Köa berikning för flera entiteter", "x-required-scope": "directory:refresh", requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["entityIds"], properties: { entityIds: { type: "array", minItems: 1, maxItems: 500, items: { type: "string", format: "uuid" } }, purpose: { type: "string" }, requestedFields: { type: "array", items: { type: "string" } }, force: { type: "boolean" }, idempotencyKey: { type: "string" } } } } } }, responses: { "202": { description: "Jobbresultat och beräknad kostnad" } } },
+      },
+      "/segments": {
+        get: { operationId: "listSegments", summary: "Lista segment", "x-required-scope": "directory:read", responses: { "200": { description: "Segmentlista" } } },
+        post: { operationId: "createSegment", summary: "Skapa dynamiskt segment", "x-required-scope": "segments:write", responses: { "201": { description: "Segment skapat" } } },
+      },
+      "/segments/preview": {
+        post: { operationId: "previewSegment", summary: "Förhandsvisa segment lokalt utan externa anrop", "x-required-scope": "directory:read", responses: { "200": { description: "Urval och freshness-sammanställning" } } },
+      },
     },
   }, { headers: { "cache-control": "public, max-age=300" } });
 }

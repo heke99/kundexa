@@ -4,30 +4,30 @@
 
 - Namn: Kundexa
 - Typ: multi-tenant SaaS-webbapp
-- Repository: inget Git/GitHub-repository ingår
-- Databas/backend: Supabase Cloud
+- Databas/backend: Supabase Cloud/PostgreSQL
 - Dockerkrav: nej
+- Nodekrav: 22+
 
 ## Verifieringskommandon
 
 ```bash
 npm ci
-npm run typecheck
-npm test
-npm run build
+npm run verify
+npm audit
 ```
 
-## Levererade huvudmappar
+## Levererade huvudområden
 
 - `src/app` – webbapp, server actions och API-rutter
-- `src/components` – UI, dialer och app shell
-- `src/lib` – auth, RLS-kontext, permissions, crypto och domänlogik
-- `supabase/migrations` – komplett ordnad databasdefinition
-- `supabase/functions/process-outbox` – provider- och dokumentworker
+- `src/components` – UI, API-nycklar och WebRTC-dialer
+- `src/lib` – auth, permissions, katalog, validering, crypto och domänlogik
+- `supabase/migrations` – 18 ordnade migrationer
+- `supabase/functions/process-outbox` – telefoni/SMS/e-post/dokumentworker
 - `supabase/functions/automation-runner` – automationsworker
-- `public/vendor` – lokal JsSIP-browserbundle
-- `docs` – krav, arkitektur, installation, säkerhet och produktionsgrindar
+- `supabase/functions/data-worker` – provider-/berikningsworker
+- `scripts/verify-sql.mjs` – exekvering av hela migrationskedjan
+- `docs` – arkitektur, scope, installation, säkerhet och produktionsgrindar
 
-## Kontrollsummering
+## Viktig avgränsning
 
-SHA-256 för leveransarkivet publiceras bredvid zip-filen vid paketering.
+Källkoden och den kanoniska databaskärnan är verifierade. Externa provideravtal, livecredentials, juridik, BankID/NIX-provider, malware scanning, DR-övning, lasttest och penetrationstest är produktionsgrindar och kan inte bekräftas enbart från repositoryt.

@@ -68,6 +68,7 @@ export function WebRtcDialer({ customers, initialCustomer }: { customers: Custom
   const [calling, setCalling] = useState(false);
   const sessionRef = useRef<SessionLike | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const requestKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -143,16 +144,18 @@ export function WebRtcDialer({ customers, initialCustomer }: { customers: Custom
     if (!selected) return;
 
     setStatus("Köar samtalet…");
+    requestKeyRef.current ??= `webrtc.call:${crypto.randomUUID()}`;
     const response = await fetch("/api/v1/calls", {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ customerId: selected }),
+      headers: { "content-type": "application/json", "idempotency-key": requestKeyRef.current },
+      body: JSON.stringify({ customerId: selected, idempotencyKey: requestKeyRef.current }),
     });
     const data = await response.json() as { error?: string };
     if (!response.ok) {
       setStatus(data.error ?? "Samtalet kunde inte startas");
       return;
     }
+    requestKeyRef.current = null;
     setStatus("Ringer din WebRTC-klient…");
   }
 

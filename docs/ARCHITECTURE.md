@@ -1,28 +1,51 @@
-# Canonical architecture
+# Kanonisk arkitektur
 
 ```text
-Browser -> Kundexa Web (BFF) -> Kundexa API -> PostgreSQL
-                                      |       -> transactional outbox
-                                      |       -> Redis rate limits
-                                      |       -> private S3 storage
-                                      -> 46elks / SMTP through adapters
-Worker (separate DB role with BYPASSRLS) -> claims outbox jobs -> providers/storage
+Browser
+  -> Next.js BFF/API
+     -> Supabase Auth + PostgreSQL/RLS
+     -> transactional outbox / atomic RPC
+     -> private Storage
+
+Schedulers
+  -> process-outbox      -> 46elks / Resend / Storage
+  -> automation-runner  -> atomic service queues
+  -> data-worker        -> permitted provider APIs
 ```
 
-## Tenant context
+## Tenantkontext
 
-1. Access token identifies user and selected membership.
-2. API validates active membership against PostgreSQL.
-3. API starts a transaction and calls `set_config('app.user_id', ...)` and `set_config('app.tenant_id', ...)`.
-4. Every tenant-owned table has forced RLS and a single canonical `tenant_id`.
-5. Provider webhooks derive tenant from an opaque route token and receiving number, never from a client-submitted tenant id.
+1. Session eller hashad API-nyckel identifierar användare och tenant.
+2. Servern validerar aktivt medlemskap och scope.
+3. Tenant hämtas aldrig från en obetrodd klientparameter som ensam sanningskälla.
+4. Tenantägda tabeller har RLS och kanoniskt `tenant_id`.
+5. Worker-RPC:er är spärrade för `anon` och `authenticated` och körs endast med service-role.
+6. Providerwebhooks härleder tenant från opaque callbacktoken och registrerat mottagarnummer.
 
-## Database ownership
+## Datadomäner
 
-- `kundexa_owner`: migrations only.
-- `kundexa_app`: API; cannot bypass RLS.
-- `kundexa_worker`: background processing; BYPASSRLS and isolated credentials.
+### Tenantunik CRM-data
 
-## Data consistency
+Kunder, anteckningar, aktiviteter, kampanjer, affärer, avtal, samtal, meddelanden och interna statusar är strikt tenantunika.
 
-Provider submission is never performed inside the HTTP request's business transaction. The transaction stores the business entity and an outbox job atomically. A worker claims the job with `FOR UPDATE SKIP LOCKED`, submits to the provider, and records the provider ID and events idempotently.
+### Central katalog och provenance
+
+`master_entities` håller sökbara mastervärden. Extern data går först till råpayload och `source_facts`; resolvern uppdaterar därefter fältvärden och historik. Freshness och licens-/cacheomfattning avgör om data får återanvändas eller behöver uppdateras.
+
+### Provider- och berikningsflöde
+
+```text
+Local search -> freshness check -> enrichment job -> atomic claim/lock/quota
+-> provider adapter -> encrypted raw payload -> normalized facts
+-> field history/master update -> usage/audit
+```
+
+Providerkonfigurationen innehåller tillåtna domäner, paths, fält, ändamål, cacheomfattning, lagringsrätt, kostnad och kvoter. Den generiska adaptern accepterar bara HTTPS och blockerar privata nät, credentials i URL och otillåtna redirects.
+
+## Datakonsistens
+
+- Affärstransaktionen skapar affärsobjekt och outboxjobb atomiskt.
+- Workers claimar jobb med databaslås/atomiska RPC:er.
+- Idempotensnycklar hindrar dubbla SMS, e-post, samtal, automationer och berikningar.
+- Kontaktpolicy och usage-reservation ligger i databasen så UI, API och workers använder samma regler.
+- Godkända avtals-, produkt-, pris- och juridikversioner snapshotas; accepterade versioner är immutable.

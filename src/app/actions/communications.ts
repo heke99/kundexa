@@ -1,15 +1,104 @@
 "use server";
+
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getAppContext } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { normalizePhone } from "@/lib/domain/phone";
 import { randomToken, sha256 } from "@/lib/crypto";
 import { serverEnv } from "@/lib/env";
 import { assertPermission } from "@/lib/permissions";
-const v=(f:FormData,k:string)=>String(f.get(k)??'').trim();
-async function assertContactAllowed(customerId:string,channel:'call'|'sms'|'email'){const s=await createClient();const {data:c}=await s.from('customers').select('do_not_call,do_not_sms,do_not_email').eq('id',customerId).single();if(!c)throw new Error('Kunden saknas');if((channel==='call'&&c.do_not_call)||(channel==='sms'&&c.do_not_sms)||(channel==='email'&&c.do_not_email))throw new Error(`Kunden är spärrad för ${channel}`);const {count}=await s.from('compliance_blocks').select('*',{count:'exact',head:true}).eq('customer_id',customerId).eq('active',true).contains('channels',[channel]);if(count)throw new Error(`Aktiv compliance-spärr stoppar ${channel}`)}
-export async function queueSms(f:FormData){const ctx=await getAppContext();assertPermission(ctx.role,"messages.send");const customerId=v(f,'customer_id');const body=v(f,'body');if(!customerId||!body)redirect('/app/sms?error=Kund och meddelande krävs');try{await assertContactAllowed(customerId,'sms')}catch(e){redirect(`/app/sms?error=${encodeURIComponent(e instanceof Error?e.message:'Spärrad')}`)}const s=await createClient();const {data:c}=await s.from('customers').select('phone_e164').eq('id',customerId).single();const {data:n}=await s.from('phone_numbers').select('number_e164').eq('supports_sms',true).eq('status','active').limit(1).maybeSingle();if(!c?.phone_e164||!n)redirect('/app/sms?error=Kunden eller organisationen saknar SMS-nummer');let to;try{to=normalizePhone(c.phone_e164)}catch{redirect('/app/sms?error=Kundens telefonnummer är ogiltigt')}const {data:m,error}=await s.from('sms_messages').insert({tenant_id:ctx.tenantId,customer_id:customerId,direction:'outbound',from_number:n.number_e164,to_number:to,body,status:'queued',created_by:ctx.userId}).select('id').single();if(error)redirect(`/app/sms?error=${encodeURIComponent(error.message)}`);await s.from('outbox_jobs').insert({tenant_id:ctx.tenantId,job_type:'sms.send',aggregate_type:'sms_message',aggregate_id:m.id,payload:{sms_message_id:m.id},idempotency_key:`sms.send:${m.id}`});revalidatePath('/app/sms');redirect('/app/sms')}
-export async function queueEmail(f:FormData){const ctx=await getAppContext();assertPermission(ctx.role,"messages.send");const customerId=v(f,'customer_id');const subject=v(f,'subject');const body=v(f,'body');if(!customerId||!subject||!body)redirect('/app/email?error=Kund, ämne och meddelande krävs');try{await assertContactAllowed(customerId,'email')}catch(e){redirect(`/app/email?error=${encodeURIComponent(e instanceof Error?e.message:'Spärrad')}`)}const s=await createClient();const {data:c}=await s.from('customers').select('email').eq('id',customerId).single();if(!c?.email)redirect('/app/email?error=Kunden saknar e-post');const {data:m,error}=await s.from('email_messages').insert({tenant_id:ctx.tenantId,customer_id:customerId,direction:'outbound',from_address:'pending@kundexa.local',to_addresses:[c.email],subject,body_text:body,status:'queued',created_by:ctx.userId}).select('id').single();if(error)redirect(`/app/email?error=${encodeURIComponent(error.message)}`);await s.from('outbox_jobs').insert({tenant_id:ctx.tenantId,job_type:'email.send',aggregate_type:'email_message',aggregate_id:m.id,payload:{email_message_id:m.id},idempotency_key:`email.send:${m.id}`});revalidatePath('/app/email');redirect('/app/email')}
-export async function startCall(f:FormData){const ctx=await getAppContext();assertPermission(ctx.role,"calls.create");const customerId=v(f,'customer_id');if(!customerId)redirect('/app/dialer?error=Välj en kund');try{await assertContactAllowed(customerId,'call')}catch(e){redirect(`/app/dialer?error=${encodeURIComponent(e instanceof Error?e.message:'Spärrad')}`)}const s=await createClient();const [{data:c},{data:n}]=await Promise.all([s.from('customers').select('phone_e164').eq('id',customerId).single(),s.from('phone_numbers').select('id,number_e164').eq('supports_voice',true).eq('status','active').limit(1).maybeSingle()]);if(!c?.phone_e164||!n)redirect('/app/dialer?error=Kunden eller organisationen saknar röstnummer');let to;try{to=normalizePhone(c.phone_e164)}catch{redirect('/app/dialer?error=Ogiltigt kundnummer')}const token=randomToken();const env=serverEnv();const {data:call,error}=await s.from('calls').insert({tenant_id:ctx.tenantId,customer_id:customerId,phone_number_id:n.id,user_id:ctx.userId,direction:'outbound',from_number:n.number_e164,to_number:to,status:'queued',callback_token_hash:sha256(token+env.KUNDEXA_WEBHOOK_PEPPER)}).select('id').single();if(error)redirect(`/app/dialer?error=${encodeURIComponent(error.message)}`);await s.from('outbox_jobs').insert({tenant_id:ctx.tenantId,job_type:'call.start',aggregate_type:'call',aggregate_id:call.id,payload:{call_id:call.id,callback_token:token},idempotency_key:`call.start:${call.id}`});await s.from('activities').insert({tenant_id:ctx.tenantId,customer_id:customerId,type:'call',status:'in_progress',title:'Utgående samtal',assigned_user_id:ctx.userId,created_by:ctx.userId,metadata:{call_id:call.id}});revalidatePath('/app/dialer');redirect(`/app/calls?started=${call.id}`)}
-export async function setCallDisposition(f:FormData){const ctx=await getAppContext();assertPermission(ctx.role,"calls.create");const callId=v(f,'call_id');const disposition=v(f,'disposition');const notes=v(f,'notes');const s=await createClient();const {data:call}=await s.from('calls').select('customer_id').eq('id',callId).single();await s.from('calls').update({disposition,notes,status:'completed',ended_at:new Date().toISOString()}).eq('id',callId);if(call?.customer_id){const next=disposition==='callback'?new Date(Date.now()+86400000).toISOString():null;await s.from('customers').update({last_contact_at:new Date().toISOString(),next_activity_at:next}).eq('id',call.customer_id);if(next)await s.from('activities').insert({tenant_id:ctx.tenantId,customer_id:call.customer_id,type:'callback',title:'Återuppringning',due_at:next,assigned_user_id:ctx.userId,created_by:ctx.userId})}revalidatePath('/app/calls')}
+
+const value = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
+const requestKey = (form: FormData, prefix: string) => value(form, "idempotency_key") || `${prefix}:${crypto.randomUUID()}`;
+
+function errorMessage(error: unknown) {
+  if (!(error instanceof Error)) return "Åtgärden kunde inte genomföras";
+  return error.message
+    .replace("contact_not_allowed:", "Kontakt stoppades: ")
+    .replace("usage_hard_limit_exceeded:", "Användningsgränsen är nådd för ")
+    .replaceAll("_", " ");
+}
+
+export async function queueSms(form: FormData) {
+  const ctx = await getAppContext();
+  assertPermission(ctx.role, "messages.send");
+  const customerId = value(form, "customer_id");
+  const body = value(form, "body");
+  if (!customerId || !body) redirect("/app/sms?error=Kund och meddelande krävs");
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("queue_sms_message", {
+    p_customer_id: customerId,
+    p_body: body,
+    p_idempotency_key: requestKey(form, "ui.sms"),
+    p_purpose: "direct_marketing",
+  });
+  if (error) redirect(`/app/sms?error=${encodeURIComponent(errorMessage(error))}`);
+  revalidatePath("/app/sms");
+  redirect("/app/sms");
+}
+
+export async function queueEmail(form: FormData) {
+  const ctx = await getAppContext();
+  assertPermission(ctx.role, "messages.send");
+  const customerId = value(form, "customer_id");
+  const subject = value(form, "subject");
+  const body = value(form, "body");
+  if (!customerId || !subject || !body) redirect("/app/email?error=Kund, ämne och meddelande krävs");
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("queue_email_message", {
+    p_customer_id: customerId,
+    p_subject: subject,
+    p_body: body,
+    p_idempotency_key: requestKey(form, "ui.email"),
+    p_purpose: "direct_marketing",
+  });
+  if (error) redirect(`/app/email?error=${encodeURIComponent(errorMessage(error))}`);
+  revalidatePath("/app/email");
+  redirect("/app/email");
+}
+
+export async function startCall(form: FormData) {
+  const ctx = await getAppContext();
+  assertPermission(ctx.role, "calls.create");
+  const customerId = value(form, "customer_id");
+  if (!customerId) redirect("/app/dialer?error=Välj en kund");
+  const supabase = await createClient();
+  const { data: voiceClient } = await supabase.from("voice_clients")
+    .select("client_number_e164")
+    .eq("assigned_user_id", ctx.userId)
+    .eq("status", "active")
+    .maybeSingle();
+  if (!voiceClient?.client_number_e164) redirect("/app/dialer?error=Din användare saknar en aktiv WebRTC-klient");
+
+  const token = randomToken();
+  const env = serverEnv();
+  const { data: callId, error } = await supabase.rpc("queue_outbound_call", {
+    p_customer_id: customerId,
+    p_callback_token_hash: sha256(token + env.KUNDEXA_WEBHOOK_PEPPER),
+    p_callback_token: token,
+    p_voice_client_number: voiceClient.client_number_e164,
+    p_idempotency_key: requestKey(form, "ui.call"),
+    p_purpose: "direct_marketing",
+  });
+  if (error || !callId) redirect(`/app/dialer?error=${encodeURIComponent(errorMessage(error ?? new Error("Samtalet kunde inte köas")))}`);
+  revalidatePath("/app/dialer");
+  redirect(`/app/calls?started=${callId}`);
+}
+
+export async function setCallDisposition(form: FormData) {
+  const ctx = await getAppContext();
+  assertPermission(ctx.role, "calls.create");
+  const callId = value(form, "call_id");
+  const disposition = value(form, "disposition");
+  const notes = value(form, "notes");
+  const supabase = await createClient();
+  const { data: call } = await supabase.from("calls").select("customer_id").eq("id", callId).single();
+  const { error } = await supabase.from("calls").update({ disposition, notes, status: "completed", ended_at: new Date().toISOString() }).eq("id", callId);
+  if (error) throw error;
+  if (call?.customer_id) {
+    const next = disposition === "callback" ? new Date(Date.now() + 86_400_000).toISOString() : null;
+    await supabase.from("customers").update({ last_contact_at: new Date().toISOString(), next_activity_at: next }).eq("id", call.customer_id);
+    if (next) await supabase.from("activities").insert({ tenant_id: ctx.tenantId, customer_id: call.customer_id, type: "callback", title: "Återuppringning", due_at: next, assigned_user_id: ctx.userId, created_by: ctx.userId });
+  }
+  revalidatePath("/app/calls");
+}
