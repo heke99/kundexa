@@ -1,4 +1,4 @@
-//
+//src/app/(auth)/login/page.tsx
 import Link from "next/link";
 import { Logo } from "@/components/logo";
 import { signIn } from "@/app/actions/auth";
