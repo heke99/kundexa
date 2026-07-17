@@ -170,4 +170,57 @@ const erasedCustomer = await db.query(`select display_name,phone_e164,email,dele
 const suppression = await db.query(`select count(*)::int as count from public.compliance_blocks where tenant_id='00000000-0000-0000-0000-000000000001' and phone_e164='+46701111111' and active`);
 if (!String(erasedCustomer.rows[0].display_name).startsWith('Raderad kund ') || erasedCustomer.rows[0].phone_e164 !== null || Number(suppression.rows[0].count) !== 1) throw new Error(`DSAR minimization/suppression failed: ${JSON.stringify({erasedCustomer:erasedCustomer.rows,suppression:suppression.rows})}`);
 console.log("Executed canonical data-platform runtime path: scheduler, raw payload, resolver, licensed directory, geography, quality, segment, secure import, NIX campaign resume, DSAR and retention.");
+
+// Onboarding must be safe against double-clicks, retries and overlapping tenant bootstrap triggers.
+await db.exec(`
+  insert into auth.users(id,email,raw_user_meta_data)
+  values('00000000-0000-0000-0000-000000000014','platform-owner@example.test','{"full_name":"Platform Owner"}');
+  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000014',false);
+`);
+const firstTenant = await db.query(`select public.create_tenant_with_owner('Kundexa Control','Kundexa Platform AB','5599990001') as id`);
+const secondTenant = await db.query(`select public.create_tenant_with_owner('Should not duplicate','Should not duplicate AB','5599990002') as id`);
+const onboardingTenantId = String(firstTenant.rows[0].id);
+if (onboardingTenantId !== String(secondTenant.rows[0].id)) throw new Error("Onboarding replay created a second tenant");
+const onboardingState = await db.query(`
+  select
+    (select count(*)::int from public.tenants where id=$1) as tenants,
+    (select count(*)::int from public.tenant_memberships where tenant_id=$1 and user_id='00000000-0000-0000-0000-000000000014') as memberships,
+    (select count(*)::int from public.teams where tenant_id=$1 and name='Huvudteam') as teams,
+    (select count(*)::int from public.tenant_settings where tenant_id=$1) as settings,
+    (select count(*)::int from public.tenant_features where tenant_id=$1) as features,
+    (select count(*)::int from public.customer_statuses where tenant_id=$1) as statuses,
+    (select count(*)::int from public.pipelines where tenant_id=$1 and name='Nyförsäljning') as pipelines,
+    (select count(*)::int from public.pipeline_stages where tenant_id=$1) as stages,
+    (select count(*)::int from public.tenant_legal_entities where tenant_id=$1 and is_default and active) as legal_entities
+`, [onboardingTenantId]);
+const os = onboardingState.rows[0];
+if (Number(os.tenants)!==1 || Number(os.memberships)!==1 || Number(os.teams)!==1 || Number(os.settings)!==1 || Number(os.features)!==16 || Number(os.statuses)!==9 || Number(os.pipelines)!==1 || Number(os.stages)!==8 || Number(os.legal_entities)!==1) {
+  throw new Error(`Idempotent onboarding state invalid: ${JSON.stringify(os)}`);
+}
+
+// Seed the first platform owner through trusted SQL, then verify audited role and tenant controls.
+await db.exec(`
+  insert into public.platform_memberships(user_id,role,status,created_by)
+  values('00000000-0000-0000-0000-000000000014','platform_owner','active','00000000-0000-0000-0000-000000000014');
+  insert into auth.users(id,email) values('00000000-0000-0000-0000-000000000015','platform-admin@example.test');
+`);
+await db.query(`select public.set_platform_membership($1,'platform_admin','active','Runtime verifiering av delegerad administration')`, ['00000000-0000-0000-0000-000000000015']);
+await db.query(`select public.set_tenant_platform_status($1,'suspended','Runtime verifiering av tenantstyrning')`, [onboardingTenantId]);
+const platformState = await db.query(`
+  select
+    (select status from public.tenants where id=$1) as tenant_status,
+    (select role::text from public.platform_memberships where user_id='00000000-0000-0000-0000-000000000015') as delegated_role,
+    (select count(*)::int from public.platform_audit_logs where actor_user_id='00000000-0000-0000-0000-000000000014') as audit_count
+`, [onboardingTenantId]);
+if (platformState.rows[0].tenant_status!=='suspended' || platformState.rows[0].delegated_role!=='platform_admin' || Number(platformState.rows[0].audit_count)!==2) {
+  throw new Error(`Platform administration runtime failed: ${JSON.stringify(platformState.rows[0])}`);
+}
+let lastOwnerProtected = false;
+try {
+  await db.query(`select public.set_platform_membership($1,'platform_admin','active','Should fail because this is the last owner')`, ['00000000-0000-0000-0000-000000000014']);
+} catch (error) {
+  lastOwnerProtected = String(error).includes('last_platform_owner_cannot_be_removed');
+}
+if (!lastOwnerProtected) throw new Error("Last platform owner protection did not trigger");
+console.log("Executed idempotent onboarding and audited platform-administration runtime path.");
 await db.close();

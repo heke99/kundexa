@@ -14,10 +14,10 @@
 
 ## Resultat
 
-- 22 migrationer exekverade i ordning utan SQL-fel i PostgreSQL-kompatibel PGlite
-- 123 publika tabeller
-- 183 publika funktioner
-- 249 RLS-policyer
+- 23 migrationer exekverade i ordning utan SQL-fel i PostgreSQL-kompatibel PGlite
+- 125 publika tabeller
+- 186 publika funktioner
+- 251 RLS-policyer
 - Web TypeScript: godkänd
 - Edge Functions/Deno: godkänd
 - Produktionsbuild: godkänd

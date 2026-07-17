@@ -10,6 +10,7 @@ export type AppContext = {
   tenantLegalName: string;
   role: string;
   teamIds: string[];
+  platformRole: string | null;
 };
 
 export const getAppContext = cache(async (): Promise<AppContext> => {
@@ -35,11 +36,19 @@ export const getAppContext = cache(async (): Promise<AppContext> => {
 
   if (!membership) redirect("/onboarding");
 
-  const { data: teamRows } = await supabase
+  const [{ data: teamRows }, { data: platformMembership }] = await Promise.all([
+    supabase
     .from("team_members")
     .select("team_id")
     .eq("tenant_id", profile.active_tenant_id)
-    .eq("user_id", user.id);
+    .eq("user_id", user.id),
+    supabase
+      .from("platform_memberships")
+      .select("role,status")
+      .eq("user_id", user.id)
+      .eq("status", "active")
+      .maybeSingle(),
+  ]);
 
   const tenantsValue = membership.tenants as unknown as { name?: string; legal_name?: string } | { name?: string; legal_name?: string }[] | null;
   const tenantName = Array.isArray(tenantsValue) ? tenantsValue[0]?.name : tenantsValue?.name;
@@ -53,9 +62,24 @@ export const getAppContext = cache(async (): Promise<AppContext> => {
     tenantLegalName: tenantLegalName ?? tenantName ?? "Kundexa",
     role: membership.role,
     teamIds: (teamRows ?? []).map((row) => row.team_id),
+    platformRole: platformMembership?.role ?? null,
   };
 });
 
 export function isAdmin(role: string) {
   return role === "owner" || role === "admin";
+}
+
+export function isPlatformAdmin(role: string | null) {
+  return role === "platform_owner" || role === "platform_admin";
+}
+
+export function isPlatformOwner(role: string | null) {
+  return role === "platform_owner";
+}
+
+export async function getPlatformContext() {
+  const context = await getAppContext();
+  if (!context.platformRole) redirect("/app");
+  return context;
 }

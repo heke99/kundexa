@@ -188,10 +188,7 @@ const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8"
 assert.doesNotMatch(nextConfig, /outputFileTracingExcludes/, "Production tracing must not exclude framework runtime files");
 if (/ignoreBuildErrors\s*:\s*true/.test(nextConfig)) {
   assert.match(packageJson.scripts.build, /^npm run typecheck && npm run build:next$/, "Next's duplicate checker may only be disabled when the public build hard-fails on the canonical typecheck first");
-  assert.equal(packageJson.scripts["build:next"], "node scripts/build-next.mjs", "The internal build command must use the deterministic Next wrapper");
-  const buildNext = await readFile(join(root, "scripts/build-next.mjs"), "utf8");
-  assert.match(buildNext, /NEXT_TELEMETRY_DISABLED/, "The deterministic build wrapper must disable network telemetry");
-  assert.match(buildNext, /NEXT_PRIVATE_BUILD_WORKER/, "The deterministic build wrapper must pin the build worker");
+  assert.equal(packageJson.scripts["build:next"], "next build --webpack", "The internal build command must use the deterministic official Next webpack build");
 }
 
 assert.equal(packageJson.dependencies.next, "16.2.10");

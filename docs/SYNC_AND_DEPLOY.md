@@ -43,7 +43,7 @@ npm audit
 npm run supabase:login
 npm run supabase:link -- --project-ref PROJECT_REF
 npm run db:push
-npm run types:generate
+SUPABASE_PROJECT_REF=PROJECT_REF npm run types:generate
 ```
 
 Ändra aldrig en migration som redan körts i produktion. Skapa alltid en ny tidsstämplad migration.
@@ -79,4 +79,4 @@ npm run verify
 npm run start
 ```
 
-`npm run build` kör först kanonisk TypeScript-kontroll och därefter Next/Turbopack-build med en kontrollerad worker.
+`npm run build` kör först kanonisk TypeScript-kontroll och därefter det officiella kommandot `next build --webpack`. Webpack används för reproducerbar lokal CI- och Vercel-build när Turbopack kan vara instabil i rena miljöer.

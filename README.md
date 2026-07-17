@@ -51,7 +51,7 @@ openssl rand -hex 48      # CRON_SECRET
 npm run supabase:login
 npm run supabase:link -- --project-ref DIN_PROJECT_REF
 npm run db:push
-npm run types:generate
+SUPABASE_PROJECT_REF=DIN_PROJECT_REF npm run types:generate
 ```
 
 ### Deploya workers
@@ -89,7 +89,7 @@ npm audit
 npm run dev
 ```
 
-`npm run verify` kör Deno-kontroll av samtliga workers, statiska arkitekturtester, hela migrationskedjan med runtime-RPC-test, TypeScript och produktionsbuild.
+`npm run verify` kör Deno-kontroll av samtliga workers, statiska arkitekturtester, hela migrationskedjan med runtime-RPC-test, TypeScript och en deterministisk Next.js-produktionsbuild med Webpack. Utvecklingsservern kan fortsatt använda Turbopack.
 
 ## Implementerade huvudflöden
 
@@ -119,6 +119,7 @@ Koden är en verifierad produktgrund. Skarp drift kräver fortfarande externa av
 - [Systemarkitektur](docs/ARCHITECTURE.md)
 - [Implementerad omfattning](docs/IMPLEMENTED_SCOPE.md)
 - [Supabase-installation](docs/SUPABASE_SETUP.md)
+- [Plattformsadministration](docs/PLATFORM_ADMINISTRATION.md)
 - [Synk och deployment](docs/SYNC_AND_DEPLOY.md)
 - [Säkerhet](docs/SECURITY.md)
 - [Produktionsgrindar](docs/PRODUCTION_GATES.md)

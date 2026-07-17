@@ -29,8 +29,12 @@ Service-role, scanner-token och krypteringsnycklar får endast finnas i servermi
 npm run supabase:login
 npm run supabase:link -- --project-ref PROJECT_REF
 npm run db:push
-npm run types:generate
+SUPABASE_PROJECT_REF=PROJECT_REF npm run types:generate
 ```
+
+## Plattformsägare
+
+Efter migrationerna skapas den första plattformsägaren genom betrodd SQL enligt `docs/PLATFORM_ADMINISTRATION.md`. Tenantrollen `owner` är inte samma sak som `platform_owner`.
 
 ## Auth
 

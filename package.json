@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "npm run typecheck && npm run build:next",
-    "build:next": "node scripts/build-next.mjs",
+    "build:next": "next build --webpack",
     "start": "next start",
     "lint": "tsc --noEmit --pretty false --incremental false",
     "typecheck": "tsc --noEmit --pretty false --incremental false",
@@ -22,7 +22,7 @@
     "db:reset:local": "npx supabase@2.109.1 db reset",
     "functions:serve": "npx supabase@2.109.1 functions serve --env-file .env.local",
     "functions:deploy": "node scripts/deploy-functions.mjs",
-    "types:generate": "npx supabase@2.109.1 gen types typescript --linked > src/lib/supabase/database.types.ts",
+    "types:generate": "node scripts/generate-supabase-types.mjs",
     "geography:import": "node scripts/import-geography.mjs"
   },
   "dependencies": {
