@@ -6,8 +6,9 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
-import { approveParserObservation, configureGenericJsonProvider, runIngestionNow, setProviderStatus } from "@/app/actions/admin";
+import { approveParserObservation, configureGenericJsonProvider, configureScraperProvider, controlIngestionRun, runIngestionNow, setProviderStatus } from "@/app/actions/admin";
 import { formatDate } from "@/lib/utils";
+import { SCRAPER_ADAPTERS } from "../../../../../supabase/functions/_shared/providers";
 
 export default async function DataSourcesPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string }> }) {
   const params = await searchParams; const context = await getAppContext(); const supabase = await createClient();
@@ -17,12 +18,16 @@ export default async function DataSourcesPage({ searchParams }: { searchParams: 
     supabase.from("provider_permissions").select("id,data_provider_id,permission_name,status,cache_scope,allowed_domains,allowed_entity_types,raw_storage_allowed,tenant_display_allowed,expires_at").order("created_at", { ascending: false }),
     supabase.from("enrichment_jobs").select("id,status,estimated_cost,actual_cost,last_error,created_at,completed_at").order("created_at", { ascending: false }).limit(10),
     supabase.from("ingestion_jobs").select("id,data_provider_id,name,entity_type,status,max_records,next_run_at,last_completed_at,schedule_interval_seconds").order("created_at", { ascending: false }).limit(50),
-    supabase.from("ingestion_runs").select("id,ingestion_job_id,status,requested_records,fetched_records,new_records,changed_records,unchanged_records,error_records,quarantined_records,last_error,started_at,completed_at").order("created_at", { ascending: false }).limit(30),
+    supabase.from("ingestion_runs").select("id,ingestion_job_id,status,requested_records,fetched_records,new_records,changed_records,unchanged_records,error_records,quarantined_records,attempts,max_attempts,next_attempt_at,current_page,next_page,last_error,started_at,completed_at").order("created_at", { ascending: false }).limit(30),
     supabase.from("parser_observations").select("id,parser_version_id,status,match_rate,disappearance_rate,page_fingerprint,missing_fields,details,created_at").in("status", ["warning", "quarantined"]).order("created_at", { ascending: false }).limit(20),
   ]);
   const accountByProvider = new Map((accounts ?? []).map((account) => [account.data_provider_id, account]));
   const permissionByProvider = new Map((permissions ?? []).map((permission) => [permission.data_provider_id, permission]));
   const jobById = new Map((ingestionJobs ?? []).map((job) => [job.id, job]));
+  const isDeadLetter = (run: { status: string; completed_at: string | null }) => run.status === "failed" && Boolean(run.completed_at);
+  const deadLetters = (ingestionRuns ?? []).filter(isDeadLetter).length;
+  const openRuns = (ingestionRuns ?? []).filter((run) => ["scheduled", "running", "paused"].includes(run.status)).length;
+  const retryWaiting = (ingestionRuns ?? []).filter((run) => run.status === "failed" && !run.completed_at).length;
   return <>
     <PageHeader title="Datakällor" description="Tillstånd, API-adaptrar, femdagarsinsamling, rådata, parserkarantän, kvoter och 20-dagars freshness." />
     {params.error ? <p className="form-error">{params.error}</p> : null}{params.message ? <div className="notice success">{params.message}</div> : null}
@@ -44,8 +49,39 @@ export default async function DataSourcesPage({ searchParams }: { searchParams: 
         <div className="grid grid-4"><Field label="Kvot" name="quota_units" type="number" min="1" defaultValue="5000"/><Field label="Kvotfönster sek" name="quota_window_seconds" type="number" min="1" defaultValue="432000"/><Field label="Max samtidighet" name="max_concurrency" type="number" min="1" defaultValue="1"/><Field label="Min delay ms" name="minimum_delay_ms" type="number" min="0" defaultValue="250"/><Field label="Timeout ms" name="timeout_ms" type="number" min="1000" max="120000" defaultValue="30000"/><Field label="Max retries" name="max_retries" type="number" min="0" max="20" defaultValue="5"/></div>
         <button className="button button-primary"><ShieldCheck size={16}/> Spara hela providerflödet</button></form></CardContent></Card>:null}
 
+      {isAdmin(context.role)?<Card><CardHeader><h2>Skrapkällor: Allabolag och Merinfo</h2><Badge>Tillåten insamling</Badge></CardHeader><CardContent><form action={configureScraperProvider} className="form-stack">
+        <div className="grid grid-4">
+          <SelectField label="Källa" name="adapter_key" defaultValue="allabolag">{Object.values(SCRAPER_ADAPTERS).map((adapter)=><option key={adapter.key} value={adapter.key}>{adapter.name}</option>)}</SelectField>
+          <Field label="Tillståndets namn" name="permission_name" placeholder="Skrapavtal 2026" required/>
+          <Field label="Avtals-/tillståndsreferens" name="written_approval_reference" required hint="Dokumenterad rättslig grund för insamlingen."/>
+          <Field label="Ändamål" name="allowed_purposes" defaultValue="prospecting,crm_refresh"/>
+        </div>
+        <fieldset className="field"><span>Entitetstyper</span><label><input type="checkbox" name="entity_types" value="organization" defaultChecked/> Företag</label><label><input type="checkbox" name="entity_types" value="person"/> Personer (endast Merinfo)</label><label><input type="checkbox" name="person_data_approved"/> Persondata har dokumenterat tillstånd och rättslig grund</label></fieldset>
+        <h3>Insamlingsfilter (återanvänds av jobbkö, scraper och listgenerator)</h3>
+        <div className="grid grid-4">
+          <Field label="Fritext" name="filter_query" placeholder="bygg"/><Field label="Företagsnamn" name="filter_company_name"/><Field label="SNI-kod" name="filter_sni_code" placeholder="41200"/><Field label="Bolagsform" name="filter_legal_form" placeholder="Aktiebolag"/>
+          <Field label="Län" name="filter_county"/><Field label="Kommun" name="filter_municipality"/><Field label="Ort" name="filter_city"/><Field label="Postnummer" name="filter_postal_code"/>
+          <Field label="Anställda min" name="filter_employee_min" type="number" min="0"/><Field label="Anställda max" name="filter_employee_max" type="number" min="0"/><Field label="Omsättning min" name="filter_revenue_min" type="number" min="0"/><Field label="Omsättning max" name="filter_revenue_max" type="number" min="0"/>
+        </div>
+        <label className="check-row"><input type="checkbox" name="filter_only_active" defaultChecked/> Endast aktiva företag</label>
+        <h3>Gränser (konfiguration, inte hårdkodning)</h3>
+        <div className="grid grid-4">
+          <Field label="Max poster per körning" name="max_records" type="number" min="1" max="5000" defaultValue="5000"/>
+          <Field label="Schema, sekunder" name="schedule_interval_seconds" type="number" min="3600" defaultValue="432000" hint="Standard: full uppdatering var femte dag."/>
+          <Field label="Kvot, externa anrop" name="quota_units" type="number" min="1" defaultValue="5000"/>
+          <Field label="Kvotfönster, sekunder" name="quota_window_seconds" type="number" min="1" defaultValue="432000"/>
+          <Field label="Min fördröjning, ms" name="minimum_delay_ms" type="number" min="0" defaultValue="1500" hint="Slumpad extra fördröjning läggs till per request."/>
+          <Field label="Timeout, ms" name="timeout_ms" type="number" min="1000" max="120000" defaultValue="30000"/>
+          <Field label="Max retries" name="max_retries" type="number" min="0" max="20" defaultValue="5"/>
+          <Field label="Freshness TTL, dagar" name="ttl_days" type="number" min="0" max="3650" defaultValue="20" hint="Kostsam återberikning tidigast efter 20 dagar."/>
+        </div>
+        <label className="check-row"><input type="checkbox" name="start_ingestion_now"/> Starta första insamlingen direkt</label>
+        <p className="muted">Robots-regler, avtalade begränsningar och tekniska skydd respekteras alltid: en disallow avbryter körningen och systemet kringgår aldrig CAPTCHA eller blockeringar.</p>
+        <button className="button button-primary"><ShieldCheck size={16}/> Spara skrapkällan atomiskt</button>
+      </form></CardContent></Card>:null}
+
       <Card><CardHeader><h2>Femdagarsjobb</h2><Badge>{ingestionJobs?.length??0}</Badge></CardHeader><CardContent style={{padding:0}}><DataTable headers={["Jobb","Entitet","Tak","Nästa körning","Senast klar","Status","Åtgärd"]}>{ingestionJobs?.map(job=><tr key={job.id}><td><strong>{job.name}</strong></td><td>{job.entity_type}</td><td>{job.max_records}</td><td>{formatDate(job.next_run_at)}</td><td>{formatDate(job.last_completed_at)}</td><td><Badge className={job.status==="active"?"badge-success":""}>{job.status}</Badge></td><td><form action={runIngestionNow}><input type="hidden" name="ingestion_job_id" value={job.id}/><button className="button button-secondary button-sm"><Play size={14}/> Kör nu</button></form></td></tr>)}</DataTable></CardContent></Card>
-      <Card><CardHeader><h2>Ingestionkörningar</h2><Badge>{ingestionRuns?.length??0}</Badge></CardHeader><CardContent style={{padding:0}}><DataTable headers={["Jobb","Status","Hämtade","Nya","Ändrade","Oförändrade","Fel","Tid"]}>{ingestionRuns?.map(run=><tr key={run.id}><td>{jobById.get(run.ingestion_job_id)?.name??run.ingestion_job_id}</td><td><Badge className={run.status==="completed"?"badge-success":run.status==="quarantined"||run.status==="failed"?"badge-danger":""}>{run.status}</Badge><div className="muted">{run.last_error??""}</div></td><td>{run.fetched_records}/{run.requested_records}</td><td>{run.new_records}</td><td>{run.changed_records}</td><td>{run.unchanged_records}</td><td>{run.error_records}</td><td>{formatDate(run.completed_at??run.started_at)}</td></tr>)}</DataTable></CardContent></Card>
+      <Card><CardHeader><h2>Ingestionkörningar</h2><div className="toolbar-left"><Badge>{openRuns} öppna</Badge><Badge className={retryWaiting?"badge-warning":""}>{retryWaiting} väntar retry</Badge><Badge className={deadLetters?"badge-danger":""}>{deadLetters} dead letter</Badge></div></CardHeader><CardContent style={{padding:0}}><DataTable headers={["Jobb","Status","Progress","Nya","Ändrade","Oförändrade","Fel","Checkpoint","Nästa försök","Tid","Åtgärd"]}>{ingestionRuns?.map(run=>{const dead=isDeadLetter(run);return <tr key={run.id}><td>{jobById.get(run.ingestion_job_id)?.name??run.ingestion_job_id}</td><td><Badge className={run.status==="completed"?"badge-success":dead||run.status==="quarantined"?"badge-danger":run.status==="failed"?"badge-warning":""}>{dead?"dead_letter":run.status}</Badge><div className="muted">{run.last_error??""}</div></td><td>{run.fetched_records}/{run.requested_records}<div className="muted">Försök {run.attempts}/{run.max_attempts}</div></td><td>{run.new_records}</td><td>{run.changed_records}</td><td>{run.unchanged_records}</td><td>{run.error_records}</td><td>{run.next_page??run.current_page??"—"}</td><td>{run.status==="failed"&&!dead?formatDate(run.next_attempt_at):"—"}</td><td>{formatDate(run.completed_at??run.started_at)}</td><td>{isAdmin(context.role)?<div className="toolbar-left">{["scheduled","running"].includes(run.status)?<form action={controlIngestionRun}><input type="hidden" name="run_id" value={run.id}/><input type="hidden" name="action" value="pause"/><button className="button button-secondary button-sm"><Pause size={13}/></button></form>:null}{["paused","failed"].includes(run.status)?<form action={controlIngestionRun}><input type="hidden" name="run_id" value={run.id}/><input type="hidden" name="action" value="resume"/><button className="button button-secondary button-sm"><Play size={13}/></button></form>:null}{!["completed","cancelled"].includes(run.status)?<form action={controlIngestionRun}><input type="hidden" name="run_id" value={run.id}/><input type="hidden" name="action" value="cancel"/><button className="button button-secondary button-sm">Avbryt</button></form>:null}</div>:null}</td></tr>})}</DataTable></CardContent></Card>
       {observations?.length?<Card><CardHeader><h2>Parserkarantän</h2><Badge className="badge-danger">{observations.length}</Badge></CardHeader><CardContent style={{padding:0}}><DataTable headers={["Status","Match","Bortfall","Saknade fält","Skapad","Granska"]}>{observations.map(ob=><tr key={ob.id}><td><Badge className="badge-danger">{ob.status}</Badge></td><td>{Math.round(Number(ob.match_rate)*100)}%</td><td>{Math.round(Number(ob.disappearance_rate)*100)}%</td><td>{ob.missing_fields?.join(", ")||"—"}</td><td>{formatDate(ob.created_at)}</td><td><form action={approveParserObservation}><input type="hidden" name="observation_id" value={ob.id}/><input type="hidden" name="parser_version_id" value={ob.parser_version_id}/><button className="button button-secondary button-sm"><RefreshCw size={14}/> Godkänn ny struktur</button></form></td></tr>)}</DataTable></CardContent></Card>:null}
       <Card><CardHeader><h2>Senaste berikningsjobb</h2><Badge>{enrichmentJobs?.length??0}</Badge></CardHeader><CardContent style={{padding:0}}><DataTable headers={["Status","Skapad","Kostnad","Slutförd","Fel"]}>{enrichmentJobs?.map(job=><tr key={job.id}><td><Badge className={job.status==="completed"?"badge-success":job.status==="failed"?"badge-danger":""}>{job.status}</Badge></td><td>{formatDate(job.created_at)}</td><td>{Number(job.actual_cost??job.estimated_cost??0).toFixed(2)}</td><td>{formatDate(job.completed_at)}</td><td>{job.last_error??"—"}</td></tr>)}</DataTable></CardContent></Card>
     </div>

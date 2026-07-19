@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { encryptJson, randomToken, sha256 } from "@/lib/crypto";
 import { serverEnv } from "@/lib/env";
+import { getScraperAdapter, identityFieldMapping, validateScraperFilter } from "../../../supabase/functions/_shared/providers";
 
 const value = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
 
@@ -423,6 +424,144 @@ export async function configureGenericJsonProvider(form: FormData) {
   revalidatePath("/app/data-sources");
   revalidatePath("/app/directory");
   redirect("/app/data-sources?message=Leverantör, parser, tillstånd och femdagarsinsamling är sparade atomiskt");
+}
+
+// Konfigurerar en tillåten skrapkälla (Allabolag/Merinfo) ovanpå samma kanoniska
+// providerflöde som API-källor: konto, tillstånd, fältlicenser, kvoter, freshness,
+// parserversioner och femdagarsinsamling. Alla gränser lagras i databasen och kan
+// justeras utan koddeploy; adaptern i workern styr URL, parsning och normalisering.
+export async function configureScraperProvider(form: FormData) {
+  const context = await adminContext();
+  const adapter = getScraperAdapter(value(form, "adapter_key"));
+  if (!adapter) redirect("/app/data-sources?error=Okänd scraperadapter");
+  const entityTypes = form.getAll("entity_types").map(String)
+    .filter((entry): entry is "organization" | "person" => adapter.entityTypes.includes(entry as "organization" | "person"));
+  if (!entityTypes.length) redirect("/app/data-sources?error=Minst en tillåten entitetstyp krävs");
+  if (adapter.personDataRestricted && entityTypes.includes("person") && form.get("person_data_approved") !== "on") {
+    redirect("/app/data-sources?error=Persondata kräver dokumenterat tillstånd och uttryckligt godkännande");
+  }
+  let filter;
+  try {
+    filter = validateScraperFilter({
+      query: value(form, "filter_query"), companyName: value(form, "filter_company_name"),
+      sniCode: value(form, "filter_sni_code"), legalForm: value(form, "filter_legal_form"),
+      county: value(form, "filter_county"), municipality: value(form, "filter_municipality"),
+      city: value(form, "filter_city"), postalCode: value(form, "filter_postal_code"),
+      employeeMin: value(form, "filter_employee_min") || undefined, employeeMax: value(form, "filter_employee_max") || undefined,
+      revenueMin: value(form, "filter_revenue_min") || undefined, revenueMax: value(form, "filter_revenue_max") || undefined,
+      onlyActive: form.get("filter_only_active") === "on",
+    });
+  } catch (error) {
+    redirect(`/app/data-sources?error=${encodeURIComponent(error instanceof Error ? error.message : "Ogiltigt filter")}`);
+  }
+  const fieldMapping = identityFieldMapping(adapter);
+  const maxRecords = Math.max(1, Math.min(Number(value(form, "max_records") || adapter.defaults.maxRecordsPerRun), adapter.defaults.maxRecordsPerRun));
+  const scheduleIntervalSeconds = Math.max(3600, Number(value(form, "schedule_interval_seconds") || adapter.defaults.scheduleIntervalSeconds));
+  const quotaUnits = Math.max(1, Number(value(form, "quota_units") || adapter.defaults.quotaUnits));
+  const quotaWindowSeconds = Math.max(1, Number(value(form, "quota_window_seconds") || adapter.defaults.quotaWindowSeconds));
+  const minimumDelayMs = Math.max(adapter.defaults.minimumDelayMs, Number(value(form, "minimum_delay_ms") || adapter.defaults.minimumDelayMs));
+  const timeoutMs = Math.max(1000, Math.min(Number(value(form, "timeout_ms") || adapter.defaults.timeoutMs), 120000));
+  const maxRetries = Math.max(0, Math.min(Number(value(form, "max_retries") || adapter.defaults.maxRetries), 20));
+  const ttlDays = Math.max(0, Math.min(Number(value(form, "ttl_days") || adapter.defaults.freshnessTtlDays), 3650));
+  const supabase = await createClient();
+  const { data: configured, error } = await supabase.rpc("configure_generic_json_provider", {
+    p_provider: adapter.key,
+    p_name: value(form, "name") || adapter.name,
+    p_permission_name: value(form, "permission_name") || `${adapter.name} skraptillstånd`,
+    p_endpoint_template: adapter.defaults.detailEndpointTemplate,
+    p_method: "GET",
+    p_credentials_ciphertext: "",
+    p_field_mapping: fieldMapping,
+    p_allowed_domains: adapter.defaults.allowedDomains,
+    p_allowed_paths: adapter.defaults.allowedPaths,
+    p_allowed_entity_types: entityTypes,
+    p_allowed_purposes: csvValues(value(form, "allowed_purposes") || "prospecting,crm_refresh"),
+    p_cache_scope: "tenant",
+    p_raw_storage_allowed: form.get("raw_storage_allowed") === "on",
+    p_tenant_display_allowed: true,
+    p_cross_tenant_reuse_allowed: false,
+    p_export_allowed: false,
+    p_attribution_required: true,
+    p_retention_days: value(form, "retention_days") ? Number(value(form, "retention_days")) : (form.get("raw_storage_allowed") === "on" ? 30 : null),
+    p_written_approval_reference: value(form, "written_approval_reference"),
+    p_quota_units: quotaUnits,
+    p_quota_window_seconds: quotaWindowSeconds,
+    p_max_concurrency: Math.max(1, Math.min(Number(value(form, "max_concurrency") || adapter.defaults.maxConcurrency), 4)),
+    p_minimum_delay_ms: minimumDelayMs,
+    p_timeout_ms: timeoutMs,
+    p_max_retries: maxRetries,
+    p_ttl_days: ttlDays,
+    p_estimated_cost_per_call: 0,
+  });
+  if (error) redirect(`/app/data-sources?error=${encodeURIComponent(error.message)}`);
+  const ids = configured as { provider_id: string; account_id: string; permission_id: string } | null;
+  if (!ids?.provider_id || !ids.account_id || !ids.permission_id) redirect("/app/data-sources?error=Scraperkonfigurationen returnerade inga identifierare");
+
+  const discoveryConfiguration = {
+    endpoint_template: adapter.defaults.searchEndpointTemplate,
+    format: "html_regex",
+    page_parameter: adapter.defaults.pageParameter,
+    page_start: adapter.defaults.pageStart,
+    page_size: adapter.defaults.pageSize,
+    max_pages_per_run: adapter.defaults.maxPagesPerRun,
+    timeout_ms: timeoutMs,
+    minimum_delay_ms: minimumDelayMs,
+    max_retries: maxRetries,
+  };
+  const { error: providerUpdateError } = await supabase.from("data_providers")
+    .update({ adapter_key: adapter.key, integration_type: "scrape_html", source_class: adapter.sourceClass, discovery_configuration: discoveryConfiguration })
+    .eq("tenant_id", context.tenantId).eq("id", ids.provider_id);
+  if (providerUpdateError) redirect(`/app/data-sources?error=${encodeURIComponent(providerUpdateError.message)}`);
+
+  // Separat kvotnyckel för discovery-insamling: en enhet per externt anrop.
+  const { error: rateError } = await supabase.from("provider_rate_limits").upsert({
+    tenant_id: context.tenantId, provider_account_id: ids.account_id, quota_key: "ingestion",
+    window_seconds: quotaWindowSeconds, max_units: quotaUnits, max_concurrency: 1,
+    minimum_delay_ms: minimumDelayMs, timeout_ms: timeoutMs, max_retries: maxRetries,
+  }, { onConflict: "provider_account_id,quota_key" });
+  if (rateError) redirect(`/app/data-sources?error=${encodeURIComponent(rateError.message)}`);
+
+  const coreExpectedFields = adapter.key === "allabolag" ? ["canonical_name", "organization_number"] : ["canonical_name"];
+  for (const entityType of entityTypes) {
+    const { data: activeParser } = await supabase.from("parser_versions").select("id").eq("tenant_id", context.tenantId).eq("data_provider_id", ids.provider_id).eq("entity_type", entityType).eq("status", "active").order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (activeParser) {
+      const { error: parserError } = await supabase.from("parser_versions").update({ expected_fields: coreExpectedFields, minimum_match_rate: 0.9, disappearance_threshold: 0.2 }).eq("id", activeParser.id);
+      if (parserError) redirect(`/app/data-sources?error=${encodeURIComponent(parserError.message)}`);
+    } else {
+      const { error: parserError } = await supabase.from("parser_versions").insert({ tenant_id: context.tenantId, data_provider_id: ids.provider_id, entity_type: entityType, version: "1", expected_fields: coreExpectedFields, minimum_match_rate: 0.9, disappearance_threshold: 0.2, status: "active", created_by: context.userId });
+      if (parserError) redirect(`/app/data-sources?error=${encodeURIComponent(parserError.message)}`);
+    }
+    const jobName = `${adapter.name} – ${entityType} – femdagarsinsamling`;
+    const { data: existingJob } = await supabase.from("ingestion_jobs").select("id").eq("tenant_id", context.tenantId).eq("data_provider_id", ids.provider_id).eq("name", jobName).maybeSingle();
+    const payload = {
+      tenant_id: context.tenantId, data_provider_id: ids.provider_id, provider_account_id: ids.account_id, permission_id: ids.permission_id,
+      name: jobName, entity_type: entityType, schedule_expression: "every 5 days", schedule_interval_seconds: scheduleIntervalSeconds,
+      priority: 100, max_records: maxRecords, quota_interpretation: "per_run",
+      filter_definition: filter as Record<string, unknown>, status: "active",
+      next_run_at: form.get("start_ingestion_now") === "on" ? new Date().toISOString() : new Date(Date.now() + scheduleIntervalSeconds * 1000).toISOString(),
+      adapter_key: adapter.key, adapter_configuration: discoveryConfiguration, created_by: context.userId,
+    };
+    const jobQuery = existingJob ? supabase.from("ingestion_jobs").update(payload).eq("id", existingJob.id) : supabase.from("ingestion_jobs").insert(payload);
+    const { error: jobError } = await jobQuery;
+    if (jobError) redirect(`/app/data-sources?error=${encodeURIComponent(jobError.message)}`);
+  }
+  revalidatePath("/app/data-sources");
+  revalidatePath("/app/directory");
+  redirect(`/app/data-sources?message=${encodeURIComponent(`${adapter.name} är konfigurerad med tillstånd, kvoter, parser och femdagarsinsamling`)}`);
+}
+
+// Administrativ jobbkontroll: pausa, återuppta (inklusive dead letter med bevarad
+// checkpoint) eller avbryt en ingestionkörning. Behörighet verifieras i databasen.
+export async function controlIngestionRun(form: FormData) {
+  await adminContext();
+  const runId = value(form, "run_id");
+  const action = value(form, "action");
+  if (!runId || !["pause", "resume", "cancel"].includes(action)) return;
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("control_ingestion_run", { p_run_id: runId, p_action: action });
+  if (error) redirect(`/app/data-sources?error=${encodeURIComponent(error.message)}`);
+  revalidatePath("/app/data-sources");
+  redirect(`/app/data-sources?message=${encodeURIComponent(`Körningen är uppdaterad (${action})`)}`);
 }
 
 export async function setProviderStatus(form: FormData) {

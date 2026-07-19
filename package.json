@@ -12,7 +12,7 @@
     "start": "next start",
     "lint": "tsc --noEmit --pretty false --incremental false",
     "typecheck": "tsc --noEmit --pretty false --incremental false",
-    "typecheck:edge": "deno check supabase/functions/_shared/crypto.ts supabase/functions/data-worker/index.ts supabase/functions/ingestion-worker/index.ts supabase/functions/maintenance-worker/index.ts supabase/functions/compliance-worker/index.ts supabase/functions/process-outbox/index.ts supabase/functions/automation-runner/index.ts",
+    "typecheck:edge": "deno check supabase/functions/_shared/crypto.ts supabase/functions/_shared/providers.ts supabase/functions/data-worker/index.ts supabase/functions/ingestion-worker/index.ts supabase/functions/maintenance-worker/index.ts supabase/functions/compliance-worker/index.ts supabase/functions/process-outbox/index.ts supabase/functions/automation-runner/index.ts",
     "test": "node scripts/verify.mjs && node scripts/verify-sql.mjs",
     "test:watch": "node scripts/verify.mjs",
     "verify": "npm run typecheck:edge && npm run test && npm run build",

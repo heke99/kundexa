@@ -110,6 +110,14 @@ export async function queueEnrichmentForEntity(request: EnrichmentRequest) {
     purpose: request.purpose, idempotency_key: key, estimated_external_calls: 1, estimated_cost: estimatedCost,
     permission_result: { entityAllowed, purposeAllowed, unexpired }, requested_by: request.userId,
   }).select("*").single();
-  if (error) throw new Error(error.message);
+  if (error) {
+    // Stampede-skydd: samtidiga identiska förfrågningar dedupliceras via den unika
+    // idempotensnyckeln; förloraren i kapplöpningen återanvänder det befintliga jobbet.
+    if (error.code === "23505") {
+      const { data: raced } = await admin.from("enrichment_jobs").select("*").eq("tenant_id", request.tenantId).eq("idempotency_key", key).maybeSingle();
+      if (raced) return { status: raced.status, entityId: entity.id, job: raced, estimatedExternalCalls: raced.estimated_external_calls, estimatedCost: Number(raced.estimated_cost) };
+    }
+    throw new Error(error.message);
+  }
   return { status: job.status, entityId: entity.id, job, estimatedExternalCalls: 1, estimatedCost };
 }

@@ -8957,6 +8957,28 @@ export type Database = {
         Args: { p_customer_id: string; p_tenant_id: string }
         Returns: boolean
       }
+      dashboard_overview: { Args: never; Returns: Json }
+      customer_list_overview: {
+        Args: { p_list_id?: string | null }
+        Returns: {
+          list_id: string
+          total_members: number
+          open_members: number
+          active_sellers: number
+        }[]
+      }
+      customer_list_candidate_counts: {
+        Args: { p_list_id: string }
+        Returns: Json
+      }
+      control_ingestion_run: {
+        Args: { p_run_id: string; p_action: string }
+        Returns: Json
+      }
+      reserve_provider_ingestion_usage: {
+        Args: { p_run_id: string; p_units?: number }
+        Returns: Json
+      }
       data_subject_export_for_request: {
         Args: { p_request_id: string }
         Returns: Json
