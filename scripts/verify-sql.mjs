@@ -283,4 +283,94 @@ await db.query(`select public.complete_manual_call_work($1,'interested','Handled
 const manualState = await db.query(`select a.status,c.disposition,c.callback_activity_id,(select count(*) from public.notes n where n.call_id=c.id) as notes from public.activities a join public.calls c on c.callback_activity_id=a.id where a.id=$1`, [manualCallbackId]);
 if (manualState.rows[0].status !== 'completed' || manualState.rows[0].disposition !== 'interested' || Number(manualState.rows[0].notes) !== 1) throw new Error(`Manual callback after-work failed: ${JSON.stringify(manualState.rows[0])}`);
 console.log("Executed prospecting/list assignment, atomic claim, canonical calls, caller-ID/recording policy, order after-work and personal/global callback runtime paths.");
+
+// Performance/scraper operations runtime path: aggregated RPCs, atomic ingestion
+// quota reservation, admin run controls, dead-letter re-drive and duplicate-run guards.
+await db.exec(`
+  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
+  insert into public.pipelines(id,tenant_id,name) values('00000000-0000-0000-0000-000000000030','00000000-0000-0000-0000-000000000001','Verify pipeline');
+  insert into public.pipeline_stages(id,tenant_id,pipeline_id,name,sort_order) values('00000000-0000-0000-0000-000000000031','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000030','Verify stage',1);
+  insert into public.deals(tenant_id,customer_id,pipeline_id,stage_id,name,value,status) values
+    ('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000021','00000000-0000-0000-0000-000000000030','00000000-0000-0000-0000-000000000031','Won verify deal',300,'won'),
+    ('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000021','00000000-0000-0000-0000-000000000030','00000000-0000-0000-0000-000000000031','Open verify deal',100,'open');
+`);
+const dashboard = await db.query(`select public.dashboard_overview() as overview`);
+const overview = dashboard.rows[0].overview;
+if (Number(overview.wonDealValue) !== 300 || Number(overview.openDeals) !== 1 || Number(overview.customers) < 3 || Number(overview.callsToday) < 2) {
+  throw new Error(`Dashboard aggregation failed: ${JSON.stringify(overview)}`);
+}
+const listOverview = await db.query(`select * from public.customer_list_overview($1)`, [runtimeListId]);
+if (listOverview.rows.length !== 1 || Number(listOverview.rows[0].total_members) !== 2 || Number(listOverview.rows[0].open_members) !== 1 || Number(listOverview.rows[0].active_sellers) !== 1) {
+  throw new Error(`Customer list aggregation failed: ${JSON.stringify(listOverview.rows)}`);
+}
+const candidateCounts = await db.query(`select public.customer_list_candidate_counts($1) as counts`, [runtimeListId]);
+if (Number(candidateCounts.rows[0].counts.approved) !== 0 || Number(candidateCounts.rows[0].counts.blocked) !== 0) {
+  throw new Error(`Candidate aggregation failed: ${JSON.stringify(candidateCounts.rows[0])}`);
+}
+
+// Ingestion quota: one unit per external call inside the configured window.
+await db.exec(`
+  insert into public.provider_rate_limits(tenant_id,provider_account_id,quota_key,window_seconds,max_units,max_concurrency,minimum_delay_ms,timeout_ms,max_retries)
+  values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000004','ingestion',3600,2,1,250,30000,5);
+`);
+const firstReservation = await db.query(`select public.reserve_provider_ingestion_usage($1,1) as result`, [runId]);
+const secondReservation = await db.query(`select public.reserve_provider_ingestion_usage($1,1) as result`, [runId]);
+const thirdReservation = await db.query(`select public.reserve_provider_ingestion_usage($1,1) as result`, [runId]);
+if (firstReservation.rows[0].result.allowed !== true || secondReservation.rows[0].result.allowed !== true) {
+  throw new Error(`Ingestion quota reservation failed: ${JSON.stringify([firstReservation.rows[0], secondReservation.rows[0]])}`);
+}
+if (thirdReservation.rows[0].result.allowed !== false || Number(thirdReservation.rows[0].result.retryAfterSeconds) < 1) {
+  throw new Error(`Ingestion quota exhaustion failed: ${JSON.stringify(thirdReservation.rows[0])}`);
+}
+
+// Sellers must not control system-wide ingestion runs; tenant admins may.
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000020',false)`);
+let sellerBlocked = false;
+try {
+  await db.query(`select public.control_ingestion_run($1,'pause')`, [runId]);
+} catch (error) {
+  sellerBlocked = String(error).includes("admin_required");
+}
+if (!sellerBlocked) throw new Error("Seller was able to control ingestion runs");
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
+const controlRun = await db.query(`
+  insert into public.ingestion_runs(tenant_id,ingestion_job_id,status,requested_records,max_attempts,next_attempt_at,current_page)
+  values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000007','scheduled',5000,5,now(),'3') returning id
+`);
+const controlRunId = String(controlRun.rows[0].id);
+// Only one open run per job is allowed: a second open run must be rejected.
+let duplicateBlocked = false;
+try {
+  await db.query(`insert into public.ingestion_runs(tenant_id,ingestion_job_id,status,requested_records) values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000007','scheduled',5000)`);
+} catch (error) {
+  duplicateBlocked = String(error).includes("ingestion_runs_one_open_per_job_idx");
+}
+if (!duplicateBlocked) throw new Error("Duplicate open ingestion run was not prevented");
+// The scheduler must not create a parallel run while one is open or retryable.
+await db.exec(`update public.ingestion_jobs set next_run_at=now() where id='00000000-0000-0000-0000-000000000007'`);
+await db.query(`select * from public.schedule_due_ingestion_jobs(10)`);
+const openRunCount = await db.query(`select count(*)::int as count from public.ingestion_runs where ingestion_job_id='00000000-0000-0000-0000-000000000007' and status in ('scheduled','running','paused')`);
+if (Number(openRunCount.rows[0].count) !== 1) throw new Error(`Scheduler created a duplicate open run: ${JSON.stringify(openRunCount.rows)}`);
+await db.query(`select public.control_ingestion_run($1,'pause')`, [controlRunId]);
+const pausedRun = await db.query(`select status from public.ingestion_runs where id=$1`, [controlRunId]);
+if (pausedRun.rows[0].status !== "paused") throw new Error(`Ingestion pause failed: ${JSON.stringify(pausedRun.rows)}`);
+// Terminal failure = dead letter: not claimable until an admin resumes it.
+await db.exec(`update public.ingestion_runs set status='failed',completed_at=now(),next_attempt_at=now()-interval '1 minute',attempts=1,locked_at=null where id='${controlRunId}'`);
+const deadLetterClaims = await db.query(`select * from public.claim_ingestion_runs('verify-dead-letter-worker',5)`);
+if (deadLetterClaims.rows.length !== 0) throw new Error(`Dead-letter run was claimable: ${JSON.stringify(deadLetterClaims.rows)}`);
+await db.query(`select public.control_ingestion_run($1,'resume')`, [controlRunId]);
+const resumedRun = await db.query(`select status,attempts,completed_at,current_page from public.ingestion_runs where id=$1`, [controlRunId]);
+if (resumedRun.rows[0].status !== "scheduled" || Number(resumedRun.rows[0].attempts) !== 0 || resumedRun.rows[0].completed_at !== null || resumedRun.rows[0].current_page !== "3") {
+  throw new Error(`Dead-letter resume with checkpoint failed: ${JSON.stringify(resumedRun.rows)}`);
+}
+const resumedClaims = await db.query(`select id,current_page from public.claim_ingestion_runs('verify-resume-worker',5)`);
+if (resumedClaims.rows.length !== 1 || String(resumedClaims.rows[0].id) !== controlRunId || resumedClaims.rows[0].current_page !== "3") {
+  throw new Error(`Resumed run claim failed: ${JSON.stringify(resumedClaims.rows)}`);
+}
+await db.query(`select public.control_ingestion_run($1,'cancel')`, [controlRunId]);
+const cancelledRun = await db.query(`select status from public.ingestion_runs where id=$1`, [controlRunId]);
+if (cancelledRun.rows[0].status !== "cancelled") throw new Error(`Ingestion cancel failed: ${JSON.stringify(cancelledRun.rows)}`);
+const controlAudit = await db.query(`select count(*)::int as count from public.audit_logs where tenant_id='00000000-0000-0000-0000-000000000001' and entity_type='ingestion_run' and action in ('ingestion_run.pause','ingestion_run.resume','ingestion_run.cancel')`);
+if (Number(controlAudit.rows[0].count) !== 3) throw new Error(`Ingestion run controls were not audited: ${JSON.stringify(controlAudit.rows)}`);
+console.log("Executed dashboard/list aggregation, ingestion quota, run-control, dead-letter resume and duplicate-run protection runtime paths.");
 await db.close();

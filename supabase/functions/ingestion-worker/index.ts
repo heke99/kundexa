@@ -1,5 +1,9 @@
 import { createClient } from "npm:@supabase/supabase-js@2.110.7";
 import { decryptJson, encryptJson } from "../_shared/crypto.ts";
+import {
+  getScraperAdapter, identityFieldMapping, isPathAllowedByRobots, mergeContract, parseWithContract,
+  validateScraperFilter, type ScraperAdapter,
+} from "../_shared/providers.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -46,8 +50,9 @@ type Permission = {
   status: string;
 };
 type Account = { configuration: JsonObject | null; credentials_ciphertext: string | null; status: string };
-type Provider = { provider: string; field_mapping: Record<string, string> | null; discovery_configuration: JsonObject | null; status: string };
+type Provider = { provider: string; field_mapping: Record<string, string> | null; discovery_configuration: JsonObject | null; status: string; source_class: string };
 type FieldPermission = { field_key: string; may_fetch: boolean; may_store: boolean };
+type RateLimit = { minimum_delay_ms: number; timeout_ms: number } | null;
 type Credentials = { headers?: Record<string, string>; query?: Record<string, string>; apiKey?: string; apiKeyHeader?: string };
 
 type AdapterConfig = {
@@ -71,7 +76,14 @@ type AdapterConfig = {
   max_pages_per_run?: number;
   delimiter?: string;
   timeout_ms?: number;
+  minimum_delay_ms?: number;
 };
+
+const WORKER_USER_AGENT = "KundexaBot/1.0 (+https://kundexa.se/bot)";
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, ms)));
+}
 
 class WorkerError extends Error {
   constructor(message: string, readonly retryable = false, readonly delaySeconds = 60, readonly details: JsonObject = {}) { super(message); }
@@ -175,28 +187,64 @@ async function loadContext(run: Run) {
   const { data: job, error: jobError } = await supabase.from("ingestion_jobs").select("*").eq("id", run.ingestion_job_id).single();
   if (jobError || !job) throw new WorkerError(`ingestion_job_load_failed:${jobError?.message ?? "missing"}`);
   const typedJob = job as Job;
-  const [providerResult, accountResult, permissionResult, fieldsResult] = await Promise.all([
-    supabase.from("data_providers").select("provider,field_mapping,discovery_configuration,status").eq("id", typedJob.data_provider_id).single(),
+  const [providerResult, accountResult, permissionResult, fieldsResult, rateResult] = await Promise.all([
+    supabase.from("data_providers").select("provider,field_mapping,discovery_configuration,status,source_class").eq("id", typedJob.data_provider_id).single(),
     typedJob.provider_account_id ? supabase.from("provider_accounts").select("configuration,credentials_ciphertext,status").eq("id", typedJob.provider_account_id).single() : Promise.resolve({ data: null, error: null }),
     supabase.from("provider_permissions").select("id,allowed_domains,allowed_paths,raw_storage_allowed,status").eq("id", typedJob.permission_id).single(),
     supabase.from("provider_field_permissions").select("field_key,may_fetch,may_store").eq("permission_id", typedJob.permission_id).eq("entity_type", typedJob.entity_type),
+    typedJob.provider_account_id ? supabase.from("provider_rate_limits").select("minimum_delay_ms,timeout_ms,quota_key").eq("provider_account_id", typedJob.provider_account_id).order("quota_key") : Promise.resolve({ data: null, error: null }),
   ]);
   if (!providerResult.data || providerResult.error) throw new WorkerError("provider_not_found");
   if (!permissionResult.data || permissionResult.error) throw new WorkerError("permission_not_found");
   if (providerResult.data.status !== "active" || permissionResult.data.status !== "active") throw new WorkerError("provider_or_permission_inactive");
   if (typedJob.provider_account_id && (!accountResult.data || accountResult.data.status !== "active")) throw new WorkerError("provider_account_inactive");
+  const rateRows = (rateResult.data ?? []) as Array<{ minimum_delay_ms: number; timeout_ms: number; quota_key: string }>;
+  const rateLimit = rateRows.find((row) => row.quota_key === "ingestion") ?? rateRows[0] ?? null;
   return {
     job: typedJob,
     provider: providerResult.data as Provider,
     account: accountResult.data as Account | null,
     permission: permissionResult.data as Permission,
     fieldPermissions: (fieldsResult.data ?? []) as FieldPermission[],
+    rateLimit: rateLimit as RateLimit,
   };
+}
+
+// Robots-regler respekteras för skrapkällor. Systemet försöker aldrig kringgå
+// blockeringar: en disallow avbryter körningen som terminalt fel.
+async function assertRobotsAllowed(url: URL, cache: Map<string, string | null>) {
+  if (!cache.has(url.origin)) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      const response = await fetch(`${url.origin}/robots.txt`, { headers: { "user-agent": WORKER_USER_AGENT }, redirect: "manual", signal: controller.signal });
+      clearTimeout(timer);
+      cache.set(url.origin, response.ok ? await response.text() : null);
+    } catch {
+      cache.set(url.origin, null);
+    }
+  }
+  const robots = cache.get(url.origin);
+  if (robots && !isPathAllowedByRobots(robots, url.pathname + url.search)) {
+    throw new WorkerError("robots_disallowed", false, 0, { path: url.pathname });
+  }
 }
 
 async function executeRun(run: Run) {
   const context = await loadContext(run);
+  const adapter: ScraperAdapter | null = getScraperAdapter(context.job.adapter_key);
+  const adapterDefaults: Partial<AdapterConfig> = adapter ? {
+    endpoint_template: adapter.defaults.searchEndpointTemplate,
+    format: "html_regex",
+    page_parameter: adapter.defaults.pageParameter,
+    page_start: adapter.defaults.pageStart,
+    page_size: adapter.defaults.pageSize,
+    max_pages_per_run: adapter.defaults.maxPagesPerRun,
+    timeout_ms: adapter.defaults.timeoutMs,
+    minimum_delay_ms: adapter.defaults.minimumDelayMs,
+  } : {};
   const config = {
+    ...adapterDefaults,
     ...(context.provider.discovery_configuration ?? {}),
     ...(context.account?.configuration ?? {}),
     ...(context.job.adapter_configuration ?? {}),
@@ -204,21 +252,40 @@ async function executeRun(run: Run) {
   if (!config.endpoint_template) throw new WorkerError("ingestion_endpoint_missing");
   const credentials: Credentials = context.account?.credentials_ciphertext ? await decryptJson<Credentials>(context.account.credentials_ciphertext, encryptionKey) : {};
   const permitted = new Set(context.fieldPermissions.filter((f) => f.may_fetch && f.may_store).map((f) => f.field_key));
-  const mapping = { ...(context.provider.field_mapping ?? {}), ...(config.field_mapping ?? {}) };
+  const mapping = { ...(adapter ? identityFieldMapping(adapter) : {}), ...(context.provider.field_mapping ?? {}), ...(config.field_mapping ?? {}) };
+  const filterVariables = adapter ? adapter.buildSearchVariables(validateScraperFilter(context.job.filter_definition ?? {})) : {};
   const maxRecords = Math.min(context.job.max_records, Math.max(0, run.requested_records - run.fetched_records));
+  const minimumDelayMs = Math.max(0, Number(context.rateLimit?.minimum_delay_ms ?? config.minimum_delay_ms ?? 0));
+  const robotsCache = new Map<string, string | null>();
   let processed = 0;
-  let page = Number(run.next_page ?? run.current_page ?? config.page_start ?? 1);
+  // Återupptagning: next_page pekar på nästa sida; current_page är senast slutförda.
+  let page = run.next_page != null && run.next_page !== ""
+    ? Number(run.next_page)
+    : run.current_page != null && run.current_page !== ""
+      ? Number(run.current_page) + 1
+      : Number(config.page_start ?? 1);
   const maxPages = Math.max(1, Math.min(Number(config.max_pages_per_run ?? 100), 1000));
   let nextPageToken: string | null = null;
 
   for (let pageIndex = 0; pageIndex < maxPages && processed < maxRecords; pageIndex++) {
-    const variables: Record<string, string> = { page: String(page), limit: String(config.page_size ?? 100), entity_type: context.job.entity_type };
-    for (const [key, value] of Object.entries(context.job.filter_definition ?? {})) variables[key] = String(value ?? "");
+    const variables: Record<string, string> = { page: String(page), limit: String(config.page_size ?? 100), entity_type: context.job.entity_type, ...filterVariables };
+    if (!adapter) for (const [key, value] of Object.entries(context.job.filter_definition ?? {})) variables[key] = String(value ?? "");
     const url = assertProviderUrl(interpolate(config.endpoint_template, variables), context.permission);
     for (const [key, value] of Object.entries(config.query ?? {})) url.searchParams.set(key, interpolate(String(value), variables));
     for (const [key, value] of Object.entries(credentials.query ?? {})) url.searchParams.set(key, String(value));
     if (config.page_parameter) url.searchParams.set(config.page_parameter, String(page));
-    const headers = new Headers({ accept: "application/json,text/csv,text/html,application/x-ndjson" });
+    if (context.provider.source_class === "permitted_scrape") await assertRobotsAllowed(url, robotsCache);
+
+    // Atomisk kvotreservation per externt anrop; vid uttömd kvot pausas körningen
+    // med retry vid nästa kvotfönster och fortsätter från checkpointen.
+    const { data: reservation, error: reserveError } = await supabase.rpc("reserve_provider_ingestion_usage", { p_run_id: run.id, p_units: 1 });
+    if (reserveError) throw new WorkerError(`usage_reservation_failed:${reserveError.message}`, true, 60);
+    if (isRecord(reservation) && reservation.allowed === false) {
+      throw new WorkerError("provider_quota_exhausted", true, Math.max(1, Number(reservation.retryAfterSeconds ?? 60)));
+    }
+    if (pageIndex > 0 && minimumDelayMs > 0) await sleep(minimumDelayMs + Math.floor(Math.random() * Math.min(1000, minimumDelayMs)));
+
+    const headers = new Headers({ accept: "application/json,text/csv,text/html,application/x-ndjson", "user-agent": WORKER_USER_AGENT });
     for (const [key, value] of Object.entries(config.headers ?? {})) headers.set(key, interpolate(String(value), variables));
     for (const [key, value] of Object.entries(credentials.headers ?? {})) headers.set(key, String(value));
     if (credentials.apiKey) headers.set(credentials.apiKeyHeader || "Authorization", credentials.apiKeyHeader ? credentials.apiKey : `Bearer ${credentials.apiKey}`);
@@ -254,6 +321,7 @@ async function executeRun(run: Run) {
       if (format === "json") { parsedRoot = JSON.parse(text); const items = pathValue(parsedRoot, config.items_path ?? config.response_root_path); records = Array.isArray(items) ? items.filter(isRecord) : isRecord(items) ? [items] : []; }
       else if (format === "ndjson") records = text.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line)).filter(isRecord);
       else if (format === "csv") records = parseCsv(text, config.delimiter ?? ",");
+      else if (adapter) records = parseWithContract(text, mergeContract(adapter.listContract, { record_regex: config.record_regex, regex_mapping: config.regex_mapping }));
       else records = parseHtmlRegex(text, config);
     } catch (error) {
       await supabase.from("raw_payloads").update({ parse_status: "failed", parse_error: String(error) }).eq("id", rawPayloadId);
@@ -267,19 +335,34 @@ async function executeRun(run: Run) {
     const fingerprint = await sha256([...new Set(records.flatMap((r) => Object.keys(r)))].sort().join("|"));
     for (const record of records) {
       if (processed >= maxRecords) break;
-      const external = pathValue(record, config.external_id_path) ?? record.external_id ?? record.id ?? record.organization_number ?? record.organizationNumber;
-      if (external == null || String(external).trim() === "") continue;
       const facts: Array<{ field_key: string; field_value: unknown; value_hash: string; confidence: number }> = [];
       const canonical: JsonObject = {};
-      for (const [field, sourcePath] of Object.entries(mapping)) {
-        if (!permitted.has(field)) continue;
-        const raw = pathValue(record, sourcePath);
-        if (raw == null || raw === "") continue;
-        const value = CANONICAL_FIELDS.has(field) ? normalizeCanonical(field, raw) : raw;
-        if (value == null) continue;
-        facts.push({ field_key: field, field_value: value, value_hash: await sha256(stableJson(value)), confidence: 0.8 });
-        if (CANONICAL_FIELDS.has(field)) canonical[field] = value;
+      let external: unknown;
+      if (adapter) {
+        // Adaptern validerar och normaliserar; osäkra fält utelämnas och poster
+        // utan stabil identifierare (t.ex. ogiltigt organisationsnummer) hoppas över.
+        const normalized = adapter.normalizeRecord(record, context.job.entity_type === "person" ? "person" : "organization");
+        if (!normalized) continue;
+        external = normalized.external_id;
+        for (const [field, value] of Object.entries(normalized.fields)) {
+          if (!permitted.has(field) || value == null || value === "") continue;
+          facts.push({ field_key: field, field_value: value, value_hash: await sha256(stableJson(value)), confidence: normalized.confidence[field] ?? 0.7 });
+          if (CANONICAL_FIELDS.has(field)) canonical[field] = value as string | number | boolean;
+        }
+      } else {
+        external = pathValue(record, config.external_id_path) ?? record.external_id ?? record.id ?? record.organization_number ?? record.organizationNumber;
+        if (external == null || String(external).trim() === "") continue;
+        for (const [field, sourcePath] of Object.entries(mapping)) {
+          if (!permitted.has(field)) continue;
+          const raw = pathValue(record, sourcePath);
+          if (raw == null || raw === "") continue;
+          const value = CANONICAL_FIELDS.has(field) ? normalizeCanonical(field, raw) : raw;
+          if (value == null) continue;
+          facts.push({ field_key: field, field_value: value, value_hash: await sha256(stableJson(value)), confidence: 0.8 });
+          if (CANONICAL_FIELDS.has(field)) canonical[field] = value;
+        }
       }
+      if (external == null || String(external).trim() === "") continue;
       if (!facts.length) continue;
       if (!canonical.canonical_name) canonical.canonical_name = String(record.name ?? record.company_name ?? external);
       const sourceTimestampValue = pathValue(record, config.source_timestamp_path);

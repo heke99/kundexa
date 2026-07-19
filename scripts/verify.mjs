@@ -207,6 +207,146 @@ const templatesAction = await readFile(join(root, "src/app/actions/contracts.ts"
 assert.match(templatesAction, /renderStrictTemplate/, "Contract creation must render the approved version, not hard-coded terms");
 assert.match(templatesAction, /create_contract_draft_v2/, "Contract creation must bind template, price and legal snapshots atomically");
 
+// ---------------------------------------------------------------------------
+// Scraperadaptrar: normalisering, kontraktsparsning, robots och filtermodell.
+// Modulen transpileras och exekveras så att fixtures testar verklig kod.
+// ---------------------------------------------------------------------------
+
+const providersSource = await readFile(join(root, "supabase/functions/_shared/providers.ts"), "utf8");
+const providersTranspiled = ts.transpileModule(providersSource, {
+  fileName: "providers.ts",
+  reportDiagnostics: true,
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+});
+assert.equal((providersTranspiled.diagnostics ?? []).filter((d) => d.category === ts.DiagnosticCategory.Error).length, 0, "providers.ts contains TypeScript syntax errors");
+const providers = await import(`data:text/javascript;base64,${Buffer.from(providersTranspiled.outputText).toString("base64")}`);
+
+// Normalisering: organisationsnummer (Luhn), telefon (E.164), belopp och heltal.
+assert.equal(providers.normalizeOrganizationNumber("556016-0680"), "5560160680");
+assert.equal(providers.normalizeOrganizationNumber("16556016-0680"), "5560160680");
+assert.equal(providers.normalizeOrganizationNumber("556016-0681"), null, "Invalid Luhn must be rejected");
+assert.equal(providers.normalizeOrganizationNumber("12345"), null);
+assert.equal(providers.normalizeSwedishPhone("08-719 00 00"), "+4687190000");
+assert.equal(providers.normalizeSwedishPhone("+46 70 123 45 67"), "+46701234567");
+assert.equal(providers.normalizeSwedishPhone("0046701234567"), "+46701234567");
+assert.equal(providers.normalizeSwedishPhone("banan"), null);
+assert.equal(providers.parseSwedishAmount("12 345 tkr"), 12_345_000);
+assert.equal(providers.parseSwedishAmount("473 479 mkr"), 473_479_000_000);
+assert.equal(providers.parseSwedishAmount("(1 200) tkr"), -1_200_000);
+assert.equal(providers.parseSwedishInteger("1 200"), 1200);
+assert.equal(providers.parseSwedishInteger("10-19"), 10);
+assert.equal(providers.normalizeSwedishPostalCode("164 83"), "16483");
+
+// Robots-regler: disallow respekteras, allow med längre matchning vinner.
+const robotsFixture = "User-agent: *\nDisallow: /private\nAllow: /private/open\n\nUser-agent: badbot\nDisallow: /";
+assert.equal(providers.isPathAllowedByRobots(robotsFixture, "/companies"), true);
+assert.equal(providers.isPathAllowedByRobots(robotsFixture, "/private/data"), false);
+assert.equal(providers.isPathAllowedByRobots(robotsFixture, "/private/open/page"), true);
+assert.equal(providers.isPathAllowedByRobots("User-agent: *\nDisallow: /", "/anything"), false);
+
+// Central filtermodell: validering och variabelbygge delas av alla lager.
+const validatedFilter = providers.validateScraperFilter({ query: "bygg", county: "Skåne län", employeeMin: "5", employeeMax: 50, organizationNumber: "556016-0680", onlyActive: true });
+assert.equal(validatedFilter.organizationNumber, "5560160680");
+assert.equal(validatedFilter.employeeMin, 5);
+assert.throws(() => providers.validateScraperFilter({ employeeMin: 10, employeeMax: 2 }), /employee_range_invalid/);
+assert.throws(() => providers.validateScraperFilter({ organizationNumber: "1234" }), /invalid_organization_number/);
+const searchVariables = providers.SCRAPER_ADAPTERS.allabolag.buildSearchVariables(validatedFilter);
+assert.equal(searchVariables.county, "Skåne län");
+assert.equal(searchVariables.only_active, "true");
+assert.ok(searchVariables.query.includes("bygg"));
+
+// Allabolag-fixtur: korrekt parsning, normalisering och avvisad ogiltig identitet.
+const allabolagFixture = await readFile(join(root, "scripts/fixtures/allabolag-search.html"), "utf8");
+const allabolagAdapter = providers.SCRAPER_ADAPTERS.allabolag;
+const allabolagRaw = providers.parseWithContract(allabolagFixture, allabolagAdapter.listContract);
+assert.equal(allabolagRaw.length, 3, "Allabolag fixture must yield three raw records");
+const allabolagNormalized = allabolagRaw.map((record) => allabolagAdapter.normalizeRecord(record, "organization")).filter(Boolean);
+assert.equal(allabolagNormalized.length, 2, "Invalid organisation numbers must be dropped");
+const ericsson = allabolagNormalized[0];
+assert.equal(ericsson.external_id, "5560160680");
+assert.equal(ericsson.fields.canonical_name, "Telefonaktiebolaget LM Ericsson");
+assert.equal(ericsson.fields.postal_code, "16483");
+assert.equal(ericsson.fields.county, "Stockholms län", "HTML entities must be decoded");
+assert.equal(ericsson.fields.phone_e164, "+4687190000");
+assert.equal(ericsson.fields.employee_count, 1200);
+assert.equal(ericsson.fields.revenue, 263_351_000_000);
+assert.equal(ericsson.fields.registration_date, "1918-08-18");
+assert.equal(ericsson.confidence.organization_number, 1);
+const volvo = allabolagNormalized[1];
+assert.equal(volvo.external_id, "5560360793");
+assert.equal(volvo.fields.employee_count, 10, "Employee ranges must fall back to the lower bound");
+assert.equal(volvo.fields.revenue, 473_479_000_000);
+assert.equal(volvo.fields.result, -1_200_000, "Parenthesised amounts must be negative");
+assert.equal(volvo.fields.website, undefined, "Missing fields must be omitted, not guessed");
+
+// Merinfo-fixtur: person- och företagsposter, restriktiv identitetshantering.
+const merinfoFixture = await readFile(join(root, "scripts/fixtures/merinfo-search.html"), "utf8");
+const merinfoAdapter = providers.SCRAPER_ADAPTERS.merinfo;
+const merinfoRaw = providers.parseWithContract(merinfoFixture, merinfoAdapter.listContract);
+assert.equal(merinfoRaw.length, 3, "Merinfo fixture must yield three raw records");
+const merinfoPerson = merinfoAdapter.normalizeRecord(merinfoRaw[0], "person");
+assert.equal(merinfoPerson.external_id, "p-9a8b7c6d", "Persons must use the stable source identifier");
+assert.equal(merinfoPerson.fields.canonical_name, "Anna Andersson");
+assert.equal(merinfoPerson.fields.role_title, "Styrelseledamot");
+assert.equal(merinfoPerson.fields.company_organization_number, "5560160680");
+assert.equal(merinfoPerson.fields.phone_e164, "+46701234567");
+const merinfoCompany = merinfoAdapter.normalizeRecord(merinfoRaw[1], "organization");
+assert.equal(merinfoCompany.external_id, "5560360793", "Companies dedupe on the organisation number");
+assert.equal(merinfoCompany.fields.organization_number, "5560360793");
+assert.equal(merinfoAdapter.normalizeRecord(merinfoRaw[2], "person"), null, "Records without a stable identifier must be skipped");
+
+// Förändrad HTML-struktur: fält försvinner i stället för att gissas, vilket
+// låter parser_observations/karantän slå till nedströms via match rate.
+const mutatedFixture = allabolagFixture.replaceAll("data-orgnr", "data-organisation").replaceAll("company-name", "changed-name");
+const mutatedRecords = providers.parseWithContract(mutatedFixture, allabolagAdapter.listContract)
+  .map((record) => allabolagAdapter.normalizeRecord(record, "organization")).filter(Boolean);
+assert.equal(mutatedRecords.length, 0, "Structure changes must not produce fabricated identities");
+
+// Oförändrad data: samma normaliserade fält ger samma stabila JSON-hash-underlag.
+const repeatParse = providers.parseWithContract(allabolagFixture, allabolagAdapter.listContract)
+  .map((record) => allabolagAdapter.normalizeRecord(record, "organization")).filter(Boolean);
+assert.deepEqual(repeatParse[0].fields, ericsson.fields, "Parsing must be deterministic for change detection");
+
+// Statiska driftinvarianter för scraper- och prestandaflödet.
+assert.match(ingestionWorker, /reserve_provider_ingestion_usage/, "Ingestion worker must reserve quota per external call");
+assert.match(ingestionWorker, /assertRobotsAllowed/, "Ingestion worker must honour robots rules for scrape sources");
+assert.match(ingestionWorker, /minimum_delay_ms|minimumDelayMs/, "Ingestion worker must apply the configured inter-request delay");
+assert.match(ingestionWorker, /getScraperAdapter/, "Ingestion worker must route scraper adapters");
+assert.match(ingestionWorker, /KundexaBot/, "Ingestion worker must identify itself with a user agent");
+const dataWorkerSource = await readFile(join(root, "supabase/functions/data-worker/index.ts"), "utf8");
+assert.match(dataWorkerSource, /executeScraperDetail/, "Data worker must support scraper detail enrichment");
+assert.match(dataWorkerSource, /robots_disallowed/, "Data worker must honour robots rules");
+for (const pattern of [
+  /create or replace function public\.dashboard_overview/i,
+  /create or replace function public\.customer_list_overview/i,
+  /create or replace function public\.customer_list_candidate_counts/i,
+  /create or replace function public\.control_ingestion_run/i,
+  /create or replace function public\.reserve_provider_ingestion_usage/i,
+  /ingestion_runs_one_open_per_job_idx/i,
+  /revoke all on function public\.reserve_provider_ingestion_usage[\s\S]*from public, ?anon, ?authenticated/i,
+  /calls_list_capacity_idx/i,
+  /activities_callback_pick_idx/i,
+]) assert.match(sql, pattern, `Missing performance/scraper migration invariant: ${pattern}`);
+const dashboardPage = await readFile(join(root, "src/app/(dashboard)/app/page.tsx"), "utf8");
+assert.match(dashboardPage, /dashboard_overview/, "Dashboard must use the aggregated overview RPC");
+assert.doesNotMatch(dashboardPage, /from\('deals'\)\.select\('value,status'\)/, "Dashboard must not fetch unbounded deal rows");
+const listsPage = await readFile(join(root, "src/app/(dashboard)/app/lists/page.tsx"), "utf8");
+assert.match(listsPage, /customer_list_overview/, "Lists page must use aggregated member counts");
+const companiesPage = await readFile(join(root, "src/app/(dashboard)/app/companies/page.tsx"), "utf8");
+assert.match(companiesPage, /\.range\(/, "Companies page must paginate");
+assert.doesNotMatch(companiesPage, /select\('\*'\)/, "Companies page must not select every column");
+const customersPage = await readFile(join(root, "src/app/(dashboard)/app/customers/page.tsx"), "utf8");
+assert.match(customersPage, /\.range\(/, "Customers page must paginate");
+const directorySource = await readFile(join(root, "src/lib/directory.ts"), "utf8");
+assert.match(directorySource, /23505/, "Concurrent enrichment requests must dedupe on the idempotency key");
+const dataSourcesPage = await readFile(join(root, "src/app/(dashboard)/app/data-sources/page.tsx"), "utf8");
+assert.match(dataSourcesPage, /configureScraperProvider/, "Scraper providers must be configurable from the admin UI");
+assert.match(dataSourcesPage, /controlIngestionRun/, "Ingestion runs must be controllable from the admin UI");
+assert.match(dataSourcesPage, /dead_letter/, "Dead-letter runs must be visible to administrators");
+const adminActions = await readFile(join(root, "src/app/actions/admin.ts"), "utf8");
+assert.match(adminActions, /validateScraperFilter/, "Scraper filters must be validated centrally");
+assert.match(adminActions, /person_data_approved/, "Person data requires explicit documented approval");
+
 const nextConfig = await readFile(join(root, "next.config.ts"), "utf8");
 const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 assert.doesNotMatch(nextConfig, /outputFileTracingExcludes/, "Production tracing must not exclude framework runtime files");

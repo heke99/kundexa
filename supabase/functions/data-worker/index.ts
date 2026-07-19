@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2.110.7";
 import { decryptJson, encryptJson } from "../_shared/crypto.ts";
+import { getScraperAdapter, isPathAllowedByRobots, mergeContract, parseWithContract } from "../_shared/providers.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -34,7 +35,10 @@ type Provider = {
   integration_type: string;
   field_mapping: Record<string, string> | null;
   status: string;
+  source_class: string;
 };
+
+const WORKER_USER_AGENT = "KundexaBot/1.0 (+https://kundexa.se/bot)";
 
 type Account = {
   configuration: Record<string, unknown> | null;
@@ -166,7 +170,7 @@ function safeHeaders(headers: Headers) {
 
 async function loadJobContext(job: Job) {
   const [providerResult, accountResult, permissionResult, entityResult, fieldsResult, parserResult] = await Promise.all([
-    supabase.from("data_providers").select("provider,adapter_key,integration_type,field_mapping,status").eq("tenant_id", job.tenant_id).eq("id", job.data_provider_id).single(),
+    supabase.from("data_providers").select("provider,adapter_key,integration_type,field_mapping,status,source_class").eq("tenant_id", job.tenant_id).eq("id", job.data_provider_id).single(),
     supabase.from("provider_accounts").select("configuration,credentials_ciphertext,status").eq("tenant_id", job.tenant_id).eq("id", job.provider_account_id).single(),
     supabase.from("provider_permissions").select("allowed_domains,allowed_paths,raw_storage_allowed,status").eq("tenant_id", job.tenant_id).eq("id", job.permission_id).single(),
     supabase.from("master_entities").select("id,entity_type,external_primary_id,organization_number").eq("id", job.master_entity_id).single(),
@@ -188,8 +192,9 @@ async function loadJobContext(job: Job) {
   };
 }
 
-async function executeGenericJson(job: Job) {
-  const context = await loadJobContext(job);
+type JobContext = Awaited<ReturnType<typeof loadJobContext>>;
+
+async function executeGenericJson(job: Job, context: JobContext) {
   if (context.provider.status !== "active" || context.account.status !== "active" || context.permission.status !== "active") {
     throw new WorkerError("provider_configuration_inactive");
   }
@@ -303,6 +308,113 @@ async function executeGenericJson(job: Job) {
   return data;
 }
 
+// Robots-regler respekteras för skrapkällor; disallow avbryter jobbet terminalt.
+async function assertRobotsAllowed(url: URL) {
+  let robots: string | null = null;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    const response = await fetch(`${url.origin}/robots.txt`, { headers: { "user-agent": WORKER_USER_AGENT }, redirect: "manual", signal: controller.signal });
+    clearTimeout(timer);
+    robots = response.ok ? await response.text() : null;
+  } catch {
+    robots = null;
+  }
+  if (robots && !isPathAllowedByRobots(robots, url.pathname + url.search)) {
+    throw new WorkerError("robots_disallowed", false, 0, { path: url.pathname });
+  }
+}
+
+// Detaljberikning via scraperadapter (Allabolag/Merinfo): hämtar och parsar en
+// enskild källsida, normaliserar fälten och fullföljer via samma kanoniska
+// complete_enrichment_job som API-baserade providers. Kvot och samtidighet
+// reserveras redan atomiskt i claim_enrichment_jobs.
+async function executeScraperDetail(job: Job, context: JobContext) {
+  const adapter = getScraperAdapter(context.provider.adapter_key);
+  if (!adapter) throw new WorkerError(`unsupported_provider_adapter:${context.provider.adapter_key ?? "missing"}`);
+  if (context.provider.status !== "active" || context.account.status !== "active" || context.permission.status !== "active") {
+    throw new WorkerError("provider_configuration_inactive");
+  }
+  const entityType = context.entity.entity_type === "person" ? "person" : "organization";
+  if (!adapter.entityTypes.includes(entityType)) throw new WorkerError(`adapter_entity_type_not_supported:${entityType}`);
+  const externalIdentifier = context.entity.external_primary_id || context.entity.organization_number;
+  if (!externalIdentifier) throw new WorkerError("entity_external_identifier_missing");
+
+  const config = (context.account.configuration ?? {}) as AdapterConfig & { record_regex?: string; regex_mapping?: Record<string, string> };
+  const endpointTemplate = config.endpoint_template || adapter.defaults.detailEndpointTemplate;
+  const variables = {
+    external_identifier: externalIdentifier,
+    organization_number: context.entity.organization_number ?? externalIdentifier,
+    purpose: job.purpose,
+    entity_type: context.entity.entity_type,
+  };
+  const url = assertProviderUrl(interpolate(endpointTemplate, variables), context.permission);
+  if (context.provider.source_class === "permitted_scrape") await assertRobotsAllowed(url);
+
+  const timeoutMs = Math.max(1000, Math.min(Number(config.timeout_ms ?? adapter.defaults.timeoutMs), 120000));
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let response: Response;
+  try {
+    response = await fetch(url, { method: "GET", headers: { accept: "text/html,application/xhtml+xml", "user-agent": WORKER_USER_AGENT }, redirect: "manual", signal: controller.signal });
+  } catch (error) {
+    throw new WorkerError(error instanceof DOMException && error.name === "AbortError" ? "provider_timeout" : "provider_network_error", true, 60, { cause: String(error) });
+  } finally {
+    clearTimeout(timer);
+  }
+  if (response.status >= 300 && response.status < 400) throw new WorkerError("provider_redirect_forbidden");
+  const retryAfter = Math.max(1, Math.min(Number(response.headers.get("retry-after") ?? 60), 3600));
+  if (response.status === 429 || response.status >= 500) throw new WorkerError(`provider_http_${response.status}`, true, retryAfter);
+  if (!response.ok) throw new WorkerError(`provider_http_${response.status}`);
+  const text = await response.text();
+  if (new TextEncoder().encode(text).length > MAX_RESPONSE_BYTES) throw new WorkerError("provider_response_too_large");
+
+  const contract = mergeContract(adapter.detailContract, { record_regex: config.record_regex, regex_mapping: config.regex_mapping });
+  const rawRecords = parseWithContract(text, contract);
+  const normalized = rawRecords.length ? adapter.normalizeRecord(rawRecords[0], entityType) : null;
+  if (!normalized) throw new WorkerError("provider_detail_parse_failed", false, 0, { adapter: adapter.key });
+
+  const permitted = new Set(context.fieldPermissions.filter((field) => field.may_fetch && field.may_store).map((field) => field.field_key));
+  const requested = new Set(job.requested_fields.length ? job.requested_fields : [...permitted]);
+  const facts: Array<{ field_key: string; field_value: unknown; value_hash: string; confidence: number }> = [];
+  const canonical: Record<string, string | number> = {};
+  for (const [field, value] of Object.entries(normalized.fields)) {
+    if (!permitted.has(field) || !requested.has(field) || value == null || value === "") continue;
+    facts.push({ field_key: field, field_value: value, value_hash: await sha256(stableJson(value)), confidence: normalized.confidence[field] ?? 0.7 });
+    if (CANONICAL_FIELDS.has(field) && (typeof value === "string" || typeof value === "number")) canonical[field] = value;
+  }
+  if (!facts.length) throw new WorkerError("provider_no_permitted_fields_returned");
+
+  if (context.parser?.expected_fields?.length) {
+    const present = new Set(facts.map((fact) => fact.field_key));
+    const matchRate = context.parser.expected_fields.filter((field: string) => present.has(field)).length / context.parser.expected_fields.length;
+    if (matchRate < Number(context.parser.minimum_match_rate ?? 0.9)) {
+      throw new WorkerError("parser_match_rate_below_threshold", false, 0, { matchRate, expected: context.parser.expected_fields });
+    }
+  }
+
+  const payloadHash = await sha256(text);
+  const encryptedPayload = context.permission.raw_storage_allowed ? await encryptJson({ raw: text }, encryptionKey) : null;
+  const { data, error } = await supabase.rpc("complete_enrichment_job", {
+    p_job_id: job.id,
+    p_external_identifier: normalized.external_id,
+    p_facts: facts,
+    p_canonical: canonical,
+    p_payload_sha256: payloadHash,
+    p_payload_ciphertext: encryptedPayload,
+    p_content_type: response.headers.get("content-type") ?? "text/html",
+    p_http_status: response.status,
+    p_response_headers: safeHeaders(response.headers),
+    p_request_id: response.headers.get("x-request-id"),
+    p_source_timestamp: null,
+    p_parser_version_id: context.parser?.id ?? null,
+    p_actual_cost: Number(config.estimated_cost_per_call ?? 0),
+    p_metadata: { adapter: adapter.key, provider: context.provider.provider, source_url: normalized.source_url ?? url.origin + url.pathname, parser_version: context.parser?.version ?? null },
+  });
+  if (error) throw new WorkerError(`complete_enrichment_failed:${error.message}`, true, 60);
+  return data;
+}
+
 async function failJob(job: Job, error: unknown) {
   const normalized = error instanceof WorkerError ? error : new WorkerError(error instanceof Error ? error.message : String(error), true, 60);
   await supabase.rpc("fail_enrichment_job", {
@@ -328,7 +440,9 @@ Deno.serve(async (request) => {
   const results: unknown[] = [];
   for (const job of jobs) {
     try {
-      results.push({ id: job.id, status: "completed", result: await executeGenericJson(job) });
+      const context = await loadJobContext(job);
+      const scraperAdapter = getScraperAdapter(context.provider.adapter_key);
+      results.push({ id: job.id, status: "completed", result: scraperAdapter ? await executeScraperDetail(job, context) : await executeGenericJson(job, context) });
     } catch (jobError) {
       results.push(await failJob(job, jobError));
     }

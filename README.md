@@ -128,4 +128,5 @@ Koden är en verifierad produktgrund. Skarp drift kräver fortfarande externa av
 - [Säkerhet](docs/SECURITY.md)
 - [Produktionsgrindar](docs/PRODUCTION_GATES.md)
 - [Verifieringsrapport](docs/VERIFICATION_2026-07-19.md)
+- [Prestanda- och scraperrapport](docs/PERFORMANCE_AND_SCRAPERS_2026-07-19.md)
 - [Leveransmanifest](DELIVERY-MANIFEST.md)

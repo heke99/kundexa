@@ -15,21 +15,14 @@ export default async function ListsPage({ searchParams }: { searchParams: Promis
   const params = await searchParams;
   const context = await getAppContext();
   const supabase = await createClient();
-  const [{ data: lists }, { data: members }, { data: sellers }, { data: teams }] = await Promise.all([
-    supabase.from("customer_lists").select("*").order("priority", { ascending: false }).order("created_at", { ascending: false }),
-    supabase.from("customer_list_members").select("list_id,state"),
-    supabase.from("customer_list_seller_assignments").select("list_id,status"),
+  // Medlems- och säljarantal aggregeras i databasen; hela medlemstabellen hämtas inte längre.
+  const [{ data: lists }, { data: overview }, { data: teams }] = await Promise.all([
+    supabase.from("customer_lists").select("id,name,description,list_type,team_id,dialing_mode,status,priority,created_at").order("priority", { ascending: false }).order("created_at", { ascending: false }).limit(200),
+    supabase.rpc("customer_list_overview"),
     supabase.from("teams").select("id,name").order("name"),
   ]);
-  const memberCounts = new Map<string, { total: number; open: number }>();
-  for (const row of members ?? []) {
-    const current = memberCounts.get(row.list_id) ?? { total: 0, open: 0 };
-    current.total += 1;
-    if (!["completed", "blocked"].includes(row.state)) current.open += 1;
-    memberCounts.set(row.list_id, current);
-  }
-  const sellerCounts = new Map<string, number>();
-  for (const row of sellers ?? []) if (row.status === "active") sellerCounts.set(row.list_id, (sellerCounts.get(row.list_id) ?? 0) + 1);
+  type ListOverviewRow = { list_id: string; total_members: number; open_members: number; active_sellers: number };
+  const counts = new Map<string, ListOverviewRow>(((overview ?? []) as ListOverviewRow[]).map((row) => [row.list_id, row]));
   const teamNames = new Map((teams ?? []).map((team) => [team.id, team.name]));
   const mayManage = can(context.role, "lists.manage");
 
@@ -42,13 +35,13 @@ export default async function ListsPage({ searchParams }: { searchParams: Promis
         <CardContent style={{ padding: 0 }}>
           <DataTable headers={["Lista", "Läge", "Team", "Säljare", "Kvar", "Status", "Skapad"]}>
             {lists?.map((list) => {
-              const counts = memberCounts.get(list.id) ?? { total: 0, open: 0 };
+              const listCounts = counts.get(list.id) ?? { total_members: 0, open_members: 0, active_sellers: 0 };
               return <tr key={list.id}>
                 <td><Link href={`/app/lists/${list.id}`}><strong>{list.name}</strong></Link><br /><span className="muted">{list.description ?? list.list_type}</span></td>
                 <td><Badge className={list.dialing_mode === "automatic" ? "badge-info" : ""}>{list.dialing_mode === "automatic" ? "Automatisk" : "Manuell"}</Badge></td>
                 <td>{list.team_id ? teamNames.get(list.team_id) ?? "Team" : "Organisation"}</td>
-                <td><Users size={14} /> {sellerCounts.get(list.id) ?? 0}</td>
-                <td>{counts.open} / {counts.total}</td>
+                <td><Users size={14} /> {Number(listCounts.active_sellers)}</td>
+                <td>{Number(listCounts.open_members)} / {Number(listCounts.total_members)}</td>
                 <td><Badge className={list.status === "active" ? "badge-success" : list.status === "paused" ? "badge-warning" : ""}>{list.status}</Badge></td>
                 <td>{formatDate(list.created_at)}<br />{list.status === "active" ? <Link className="muted" href={`/app/dialer/lists/${list.id}`}><PhoneCall size={13} /> Ring</Link> : null}</td>
               </tr>;

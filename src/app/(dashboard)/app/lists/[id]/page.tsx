@@ -18,7 +18,8 @@ export default async function ListDetailPage({ params, searchParams }: {
   const { id } = await params;
   const query = await searchParams;
   const supabase = await createClient();
-  const [{ data: list }, { data: mayManage }, { data: members }, { data: assignments }, { data: memberships }, { data: teamMembers }, { data: customers }, { data: dispositions }, { data: segments }, { data: candidates }, { data: phoneNumbers }] = await Promise.all([
+  // Kandidatstatus och medlemsantal aggregeras i databasen i stället för att hämta alla rader.
+  const [{ data: list }, { data: mayManage }, { data: members }, { data: assignments }, { data: memberships }, { data: teamMembers }, { data: customers }, { data: dispositions }, { data: segments }, { data: candidateCounts }, { data: listOverview }, { data: phoneNumbers }] = await Promise.all([
     supabase.from("customer_lists").select("*").eq("id", id).single(),
     supabase.rpc("can_manage_customer_list", { p_list_id: id }),
     supabase.from("customer_list_members").select("id,customer_id,assigned_user_id,state,attempts,outcome,next_attempt_at,customers(display_name,phone_e164,city,do_not_call)").eq("list_id", id).order("priority", { ascending: false }).limit(500),
@@ -28,10 +29,13 @@ export default async function ListDetailPage({ params, searchParams }: {
     supabase.from("customers").select("id,display_name,phone_e164,city,lifecycle").in("lifecycle", ["prospect", "lead", "customer"]).is("deleted_at", null).order("updated_at", { ascending: false }).limit(500),
     supabase.from("list_dispositions").select("key,label,outcome_group,terminal,retry_after_minutes,requires_callback,requires_order").eq("list_id", id).eq("active", true).order("sort_order"),
     supabase.from("segments").select("id,name,segment_type,last_refreshed_at").eq("active", true).order("name"),
-    supabase.from("customer_list_contact_candidates").select("status").eq("list_id", id),
+    supabase.rpc("customer_list_candidate_counts", { p_list_id: id }),
+    supabase.rpc("customer_list_overview", { p_list_id: id }),
     supabase.from("phone_numbers").select("id,number_e164").eq("status", "active").eq("supports_voice", true).order("number_e164"),
   ]);
   if (!list) notFound();
+  const memberStats = (listOverview?.[0] ?? { total_members: members?.length ?? 0, open_members: 0, active_sellers: 0 }) as { total_members: number; open_members: number; active_sellers: number };
+  const policyCounts = (candidateCounts ?? { approved: 0, pendingNix: 0, blocked: 0, pending: 0 }) as { approved: number; pendingNix: number; blocked: number; pending: number };
   const selectedSellers = new Set((assignments ?? []).filter((item) => item.status === "active").map((item) => item.user_id));
   const teamUserIds = list.team_id ? new Set((teamMembers ?? []).filter((item) => item.team_id === list.team_id).map((item) => item.user_id)) : null;
   const availableSellers = (memberships ?? []).filter((member) => !teamUserIds || teamUserIds.has(member.user_id));
@@ -49,8 +53,8 @@ export default async function ListDetailPage({ params, searchParams }: {
     {query.saved ? <div className="notice" style={{ marginBottom: 16 }}>Listan är uppdaterad och synkroniserad med säljarvyn.</div> : null}
     {query.imported ? <div className="notice" style={{ marginBottom: 16 }}>Prospekteringen är synkroniserad: {query.imported}</div> : null}
     <div className="grid grid-4" style={{ marginBottom: 18 }}>
-      <Card><CardContent><strong>{members?.length ?? 0}</strong><div className="muted">Prospekt totalt</div></CardContent></Card>
-      <Card><CardContent><strong>{members?.filter((member) => !["completed", "blocked"].includes(member.state)).length ?? 0}</strong><div className="muted">Kvar att bearbeta</div></CardContent></Card>
+      <Card><CardContent><strong>{Number(memberStats.total_members)}</strong><div className="muted">Prospekt totalt</div></CardContent></Card>
+      <Card><CardContent><strong>{Number(memberStats.open_members)}</strong><div className="muted">Kvar att bearbeta</div></CardContent></Card>
       <Card><CardContent><strong>{selectedSellers.size}</strong><div className="muted">Aktiva säljare</div></CardContent></Card>
       <Card><CardContent><strong>{String(list.allowed_start_time).slice(0, 5)}–{String(list.allowed_end_time).slice(0, 5)}</strong><div className="muted">Tillåten ringtid</div></CardContent></Card>
     </div>
@@ -112,7 +116,7 @@ export default async function ListDetailPage({ params, searchParams }: {
               {segments?.map((segment) => <option key={segment.id} value={segment.id}>{segment.name} · {segment.segment_type === "dynamic" ? "dynamiskt" : "ögonblicksbild"}</option>)}
             </SelectField>
             <p className="muted">Filtret körs mot den befintliga katalogen. Godkända träffar blir kanoniska kundkort och listmedlemmar; spärrade träffar rings aldrig.</p>
-            <div className="muted">Policyresultat: {candidates?.filter((item) => item.status === "approved").length ?? 0} godkända · {candidates?.filter((item) => item.status === "pending_nix").length ?? 0} inväntar NIX · {candidates?.filter((item) => item.status === "blocked").length ?? 0} blockerade</div>
+            <div className="muted">Policyresultat: {Number(policyCounts.approved)} godkända · {Number(policyCounts.pendingNix)} inväntar NIX · {Number(policyCounts.blocked)} blockerade</div>
             <button className="button button-secondary" disabled={!segments?.length}>Kör segment och synkronisera</button>
           </form></CardContent>
         </Card>
