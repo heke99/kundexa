@@ -18,6 +18,10 @@ export type Database = {
         Row: {
           assigned_team_id: string | null
           assigned_user_id: string | null
+          callback_scope: string | null
+          call_id: string | null
+          claim_expires_at: string | null
+          claimed_by: string | null
           completed_at: string | null
           contract_id: string | null
           created_at: string
@@ -27,9 +31,12 @@ export type Database = {
           description: string | null
           due_at: string | null
           id: string
+          handled_at: string | null
+          list_id: string | null
           metadata: Json
           priority: string
           recurrence_rule: string | null
+          snoozed_until: string | null
           status: Database["public"]["Enums"]["activity_status"]
           tenant_id: string
           title: string
@@ -39,6 +46,10 @@ export type Database = {
         Insert: {
           assigned_team_id?: string | null
           assigned_user_id?: string | null
+          callback_scope?: string | null
+          call_id?: string | null
+          claim_expires_at?: string | null
+          claimed_by?: string | null
           completed_at?: string | null
           contract_id?: string | null
           created_at?: string
@@ -48,9 +59,12 @@ export type Database = {
           description?: string | null
           due_at?: string | null
           id?: string
+          handled_at?: string | null
+          list_id?: string | null
           metadata?: Json
           priority?: string
           recurrence_rule?: string | null
+          snoozed_until?: string | null
           status?: Database["public"]["Enums"]["activity_status"]
           tenant_id: string
           title: string
@@ -60,6 +74,10 @@ export type Database = {
         Update: {
           assigned_team_id?: string | null
           assigned_user_id?: string | null
+          callback_scope?: string | null
+          call_id?: string | null
+          claim_expires_at?: string | null
+          claimed_by?: string | null
           completed_at?: string | null
           contract_id?: string | null
           created_at?: string
@@ -69,9 +87,12 @@ export type Database = {
           description?: string | null
           due_at?: string | null
           id?: string
+          handled_at?: string | null
+          list_id?: string | null
           metadata?: Json
           priority?: string
           recurrence_rule?: string | null
+          snoozed_until?: string | null
           status?: Database["public"]["Enums"]["activity_status"]
           tenant_id?: string
           title?: string
@@ -572,13 +593,16 @@ export type Database = {
       }
       calls: {
         Row: {
+          after_call_completed_at: string | null
           answered_at: string | null
+          callback_activity_id: string | null
           callback_token_hash: string
           campaign_id: string | null
           cost: number | null
           created_at: string
           currency: string | null
           customer_id: string | null
+          dialer_session_id: string | null
           direction: Database["public"]["Enums"]["communication_direction"]
           disposition: string | null
           duration_seconds: number | null
@@ -586,6 +610,8 @@ export type Database = {
           from_number: string
           id: string
           idempotency_key: string | null
+          list_id: string | null
+          list_member_id: string | null
           metadata: Json
           notes: string | null
           phone_number_id: string | null
@@ -602,13 +628,16 @@ export type Database = {
           wait_seconds: number | null
         }
         Insert: {
+          after_call_completed_at?: string | null
           answered_at?: string | null
+          callback_activity_id?: string | null
           callback_token_hash: string
           campaign_id?: string | null
           cost?: number | null
           created_at?: string
           currency?: string | null
           customer_id?: string | null
+          dialer_session_id?: string | null
           direction: Database["public"]["Enums"]["communication_direction"]
           disposition?: string | null
           duration_seconds?: number | null
@@ -616,6 +645,8 @@ export type Database = {
           from_number: string
           id?: string
           idempotency_key?: string | null
+          list_id?: string | null
+          list_member_id?: string | null
           metadata?: Json
           notes?: string | null
           phone_number_id?: string | null
@@ -632,13 +663,16 @@ export type Database = {
           wait_seconds?: number | null
         }
         Update: {
+          after_call_completed_at?: string | null
           answered_at?: string | null
+          callback_activity_id?: string | null
           callback_token_hash?: string
           campaign_id?: string | null
           cost?: number | null
           created_at?: string
           currency?: string | null
           customer_id?: string | null
+          dialer_session_id?: string | null
           direction?: Database["public"]["Enums"]["communication_direction"]
           disposition?: string | null
           duration_seconds?: number | null
@@ -646,6 +680,8 @@ export type Database = {
           from_number?: string
           id?: string
           idempotency_key?: string | null
+          list_id?: string | null
+          list_member_id?: string | null
           metadata?: Json
           notes?: string | null
           phone_number_id?: string | null
@@ -2088,27 +2124,172 @@ export type Database = {
           },
         ]
       }
+      customer_list_seller_assignments: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          daily_capacity: number | null
+          ends_at: string | null
+          id: string
+          list_id: string
+          starts_at: string | null
+          status: string
+          tenant_id: string
+          updated_at: string
+          user_id: string
+          weight: number
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          daily_capacity?: number | null
+          ends_at?: string | null
+          id?: string
+          list_id: string
+          starts_at?: string | null
+          status?: string
+          tenant_id: string
+          updated_at?: string
+          user_id: string
+          weight?: number
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          daily_capacity?: number | null
+          ends_at?: string | null
+          id?: string
+          list_id?: string
+          starts_at?: string | null
+          status?: string
+          tenant_id?: string
+          updated_at?: string
+          user_id?: string
+          weight?: number
+        }
+        Relationships: []
+      }
+      customer_list_contact_candidates: {
+        Row: {
+          created_at: string
+          customer_id: string
+          evaluated_at: string | null
+          list_id: string
+          policy_reason: string | null
+          segment_id: string | null
+          status: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          customer_id: string
+          evaluated_at?: string | null
+          list_id: string
+          policy_reason?: string | null
+          segment_id?: string | null
+          status?: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          customer_id?: string
+          evaluated_at?: string | null
+          list_id?: string
+          policy_reason?: string | null
+          segment_id?: string | null
+          status?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "customer_list_contact_candidates_tenant_id_list_id_fkey"
+            columns: ["tenant_id", "list_id"]
+            isOneToOne: false
+            referencedRelation: "customer_lists"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "customer_list_contact_candidates_tenant_id_customer_id_fkey"
+            columns: ["tenant_id", "customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "customer_list_contact_candidates_tenant_id_segment_id_fkey"
+            columns: ["tenant_id", "segment_id"]
+            isOneToOne: false
+            referencedRelation: "segments"
+            referencedColumns: ["tenant_id", "id"]
+          },
+        ]
+      }
       customer_list_members: {
         Row: {
           added_by: string | null
+          assigned_user_id: string | null
+          attempts: number
+          claim_expires_at: string | null
+          claimed_by: string | null
+          completed_at: string | null
           created_at: string
           customer_id: string
+          id: string
+          last_call_id: string | null
+          last_contacted_at: string | null
           list_id: string
+          next_attempt_at: string | null
+          outcome: string | null
+          priority: number
+          source_segment_id: string | null
+          state: string
           tenant_id: string
+          updated_at: string
         }
         Insert: {
           added_by?: string | null
+          assigned_user_id?: string | null
+          attempts?: number
+          claim_expires_at?: string | null
+          claimed_by?: string | null
+          completed_at?: string | null
           created_at?: string
           customer_id: string
+          id?: string
+          last_call_id?: string | null
+          last_contacted_at?: string | null
           list_id: string
+          next_attempt_at?: string | null
+          outcome?: string | null
+          priority?: number
+          source_segment_id?: string | null
+          state?: string
           tenant_id: string
+          updated_at?: string
         }
         Update: {
           added_by?: string | null
+          assigned_user_id?: string | null
+          attempts?: number
+          claim_expires_at?: string | null
+          claimed_by?: string | null
+          completed_at?: string | null
           created_at?: string
           customer_id?: string
+          id?: string
+          last_call_id?: string | null
+          last_contacted_at?: string | null
           list_id?: string
+          next_attempt_at?: string | null
+          outcome?: string | null
+          priority?: number
+          source_segment_id?: string | null
+          state?: string
           tenant_id?: string
+          updated_at?: string
         }
         Relationships: [
           {
@@ -2125,49 +2306,122 @@ export type Database = {
             referencedRelation: "customer_lists"
             referencedColumns: ["tenant_id", "id"]
           },
+          {
+            foreignKeyName: "customer_list_members_source_segment_fk"
+            columns: ["tenant_id", "source_segment_id"]
+            isOneToOne: false
+            referencedRelation: "segments"
+            referencedColumns: ["tenant_id", "id"]
+          },
         ]
       }
       customer_lists: {
         Row: {
+          allowed_days: number[]
+          allowed_end_time: string
+          allowed_start_time: string
+          allow_browse: boolean
+          allow_skip: boolean
           archived_at: string | null
+          auto_next_delay_seconds: number
+          callback_policy: string
           created_at: string
           description: string | null
+          dialing_mode: string
+          distribution_strategy: string
+          ends_at: string | null
           filter_definition: Json
           id: string
           is_locked: boolean
           list_type: string
+          lock_to_seller: boolean
+          max_attempts: number
           name: string
+          outbound_phone_number_id: string | null
           owner_user_id: string | null
+          priority: number
+          questionnaire: Json
+          required_disposition: boolean
+          retry_delay_minutes: number
+          script: string | null
+          settings: Json
+          starts_at: string | null
+          status: string
           team_id: string | null
           tenant_id: string
+          timezone: string
           updated_at: string
         }
         Insert: {
+          allowed_days?: number[]
+          allowed_end_time?: string
+          allowed_start_time?: string
+          allow_browse?: boolean
+          allow_skip?: boolean
           archived_at?: string | null
+          auto_next_delay_seconds?: number
+          callback_policy?: string
           created_at?: string
           description?: string | null
+          dialing_mode?: string
+          distribution_strategy?: string
+          ends_at?: string | null
           filter_definition?: Json
           id?: string
           is_locked?: boolean
           list_type?: string
+          lock_to_seller?: boolean
+          max_attempts?: number
           name: string
+          outbound_phone_number_id?: string | null
           owner_user_id?: string | null
+          priority?: number
+          questionnaire?: Json
+          required_disposition?: boolean
+          retry_delay_minutes?: number
+          script?: string | null
+          settings?: Json
+          starts_at?: string | null
+          status?: string
           team_id?: string | null
           tenant_id: string
+          timezone?: string
           updated_at?: string
         }
         Update: {
+          allowed_days?: number[]
+          allowed_end_time?: string
+          allowed_start_time?: string
+          allow_browse?: boolean
+          allow_skip?: boolean
           archived_at?: string | null
+          auto_next_delay_seconds?: number
+          callback_policy?: string
           created_at?: string
           description?: string | null
+          dialing_mode?: string
+          distribution_strategy?: string
+          ends_at?: string | null
           filter_definition?: Json
           id?: string
           is_locked?: boolean
           list_type?: string
+          lock_to_seller?: boolean
+          max_attempts?: number
           name?: string
+          outbound_phone_number_id?: string | null
           owner_user_id?: string | null
+          priority?: number
+          questionnaire?: Json
+          required_disposition?: boolean
+          retry_delay_minutes?: number
+          script?: string | null
+          settings?: Json
+          starts_at?: string | null
+          status?: string
           team_id?: string | null
           tenant_id?: string
+          timezone?: string
           updated_at?: string
         }
         Relationships: [
@@ -2942,6 +3196,60 @@ export type Database = {
             referencedColumns: ["tenant_id", "id"]
           },
         ]
+      }
+      dialer_sessions: {
+        Row: {
+          created_at: string
+          current_callback_activity_id: string | null
+          current_call_id: string | null
+          current_list_member_id: string | null
+          ended_at: string | null
+          id: string
+          last_seen_at: string
+          list_id: string
+          mode: string
+          paused_at: string | null
+          started_at: string
+          state: string
+          tenant_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          current_callback_activity_id?: string | null
+          current_call_id?: string | null
+          current_list_member_id?: string | null
+          ended_at?: string | null
+          id?: string
+          last_seen_at?: string
+          list_id: string
+          mode: string
+          paused_at?: string | null
+          started_at?: string
+          state?: string
+          tenant_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          current_callback_activity_id?: string | null
+          current_call_id?: string | null
+          current_list_member_id?: string | null
+          ended_at?: string | null
+          id?: string
+          last_seen_at?: string
+          list_id?: string
+          mode?: string
+          paused_at?: string | null
+          started_at?: string
+          state?: string
+          tenant_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
       }
       departments: {
         Row: {
@@ -4263,6 +4571,60 @@ export type Database = {
           },
         ]
       }
+      list_dispositions: {
+        Row: {
+          active: boolean
+          created_at: string
+          id: string
+          key: string
+          label: string
+          list_id: string
+          outcome_group: string
+          requires_callback: boolean
+          requires_note: boolean
+          requires_order: boolean
+          retry_after_minutes: number | null
+          sort_order: number
+          tenant_id: string
+          terminal: boolean
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          key: string
+          label: string
+          list_id: string
+          outcome_group: string
+          requires_callback?: boolean
+          requires_note?: boolean
+          requires_order?: boolean
+          retry_after_minutes?: number | null
+          sort_order?: number
+          tenant_id: string
+          terminal?: boolean
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          key?: string
+          label?: string
+          list_id?: string
+          outcome_group?: string
+          requires_callback?: boolean
+          requires_note?: boolean
+          requires_order?: boolean
+          retry_after_minutes?: number | null
+          sort_order?: number
+          tenant_id?: string
+          terminal?: boolean
+          updated_at?: string
+        }
+        Relationships: []
+      }
       legal_holds: {
         Row: {
           active: boolean
@@ -4845,36 +5207,81 @@ export type Database = {
           },
         ]
       }
-      notes: {
+      note_revisions: {
         Row: {
           body: string
+          changed_at: string
+          changed_by: string | null
+          id: number
+          is_pinned: boolean
+          note_id: string
+          tenant_id: string
+          visibility: string
+        }
+        Insert: {
+          body: string
+          changed_at?: string
+          changed_by?: string | null
+          id?: never
+          is_pinned: boolean
+          note_id: string
+          tenant_id: string
+          visibility: string
+        }
+        Update: {
+          body?: string
+          changed_at?: string
+          changed_by?: string | null
+          id?: never
+          is_pinned?: boolean
+          note_id?: string
+          tenant_id?: string
+          visibility?: string
+        }
+        Relationships: []
+      }
+      notes: {
+        Row: {
+          archived_at: string | null
+          body: string
+          call_id: string | null
           created_at: string
           created_by: string | null
           customer_id: string
           id: string
           is_pinned: boolean
+          list_id: string | null
+          note_type: string
           tenant_id: string
           updated_at: string
           visibility: string
         }
         Insert: {
+          archived_at?: string | null
           body: string
+          call_id?: string | null
           created_at?: string
           created_by?: string | null
           customer_id: string
           id?: string
           is_pinned?: boolean
+          list_id?: string | null
+          note_type?: string
           tenant_id: string
           updated_at?: string
           visibility?: string
         }
         Update: {
+          archived_at?: string | null
           body?: string
+          call_id?: string | null
           created_at?: string
           created_by?: string | null
           customer_id?: string
           id?: string
           is_pinned?: boolean
+          list_id?: string | null
+          note_type?: string
           tenant_id?: string
           updated_at?: string
           visibility?: string
@@ -6676,6 +7083,105 @@ export type Database = {
             referencedColumns: ["tenant_id", "id"]
           },
         ]
+      }
+      sales_order_items: {
+        Row: {
+          created_at: string
+          description: string
+          discount: number
+          id: string
+          line_total: number
+          order_id: string
+          price_version_id: string | null
+          product_id: string | null
+          quantity: number
+          tenant_id: string
+          unit_price: number
+        }
+        Insert: {
+          created_at?: string
+          description: string
+          discount?: number
+          id?: string
+          line_total?: number
+          order_id: string
+          price_version_id?: string | null
+          product_id?: string | null
+          quantity?: number
+          tenant_id: string
+          unit_price?: number
+        }
+        Update: {
+          created_at?: string
+          description?: string
+          discount?: number
+          id?: string
+          line_total?: number
+          order_id?: string
+          price_version_id?: string | null
+          product_id?: string | null
+          quantity?: number
+          tenant_id?: string
+          unit_price?: number
+        }
+        Relationships: []
+      }
+      sales_orders: {
+        Row: {
+          confirmed_at: string | null
+          created_at: string
+          currency: string
+          customer_id: string
+          discount_total: number
+          id: string
+          notes: string | null
+          order_number: string
+          owner_user_id: string | null
+          source_call_id: string | null
+          source_list_id: string | null
+          status: string
+          subtotal: number
+          tenant_id: string
+          total: number
+          updated_at: string
+        }
+        Insert: {
+          confirmed_at?: string | null
+          created_at?: string
+          currency?: string
+          customer_id: string
+          discount_total?: number
+          id?: string
+          notes?: string | null
+          order_number: string
+          owner_user_id?: string | null
+          source_call_id?: string | null
+          source_list_id?: string | null
+          status?: string
+          subtotal?: number
+          tenant_id: string
+          total?: number
+          updated_at?: string
+        }
+        Update: {
+          confirmed_at?: string | null
+          created_at?: string
+          currency?: string
+          customer_id?: string
+          discount_total?: number
+          id?: string
+          notes?: string | null
+          order_number?: string
+          owner_user_id?: string | null
+          source_call_id?: string | null
+          source_list_id?: string | null
+          status?: string
+          subtotal?: number
+          tenant_id?: string
+          total?: number
+          updated_at?: string
+        }
+        Relationships: []
       }
       segments: {
         Row: {
@@ -8829,6 +9335,10 @@ export type Database = {
         Args: { p_actor?: string; p_campaign_id: string; p_segment_id: string }
         Returns: Json
       }
+      materialize_segment_to_customer_list: {
+        Args: { p_list_id: string; p_segment_id: string }
+        Returns: Json
+      }
       merge_master_entities: {
         Args: {
           p_actor: string
@@ -8948,6 +9458,84 @@ export type Database = {
         }
         Returns: string
       }
+      add_customers_to_list: {
+        Args: { p_customer_ids: string[]; p_list_id: string }
+        Returns: number
+      }
+      can_manage_customer_list: {
+        Args: { p_list_id: string }
+        Returns: boolean
+      }
+      can_work_customer_list: {
+        Args: { p_list_id: string }
+        Returns: boolean
+      }
+      claim_next_list_member: {
+        Args: { p_list_id: string; p_session_id: string }
+        Returns: Json
+      }
+      claim_customer_callback: {
+        Args: { p_activity_id: string }
+        Returns: Json
+      }
+      complete_customer_callback: {
+        Args: { p_activity_id: string; p_notes?: string | null }
+        Returns: undefined
+      }
+      complete_dialer_work: {
+        Args: {
+          p_call_id: string
+          p_callback_due_at: string | null
+          p_callback_scope: string | null
+          p_create_order: boolean
+          p_disposition_key: string
+          p_idempotency_key: string
+          p_notes: string | null
+          p_product_id: string | null
+          p_quantity: number | null
+          p_unit_price: number | null
+        }
+        Returns: Json
+      }
+      complete_manual_call_work: {
+        Args: {
+          p_call_id: string
+          p_callback_due_at: string | null
+          p_callback_scope: string | null
+          p_disposition: string
+          p_notes: string | null
+        }
+        Returns: Json
+      }
+      create_managed_customer_list: {
+        Args: {
+          p_allow_browse: boolean
+          p_allow_skip: boolean
+          p_allowed_days: number[]
+          p_auto_next_delay_seconds: number
+          p_callback_policy: string
+          p_description: string
+          p_dialing_mode: string
+          p_end_time: string
+          p_list_type: string
+          p_max_attempts: number
+          p_name: string
+          p_priority: number
+          p_retry_delay_minutes: number
+          p_script: string
+          p_start_time: string
+          p_team_id: string | null
+        }
+        Returns: string
+      }
+      create_or_match_manual_prospect: {
+        Args: {
+          p_customer_type?: Database["public"]["Enums"]["customer_type"]
+          p_display_name: string
+          p_phone_e164: string
+        }
+        Returns: Json
+      }
       queue_outbound_call: {
         Args: {
           p_callback_token: string
@@ -8958,6 +9546,88 @@ export type Database = {
           p_voice_client_number: string
         }
         Returns: string
+      }
+      queue_list_outbound_call: {
+        Args: {
+          p_callback_activity_id: string | null
+          p_callback_token: string
+          p_callback_token_hash: string
+          p_idempotency_key: string
+          p_list_member_id: string
+          p_purpose?: string
+          p_session_id: string
+          p_voice_client_number: string
+        }
+        Returns: string
+      }
+      queue_callback_outbound_call: {
+        Args: {
+          p_activity_id: string
+          p_callback_token: string
+          p_callback_token_hash: string
+          p_customer_id: string
+          p_idempotency_key: string
+          p_purpose?: string
+          p_voice_client_number: string
+        }
+        Returns: string
+      }
+      reassign_customer_callback: {
+        Args: { p_activity_id: string; p_user_id: string }
+        Returns: undefined
+      }
+      release_list_member_claim: {
+        Args: { p_reason?: string; p_session_id: string }
+        Returns: undefined
+      }
+      schedule_customer_callback: {
+        Args: {
+          p_customer_id: string
+          p_description: string
+          p_due_at: string
+          p_list_id: string | null
+          p_scope: string
+          p_title: string
+        }
+        Returns: string
+      }
+      snooze_customer_callback: {
+        Args: { p_activity_id: string; p_snoozed_until: string }
+        Returns: undefined
+      }
+      set_customer_list_sellers: {
+        Args: { p_list_id: string; p_user_ids: string[] }
+        Returns: number
+      }
+      start_dialer_session: {
+        Args: { p_list_id: string }
+        Returns: string
+      }
+      update_customer_list_configuration: {
+        Args: {
+          p_allow_browse: boolean
+          p_allow_skip: boolean
+          p_auto_next_delay_seconds: number
+          p_callback_policy: string
+          p_description: string
+          p_dialing_mode: string
+          p_end_time: string
+          p_list_id: string
+          p_lock_to_seller: boolean
+          p_max_attempts: number
+          p_name: string
+          p_outbound_phone_number_id: string | null
+          p_priority: number
+          p_recording_enabled: boolean
+          p_retry_delay_minutes: number
+          p_script: string
+          p_start_time: string
+          p_starts_at: string | null
+          p_status: string
+          p_ends_at: string | null
+          p_timezone: string
+        }
+        Returns: undefined
       }
       queue_sms_message: {
         Args: {
@@ -9024,6 +9694,10 @@ export type Database = {
       }
       refresh_segment_materialization: {
         Args: { p_actor?: string; p_segment_id: string }
+        Returns: Json
+      }
+      refresh_due_dynamic_customer_lists: {
+        Args: { p_limit?: number }
         Returns: Json
       }
       reserve_usage_for_tenant: {

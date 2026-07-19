@@ -7,14 +7,14 @@ Kör exakt:
 ```bash
 cd ~/Downloads
 
-rm -rf kundexa-canonical-finalization-2026-07-16-patch
+rm -rf kundexa-prospecting-lists-dialer-2026-07-19-patch
 
-unzip -o kundexa-canonical-finalization-2026-07-16-patch.zip
+unzip -o kundexa-prospecting-lists-dialer-2026-07-19-patch.zip
 
 mkdir -p /Users/hekmath/Desktop/Projects/kundexa
 
 rsync -av --checksum --itemize-changes \
-  kundexa-canonical-finalization-2026-07-16-patch/payload/ \
+  kundexa-prospecting-lists-dialer-2026-07-19-patch/payload/ \
   /Users/hekmath/Desktop/Projects/kundexa/
 ```
 
@@ -23,7 +23,7 @@ Patchen innehåller inte `node_modules`, `.next`, `.git`, `.env.local` eller hem
 Alternativt:
 
 ```bash
-cd ~/Downloads/kundexa-canonical-finalization-2026-07-16-patch
+cd ~/Downloads/kundexa-prospecting-lists-dialer-2026-07-19-patch
 ./sync-to-project.sh /Users/hekmath/Desktop/Projects/kundexa
 ```
 
@@ -54,7 +54,7 @@ SUPABASE_PROJECT_REF=PROJECT_REF npm run types:generate
 npm run functions:deploy -- --project-ref PROJECT_REF
 ```
 
-Kommandot deployar alla sex workers.
+Kommandot deployar alla sex workers. `maintenance-worker` innehåller nu även automatisk synk av dynamiska ringlistor efter segmentsnapshot.
 
 ## Scheduler
 

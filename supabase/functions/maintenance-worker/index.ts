@@ -23,6 +23,8 @@ Deno.serve(async (request) => {
       segmentResults.push({ id: job.id, status: "failed", error: error.message });
     } else segmentResults.push({ id: job.id, status: "completed" });
   }
+  const { data: dynamicLists, error: dynamicListError } = await supabase.rpc("refresh_due_dynamic_customer_lists", { p_limit: Math.max(1, Math.min(Number(body.segmentLimit ?? 100), 500)) });
+  if (dynamicListError) return Response.json({ error: dynamicListError.message }, { status: 500 });
 
   const { data: geographyNormalized, error: geographyError } = await supabase.rpc("normalize_due_geographies", { p_limit: Math.max(1, Math.min(Number(body.geographyLimit ?? 500), 5000)) });
   if (geographyError) return Response.json({ error: geographyError.message }, { status: 500 });
@@ -34,5 +36,5 @@ Deno.serve(async (request) => {
     const { data, error } = await supabase.rpc("run_retention_maintenance", { p_tenant_id: tenant.id, p_limit: Math.max(1, Math.min(Number(body.retentionLimit ?? 1000), 10000)) });
     retentionResults.push(error ? { tenantId: tenant.id, error: error.message } : data);
   }
-  return Response.json({ workerId, geographyNormalized: Number(geographyNormalized ?? 0), segmentResults, retentionResults });
+  return Response.json({ workerId, geographyNormalized: Number(geographyNormalized ?? 0), segmentResults, dynamicLists, retentionResults });
 });

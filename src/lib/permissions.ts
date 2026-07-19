@@ -1,20 +1,20 @@
 export type Permission =
   | "customers.read" | "customers.write" | "customers.export" | "imports.manage"
-  | "campaigns.manage" | "products.manage"
+  | "campaigns.manage" | "lists.manage" | "products.manage"
   | "calls.read" | "calls.create" | "recordings.read"
   | "messages.read" | "messages.send"
   | "contracts.read" | "contracts.write" | "contracts.send"
-  | "automations.manage" | "users.manage" | "settings.manage" | "reports.read"
+  | "automations.manage" | "callbacks.create" | "orders.read" | "users.manage" | "settings.manage" | "reports.read"
   | "directory.read" | "directory.refresh" | "segments.manage" | "providers.manage";
 
 const rolePermissions: Record<string, Permission[]> = {
-  owner: ["customers.read", "customers.write", "customers.export", "imports.manage", "campaigns.manage", "products.manage", "calls.read", "calls.create", "recordings.read", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "automations.manage", "users.manage", "settings.manage", "reports.read", "directory.read", "directory.refresh", "segments.manage", "providers.manage"],
-  admin: ["customers.read", "customers.write", "customers.export", "imports.manage", "campaigns.manage", "products.manage", "calls.read", "calls.create", "recordings.read", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "automations.manage", "users.manage", "settings.manage", "reports.read", "directory.read", "directory.refresh", "segments.manage", "providers.manage"],
-  team_lead: ["customers.read", "customers.write", "imports.manage", "campaigns.manage", "calls.read", "calls.create", "recordings.read", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "reports.read", "directory.read", "directory.refresh", "segments.manage"],
-  sales: ["customers.read", "customers.write", "calls.read", "calls.create", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "directory.read"],
+  owner: ["customers.read", "customers.write", "customers.export", "imports.manage", "campaigns.manage", "lists.manage", "products.manage", "calls.read", "calls.create", "recordings.read", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "automations.manage", "callbacks.create", "orders.read", "users.manage", "settings.manage", "reports.read", "directory.read", "directory.refresh", "segments.manage", "providers.manage"],
+  admin: ["customers.read", "customers.write", "customers.export", "imports.manage", "campaigns.manage", "lists.manage", "products.manage", "calls.read", "calls.create", "recordings.read", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "automations.manage", "callbacks.create", "orders.read", "users.manage", "settings.manage", "reports.read", "directory.read", "directory.refresh", "segments.manage", "providers.manage"],
+  team_lead: ["customers.read", "customers.write", "imports.manage", "campaigns.manage", "lists.manage", "calls.read", "calls.create", "recordings.read", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "callbacks.create", "orders.read", "reports.read", "directory.read", "directory.refresh", "segments.manage"],
+  sales: ["customers.read", "customers.write", "calls.read", "calls.create", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "callbacks.create", "orders.read", "directory.read"],
   contract_manager: ["customers.read", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "reports.read", "directory.read"],
   quality: ["customers.read", "calls.read", "recordings.read", "contracts.read", "reports.read"],
-  backoffice: ["customers.read", "customers.write", "imports.manage", "messages.read", "messages.send", "contracts.read", "contracts.write", "directory.read", "directory.refresh", "segments.manage", "providers.manage"],
+  backoffice: ["customers.read", "customers.write", "imports.manage", "messages.read", "messages.send", "contracts.read", "contracts.write", "callbacks.create", "orders.read", "directory.read", "directory.refresh", "segments.manage", "providers.manage"],
   finance: ["customers.read", "contracts.read", "reports.read"],
   viewer: ["customers.read", "calls.read", "messages.read", "contracts.read", "reports.read", "directory.read"],
 };

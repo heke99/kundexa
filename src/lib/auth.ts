@@ -8,6 +8,7 @@ export type AppContext = {
   tenantId: string;
   tenantName: string;
   tenantLegalName: string;
+  tenantTimezone: string;
   role: string;
   teamIds: string[];
   platformRole: string | null;
@@ -28,7 +29,7 @@ export const getAppContext = cache(async (): Promise<AppContext> => {
 
   const { data: membership } = await supabase
     .from("tenant_memberships")
-    .select("role, tenants(name,legal_name)")
+    .select("role, tenants(name,legal_name,timezone)")
     .eq("tenant_id", profile.active_tenant_id)
     .eq("user_id", user.id)
     .eq("status", "active")
@@ -50,9 +51,10 @@ export const getAppContext = cache(async (): Promise<AppContext> => {
       .maybeSingle(),
   ]);
 
-  const tenantsValue = membership.tenants as unknown as { name?: string; legal_name?: string } | { name?: string; legal_name?: string }[] | null;
+  const tenantsValue = membership.tenants as unknown as { name?: string; legal_name?: string; timezone?: string } | { name?: string; legal_name?: string; timezone?: string }[] | null;
   const tenantName = Array.isArray(tenantsValue) ? tenantsValue[0]?.name : tenantsValue?.name;
   const tenantLegalName = Array.isArray(tenantsValue) ? tenantsValue[0]?.legal_name : tenantsValue?.legal_name;
+  const tenantTimezone = Array.isArray(tenantsValue) ? tenantsValue[0]?.timezone : tenantsValue?.timezone;
 
   return {
     userId: user.id,
@@ -60,6 +62,7 @@ export const getAppContext = cache(async (): Promise<AppContext> => {
     tenantId: profile.active_tenant_id,
     tenantName: tenantName ?? "Kundexa",
     tenantLegalName: tenantLegalName ?? tenantName ?? "Kundexa",
+    tenantTimezone: tenantTimezone ?? "Europe/Stockholm",
     role: membership.role,
     teamIds: (teamRows ?? []).map((row) => row.team_id),
     platformRole: platformMembership?.role ?? null,

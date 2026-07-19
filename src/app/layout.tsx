@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./dialer.css";
 
 export const metadata: Metadata = {
   title: { default: "Kundexa", template: "%s · Kundexa" },

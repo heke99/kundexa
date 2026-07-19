@@ -92,13 +92,16 @@ export async function setCallDisposition(form: FormData) {
   const disposition = value(form, "disposition");
   const notes = value(form, "notes");
   const supabase = await createClient();
-  const { data: call } = await supabase.from("calls").select("customer_id").eq("id", callId).single();
+  const { data: call } = await supabase.from("calls").select("customer_id,list_id,callback_activity_id").eq("id", callId).single();
+  if (call?.list_id) redirect(`/app/dialer/lists/${call.list_id}?error=Listans efterarbete måste slutföras i ringsessionen`);
   const { error } = await supabase.from("calls").update({ disposition, notes, status: "completed", ended_at: new Date().toISOString() }).eq("id", callId);
   if (error) throw error;
+  if (call?.callback_activity_id) await supabase.from("activities").update({ status: "completed", completed_at: new Date().toISOString(), handled_at: new Date().toISOString(), claimed_by: null, claim_expires_at: null }).eq("id", call.callback_activity_id);
   if (call?.customer_id) {
     const next = disposition === "callback" ? new Date(Date.now() + 86_400_000).toISOString() : null;
     await supabase.from("customers").update({ last_contact_at: new Date().toISOString(), next_activity_at: next }).eq("id", call.customer_id);
-    if (next) await supabase.from("activities").insert({ tenant_id: ctx.tenantId, customer_id: call.customer_id, type: "callback", title: "Återuppringning", due_at: next, assigned_user_id: ctx.userId, created_by: ctx.userId });
+    if (notes) await supabase.from("notes").insert({ tenant_id: ctx.tenantId, customer_id: call.customer_id, body: notes, note_type: "call", call_id: callId, created_by: ctx.userId });
+    if (next) await supabase.from("activities").insert({ tenant_id: ctx.tenantId, customer_id: call.customer_id, type: "callback", title: "Återuppringning", due_at: next, assigned_user_id: ctx.userId, callback_scope: "personal", created_by: ctx.userId });
   }
   revalidatePath("/app/calls");
 }

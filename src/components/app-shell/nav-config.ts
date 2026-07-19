@@ -1,5 +1,5 @@
 import {
-  Activity, BarChart3, Blocks, BookUser, Bot, BriefcaseBusiness, Building2, CalendarDays,
+  Activity, BarChart3, Blocks, BookUser, Bot, BriefcaseBusiness, Building2, CalendarCheck2, CalendarDays,
   CircleDollarSign, ClipboardList, Contact, FileSignature, FileText, Gauge, Headphones,
   Import, Inbox, KeyRound, LayoutList, ListFilter, Megaphone, MessageSquareText, Package,
   PhoneCall, PhoneForwarded, Plug, ScrollText, Search, Settings, ShieldCheck, Users, Webhook,
@@ -9,6 +9,7 @@ export const navGroups = [
   { label: "Arbete", items: [
     { href: "/app", label: "Dashboard", icon: Gauge },
     { href: "/app/dialer", label: "Dialer", icon: PhoneCall },
+    { href: "/app/callbacks", label: "Återkomster", icon: CalendarCheck2 },
     { href: "/app/calls", label: "Mina samtal", icon: Headphones },
     { href: "/app/queues", label: "Samtalsköer", icon: PhoneForwarded },
     { href: "/app/activities", label: "Aktiviteter", icon: Activity },
@@ -23,6 +24,7 @@ export const navGroups = [
     { href: "/app/imports", label: "Importer", icon: Import },
     { href: "/app/campaigns", label: "Kampanjer", icon: Megaphone },
     { href: "/app/pipeline", label: "Pipeline", icon: LayoutList },
+    { href: "/app/orders", label: "Order", icon: ClipboardList },
   ]},
   { label: "Avtal & kommunikation", items: [
     { href: "/app/contracts", label: "Avtal", icon: FileSignature },

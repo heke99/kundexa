@@ -13,6 +13,7 @@ const sql = (await Promise.all(migrations.map((name) => readFile(join(migrationD
 for (const table of [
   "tenants", "tenant_memberships", "teams", "offices", "departments", "tenant_legal_entities",
   "customers", "import_runs", "campaigns", "deals", "calls", "sms_messages", "email_messages",
+  "customer_list_seller_assignments", "customer_list_contact_candidates", "list_dispositions", "dialer_sessions", "note_revisions", "sales_orders", "sales_order_items",
   "contracts", "contract_versions", "contract_acceptances", "evidence_packages", "automation_rules",
   "automation_runs", "webhook_endpoints", "audit_logs", "outbox_jobs", "data_providers", "provider_accounts",
   "provider_permissions", "provider_field_permissions", "ingestion_jobs", "raw_payloads", "master_entities",
@@ -53,6 +54,8 @@ for (const [pattern, message] of [
   [/directory_search_summary_for_tenant/i, "full-filter counts are required"],
   [/refresh_segment_materialization/i, "dynamic segment materialization is required"],
   [/materialize_segment_to_campaign/i, "directory-to-campaign flow is required"],
+  [/materialize_segment_to_customer_list/i, "directory-to-list prospecting flow is required"],
+  [/refresh_due_dynamic_customer_lists/i, "dynamic lists must follow refreshed segment membership"],
   [/run_retention_maintenance/i, "retention execution is required"],
   [/ensure_tenant_import_provider/i, "tenant import provider isolation is required"],
   [/sync_tenant_import_to_directory/i, "CRM imports must synchronize to tenant catalogue masterdata"],
@@ -67,6 +70,14 @@ for (const [pattern, message] of [
   [/data_subject_export_for_request/i, "data subject export is required"],
   [/execute_data_subject_erasure/i, "controlled erasure is required"],
   [/anonymize_customer_record/i, "retention anonymization with suppression is required"],
+  [/can_manage_customer_list/i, "team-scoped list administration is required"],
+  [/claim_next_list_member/i, "atomic list-member claiming is required"],
+  [/queue_list_outbound_call/i, "list calls must extend the canonical call queue"],
+  [/complete_dialer_work/i, "dialer after-work must be transactional"],
+  [/complete_manual_call_work/i, "manual dialer after-work must be transactional"],
+  [/claim_customer_callback/i, "global callbacks must be claimed atomically"],
+  [/schedule_customer_callback/i, "personal and global callbacks are required"],
+  [/capture_note_revision/i, "note edit history is required"],
   [/revoke all on function public\.claim_outbox_jobs[\s\S]*from public, ?anon, ?authenticated/i, "outbox worker RPC must be service-only"],
   [/revoke all on function public\.claim_enrichment_jobs[\s\S]*from public, ?anon, ?authenticated/i, "enrichment worker RPC must be service-only"],
 ]) assert.match(sql, pattern, message);
@@ -140,6 +151,7 @@ for (const pattern of [/schedule_due_ingestion_jobs/, /claim_ingestion_runs/, /r
 assert.ok(ingestionWorker.indexOf("record_ingestion_raw_payload") < ingestionWorker.indexOf("complete_ingestion_record"), "Raw payload must be persisted before normalized records");
 const maintenanceWorker = await readFile(join(root, "supabase/functions/maintenance-worker/index.ts"), "utf8");
 assert.match(maintenanceWorker, /claim_segment_refresh_jobs/, "Maintenance worker must materialize dynamic segments");
+assert.match(maintenanceWorker, /refresh_due_dynamic_customer_lists/, "Maintenance worker must synchronize dynamic customer lists");
 assert.match(maintenanceWorker, /run_retention_maintenance/, "Maintenance worker must execute retention");
 assert.match(maintenanceWorker, /normalize_due_geographies/, "Maintenance worker must normalize geographic reference data");
 const complianceWorker = await readFile(join(root, "supabase/functions/compliance-worker/index.ts"), "utf8");
@@ -168,6 +180,18 @@ for (const relative of [
   "src/lib/domain/template.ts",
   "scripts/import-geography.mjs",
   "src/app/(dashboard)/app/compliance/page.tsx",
+  "src/app/(dashboard)/app/lists/[id]/page.tsx",
+  "src/app/(dashboard)/app/dialer/lists/[id]/page.tsx",
+  "src/app/(dashboard)/app/callbacks/page.tsx",
+  "src/app/(dashboard)/app/orders/page.tsx",
+  "src/components/list-dialer-workspace.tsx",
+  "src/hooks/use-webrtc-voice.ts",
+  "src/app/api/v1/dialer/sessions/route.ts",
+  "src/app/api/v1/dialer/next/route.ts",
+  "src/app/api/v1/dialer/complete/route.ts",
+  "src/app/api/v1/calls/complete/route.ts",
+  "src/app/actions/callbacks.ts",
+  "src/hooks/use-call-realtime.ts",
 ]) assert.ok((await stat(join(root, relative))).size > 100, `Missing implementation ${relative}`);
 
 const importRoute = await readFile(join(root, "src/app/api/v1/imports/file/route.ts"), "utf8");

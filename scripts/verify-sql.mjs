@@ -223,4 +223,64 @@ try {
 }
 if (!lastOwnerProtected) throw new Error("Last platform owner protection did not trigger");
 console.log("Executed idempotent onboarding and audited platform-administration runtime path.");
+
+// Execute the canonical prospect -> assigned list -> claim -> call -> after-work -> order path.
+await db.exec(`
+  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
+  insert into auth.users(id,email,raw_user_meta_data) values('00000000-0000-0000-0000-000000000020','seller@example.test','{"full_name":"Runtime Seller"}');
+  insert into public.tenant_memberships(tenant_id,user_id,role,status,joined_at) values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000020','sales','active',now());
+  insert into public.teams(id,tenant_id,name,is_default) values('00000000-0000-0000-0000-000000000026','00000000-0000-0000-0000-000000000001','Runtime Sales Team',true);
+  insert into public.team_members(tenant_id,team_id,user_id,role)
+    select '00000000-0000-0000-0000-000000000001',id,'00000000-0000-0000-0000-000000000020','member' from public.teams where tenant_id='00000000-0000-0000-0000-000000000001' and is_default limit 1;
+  update public.profiles set active_tenant_id='00000000-0000-0000-0000-000000000001' where id='00000000-0000-0000-0000-000000000020';
+  insert into public.customers(id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by)
+  values
+    ('00000000-0000-0000-0000-000000000021','00000000-0000-0000-0000-000000000001','company','prospect','Runtime Order Prospect','+46702222221',true,'legitimate_interest','00000000-0000-0000-0000-000000000002'),
+    ('00000000-0000-0000-0000-000000000025','00000000-0000-0000-0000-000000000001','company','prospect','Runtime Callback Prospect','+46702222225',true,'legitimate_interest','00000000-0000-0000-0000-000000000002');
+  insert into public.phone_numbers(id,tenant_id,number_e164,supports_voice,status,webhook_token_hash)
+  values('00000000-0000-0000-0000-000000000022','00000000-0000-0000-0000-000000000001','+46401234567',true,'active','runtime-hash')
+  on conflict(tenant_id,number_e164) do nothing;
+  insert into public.products(id,tenant_id,name,sku,active) values('00000000-0000-0000-0000-000000000023','00000000-0000-0000-0000-000000000001','Runtime Product','RUNTIME-PRODUCT',true);
+  insert into public.product_price_versions(id,tenant_id,product_id,version,currency,setup_fee,recurring_fee,valid_from,active)
+  values('00000000-0000-0000-0000-000000000024','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000023',1,'SEK',100,200,current_date,true);
+`);
+const defaultTeam = await db.query(`select id from public.teams where tenant_id='00000000-0000-0000-0000-000000000001' and is_default limit 1`);
+const runtimeTeamId = String(defaultTeam.rows[0].id);
+const runtimeList = await db.query(`select public.create_managed_customer_list('Runtime Dialer','Full runtime path','static',$1,'automatic',100,'00:00','23:59:59',7,60,0,'both',true,false,'Runtime script') as id`, [runtimeTeamId]);
+const runtimeListId = String(runtimeList.rows[0].id);
+await db.query(`select public.update_customer_list_configuration($1,'Runtime Dialer','Full runtime path','active','automatic',100,'00:00','23:59:59',7,60,0,'both',true,false,true,'Runtime script','Europe/Stockholm','{1,2,3,4,5,6,7}','00000000-0000-0000-0000-000000000022',true,null,null)`, [runtimeListId]);
+await db.query(`select public.set_customer_list_sellers($1,array['00000000-0000-0000-0000-000000000020']::uuid[])`, [runtimeListId]);
+await db.query(`select public.add_customers_to_list($1,array['00000000-0000-0000-0000-000000000021','00000000-0000-0000-0000-000000000025']::uuid[])`, [runtimeListId]);
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000020',false)`);
+const runtimeSession = await db.query(`select public.start_dialer_session($1) as id`, [runtimeListId]);
+const runtimeSessionId = String(runtimeSession.rows[0].id);
+const runtimeClaim = await db.query(`select public.claim_next_list_member($1,$2) as claim`, [runtimeListId, runtimeSessionId]);
+const firstClaim = runtimeClaim.rows[0].claim;
+if (firstClaim.empty || firstClaim.customer?.id !== '00000000-0000-0000-0000-000000000021') throw new Error(`Dialer claim failed: ${JSON.stringify(firstClaim)}`);
+const runtimeCall = await db.query(`select public.queue_list_outbound_call($1,$2,null,'runtime-token-hash','runtime-token','+46703333333','runtime-list-call','direct_marketing') as id`, [runtimeSessionId, firstClaim.memberId]);
+const runtimeCallId = String(runtimeCall.rows[0].id);
+const listCallPolicy = await db.query(`select from_number,recording_enabled from public.calls where id=$1`, [runtimeCallId]);
+if (listCallPolicy.rows[0].from_number !== '+46401234567' || listCallPolicy.rows[0].recording_enabled !== true) throw new Error(`List caller ID/recording policy failed: ${JSON.stringify(listCallPolicy.rows[0])}`);
+await db.query(`update public.calls set status='completed',ended_at=now(),duration_seconds=42 where id=$1`, [runtimeCallId]);
+const completedDialer = await db.query(`select public.complete_dialer_work($1,'order','Converted in runtime',null,null,true,'00000000-0000-0000-0000-000000000023',1,null,'runtime-after-work') as result`, [runtimeCallId]);
+if (!completedDialer.rows[0].result.orderId) throw new Error(`Dialer order completion failed: ${JSON.stringify(completedDialer.rows[0])}`);
+const orderState = await db.query(`select o.status,o.total,c.lifecycle,lm.state from public.sales_orders o join public.customers c on c.id=o.customer_id join public.customer_list_members lm on lm.list_id=o.source_list_id and lm.customer_id=o.customer_id where o.source_call_id=$1`, [runtimeCallId]);
+if (orderState.rows.length !== 1 || orderState.rows[0].status !== 'confirmed' || Number(orderState.rows[0].total) !== 300 || orderState.rows[0].lifecycle !== 'customer' || orderState.rows[0].state !== 'completed') throw new Error(`Dialer/order canonical state failed: ${JSON.stringify(orderState.rows)}`);
+await db.query(`insert into public.activities(tenant_id,customer_id,type,status,title,assigned_team_id,priority,due_at,created_by,list_id,callback_scope) values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000025','callback','open','Runtime Global Callback',$1,'high',now()-interval '1 minute','00000000-0000-0000-0000-000000000020',$2,'global')`, [runtimeTeamId, runtimeListId]);
+const callbackClaim = await db.query(`select public.claim_next_list_member($1,$2) as claim`, [runtimeListId, runtimeSessionId]);
+if (!callbackClaim.rows[0].claim.callbackActivityId || callbackClaim.rows[0].claim.customer?.id !== '00000000-0000-0000-0000-000000000025') throw new Error(`Global callback priority/claim failed: ${JSON.stringify(callbackClaim.rows[0].claim)}`);
+await db.query(`select public.release_list_member_claim($1,'end')`, [runtimeSessionId]);
+const releasedCallback = await db.query(`select status,claimed_by from public.activities where id=$1`, [callbackClaim.rows[0].claim.callbackActivityId]);
+if (releasedCallback.rows[0].status !== 'open' || releasedCallback.rows[0].claimed_by !== null) throw new Error(`Released list callback remained claimed: ${JSON.stringify(releasedCallback.rows[0])}`);
+const manualCallback = await db.query(`insert into public.activities(tenant_id,customer_id,type,status,title,assigned_team_id,priority,due_at,created_by,callback_scope) values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000025','callback','open','Runtime Standalone Callback',$1,'high',now()-interval '1 minute','00000000-0000-0000-0000-000000000020','global') returning id`, [runtimeTeamId]);
+const manualCallbackId = String(manualCallback.rows[0].id);
+const claimedManual = await db.query(`select public.claim_customer_callback($1) as result`, [manualCallbackId]);
+if (claimedManual.rows[0].result.customerId !== '00000000-0000-0000-0000-000000000025') throw new Error(`Standalone callback claim failed: ${JSON.stringify(claimedManual.rows[0])}`);
+const manualCall = await db.query(`select public.queue_callback_outbound_call($1,'00000000-0000-0000-0000-000000000025','runtime-manual-token-hash','runtime-manual-token','+46703333333','runtime-manual-callback-call','direct_marketing') as id`, [manualCallbackId]);
+const manualCallId = String(manualCall.rows[0].id);
+await db.query(`update public.calls set status='completed',ended_at=now(),duration_seconds=17 where id=$1`, [manualCallId]);
+await db.query(`select public.complete_manual_call_work($1,'interested','Handled atomically',null,null)`, [manualCallId]);
+const manualState = await db.query(`select a.status,c.disposition,c.callback_activity_id,(select count(*) from public.notes n where n.call_id=c.id) as notes from public.activities a join public.calls c on c.callback_activity_id=a.id where a.id=$1`, [manualCallbackId]);
+if (manualState.rows[0].status !== 'completed' || manualState.rows[0].disposition !== 'interested' || Number(manualState.rows[0].notes) !== 1) throw new Error(`Manual callback after-work failed: ${JSON.stringify(manualState.rows[0])}`);
+console.log("Executed prospecting/list assignment, atomic claim, canonical calls, caller-ID/recording policy, order after-work and personal/global callback runtime paths.");
 await db.close();

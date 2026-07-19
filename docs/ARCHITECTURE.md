@@ -12,7 +12,7 @@ Schedulers
   -> automation-runner  -> atomic service queues
   -> data-worker        -> permitted entity refresh
   -> ingestion-worker   -> discovery/crawl/import + checkpoints
-  -> maintenance-worker -> segments / geography / retention
+  -> maintenance-worker -> segments / dynamic lists / geography / retention
   -> compliance-worker  -> NIX provider + campaign resume
 ```
 
@@ -64,6 +64,16 @@ Ingestion kan fortsätta från kontrollpunkt, respekterar providergränser och s
 
 Alla avancerade filter använder samma databasfunktion. Dynamiska segment materialiseras till snapshots och memberships. Överföring till kampanj skapar tenantkoppling och kör central kontaktpolicy. Privatpersoner som kräver NIX stannar i `pending_nix` tills compliance-workern registrerat ett giltigt resultat.
 
+### Prospektering, listor och dialer
+
+`customers` är det enda kanoniska kund-/prospektkortet. `customer_list_members` anger endast att kunden ska bearbetas i en lista och lagrar köstatus, försök, utfall och tidsbegränsat claim. Samtal ligger alltid i `calls`, återkomster i `activities`, anteckningar i `notes` och order i `sales_orders`/`sales_order_items`.
+
+Ett sparat katalogsegment materialiseras genom `materialize_segment_to_customer_list`. Befintliga `tenant_entities` återanvänds, nya kundkort skapas bara när en katalogpost saknar tenantkoppling och varje kandidat körs genom samma kontakt-/NIX-policy som övriga kanaler. Compliance-workern frisläpper godkända `pending_nix`-kandidater. Maintenance-workern håller aktiva dynamiska listor synkroniserade med nya segmentsnapshots utan att radera redan bearbetad historik.
+
+Säljaren startar en `dialer_session`. `claim_next_list_member` prioriterar förfallna personliga/globala återkomster och använder radlås med `SKIP LOCKED`, claim-expiration och sessionsägarskap. `queue_list_outbound_call` återanvänder den kanoniska samtalskön och applicerar listans caller-ID och inspelningspolicy. `complete_dialer_work` kräver en bekräftat avslutad operatörscall och skriver utfall, anteckning, ny återkomst, order, kundlivscykel, liststatus och audit atomiskt innan nästa automatiska samtal får starta.
+
+Den manuella dialern använder samma kundmatchning, kontaktpolicy och outbox. `complete_manual_call_work` ger samma serverkontrollerade efterarbete för enstaka samtal. Globala fristående återkomster tas med ett atomiskt claim; listbundna återkomster tas i listkön.
+
 ### Geografi
 
 Ett versionsstyrt referensregister normaliserar kommun, län, postort/postnummer och koordinater. Radiesökning använder PostGIS när extensionen finns, annars en Haversine-fallback.
@@ -78,4 +88,6 @@ Retentionworker tar hänsyn till leverantörens lagringsrätt, tenantpolicy och 
 - Workers claimar jobb med lås och atomiska RPC:er.
 - Idempotensnycklar hindrar dubbla utskick, samtal, automationer, NIX- och berikningsjobb.
 - Kontaktpolicy och usage-reservation ligger i databasen så UI, API och workers använder samma regler.
+- Automatiskt nästa samtal är spärrat tills providerhangup och efterarbete är sparade; paus/avslut släpper både prospekt- och återkomstlås.
+- Supabase Realtime publicerar kanoniska samtals-, återkomst-, list- och ordertabeller; UI uppdaterar berörda vyer och badges utan att duplicera tillståndet.
 - Godkända avtals-, produkt-, pris- och juridikversioner snapshotas; accepterade versioner är immutable.

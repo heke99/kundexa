@@ -3,7 +3,7 @@
 ## Verifierat i denna leverans
 
 - Next.js/TypeScript-webbapp med server actions och versionerat REST-API
-- 22 reproducerbara SQL-migrationer med 123 publika tabeller, 183 funktioner och 249 RLS-policyer i SQL-testmiljön
+- 24 reproducerbara SQL-migrationer med 132 publika tabeller, 209 funktioner och 263 RLS-policyer i SQL-testmiljön
 - Tenant, juridiska bolag, kontor/avdelningar, medlemskap, roller, team och feature-flaggor
 - CRM-kunder, företag, prospekt, anteckningar, aktiviteter, listor, kampanjer och pipeline
 - Säker multi-formatimport: CSV, JSON, NDJSON, XML och grundläggande tabulär XLSX
@@ -13,7 +13,7 @@
 - Licensseparation mellan lagring, filtrering och visning
 - Source priority, identitetsnycklar, dublettförslag, merge och undo merge
 - Lokal katalogsökning med korrekta totalantal, freshnessfördelning, avancerade filter och radie
-- Dynamiska segment, snapshots, memberships, refresh och policykontrollerad kampanjmaterialisering
+- Dynamiska segment, snapshots, memberships, refresh och policykontrollerad materialisering till kampanj eller statisk/dynamisk ringlista
 - Providerkonton, permissions, tillåtna fält/domäner/paths, cacheomfattning, kvoter och parser-versioner
 - Discovery från tom katalog, femdagarsschema, prioritering, pagination, kontrollpunkter och återupptagning
 - Råpayload före parser, fingerprints, disappearance threshold, observations och karantän
@@ -22,7 +22,13 @@
 - Atomiska refresh-lås, providerkvoter, concurrency, retries och dead-letter-status
 - Geografiskt referensregister, normalisering och versionsstyrd import
 - NIX-konfiguration, kö, claim, provideradapter, separat giltighet och automatisk kampanjresume
-- Dialer, WebRTC-klient, samtalskö, calls/outbox och 46elks-callbacks
+- Många-till-många-säljtilldelning, manuella/automatiska listor, atomiska prospektclaims, återkomstprioritet och daglig säljargräns
+- Sekventiell WebRTC/power dialer med caller-ID, inspelningspolicy, realtidsstatus, providerhangup-gate och obligatoriskt transaktionellt efterarbete
+- Fristående manuell dialer med kanonisk nummermatchning, callbackkoppling, utfall, anteckning och kontaktspärr
+- Personliga/globala återkomster med claim, snooze, omfördelning, session-release, badges och tenanttidszon
+- Kanoniska anteckningar med typer, synlighet, fästning, revisionshistorik och arkivering
+- Samtalsbaserade order/orderrader med produkt-/prisspårning och livscykelkonvertering utan kunddubblett
+- Händelsebaserad list-/dialerrapportering och Realtime-publicering av berörda kanoniska tabeller
 - SMS/e-post med idempotens, central spärrpolicy, usage-reservation och kostnadstak
 - Produkter, prisversioner, avtalsmallar, godkännande, versionslås och legal/commercial snapshots
 - Avtalsutskick, accept, evidence manifest/PDF/hash och kundbekräftelse
