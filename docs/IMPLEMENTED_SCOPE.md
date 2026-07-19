@@ -3,7 +3,7 @@
 ## Verifierat i denna leverans
 
 - Next.js/TypeScript-webbapp med server actions och versionerat REST-API
-- 24 reproducerbara SQL-migrationer med 132 publika tabeller, 209 funktioner och 263 RLS-policyer i SQL-testmiljön
+- 25 reproducerbara SQL-migrationer med 132 publika tabeller, 214 funktioner och 263 RLS-policyer i SQL-testmiljön
 - Tenant, juridiska bolag, kontor/avdelningar, medlemskap, roller, team och feature-flaggor
 - CRM-kunder, företag, prospekt, anteckningar, aktiviteter, listor, kampanjer och pipeline
 - Säker multi-formatimport: CSV, JSON, NDJSON, XML och grundläggande tabulär XLSX

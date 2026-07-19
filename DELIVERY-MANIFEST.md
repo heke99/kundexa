@@ -21,7 +21,7 @@ npm audit
 - `src/app` – webbapp, adminflöden och versionerat REST-API
 - `src/components` – UI, katalog, importer, API-nycklar och WebRTC-dialer
 - `src/lib` – auth, permissions, importparsers, malware-scan-gate, katalog, validering, crypto och domänlogik
-- `supabase/migrations` – 24 ordnade migrationer
+- `supabase/migrations` – 25 ordnade migrationer
 - `supabase/functions/process-outbox` – telefoni/SMS/e-post/dokument
 - `supabase/functions/automation-runner` – automationer
 - `supabase/functions/data-worker` – entitetsberikning
@@ -36,7 +36,7 @@ npm audit
 
 ## Verifierad databasinventering
 
-PGlite-kontrollen exekverar 24 migrationer och inventerar 132 publika tabeller, 209 publika funktioner och 263 RLS-policyer. Runtimeflödet omfattar även listclaim, caller-ID/inspelning, manuellt och automatiskt efterarbete, order samt personliga/globala återkomster. Slutlig stagingverifiering i riktig Supabase krävs ändå före produktion.
+PGlite-kontrollen exekverar 25 migrationer och inventerar 132 publika tabeller, 214 publika funktioner och 263 RLS-policyer. Runtimeflödet omfattar även listclaim, caller-ID/inspelning, manuellt och automatiskt efterarbete, order samt personliga/globala återkomster. Slutlig stagingverifiering i riktig Supabase krävs ändå före produktion.
 
 ## Viktig avgränsning
 

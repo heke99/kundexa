@@ -1,6 +1,6 @@
 # Leveransstatus
 
-Detta är ett körbart Kundexa-projekt med Next.js, Supabase, 24 ordnade migrationer, sex Edge Function-workers, versionerat API, tester och produktionsbuild. Prospektering, listtilldelning, sekventiell dialer, manuellt efterarbete, återkomster, kanoniska anteckningar och samtalsbaserad order ingår i samma datamodell.
+Detta är ett körbart Kundexa-projekt med Next.js, Supabase, 25 ordnade migrationer, sex Edge Function-workers, versionerat API, tester och produktionsbuild. Prospektering, listtilldelning, sekventiell dialer, manuellt efterarbete, återkomster, kanoniska anteckningar och samtalsbaserad order ingår i samma datamodell.
 
 Kodnivån är verifierad genom:
 
