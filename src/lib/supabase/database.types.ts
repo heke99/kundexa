@@ -596,6 +596,7 @@ export type Database = {
           after_call_completed_at: string | null
           answered_at: string | null
           callback_activity_id: string | null
+          contact_person_id: string | null
           callback_token_hash: string
           campaign_id: string | null
           cost: number | null
@@ -631,6 +632,7 @@ export type Database = {
           after_call_completed_at?: string | null
           answered_at?: string | null
           callback_activity_id?: string | null
+          contact_person_id?: string | null
           callback_token_hash: string
           campaign_id?: string | null
           cost?: number | null
@@ -666,6 +668,7 @@ export type Database = {
           after_call_completed_at?: string | null
           answered_at?: string | null
           callback_activity_id?: string | null
+          contact_person_id?: string | null
           callback_token_hash?: string
           campaign_id?: string | null
           cost?: number | null
@@ -1083,56 +1086,77 @@ export type Database = {
       }
       contact_people: {
         Row: {
+          alternate_phone_e164: string | null
           created_at: string
           customer_id: string
           email: string | null
+          first_name: string | null
           full_name: string
           id: string
           is_primary: boolean
+          is_signatory: boolean
+          last_name: string | null
+          ownership_percentage: number | null
           phone_e164: string | null
+          raw_source_data: Json
+          role: string | null
+          source_external_id: string | null
+          source_import_run_id: string | null
+          source_retrieved_at: string | null
+          source_url: string | null
           tenant_id: string
           title: string | null
           updated_at: string
         }
         Insert: {
+          alternate_phone_e164?: string | null
           created_at?: string
           customer_id: string
           email?: string | null
+          first_name?: string | null
           full_name: string
           id?: string
           is_primary?: boolean
+          is_signatory?: boolean
+          last_name?: string | null
+          ownership_percentage?: number | null
           phone_e164?: string | null
+          raw_source_data?: Json
+          role?: string | null
+          source_external_id?: string | null
+          source_import_run_id?: string | null
+          source_retrieved_at?: string | null
+          source_url?: string | null
           tenant_id: string
           title?: string | null
           updated_at?: string
         }
         Update: {
+          alternate_phone_e164?: string | null
           created_at?: string
           customer_id?: string
           email?: string | null
+          first_name?: string | null
           full_name?: string
           id?: string
           is_primary?: boolean
+          is_signatory?: boolean
+          last_name?: string | null
+          ownership_percentage?: number | null
           phone_e164?: string | null
+          raw_source_data?: Json
+          role?: string | null
+          source_external_id?: string | null
+          source_import_run_id?: string | null
+          source_retrieved_at?: string | null
+          source_url?: string | null
           tenant_id?: string
           title?: string | null
           updated_at?: string
         }
         Relationships: [
-          {
-            foreignKeyName: "contact_people_tenant_id_customer_id_fkey"
-            columns: ["tenant_id", "customer_id"]
-            isOneToOne: false
-            referencedRelation: "customers"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "contact_people_tenant_id_fkey"
-            columns: ["tenant_id"]
-            isOneToOne: false
-            referencedRelation: "tenants"
-            referencedColumns: ["id"]
-          },
+          { foreignKeyName: "contact_people_tenant_id_customer_id_fkey"; columns: ["tenant_id", "customer_id"]; isOneToOne: false; referencedRelation: "customers"; referencedColumns: ["tenant_id", "id"] },
+          { foreignKeyName: "contact_people_source_import_fk"; columns: ["tenant_id", "source_import_run_id"]; isOneToOne: false; referencedRelation: "import_runs"; referencedColumns: ["tenant_id", "id"] },
         ]
       }
       contact_permissions: {
@@ -2244,6 +2268,11 @@ export type Database = {
           next_attempt_at: string | null
           outcome: string | null
           priority: number
+          compliance_reason: string | null
+          compliance_status: string
+          source_import_profile_id: string | null
+          source_import_run_id: string | null
+          source_reason: string | null
           source_segment_id: string | null
           state: string
           tenant_id: string
@@ -2265,6 +2294,11 @@ export type Database = {
           next_attempt_at?: string | null
           outcome?: string | null
           priority?: number
+          compliance_reason?: string | null
+          compliance_status?: string
+          source_import_profile_id?: string | null
+          source_import_run_id?: string | null
+          source_reason?: string | null
           source_segment_id?: string | null
           state?: string
           tenant_id: string
@@ -2286,6 +2320,11 @@ export type Database = {
           next_attempt_at?: string | null
           outcome?: string | null
           priority?: number
+          compliance_reason?: string | null
+          compliance_status?: string
+          source_import_profile_id?: string | null
+          source_import_run_id?: string | null
+          source_reason?: string | null
           source_segment_id?: string | null
           state?: string
           tenant_id?: string
@@ -2533,6 +2572,7 @@ export type Database = {
           campaign_id: string | null
           city: string | null
           company_name: string | null
+          company_status: string | null
           country_code: string
           county: string | null
           created_at: string
@@ -2552,6 +2592,7 @@ export type Database = {
           first_name: string | null
           id: string
           industry: string | null
+          founded_year: number | null
           last_contact_at: string | null
           last_name: string | null
           latitude: number | null
@@ -2572,6 +2613,10 @@ export type Database = {
           sni_code: string | null
           source_external_id: string | null
           source_name: string | null
+          source_provider: string | null
+          source_website: string | null
+          source_url: string | null
+          source_import_run_id: string | null
           source_retrieved_at: string | null
           source_verified_at: string | null
           status_id: string | null
@@ -2591,6 +2636,7 @@ export type Database = {
           campaign_id?: string | null
           city?: string | null
           company_name?: string | null
+          company_status?: string | null
           country_code?: string
           county?: string | null
           created_at?: string
@@ -2610,6 +2656,7 @@ export type Database = {
           first_name?: string | null
           id?: string
           industry?: string | null
+          founded_year?: number | null
           last_contact_at?: string | null
           last_name?: string | null
           latitude?: number | null
@@ -2630,6 +2677,10 @@ export type Database = {
           sni_code?: string | null
           source_external_id?: string | null
           source_name?: string | null
+          source_provider?: string | null
+          source_website?: string | null
+          source_url?: string | null
+          source_import_run_id?: string | null
           source_retrieved_at?: string | null
           source_verified_at?: string | null
           status_id?: string | null
@@ -2649,6 +2700,7 @@ export type Database = {
           campaign_id?: string | null
           city?: string | null
           company_name?: string | null
+          company_status?: string | null
           country_code?: string
           county?: string | null
           created_at?: string
@@ -2668,6 +2720,7 @@ export type Database = {
           first_name?: string | null
           id?: string
           industry?: string | null
+          founded_year?: number | null
           last_contact_at?: string | null
           last_name?: string | null
           latitude?: number | null
@@ -2688,6 +2741,10 @@ export type Database = {
           sni_code?: string | null
           source_external_id?: string | null
           source_name?: string | null
+          source_provider?: string | null
+          source_website?: string | null
+          source_url?: string | null
+          source_import_run_id?: string | null
           source_retrieved_at?: string | null
           source_verified_at?: string | null
           status_id?: string | null
@@ -4156,160 +4213,65 @@ export type Database = {
           },
         ]
       }
+      import_change_sets: {
+        Row: { after_data: Json | null; before_data: Json | null; created_at: string; entity_id: string; entity_type: string; id: number; import_row_id: number | null; import_run_id: string; operation: string; rollback_reason: string | null; rollback_status: string; tenant_id: string }
+        Insert: { after_data?: Json | null; before_data?: Json | null; created_at?: string; entity_id: string; entity_type: string; id?: never; import_row_id?: number | null; import_run_id: string; operation: string; rollback_reason?: string | null; rollback_status?: string; tenant_id: string }
+        Update: { after_data?: Json | null; before_data?: Json | null; created_at?: string; entity_id?: string; entity_type?: string; id?: never; import_row_id?: number | null; import_run_id?: string; operation?: string; rollback_reason?: string | null; rollback_status?: string; tenant_id?: string }
+        Relationships: []
+      }
+      import_field_mappings: {
+        Row: { created_at: string; default_value: Json | null; id: string; import_profile_version_id: string; required: boolean; sort_order: number; source_path: string | null; target_field: string; target_scope: string; tenant_id: string; transform_chain: Json }
+        Insert: { created_at?: string; default_value?: Json | null; id?: string; import_profile_version_id: string; required?: boolean; sort_order?: number; source_path?: string | null; target_field: string; target_scope: string; tenant_id: string; transform_chain?: Json }
+        Update: { created_at?: string; default_value?: Json | null; id?: string; import_profile_version_id?: string; required?: boolean; sort_order?: number; source_path?: string | null; target_field?: string; target_scope?: string; tenant_id?: string; transform_chain?: Json }
+        Relationships: []
+      }
+      import_merge_conflicts: {
+        Row: { contact_person_id: string | null; created_at: string; customer_id: string | null; existing_value: Json | null; field_name: string | null; id: string; import_row_id: number | null; import_run_id: string; incoming_value: Json | null; reason: string; resolved_at: string | null; resolved_by: string | null; status: string; tenant_id: string }
+        Insert: { contact_person_id?: string | null; created_at?: string; customer_id?: string | null; existing_value?: Json | null; field_name?: string | null; id?: string; import_row_id?: number | null; import_run_id: string; incoming_value?: Json | null; reason: string; resolved_at?: string | null; resolved_by?: string | null; status?: string; tenant_id: string }
+        Update: { contact_person_id?: string | null; created_at?: string; customer_id?: string | null; existing_value?: Json | null; field_name?: string | null; id?: string; import_row_id?: number | null; import_run_id?: string; incoming_value?: Json | null; reason?: string; resolved_at?: string | null; resolved_by?: string | null; status?: string; tenant_id?: string }
+        Relationships: []
+      }
+      import_profile_versions: {
+        Row: { config: Json; created_at: string; created_by: string | null; field_mapping: Json; id: string; import_profile_id: string; mapping_checksum: string; tenant_id: string; version: number }
+        Insert: { config?: Json; created_at?: string; created_by?: string | null; field_mapping?: Json; id?: string; import_profile_id: string; mapping_checksum: string; tenant_id: string; version: number }
+        Update: { config?: Json; created_at?: string; created_by?: string | null; field_mapping?: Json; id?: string; import_profile_id?: string; mapping_checksum?: string; tenant_id?: string; version?: number }
+        Relationships: []
+      }
+      import_profiles: {
+        Row: { active: boolean; automatic_commit: boolean; created_at: string; created_by: string | null; current_version: number; format: string; header_row: number; id: string; name: string; records_path: string | null; source_provider: string; source_website: string | null; target_list_id: string | null; target_type: string; tenant_id: string; updated_at: string; updated_by: string | null; worksheet_name: string | null }
+        Insert: { active?: boolean; automatic_commit?: boolean; created_at?: string; created_by?: string | null; current_version?: number; format?: string; header_row?: number; id?: string; name: string; records_path?: string | null; source_provider?: string; source_website?: string | null; target_list_id?: string | null; target_type?: string; tenant_id: string; updated_at?: string; updated_by?: string | null; worksheet_name?: string | null }
+        Update: { active?: boolean; automatic_commit?: boolean; created_at?: string; created_by?: string | null; current_version?: number; format?: string; header_row?: number; id?: string; name?: string; records_path?: string | null; source_provider?: string; source_website?: string | null; target_list_id?: string | null; target_type?: string; tenant_id?: string; updated_at?: string; updated_by?: string | null; worksheet_name?: string | null }
+        Relationships: []
+      }
+      import_run_list_targets: {
+        Row: { assignment_strategy: string; created_at: string; created_by: string | null; id: string; import_run_id: string; list_id: string; settings: Json; tenant_id: string }
+        Insert: { assignment_strategy?: string; created_at?: string; created_by?: string | null; id?: string; import_run_id: string; list_id: string; settings?: Json; tenant_id: string }
+        Update: { assignment_strategy?: string; created_at?: string; created_by?: string | null; id?: string; import_run_id?: string; list_id?: string; settings?: Json; tenant_id?: string }
+        Relationships: []
+      }
+      parsehub_projects: {
+        Row: { active: boolean; configuration: Json; created_at: string; created_by: string | null; id: string; import_profile_id: string | null; project_name: string; project_token_hash: string; provider_account_id: string | null; source_website: string | null; tenant_id: string; updated_at: string; webhook_secret_hash: string | null }
+        Insert: { active?: boolean; configuration?: Json; created_at?: string; created_by?: string | null; id?: string; import_profile_id?: string | null; project_name: string; project_token_hash: string; provider_account_id?: string | null; source_website?: string | null; tenant_id: string; updated_at?: string; webhook_secret_hash?: string | null }
+        Update: { active?: boolean; configuration?: Json; created_at?: string; created_by?: string | null; id?: string; import_profile_id?: string | null; project_name?: string; project_token_hash?: string; provider_account_id?: string | null; source_website?: string | null; tenant_id?: string; updated_at?: string; webhook_secret_hash?: string | null }
+        Relationships: []
+      }
+      parsehub_runs: {
+        Row: { attempts: number; created_at: string; id: string; idempotency_key: string; import_profile_id: string | null; import_run_id: string | null; last_error_code: string | null; locked_at: string | null; locked_by: string | null; metadata: Json; next_attempt_at: string | null; parsehub_project_id: string; response_sha256: string | null; response_size_bytes: number | null; run_completed_at: string | null; run_started_at: string | null; run_token_ciphertext: string | null; run_token_hash: string; source_retrieved_at: string | null; status: string; tenant_id: string; updated_at: string; webhook_received_at: string | null }
+        Insert: { attempts?: number; created_at?: string; id?: string; idempotency_key: string; import_profile_id?: string | null; import_run_id?: string | null; last_error_code?: string | null; locked_at?: string | null; locked_by?: string | null; metadata?: Json; next_attempt_at?: string | null; parsehub_project_id: string; response_sha256?: string | null; response_size_bytes?: number | null; run_completed_at?: string | null; run_started_at?: string | null; run_token_ciphertext?: string | null; run_token_hash: string; source_retrieved_at?: string | null; status?: string; tenant_id: string; updated_at?: string; webhook_received_at?: string | null }
+        Update: { attempts?: number; created_at?: string; id?: string; idempotency_key?: string; import_profile_id?: string | null; import_run_id?: string | null; last_error_code?: string | null; locked_at?: string | null; locked_by?: string | null; metadata?: Json; next_attempt_at?: string | null; parsehub_project_id?: string; response_sha256?: string | null; response_size_bytes?: number | null; run_completed_at?: string | null; run_started_at?: string | null; run_token_ciphertext?: string | null; run_token_hash?: string; source_retrieved_at?: string | null; status?: string; tenant_id?: string; updated_at?: string; webhook_received_at?: string | null }
+        Relationships: []
+      }
       import_rows: {
-        Row: {
-          created_at: string
-          decision: string | null
-          errors: Json
-          id: number
-          import_run_id: string
-          matched_customer_id: string | null
-          normalized_data: Json | null
-          raw_data: Json
-          row_number: number
-          tenant_id: string
-        }
-        Insert: {
-          created_at?: string
-          decision?: string | null
-          errors?: Json
-          id?: never
-          import_run_id: string
-          matched_customer_id?: string | null
-          normalized_data?: Json | null
-          raw_data: Json
-          row_number: number
-          tenant_id: string
-        }
-        Update: {
-          created_at?: string
-          decision?: string | null
-          errors?: Json
-          id?: never
-          import_run_id?: string
-          matched_customer_id?: string | null
-          normalized_data?: Json | null
-          raw_data?: Json
-          row_number?: number
-          tenant_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "import_rows_tenant_id_import_run_id_fkey"
-            columns: ["tenant_id", "import_run_id"]
-            isOneToOne: false
-            referencedRelation: "import_runs"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "import_rows_tenant_id_matched_customer_id_fkey"
-            columns: ["tenant_id", "matched_customer_id"]
-            isOneToOne: false
-            referencedRelation: "customers"
-            referencedColumns: ["tenant_id", "id"]
-          },
-        ]
+        Row: { created_at: string; decision: string | null; error_code: string | null; errors: Json; id: number; import_run_id: string; matched_contact_person_id: string | null; matched_customer_id: string | null; normalized_data: Json | null; processing_batch: number | null; processing_ms: number | null; raw_data: Json; row_number: number; row_status: string; source_external_id: string | null; tenant_id: string; warning_codes: Json }
+        Insert: { created_at?: string; decision?: string | null; error_code?: string | null; errors?: Json; id?: never; import_run_id: string; matched_contact_person_id?: string | null; matched_customer_id?: string | null; normalized_data?: Json | null; processing_batch?: number | null; processing_ms?: number | null; raw_data: Json; row_number: number; row_status?: string; source_external_id?: string | null; tenant_id: string; warning_codes?: Json }
+        Update: { created_at?: string; decision?: string | null; error_code?: string | null; errors?: Json; id?: never; import_run_id?: string; matched_contact_person_id?: string | null; matched_customer_id?: string | null; normalized_data?: Json | null; processing_batch?: number | null; processing_ms?: number | null; raw_data?: Json; row_number?: number; row_status?: string; source_external_id?: string | null; tenant_id?: string; warning_codes?: Json }
+        Relationships: []
       }
       import_runs: {
-        Row: {
-          blocked_count: number
-          catalog_sync_status: string
-          completed_at: string | null
-          created_at: string
-          duplicate_count: number
-          error_count: number
-          field_mapping: Json
-          file_mime_type: string | null
-          file_size_bytes: number | null
-          id: string
-          name: string
-          new_count: number
-          rollback_data: Json | null
-          scan_completed_at: string | null
-          scan_provider: string | null
-          scan_sha256: string | null
-          scan_status: string
-          simulation: boolean
-          source_file_path: string | null
-          source_type: string
-          started_at: string | null
-          status: Database["public"]["Enums"]["import_status"]
-          tenant_id: string
-          total_rows: number
-          updated_at: string
-          updated_count: number
-          uploaded_by: string | null
-          validation_report: Json
-        }
-        Insert: {
-          blocked_count?: number
-          catalog_sync_status?: string
-          completed_at?: string | null
-          created_at?: string
-          duplicate_count?: number
-          error_count?: number
-          field_mapping?: Json
-          file_mime_type?: string | null
-          file_size_bytes?: number | null
-          id?: string
-          name: string
-          new_count?: number
-          rollback_data?: Json | null
-          scan_completed_at?: string | null
-          scan_provider?: string | null
-          scan_sha256?: string | null
-          scan_status?: string
-          simulation?: boolean
-          source_file_path?: string | null
-          source_type: string
-          started_at?: string | null
-          status?: Database["public"]["Enums"]["import_status"]
-          tenant_id: string
-          total_rows?: number
-          updated_at?: string
-          updated_count?: number
-          uploaded_by?: string | null
-          validation_report?: Json
-        }
-        Update: {
-          blocked_count?: number
-          catalog_sync_status?: string
-          completed_at?: string | null
-          created_at?: string
-          duplicate_count?: number
-          error_count?: number
-          field_mapping?: Json
-          file_mime_type?: string | null
-          file_size_bytes?: number | null
-          id?: string
-          name?: string
-          new_count?: number
-          rollback_data?: Json | null
-          scan_completed_at?: string | null
-          scan_provider?: string | null
-          scan_sha256?: string | null
-          scan_status?: string
-          simulation?: boolean
-          source_file_path?: string | null
-          source_type?: string
-          started_at?: string | null
-          status?: Database["public"]["Enums"]["import_status"]
-          tenant_id?: string
-          total_rows?: number
-          updated_at?: string
-          updated_count?: number
-          uploaded_by?: string | null
-          validation_report?: Json
-        }
-        Relationships: [
-          {
-            foreignKeyName: "import_runs_tenant_id_fkey"
-            columns: ["tenant_id"]
-            isOneToOne: false
-            referencedRelation: "tenants"
-            referencedColumns: ["id"]
-          },
-        ]
+        Row: { blocked_count: number; catalog_sync_status: string; commit_approved_at: string | null; commit_approved_by: string | null; completed_at: string | null; conflict_count: number; created_at: string; duplicate_count: number; error_count: number; field_mapping: Json; file_mime_type: string | null; file_sha256: string | null; file_size_bytes: number | null; header_row: number; id: string; idempotency_key: string | null; import_profile_id: string | null; import_profile_version_id: string | null; name: string; new_contact_count: number; new_count: number; profile_snapshot: Json; profile_version: number | null; records_path: string | null; rollback_data: Json | null; scan_completed_at: string | null; scan_provider: string | null; scan_sha256: string | null; scan_status: string; simulation: boolean; source_file_path: string | null; source_project: string | null; source_provider: string; source_retrieved_at: string | null; source_run_id: string | null; source_type: string; source_website: string | null; started_at: string | null; status: Database["public"]["Enums"]["import_status"]; target_list_id: string | null; tenant_id: string; total_rows: number; unchanged_count: number; updated_at: string; updated_contact_count: number; updated_count: number; uploaded_by: string | null; validation_report: Json; warning_count: number; worksheet_name: string | null }
+        Insert: { blocked_count?: number; catalog_sync_status?: string; commit_approved_at?: string | null; commit_approved_by?: string | null; completed_at?: string | null; conflict_count?: number; created_at?: string; duplicate_count?: number; error_count?: number; field_mapping?: Json; file_mime_type?: string | null; file_sha256?: string | null; file_size_bytes?: number | null; header_row?: number; id?: string; idempotency_key?: string | null; import_profile_id?: string | null; import_profile_version_id?: string | null; name: string; new_contact_count?: number; new_count?: number; profile_snapshot?: Json; profile_version?: number | null; records_path?: string | null; rollback_data?: Json | null; scan_completed_at?: string | null; scan_provider?: string | null; scan_sha256?: string | null; scan_status?: string; simulation?: boolean; source_file_path?: string | null; source_project?: string | null; source_provider?: string; source_retrieved_at?: string | null; source_run_id?: string | null; source_type: string; source_website?: string | null; started_at?: string | null; status?: Database["public"]["Enums"]["import_status"]; target_list_id?: string | null; tenant_id: string; total_rows?: number; unchanged_count?: number; updated_at?: string; updated_contact_count?: number; updated_count?: number; uploaded_by?: string | null; validation_report?: Json; warning_count?: number; worksheet_name?: string | null }
+        Update: { blocked_count?: number; catalog_sync_status?: string; commit_approved_at?: string | null; commit_approved_by?: string | null; completed_at?: string | null; conflict_count?: number; created_at?: string; duplicate_count?: number; error_count?: number; field_mapping?: Json; file_mime_type?: string | null; file_sha256?: string | null; file_size_bytes?: number | null; header_row?: number; id?: string; idempotency_key?: string | null; import_profile_id?: string | null; import_profile_version_id?: string | null; name?: string; new_contact_count?: number; new_count?: number; profile_snapshot?: Json; profile_version?: number | null; records_path?: string | null; rollback_data?: Json | null; scan_completed_at?: string | null; scan_provider?: string | null; scan_sha256?: string | null; scan_status?: string; simulation?: boolean; source_file_path?: string | null; source_project?: string | null; source_provider?: string; source_retrieved_at?: string | null; source_run_id?: string | null; source_type?: string; source_website?: string | null; started_at?: string | null; status?: Database["public"]["Enums"]["import_status"]; target_list_id?: string | null; tenant_id?: string; total_rows?: number; unchanged_count?: number; updated_at?: string; updated_contact_count?: number; updated_count?: number; uploaded_by?: string | null; validation_report?: Json; warning_count?: number; worksheet_name?: string | null }
+        Relationships: []
       }
       ingestion_errors: {
         Row: {
@@ -9440,7 +9402,11 @@ export type Database = {
         }
         Returns: string
       }
+      apply_import_row_normalization: { Args: { p_import_run_id: string; p_rows: Json }; Returns: number }
+      claim_parsehub_runs: { Args: { p_limit?: number; p_worker: string }; Returns: Database["public"]["Tables"]["parsehub_runs"]["Row"][] }
       process_import_run: { Args: { p_import_run_id: string }; Returns: Json }
+      process_parsehub_import_run: { Args: { p_parsehub_run_id: string }; Returns: Json }
+      save_import_profile: { Args: { p_automatic_commit: boolean; p_config: Json; p_field_mapping: Json; p_format: string; p_header_row: number; p_name: string; p_profile_id: string | null; p_records_path: string | null; p_source_provider: string; p_source_website: string | null; p_target_list_id: string | null; p_target_type: string; p_worksheet_name: string | null }; Returns: string }
       queue_due_nix_checks: { Args: { p_limit?: number }; Returns: number }
       queue_due_segment_refreshes: {
         Args: { p_limit?: number }
@@ -9496,6 +9462,7 @@ export type Database = {
         Args: { p_list_id: string; p_session_id: string }
         Returns: Json
       }
+      claim_next_list_member_with_contacts: { Args: { p_list_id: string; p_session_id: string }; Returns: Json }
       claim_customer_callback: {
         Args: { p_activity_id: string }
         Returns: Json
@@ -9569,6 +9536,7 @@ export type Database = {
         }
         Returns: string
       }
+      queue_outbound_call_target: { Args: { p_callback_token: string; p_callback_token_hash: string; p_contact_person_id: string | null; p_customer_id: string; p_idempotency_key: string; p_purpose?: string; p_target_phone: string; p_voice_client_number: string }; Returns: string }
       queue_list_outbound_call: {
         Args: {
           p_callback_activity_id: string | null
@@ -9582,6 +9550,7 @@ export type Database = {
         }
         Returns: string
       }
+      queue_list_outbound_call_target: { Args: { p_callback_activity_id: string | null; p_callback_token: string; p_callback_token_hash: string; p_contact_person_id: string | null; p_idempotency_key: string; p_list_member_id: string; p_purpose?: string; p_session_id: string; p_target_phone: string; p_voice_client_number: string }; Returns: string }
       queue_callback_outbound_call: {
         Args: {
           p_activity_id: string
@@ -10510,12 +10479,18 @@ export type Database = {
         | "cancelled"
       import_status:
         | "uploaded"
+        | "parsing"
+        | "mapping_required"
         | "validating"
         | "preview_ready"
+        | "validated"
+        | "queued"
         | "processing"
         | "completed"
+        | "completed_with_warnings"
         | "failed"
         | "rolled_back"
+        | "cancelled"
       ingestion_state:
         | "scheduled"
         | "running"
@@ -10778,12 +10753,18 @@ export const Constants = {
       ],
       import_status: [
         "uploaded",
+        "parsing",
+        "mapping_required",
         "validating",
         "preview_ready",
+        "validated",
+        "queued",
         "processing",
         "completed",
+        "completed_with_warnings",
         "failed",
         "rolled_back",
+        "cancelled",
       ],
       ingestion_state: [
         "scheduled",

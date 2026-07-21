@@ -11,10 +11,13 @@ const bodySchema = z.object({
   sessionId: z.uuid().optional(),
   listMemberId: z.uuid().optional(),
   callbackActivityId: z.uuid().nullable().optional(),
+  contactPersonId: z.uuid().nullable().optional(),
+  targetPhone: z.string().regex(/^\+[1-9][0-9]{7,14}$/).optional(),
   idempotencyKey: z.string().min(8).max(200).optional(),
   purpose: z.enum(["direct_marketing", "customer_service", "contract_followup"]).default("direct_marketing"),
 }).superRefine((value, context) => {
   if (Boolean(value.sessionId) !== Boolean(value.listMemberId)) context.addIssue({ code: "custom", message: "sessionId och listMemberId måste anges tillsammans" });
+  if (value.contactPersonId && !value.targetPhone) context.addIssue({ code: "custom", message: "targetPhone krävs när contactPersonId anges" });
 });
 
 export async function POST(request: Request) {
@@ -36,23 +39,40 @@ export async function POST(request: Request) {
       p_idempotency_key: parsed.idempotencyKey || request.headers.get("idempotency-key") || `api.call:${crypto.randomUUID()}`,
       p_purpose: parsed.purpose,
     };
+    const hasExplicitTarget = Boolean(parsed.targetPhone);
     const result = parsed.sessionId && parsed.listMemberId
-      ? await supabase.rpc("queue_list_outbound_call", {
-          ...common,
-          p_session_id: parsed.sessionId,
-          p_list_member_id: parsed.listMemberId,
-          p_callback_activity_id: parsed.callbackActivityId ?? null,
-        })
+      ? hasExplicitTarget
+        ? await supabase.rpc("queue_list_outbound_call_target", {
+            ...common,
+            p_session_id: parsed.sessionId,
+            p_list_member_id: parsed.listMemberId,
+            p_callback_activity_id: parsed.callbackActivityId ?? null,
+            p_contact_person_id: parsed.contactPersonId ?? null,
+            p_target_phone: parsed.targetPhone!,
+          })
+        : await supabase.rpc("queue_list_outbound_call", {
+            ...common,
+            p_session_id: parsed.sessionId,
+            p_list_member_id: parsed.listMemberId,
+            p_callback_activity_id: parsed.callbackActivityId ?? null,
+          })
       : parsed.callbackActivityId
         ? await supabase.rpc("queue_callback_outbound_call", {
             ...common,
             p_activity_id: parsed.callbackActivityId,
             p_customer_id: parsed.customerId,
           })
-        : await supabase.rpc("queue_outbound_call", { ...common, p_customer_id: parsed.customerId });
+        : hasExplicitTarget
+          ? await supabase.rpc("queue_outbound_call_target", {
+              ...common,
+              p_customer_id: parsed.customerId,
+              p_contact_person_id: parsed.contactPersonId ?? null,
+              p_target_phone: parsed.targetPhone!,
+            })
+          : await supabase.rpc("queue_outbound_call", { ...common, p_customer_id: parsed.customerId });
     const { data: callId, error } = result;
     if (error) {
-      const conflict = /contact_not_allowed|usage_hard_limit|feature_disabled|nix/i.test(error.message);
+      const conflict = /contact_not_allowed|usage_hard_limit|feature_disabled|nix|target_phone|contact_person/i.test(error.message);
       return NextResponse.json({ error: error.message }, { status: conflict ? 409 : 400 });
     }
     return NextResponse.json({ callId, status: "queued" }, { status: 202 });

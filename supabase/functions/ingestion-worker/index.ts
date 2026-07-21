@@ -233,6 +233,9 @@ async function assertRobotsAllowed(url: URL, cache: Map<string, string | null>) 
 async function executeRun(run: Run) {
   const context = await loadContext(run);
   const adapter: ScraperAdapter | null = getScraperAdapter(context.job.adapter_key);
+  if (adapter && ["allabolag", "merinfo"].includes(adapter.key) && Deno.env.get("ENABLE_LEGACY_DIRECT_SCRAPERS") !== "true") {
+    throw new WorkerError("legacy_direct_scraper_disabled_use_parsehub", false);
+  }
   const adapterDefaults: Partial<AdapterConfig> = adapter ? {
     endpoint_template: adapter.defaults.searchEndpointTemplate,
     format: "html_regex",

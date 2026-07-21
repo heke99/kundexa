@@ -67,6 +67,7 @@ Skicka `POST` med `x-cron-secret` till:
 /functions/v1/ingestion-worker
 /functions/v1/maintenance-worker
 /functions/v1/compliance-worker
+/functions/v1/parsehub-worker
 ```
 
 Lägg aldrig cron-hemligheten i klientkod.

@@ -10,7 +10,7 @@ export async function POST(request: Request) {
     assertPermission(context.role, "calls.create");
     const body = z.object({ listId: z.uuid(), sessionId: z.uuid() }).parse(await request.json());
     const supabase = await createClient();
-    const { data, error } = await supabase.rpc("claim_next_list_member", { p_list_id: body.listId, p_session_id: body.sessionId });
+    const { data, error } = await supabase.rpc("claim_next_list_member_with_contacts", { p_list_id: body.listId, p_session_id: body.sessionId });
     if (error) return NextResponse.json({ error: error.message }, { status: 409 });
     return NextResponse.json(data);
   } catch (error) {

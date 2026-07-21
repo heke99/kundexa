@@ -9,6 +9,18 @@ import { useCallRealtime } from "@/hooks/use-call-realtime";
 
 type Disposition = { key: string; label: string; outcome_group: string; terminal: boolean; retry_after_minutes: number | null; requires_note: boolean; requires_callback: boolean; requires_order: boolean };
 type Product = { id: string; name: string };
+type PhoneOption = {
+  contactPersonId: string | null;
+  source: "company" | "contact";
+  label: string;
+  phone: string;
+  eligibility: "eligible" | "pending_nix" | "blocked";
+};
+type ContactPerson = {
+  id: string; fullName: string; firstName?: string | null; lastName?: string | null; title?: string | null; role?: string | null;
+  phone?: string | null; alternatePhone?: string | null; email?: string | null; isPrimary: boolean;
+  ownershipPercentage?: number | null; isSignatory: boolean;
+};
 type Claim = {
   empty: boolean;
   sessionId: string;
@@ -18,9 +30,12 @@ type Claim = {
   autoNextDelaySeconds?: number;
   allowSkip?: boolean;
   script?: string | null;
+  contacts?: ContactPerson[];
+  phoneOptions?: PhoneOption[];
+  defaultTarget?: PhoneOption | null;
   customer?: {
     id: string; displayName: string; customerType: string; companyName?: string | null; organizationNumber?: string | null;
-    phone: string; email?: string | null; address?: string | null; industry?: string | null; sniCode?: string | null;
+    phone?: string | null; email?: string | null; address?: string | null; industry?: string | null; sniCode?: string | null;
     callAttempts: number; lastContactAt?: string | null; notes?: { id: string; body: string; isPinned: boolean; createdAt: string }[];
   };
 };
@@ -44,6 +59,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
   const [productId, setProductId] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [unitPrice, setUnitPrice] = useState("");
+  const [selectedTargetKey, setSelectedTargetKey] = useState("");
   const selectedDisposition = useMemo(() => dispositions.find((item) => item.key === dispositionKey), [dispositionKey, dispositions]);
   const voice = useWebRtcVoice(() => setPhase("after_call"));
   useCallRealtime(callId, () => setPhase("after_call"));
@@ -58,14 +74,23 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
     return data;
   }
 
+  function phoneOptionKey(option: PhoneOption) { return `${option.contactPersonId ?? "company"}:${option.phone}`; }
+
   async function claimNext(activeSessionId: string, autoDial: boolean) {
-    setPhase("loading"); setError(null); setCallId(null); setDispositionKey(""); setNotes(""); setCallbackDueAt(""); setCreateOrder(false); setProductId("");
+    setPhase("loading"); setError(null); setCallId(null); setDispositionKey(""); setNotes(""); setCallbackDueAt(""); setCreateOrder(false); setProductId(""); setSelectedTargetKey("");
     try {
       const next = await requestJson("/api/v1/dialer/next", { listId, sessionId: activeSessionId }) as unknown as Claim;
       setClaim(next);
       if (next.empty || !next.customer || !next.memberId) { setPhase("empty"); return; }
+      const defaultTarget = next.defaultTarget ?? next.phoneOptions?.find((option) => option.eligibility === "eligible") ?? null;
+      if (!defaultTarget || defaultTarget.eligibility !== "eligible") {
+        setError("Prospektet saknar ett ringbart nummer med godkänd kontaktpolicy.");
+        setPhase("ready");
+        return;
+      }
+      setSelectedTargetKey(phoneOptionKey(defaultTarget));
       setPhase("ready");
-      if (autoDial) await dial(next);
+      if (autoDial) await dial(next, defaultTarget);
     } catch (caught) { setError(cleanError(caught instanceof Error ? caught.message : "next_failed")); setPhase("error"); }
   }
 
@@ -79,8 +104,17 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
     } catch (caught) { setError(cleanError(caught instanceof Error ? caught.message : "session_failed")); setPhase("error"); }
   }
 
-  async function dial(target = claim) {
+  async function dial(target = claim, explicitTarget?: PhoneOption | null) {
     if (!target?.customer || !target.memberId || !sessionId && !target.sessionId) return;
+    const selectedTarget = explicitTarget
+      ?? target.phoneOptions?.find((option) => phoneOptionKey(option) === selectedTargetKey)
+      ?? target.defaultTarget
+      ?? null;
+    if (!selectedTarget || selectedTarget.eligibility !== "eligible") {
+      setError("Välj ett ringbart nummer innan samtalet startas.");
+      setPhase("ready");
+      return;
+    }
     setPhase("dialing"); setError(null);
     try {
       const id = await voice.startCall({
@@ -88,7 +122,9 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
         sessionId: sessionId ?? target.sessionId,
         listMemberId: target.memberId,
         callbackActivityId: target.callbackActivityId ?? null,
-        idempotencyKey: `list.call:${target.memberId}:${crypto.randomUUID()}`,
+        contactPersonId: selectedTarget.contactPersonId,
+        targetPhone: selectedTarget.phone,
+        idempotencyKey: `list.call:${target.memberId}:${selectedTarget.phone}:${crypto.randomUUID()}`,
       });
       setCallId(id);
     } catch (caught) { setError(cleanError(caught instanceof Error ? caught.message : "call_failed")); setPhase("ready"); }
@@ -147,7 +183,8 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
     {claim?.customer && ["ready", "dialing", "calling", "after_call"].includes(phase) ? <div className="dialer-customer-layout">
       <section className="dialer-customer-card">
         <div className="customer-identity"><span className="avatar">{claim.customer.displayName.slice(0, 2).toUpperCase()}</span><div><h2>{claim.customer.displayName}</h2><p>{claim.customer.customerType === "company" ? "Företag" : "Privatperson"} · {claim.customer.organizationNumber ?? "Identifiering saknas"}</p></div></div>
-        <dl className="key-value"><dt>Telefon</dt><dd>{claim.customer.phone}</dd><dt>E-post</dt><dd>{claim.customer.email ?? "—"}</dd><dt>Adress</dt><dd>{claim.customer.address || "—"}</dd><dt>Bransch / SNI</dt><dd>{[claim.customer.industry, claim.customer.sniCode].filter(Boolean).join(" · ") || "—"}</dd><dt>Tidigare försök</dt><dd>{claim.customer.callAttempts}</dd><dt>Senast kontaktad</dt><dd>{claim.customer.lastContactAt ? new Date(claim.customer.lastContactAt).toLocaleString("sv-SE") : "Aldrig"}</dd></dl>
+        <dl className="key-value"><dt>Telefon</dt><dd>{claim.customer.phone ?? "—"}</dd><dt>E-post</dt><dd>{claim.customer.email ?? "—"}</dd><dt>Adress</dt><dd>{claim.customer.address || "—"}</dd><dt>Bransch / SNI</dt><dd>{[claim.customer.industry, claim.customer.sniCode].filter(Boolean).join(" · ") || "—"}</dd><dt>Tidigare försök</dt><dd>{claim.customer.callAttempts}</dd><dt>Senast kontaktad</dt><dd>{claim.customer.lastContactAt ? new Date(claim.customer.lastContactAt).toLocaleString("sv-SE") : "Aldrig"}</dd></dl>
+        {claim.phoneOptions?.length ? <label className="field"><span>Nummer att ringa</span><select value={selectedTargetKey} onChange={(event) => setSelectedTargetKey(event.target.value)} disabled={phase !== "ready"}>{claim.phoneOptions.map((option) => <option key={phoneOptionKey(option)} value={phoneOptionKey(option)} disabled={option.eligibility !== "eligible"}>{option.label} · {option.phone}{option.eligibility === "pending_nix" ? " · inväntar NIX" : option.eligibility === "blocked" ? " · blockerad" : ""}</option>)}</select></label> : <p className="form-error">Inget ringbart nummer finns.</p>}
         <div className="dialer-call-controls">
           {phase === "ready" ? <button className="call-button" type="button" onClick={() => dial()} disabled={!voice.registered}><Phone size={25} /></button> : null}
           {phase === "dialing" ? <Badge className="badge-info">Kopplar samtalet…</Badge> : null}
@@ -158,6 +195,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
       </section>
       <aside className="dialer-context-panel">
         {claim.script ? <div className="script-box"><h3>Samtalsmanus</h3><p>{claim.script}</p></div> : null}
+        {claim.contacts?.length ? <div><h3>Kontaktpersoner</h3>{claim.contacts.map((contact) => <div className="note-preview" key={contact.id}><strong>{contact.fullName}{contact.isPrimary ? " · Primär" : ""}</strong><p>{[contact.role, contact.title].filter(Boolean).join(" · ") || "Kontaktperson"}</p><p>{[contact.phone, contact.alternatePhone, contact.email].filter(Boolean).join(" · ")}</p></div>)}</div> : null}
         <div><h3><StickyNote size={16} /> Tidigare anteckningar</h3>{claim.customer.notes?.length ? claim.customer.notes.map((note) => <div className="note-preview" key={note.id}><strong>{note.isPinned ? "Fäst anteckning" : new Date(note.createdAt).toLocaleDateString("sv-SE")}</strong><p>{note.body}</p></div>) : <p className="muted">Inga anteckningar ännu.</p>}</div>
       </aside>
     </div> : null}

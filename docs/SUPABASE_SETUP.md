@@ -76,7 +76,8 @@ Anropa med `POST` och headern `x-cron-secret`:
 /functions/v1/automation-runner  varje minut
 /functions/v1/data-worker        varje minut
 /functions/v1/ingestion-worker   varje minut
-/functions/v1/compliance-worker  varje minut
+/functions/v1/compliance-worker
+/functions/v1/parsehub-worker  varje minut
 /functions/v1/maintenance-worker varje timme
 ```
 

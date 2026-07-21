@@ -1,11 +1,14 @@
 import type { NextConfig } from "next";
+import path from "node:path";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  // `npm run build` executes `tsc --noEmit` before Next starts. The duplicate
-  // Next 16 type-check worker deadlocks in constrained Linux builders, so only
-  // that duplicate worker is disabled; the build still fails on every TS error.
+  outputFileTracingRoot: path.resolve(process.cwd()),
+  serverExternalPackages: ["exceljs"],
+  // `npm run build` kör den kanoniska `tsc --noEmit` först och stoppar på
+  // varje TypeScript-fel. Next 16:s duplicerade typkontroll låser sig i den
+  // begränsade byggmiljön, så endast den andra kontrollen stängs av.
   typescript: {
     ignoreBuildErrors: true,
   },

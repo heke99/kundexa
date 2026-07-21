@@ -1,0 +1,159 @@
+
+> kundexa@0.1.0 verify
+> npm run typecheck:edge && npm run test && npm run build
+
+
+> kundexa@0.1.0 typecheck:edge
+> deno check supabase/functions/_shared/crypto.ts supabase/functions/_shared/providers.ts supabase/functions/data-worker/index.ts supabase/functions/ingestion-worker/index.ts supabase/functions/maintenance-worker/index.ts supabase/functions/compliance-worker/index.ts supabase/functions/process-outbox/index.ts supabase/functions/automation-runner/index.ts supabase/functions/parsehub-worker/index.ts
+
+
+> kundexa@0.1.0 test
+> node scripts/verify.mjs && npm run test:imports && node scripts/verify-sql.mjs
+
+Verified 29 migrations, tenant/contact policy, contracts, communications, licensed directory, raw-before-parse ingestion, parser quarantine, identity resolution, dynamic segments, secure multi-format imports, NIX campaign compliance, geographic normalization, DSAR, retention and worker deployment.
+
+> kundexa@0.1.0 test:imports
+> rm -rf .tmp-import-tests && tsc scripts/import-core-tests.ts --outDir .tmp-import-tests --module commonjs --moduleResolution node --target ES2022 --esModuleInterop --skipLibCheck --strict --noEmit false --types node && node .tmp-import-tests/scripts/import-core-tests.js && rm -rf .tmp-import-tests
+
+Import core tests passed: organization numbers, safe JSON paths, CSV/BOM/semicolon, nested JSON, XLSX worksheets/formula results, mapping separation and 5,000-row parsing.
+Executed 29 migrations: 140 public tables, 224 public functions, 271 RLS policies.
+Executed canonical data-platform runtime path: scheduler, raw payload, resolver, licensed directory, geography, quality, segment, secure import, NIX campaign resume, DSAR and retention.
+Executed idempotent onboarding and audited platform-administration runtime path.
+Executed prospecting/list assignment, atomic claim, contact-person target selection, NIX gating, canonical calls, caller-ID/recording policy, order after-work and personal/global callback runtime paths.
+Executed dashboard/list aggregation, ingestion quota, run-control, dead-letter resume and duplicate-run protection runtime paths.
+
+> kundexa@0.1.0 build
+> npm run typecheck && npm run build:next
+
+
+> kundexa@0.1.0 typecheck
+> tsc --noEmit --pretty false --incremental false
+
+
+> kundexa@0.1.0 build:next
+> next build --webpack
+
+▲ Next.js 16.2.10 (webpack)
+- Experiments (use with caution):
+  · cpus: 1
+  · serverActions
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 15.9s
+  Skipping validation of types
+  Finished TypeScript config validation in 7ms ...
+  Collecting page data using 1 worker ...
+  Generating static pages using 1 worker (0/34) ...
+  Generating static pages using 1 worker (8/34) 
+  Generating static pages using 1 worker (16/34) 
+  Generating static pages using 1 worker (25/34) 
+✓ Generating static pages using 1 worker (34/34) in 263ms
+  Finalizing page optimization ...
+  Collecting build traces ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /accept/[token]
+├ ƒ /api/health
+├ ƒ /api/openapi.json
+├ ƒ /api/v1/api-keys
+├ ƒ /api/v1/calls
+├ ƒ /api/v1/calls/complete
+├ ƒ /api/v1/contracts
+├ ƒ /api/v1/customers
+├ ƒ /api/v1/customers/[id]
+├ ƒ /api/v1/dialer/complete
+├ ƒ /api/v1/dialer/next
+├ ƒ /api/v1/dialer/pause
+├ ƒ /api/v1/dialer/sessions
+├ ƒ /api/v1/directory/discover
+├ ƒ /api/v1/directory/entities/[id]
+├ ƒ /api/v1/directory/entities/[id]/refresh
+├ ƒ /api/v1/directory/search
+├ ƒ /api/v1/enrichment/jobs
+├ ƒ /api/v1/import-profiles
+├ ƒ /api/v1/imports/csv
+├ ƒ /api/v1/imports/file
+├ ƒ /api/v1/integrations/parsehub/projects
+├ ƒ /api/v1/integrations/parsehub/webhook
+├ ƒ /api/v1/segments
+├ ƒ /api/v1/segments/[id]/campaign
+├ ƒ /api/v1/segments/[id]/refresh
+├ ƒ /api/v1/segments/preview
+├ ƒ /api/v1/voice-client
+├ ƒ /api/webhooks/46elks/sms/delivery
+├ ƒ /api/webhooks/46elks/sms/inbound
+├ ƒ /api/webhooks/46elks/voice/hangup
+├ ƒ /api/webhooks/46elks/voice/recording
+├ ƒ /api/webhooks/46elks/voice/start
+├ ƒ /app
+├ ƒ /app/activities
+├ ƒ /app/admin
+├ ƒ /app/api
+├ ƒ /app/automations
+├ ƒ /app/billing
+├ ƒ /app/calendar
+├ ƒ /app/callbacks
+├ ƒ /app/calls
+├ ƒ /app/campaigns
+├ ƒ /app/companies
+├ ƒ /app/compliance
+├ ƒ /app/contracts
+├ ƒ /app/contracts/[id]
+├ ƒ /app/customers
+├ ƒ /app/customers/[id]
+├ ƒ /app/data-sources
+├ ƒ /app/dialer
+├ ƒ /app/dialer/lists/[id]
+├ ƒ /app/directory
+├ ƒ /app/directory/[id]
+├ ƒ /app/documents
+├ ƒ /app/email
+├ ƒ /app/imports
+├ ƒ /app/imports/[id]
+├ ƒ /app/imports/[id]/mapping
+├ ƒ /app/imports/new
+├ ƒ /app/imports/parsehub
+├ ƒ /app/imports/profiles
+├ ƒ /app/integrations
+├ ƒ /app/lists
+├ ƒ /app/lists/[id]
+├ ƒ /app/orders
+├ ƒ /app/pipeline
+├ ƒ /app/platform
+├ ƒ /app/products
+├ ƒ /app/prospects
+├ ƒ /app/queues
+├ ƒ /app/reports
+├ ƒ /app/security
+├ ƒ /app/sms
+├ ƒ /app/teams
+├ ƒ /app/templates
+├ ƒ /app/users
+├ ƒ /app/webhooks
+├ ƒ /auth/callback
+├ ƒ /login
+├ ƒ /onboarding
+└ ƒ /register
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+
+--- TIME / EDGE STDERR ---
+[0m[32mCheck[0m supabase/functions/_shared/crypto.ts
+[0m[32mCheck[0m supabase/functions/_shared/providers.ts
+[0m[32mCheck[0m supabase/functions/data-worker/index.ts
+[0m[32mCheck[0m supabase/functions/ingestion-worker/index.ts
+[0m[32mCheck[0m supabase/functions/maintenance-worker/index.ts
+[0m[32mCheck[0m supabase/functions/compliance-worker/index.ts
+[0m[32mCheck[0m supabase/functions/process-outbox/index.ts
+[0m[32mCheck[0m supabase/functions/automation-runner/index.ts
+[0m[32mCheck[0m supabase/functions/parsehub-worker/index.ts
+real 50.97
+user 87.84
+sys 10.17

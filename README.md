@@ -70,9 +70,10 @@ Schemalägg betrodda anrop med `x-cron-secret` till:
 /functions/v1/ingestion-worker
 /functions/v1/maintenance-worker
 /functions/v1/compliance-worker
+/functions/v1/parsehub-worker
 ```
 
-`process-outbox`, `automation-runner`, `data-worker`, `ingestion-worker` och `compliance-worker` kan köras varje minut. `maintenance-worker` kan köras med lägre frekvens, exempelvis varje timme, eftersom den materialiserar segment, synkroniserar dynamiska ringlistor, kör retention och normaliserar geografi.
+`process-outbox`, `automation-runner`, `data-worker`, `ingestion-worker`, `compliance-worker` och `parsehub-worker` kan köras varje minut. `maintenance-worker` kan köras med lägre frekvens, exempelvis varje timme, eftersom den materialiserar segment, synkroniserar dynamiska ringlistor, kör retention och normaliserar geografi.
 
 ### Importera geografiskt referensregister
 

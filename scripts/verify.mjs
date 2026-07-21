@@ -22,6 +22,7 @@ for (const table of [
   "source_priority_policies", "identity_keys", "merge_decisions", "parser_observations", "segment_refresh_jobs", "tenant_entities", "retention_runs", "data_subject_requests",
   "nix_provider_configurations", "nix_check_jobs", "campaign_contact_candidates",
   "geographic_areas", "geographic_normalization_results", "legal_holds", "data_subject_request_events",
+  "import_profiles", "import_profile_versions", "import_field_mappings", "import_merge_conflicts", "parsehub_projects", "parsehub_runs", "import_run_list_targets", "import_change_sets",
 ]) assert.match(sql, new RegExp(`create table(?: if not exists)? public\\.${table}\\b`, "i"), `Missing ${table}`);
 
 for (const [pattern, message] of [
@@ -72,7 +73,11 @@ for (const [pattern, message] of [
   [/anonymize_customer_record/i, "retention anonymization with suppression is required"],
   [/can_manage_customer_list/i, "team-scoped list administration is required"],
   [/claim_next_list_member/i, "atomic list-member claiming is required"],
+  [/claim_next_list_member_with_contacts/i, "dialer claims must expose selectable contact targets"],
   [/queue_list_outbound_call/i, "list calls must extend the canonical call queue"],
+  [/queue_list_outbound_call_target/i, "contact-person calls must extend the canonical call queue"],
+  [/apply_import_row_normalization/i, "mapped import rows require a safe batch update RPC"],
+  [/claim_parsehub_runs/i, "ParseHub runs require atomic worker leasing"],
   [/complete_dialer_work/i, "dialer after-work must be transactional"],
   [/complete_manual_call_work/i, "manual dialer after-work must be transactional"],
   [/claim_customer_callback/i, "global callbacks must be claimed atomically"],
@@ -168,6 +173,20 @@ for (const relative of [
   "src/lib/imports/file-parser.ts",
   "src/lib/imports/malware-scan.ts",
   "src/lib/imports/normalize-row.ts",
+  "src/lib/imports/json-path.ts",
+  "src/lib/imports/organization-number.ts",
+  "src/lib/imports/field-mapping.ts",
+  "src/lib/imports/import-profile.ts",
+  "src/components/import-field-mapping-editor.tsx",
+  "src/components/import-profile-manager.tsx",
+  "src/components/parsehub-project-manager.tsx",
+  "src/app/(dashboard)/app/imports/profiles/page.tsx",
+  "src/app/(dashboard)/app/imports/parsehub/page.tsx",
+  "src/app/api/v1/import-profiles/route.ts",
+  "src/app/api/v1/integrations/parsehub/projects/route.ts",
+  "src/app/api/v1/integrations/parsehub/webhook/route.ts",
+  "supabase/functions/parsehub-worker/index.ts",
+  "scripts/import-core-tests.ts",
   "src/app/api/v1/directory/entities/[id]/route.ts",
   "src/app/api/v1/directory/entities/[id]/refresh/route.ts",
   "src/app/api/v1/directory/discover/route.ts",
@@ -196,9 +215,14 @@ for (const relative of [
 
 const importRoute = await readFile(join(root, "src/app/api/v1/imports/file/route.ts"), "utf8");
 assert.match(importRoute, /scanImportFile/, "Import files must be security scanned before parsing and storage");
-assert.ok(importRoute.indexOf("const scan = await scanImportFile") < importRoute.indexOf("const parsed = parseImportFile"), "Malware scan must run before parser execution");
+assert.ok(importRoute.indexOf("const scan = await scanImportFile") < importRoute.indexOf("const parsed = await parseImportFile"), "Malware scan must run before parser execution");
 const importParser = await readFile(join(root, "src/lib/imports/file-parser.ts"), "utf8");
-for (const format of ["parseXlsx", "parseXmlRows", "ndjson", "Papa.parse"]) assert.match(importParser, new RegExp(format), `Import parser must support ${format}`);
+for (const format of ["ExcelJS", "parseXlsx", "parseXmlRows", "ndjson", "Papa.parse", "resolveRecordsPath", "MAX_XLSX_COMPRESSION_RATIO"]) assert.match(importParser, new RegExp(format), `Import parser must support ${format}`);
+assert.doesNotMatch(importParser, /function parseZipEntries|inflateRawSync|sharedStrings\.xml/, "XLSX parsing must use the maintained ExcelJS library rather than a handwritten ZIP/XML parser");
+const importMappingEditor = await readFile(join(root, "src/components/import-field-mapping-editor.tsx"), "utf8");
+for (const pattern of [/company\.organization_number/, /contact\.phone_e164/, /mergePolicy/, /mapping_json/, /Transformkedja/]) assert.match(importMappingEditor, pattern, `Dynamic import mapping UI invariant missing: ${pattern}`);
+const parseHubWorker = await readFile(join(root, "supabase/functions/parsehub-worker/index.ts"), "utf8");
+for (const pattern of [/x-cron-secret/, /claim_parsehub_runs/, /decryptJson/, /runs\/\$\{encodeURIComponent\(runToken\)\}\/data/, /process_parsehub_import_run/]) assert.match(parseHubWorker, pattern, `ParseHub worker invariant missing: ${pattern}`);
 const projectionSql = sql.match(/create or replace function public\.directory_entity_projection_for_tenant[\s\S]*?\$\$;/i)?.[0] ?? "";
 assert.match(projectionSql, /directory_visible_fields_for_tenant/, "Directory projection must be based on licensed visible fields");
 assert.doesNotMatch(projectionSql, /current_master/, "Directory projection must not expose the internal master payload");
@@ -363,7 +387,7 @@ assert.equal(packageJson.overrides.postcss, "8.5.19");
 assert.equal(packageJson.scripts["functions:deploy"], "node scripts/deploy-functions.mjs");
 assert.equal(packageJson.scripts["geography:import"], "node scripts/import-geography.mjs");
 const deployFunctions = await readFile(join(root, "scripts/deploy-functions.mjs"), "utf8");
-for (const worker of ["process-outbox", "automation-runner", "data-worker", "ingestion-worker", "maintenance-worker", "compliance-worker"]) assert.match(deployFunctions, new RegExp(worker), `Deployment must include ${worker}`);
+for (const worker of ["process-outbox", "automation-runner", "data-worker", "ingestion-worker", "maintenance-worker", "compliance-worker", "parsehub-worker"]) assert.match(deployFunctions, new RegExp(worker), `Deployment must include ${worker}`);
 assert.match(packageJson.scripts.verify, /typecheck:edge/, "Full verification must type-check Edge Functions");
 
 console.log(`Verified ${migrations.length} migrations, tenant/contact policy, contracts, communications, licensed directory, raw-before-parse ingestion, parser quarantine, identity resolution, dynamic segments, secure multi-format imports, NIX campaign compliance, geographic normalization, DSAR, retention and worker deployment.`);

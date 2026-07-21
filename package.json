@@ -12,8 +12,8 @@
     "start": "next start",
     "lint": "tsc --noEmit --pretty false --incremental false",
     "typecheck": "tsc --noEmit --pretty false --incremental false",
-    "typecheck:edge": "deno check supabase/functions/_shared/crypto.ts supabase/functions/_shared/providers.ts supabase/functions/data-worker/index.ts supabase/functions/ingestion-worker/index.ts supabase/functions/maintenance-worker/index.ts supabase/functions/compliance-worker/index.ts supabase/functions/process-outbox/index.ts supabase/functions/automation-runner/index.ts",
-    "test": "node scripts/verify.mjs && node scripts/verify-sql.mjs",
+    "typecheck:edge": "deno check supabase/functions/_shared/crypto.ts supabase/functions/_shared/providers.ts supabase/functions/data-worker/index.ts supabase/functions/ingestion-worker/index.ts supabase/functions/maintenance-worker/index.ts supabase/functions/compliance-worker/index.ts supabase/functions/process-outbox/index.ts supabase/functions/automation-runner/index.ts supabase/functions/parsehub-worker/index.ts",
+    "test": "node scripts/verify.mjs && npm run test:imports && node scripts/verify-sql.mjs",
     "test:watch": "node scripts/verify.mjs",
     "verify": "npm run typecheck:edge && npm run test && npm run build",
     "supabase:login": "npx supabase@2.109.1 login",
@@ -23,11 +23,13 @@
     "functions:serve": "npx supabase@2.109.1 functions serve --env-file .env.local",
     "functions:deploy": "node scripts/deploy-functions.mjs",
     "types:generate": "node scripts/generate-supabase-types.mjs",
-    "geography:import": "node scripts/import-geography.mjs"
+    "geography:import": "node scripts/import-geography.mjs",
+    "test:imports": "rm -rf .tmp-import-tests && tsc scripts/import-core-tests.ts --outDir .tmp-import-tests --module commonjs --moduleResolution node --target ES2022 --esModuleInterop --skipLibCheck --strict --noEmit false --types node && node .tmp-import-tests/scripts/import-core-tests.js && rm -rf .tmp-import-tests"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.3",
     "@supabase/supabase-js": "2.110.7",
+    "exceljs": "^4.4.0",
     "libphonenumber-js": "1.12.29",
     "next": "16.2.10",
     "papaparse": "5.5.4",
@@ -49,6 +51,7 @@
     "@next/swc-linux-x64-gnu": "^16.2.10"
   },
   "overrides": {
-    "postcss": "8.5.19"
+    "postcss": "8.5.19",
+    "uuid": "11.1.1"
   }
 }

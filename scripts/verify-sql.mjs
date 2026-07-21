@@ -136,12 +136,14 @@ await db.exec(`
   insert into public.import_runs(id,tenant_id,name,source_type,status,uploaded_by,total_rows,simulation,scan_status,scan_provider,scan_sha256,scan_completed_at)
   values('00000000-0000-0000-0000-000000000009','00000000-0000-0000-0000-000000000001','Runtime JSON','json','preview_ready','00000000-0000-0000-0000-000000000002',1,true,'clean','verify','sha',now());
   insert into public.import_rows(tenant_id,import_run_id,row_number,raw_data,normalized_data,decision,errors)
-  values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000009',2,'{"name":"Imported Runtime AB"}','{"display_name":"Imported Runtime AB","customer_type":"company","organization_number":"5599999999","city":"Lund","phone_e164":"+46709999999"}','ready','[]');
+  values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000009',2,'{"name":"Imported Runtime AB"}','{"display_name":"Imported Runtime AB","customer_type":"company","organization_number":"5599999999","city":"Lund","phone_e164":"+46709999999","contacts":[{"full_name":"Imported Runtime Owner","role":"Ägare","phone_e164":"+46707777777","ownership_percentage":100,"source_external_id":"runtime-owner-1"}]}','ready','[]');
 `);
 const imported = await db.query(`select public.process_import_run('00000000-0000-0000-0000-000000000009') as result`);
-if (Number(imported.rows[0].result.new) !== 1 || Number(imported.rows[0].result.catalogSynced) !== 1) throw new Error(`Secure import execution failed: ${JSON.stringify(imported.rows[0])}`);
+if (Number(imported.rows[0].result.new) !== 1 || Number(imported.rows[0].result.newContacts) !== 1 || Number(imported.rows[0].result.catalogSynced) !== 1) throw new Error(`Secure import execution failed: ${JSON.stringify(imported.rows[0])}`);
 const importedLink = await db.query(`select me.canonical_name,te.customer_id from public.master_entities me join public.tenant_entities te on te.master_entity_id=me.id and te.tenant_id='00000000-0000-0000-0000-000000000001' where me.organization_number='5599999999'`);
 if (importedLink.rows.length !== 1 || !importedLink.rows[0].customer_id) throw new Error(`Tenant import catalogue synchronization failed: ${JSON.stringify(importedLink.rows)}`);
+const importedContact = await db.query(`select full_name,role,phone_e164,ownership_percentage,source_external_id from public.contact_people where tenant_id='00000000-0000-0000-0000-000000000001' and customer_id=$1`, [importedLink.rows[0].customer_id]);
+if (importedContact.rows.length !== 1 || importedContact.rows[0].phone_e164 !== '+46707777777' || importedContact.rows[0].source_external_id !== 'runtime-owner-1') throw new Error(`Imported contact-person upsert failed: ${JSON.stringify(importedContact.rows)}`);
 await db.exec(`
   update public.tenant_features set enabled=true where tenant_id='00000000-0000-0000-0000-000000000001' and feature_key='outbound_calls';
   insert into public.tenant_settings(tenant_id,compliance) values('00000000-0000-0000-0000-000000000001','{"allowed_call_isodow":[1,2,3,4,5,6,7],"call_start_local":"00:00:00","call_end_local":"23:59:59.999999"}') on conflict(tenant_id) do update set compliance=excluded.compliance;
@@ -237,6 +239,10 @@ await db.exec(`
   values
     ('00000000-0000-0000-0000-000000000021','00000000-0000-0000-0000-000000000001','company','prospect','Runtime Order Prospect','+46702222221',true,'legitimate_interest','00000000-0000-0000-0000-000000000002'),
     ('00000000-0000-0000-0000-000000000025','00000000-0000-0000-0000-000000000001','company','prospect','Runtime Callback Prospect','+46702222225',true,'legitimate_interest','00000000-0000-0000-0000-000000000002');
+  insert into public.contact_people(id,tenant_id,customer_id,full_name,role,phone_e164,is_primary)
+  values('00000000-0000-0000-0000-000000000027','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000021','Runtime Owner','Ägare','+46708888888',true);
+  insert into public.nix_checks(tenant_id,customer_id,phone_e164,source,source_version,result,checked_at,valid_until,evidence)
+  values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000021','+46708888888','runtime','1','not_listed',now(),now()+interval '30 days','{}');
   insert into public.phone_numbers(id,tenant_id,number_e164,supports_voice,status,webhook_token_hash)
   values('00000000-0000-0000-0000-000000000022','00000000-0000-0000-0000-000000000001','+46401234567',true,'active','runtime-hash')
   on conflict(tenant_id,number_e164) do nothing;
@@ -254,13 +260,15 @@ await db.query(`select public.add_customers_to_list($1,array['00000000-0000-0000
 await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000020',false)`);
 const runtimeSession = await db.query(`select public.start_dialer_session($1) as id`, [runtimeListId]);
 const runtimeSessionId = String(runtimeSession.rows[0].id);
-const runtimeClaim = await db.query(`select public.claim_next_list_member($1,$2) as claim`, [runtimeListId, runtimeSessionId]);
+const runtimeClaim = await db.query(`select public.claim_next_list_member_with_contacts($1,$2) as claim`, [runtimeListId, runtimeSessionId]);
 const firstClaim = runtimeClaim.rows[0].claim;
 if (firstClaim.empty || firstClaim.customer?.id !== '00000000-0000-0000-0000-000000000021') throw new Error(`Dialer claim failed: ${JSON.stringify(firstClaim)}`);
-const runtimeCall = await db.query(`select public.queue_list_outbound_call($1,$2,null,'runtime-token-hash','runtime-token','+46703333333','runtime-list-call','direct_marketing') as id`, [runtimeSessionId, firstClaim.memberId]);
+const ownerTarget = firstClaim.phoneOptions?.find((option) => option.contactPersonId === '00000000-0000-0000-0000-000000000027' && option.phone === '+46708888888');
+if (!ownerTarget || ownerTarget.eligibility !== 'eligible' || firstClaim.contacts?.length !== 1) throw new Error(`Dialer contact targets failed: ${JSON.stringify(firstClaim)}`);
+const runtimeCall = await db.query(`select public.queue_list_outbound_call_target($1,$2,null,$3,$4,'runtime-token-hash','runtime-token','+46703333333','runtime-list-call','direct_marketing') as id`, [runtimeSessionId, firstClaim.memberId, ownerTarget.contactPersonId, ownerTarget.phone]);
 const runtimeCallId = String(runtimeCall.rows[0].id);
-const listCallPolicy = await db.query(`select from_number,recording_enabled from public.calls where id=$1`, [runtimeCallId]);
-if (listCallPolicy.rows[0].from_number !== '+46401234567' || listCallPolicy.rows[0].recording_enabled !== true) throw new Error(`List caller ID/recording policy failed: ${JSON.stringify(listCallPolicy.rows[0])}`);
+const listCallPolicy = await db.query(`select from_number,to_number,contact_person_id,recording_enabled from public.calls where id=$1`, [runtimeCallId]);
+if (listCallPolicy.rows[0].from_number !== '+46401234567' || listCallPolicy.rows[0].to_number !== '+46708888888' || String(listCallPolicy.rows[0].contact_person_id) !== ownerTarget.contactPersonId || listCallPolicy.rows[0].recording_enabled !== true) throw new Error(`List contact target/caller ID/recording policy failed: ${JSON.stringify(listCallPolicy.rows[0])}`);
 await db.query(`update public.calls set status='completed',ended_at=now(),duration_seconds=42 where id=$1`, [runtimeCallId]);
 const completedDialer = await db.query(`select public.complete_dialer_work($1,'order','Converted in runtime',null,null,true,'00000000-0000-0000-0000-000000000023',1,null,'runtime-after-work') as result`, [runtimeCallId]);
 if (!completedDialer.rows[0].result.orderId) throw new Error(`Dialer order completion failed: ${JSON.stringify(completedDialer.rows[0])}`);
@@ -282,7 +290,7 @@ await db.query(`update public.calls set status='completed',ended_at=now(),durati
 await db.query(`select public.complete_manual_call_work($1,'interested','Handled atomically',null,null)`, [manualCallId]);
 const manualState = await db.query(`select a.status,c.disposition,c.callback_activity_id,(select count(*) from public.notes n where n.call_id=c.id) as notes from public.activities a join public.calls c on c.callback_activity_id=a.id where a.id=$1`, [manualCallbackId]);
 if (manualState.rows[0].status !== 'completed' || manualState.rows[0].disposition !== 'interested' || Number(manualState.rows[0].notes) !== 1) throw new Error(`Manual callback after-work failed: ${JSON.stringify(manualState.rows[0])}`);
-console.log("Executed prospecting/list assignment, atomic claim, canonical calls, caller-ID/recording policy, order after-work and personal/global callback runtime paths.");
+console.log("Executed prospecting/list assignment, atomic claim, contact-person target selection, NIX gating, canonical calls, caller-ID/recording policy, order after-work and personal/global callback runtime paths.");
 
 // Performance/scraper operations runtime path: aggregated RPCs, atomic ingestion
 // quota reservation, admin run controls, dead-letter re-drive and duplicate-run guards.
