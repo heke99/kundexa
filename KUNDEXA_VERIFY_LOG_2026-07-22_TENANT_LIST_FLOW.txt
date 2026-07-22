@@ -1,0 +1,59 @@
+KUNDEXA VERIFIERINGSRAPPORT
+Datum: 2026-07-22
+Område: plattformslistor, tenants, team, inbjudningar och säljardistribution
+
+GENOMFÖRDA KONTROLLER
+[PASS] scripts/verify.mjs
+       - 30 ordnade Supabase-migrationer
+       - centrala listtabeller och distributions-RPC:er
+       - tenantväxling och inbjudningsaktivering
+       - borttagna direkta skrivpolicys för medlemskap/team
+       - team- och profilåtkomst begränsad efter tenant/team
+       - automatisk utgång och säker återkallning
+
+[PASS] TypeScript/TSX syntaxtranspilering
+       - 163 projektfiler kontrollerade
+       - inga syntaxfel hittades
+
+[PASS] scripts/verify-sql.mjs JavaScript-syntax
+       - runtime-testsviten är syntaktiskt giltig
+
+[PASS] Ny migrations strukturella kontroll
+       - migrationen avslutas med commit
+       - balanserade dollar-quoted SQL-block
+       - 1 213 rader och 24 funktions-/DO-block
+
+FÖRBEREDD SQL-RUNTIME-SVIT
+- plattform skapar tenant
+- tenantägare, teamledare och säljare accepterar inbjudan
+- central lista tilldelas och materialiseras i tenantens CRM
+- tenantlista delas till team
+- teamledare tilldelar säljare
+- paus och daglig leadgräns stoppar dialeråtkomst
+- återkallning tar tillbaka orörda leads men bevarar påbörjad historik
+
+KONTROLLER SOM INTE KUNDE KÖRAS I LEVERANSMILJÖN
+[BLOCKED] npm ci
+          - npm-registret var inte tillgängligt och paketet zod saknades i lokal cache
+
+[BLOCKED] npm run typecheck / Next.js build
+          - node_modules saknades; fel bestod av saknade Next/React/Supabase/Zod-typer
+
+[BLOCKED] scripts/verify-sql.mjs runtime
+          - @electric-sql/pglite var inte installerat
+
+[BLOCKED] npm run typecheck:edge
+          - Deno-binären var inte installerad
+
+KÖR I LOKAL MILJÖ ELLER CI FÖRE PRODUKTION
+npm ci
+npm run typecheck
+npm run typecheck:edge
+npm run test
+npm run db:push
+npm run types:generate
+npm run functions:deploy
+npm run build
+
+SLUTSATS
+Källkod, statisk migrationsverifiering och syntaxkontroller är gröna. Full paketberoende typkontroll, PGlite-runtime och Next.js-produktionsbuild måste köras efter npm ci.

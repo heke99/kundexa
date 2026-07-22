@@ -23,6 +23,7 @@ for (const table of [
   "nix_provider_configurations", "nix_check_jobs", "campaign_contact_candidates",
   "geographic_areas", "geographic_normalization_results", "legal_holds", "data_subject_request_events",
   "import_profiles", "import_profile_versions", "import_field_mappings", "import_merge_conflicts", "parsehub_projects", "parsehub_runs", "import_run_list_targets", "import_change_sets",
+  "tenant_invitations", "platform_lists", "platform_list_entries", "platform_list_allocations", "platform_list_allocation_entries",
 ]) assert.match(sql, new RegExp(`create table(?: if not exists)? public\\.${table}\\b`, "i"), `Missing ${table}`);
 
 for (const [pattern, message] of [
@@ -83,6 +84,26 @@ for (const [pattern, message] of [
   [/claim_customer_callback/i, "global callbacks must be claimed atomically"],
   [/schedule_customer_callback/i, "personal and global callbacks are required"],
   [/capture_note_revision/i, "note edit history is required"],
+  [/create_platform_tenant/i, "platform tenant provisioning is required"],
+  [/register_tenant_invitation/i, "audited tenant invitations are required"],
+  [/activate_current_user_invitation/i, "invited users must activate the intended tenant"],
+  [/list_current_user_tenants/i, "users must only enumerate their own active tenant memberships"],
+  [/switch_active_tenant/i, "multi-tenant users need an audited tenant switch"],
+  [/can_manage_team/i, "team-lead scoped administration is required"],
+  [/update_managed_team/i, "team status and settings must use an audited RPC"],
+  [/update_tenant_member/i, "tenant member role, status and reassignment must use an audited RPC"],
+  [/membership_scoped_select/i, "team leaders must only read members in teams they manage"],
+  [/profiles_scoped_select/i, "tenant profile visibility must follow tenant and team scope"],
+  [/drop policy if exists membership_admin_all/i, "direct tenant-membership writes must be removed"],
+  [/drop policy if exists memberships_team_manager_select/i, "legacy overlapping membership visibility policy must be removed"],
+  [/drop policy if exists profiles_team_manager_select/i, "legacy overlapping profile visibility policy must be removed"],
+  [/drop policy if exists teams_admin_write/i, "direct team writes must be removed"],
+  [/allocation_name_required/i, "platform allocations require a non-empty tenant list name"],
+  [/team_list_name_required/i, "team splits require a non-empty list name"],
+  [/allocate_platform_list_to_tenant/i, "central lists must materialize safely into tenant CRM"],
+  [/split_customer_list_to_team/i, "tenant lists must be divisible into team work queues"],
+  [/revoke_platform_list_allocation/i, "central allocations must be revocable without deleting history"],
+  [/release_expired_platform_allocations/i, "time-limited allocations must expire safely"],
   [/revoke all on function public\.claim_outbox_jobs[\s\S]*from public, ?anon, ?authenticated/i, "outbox worker RPC must be service-only"],
   [/revoke all on function public\.claim_enrichment_jobs[\s\S]*from public, ?anon, ?authenticated/i, "enrichment worker RPC must be service-only"],
 ]) assert.match(sql, pattern, message);
@@ -159,6 +180,7 @@ assert.match(maintenanceWorker, /claim_segment_refresh_jobs/, "Maintenance worke
 assert.match(maintenanceWorker, /refresh_due_dynamic_customer_lists/, "Maintenance worker must synchronize dynamic customer lists");
 assert.match(maintenanceWorker, /run_retention_maintenance/, "Maintenance worker must execute retention");
 assert.match(maintenanceWorker, /normalize_due_geographies/, "Maintenance worker must normalize geographic reference data");
+assert.match(maintenanceWorker, /release_expired_platform_allocations/, "Maintenance worker must release expired platform list allocations");
 const complianceWorker = await readFile(join(root, "supabase/functions/compliance-worker/index.ts"), "utf8");
 for (const pattern of [/queue_due_nix_checks/, /claim_nix_check_jobs/, /complete_nix_check_job/, /fail_nix_check_job/, /redirect: "manual"/, /nix_private_network_forbidden/, /decryptJson/]) assert.match(complianceWorker, pattern, `Compliance worker invariant missing: ${pattern}`);
 
@@ -211,7 +233,23 @@ for (const relative of [
   "src/app/api/v1/calls/complete/route.ts",
   "src/app/actions/callbacks.ts",
   "src/hooks/use-call-realtime.ts",
+  "src/app/actions/auth.ts",
+  "src/app/actions/organization.ts",
+  "src/app/actions/platform-lists.ts",
+  "src/app/api/v1/platform/lists/import/route.ts",
+  "src/app/(dashboard)/app/platform/lists/page.tsx",
+  "src/app/(dashboard)/app/teams/page.tsx",
+  "src/app/(dashboard)/app/users/page.tsx",
+  "src/components/app-shell/topbar.tsx",
+  "src/app/auth/callback/route.ts",
 ]) assert.ok((await stat(join(root, relative))).size > 100, `Missing implementation ${relative}`);
+
+const authActions = await readFile(join(root, "src/app/actions/auth.ts"), "utf8");
+assert.match(authActions, /signInWithPassword[\s\S]*activate_current_user_invitation/, "Existing users must accept pending tenant invitations when signing in");
+const tenantAuthCallback = await readFile(join(root, "src/app/auth/callback/route.ts"), "utf8");
+assert.match(tenantAuthCallback, /exchangeCodeForSession[\s\S]*activate_current_user_invitation/, "Email and OAuth callbacks must activate the intended tenant invitation");
+const platformImportRoute = await readFile(join(root, "src/app/api/v1/platform/lists/import/route.ts"), "utf8");
+assert.match(platformImportRoute, /employee_count: nullableInteger/, "Employee counts in central imports must be integers");
 
 const importRoute = await readFile(join(root, "src/app/api/v1/imports/file/route.ts"), "utf8");
 assert.match(importRoute, /scanImportFile/, "Import files must be security scanned before parsing and storage");
@@ -382,7 +420,7 @@ if (/ignoreBuildErrors\s*:\s*true/.test(nextConfig)) {
 assert.equal(packageJson.dependencies.next, "16.2.10");
 assert.equal(packageJson.dependencies["@supabase/ssr"], "0.12.3");
 assert.equal(packageJson.dependencies["@supabase/supabase-js"], "2.110.7");
-assert.equal(packageJson.engines.node, ">=22.0.0");
+assert.equal(packageJson.engines.node, "22.x");
 assert.equal(packageJson.overrides.postcss, "8.5.19");
 assert.equal(packageJson.scripts["functions:deploy"], "node scripts/deploy-functions.mjs");
 assert.equal(packageJson.scripts["geography:import"], "node scripts/import-geography.mjs");

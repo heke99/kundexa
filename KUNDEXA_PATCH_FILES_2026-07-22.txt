@@ -1,0 +1,38 @@
+KUNDEXA – ÄNDRADE OCH TILLAGDA FILER
+Datum: 2026-07-22
+
+DELIVERY-MANIFEST.md
+KUNDEXA_PATCH_FILES_2026-07-22.txt
+KUNDEXA_VERIFY_LOG_2026-07-22_TENANT_LIST_FLOW.txt
+docs/PLATFORM_LISTS_TENANTS_TEAMS_2026-07-22.md
+scripts/verify-sql.mjs
+scripts/verify.mjs
+src/app/(dashboard)/app/layout.tsx
+src/app/(dashboard)/app/lists/[id]/page.tsx
+src/app/(dashboard)/app/platform/lists/page.tsx
+src/app/(dashboard)/app/platform/page.tsx
+src/app/(dashboard)/app/teams/page.tsx
+src/app/(dashboard)/app/users/page.tsx
+src/app/actions/admin.ts
+src/app/actions/auth.ts
+src/app/actions/organization.ts
+src/app/actions/platform-lists.ts
+src/app/api/v1/platform/lists/import/route.ts
+src/app/auth/callback/route.ts
+src/components/app-shell/topbar.tsx
+src/lib/auth.ts
+supabase/functions/maintenance-worker/index.ts
+supabase/migrations/202607220001_platform_list_distribution_and_team_admin.sql
+
+HUVUDFLÖDE
+Plattformens listbank -> tenantallokering -> tenantens befintliga CRM/listor -> teamlista -> säljarfördelning -> dialer/callback/order/statistik.
+
+REKOMMENDERAD KÖRORDNING EFTER RSYNC
+npm ci
+npm run typecheck
+npm run typecheck:edge
+npm run test
+npm run db:push
+npm run types:generate
+npm run functions:deploy
+npm run build

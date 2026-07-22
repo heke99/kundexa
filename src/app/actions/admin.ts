@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getAppContext, isAdmin } from "@/lib/auth";
+import { createTeam as createManagedTeam, inviteUser as inviteTenantUser } from "@/app/actions/organization";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { encryptJson, randomToken, sha256 } from "@/lib/crypto";
@@ -29,46 +30,11 @@ function publicHttpsUrl(raw: string) {
 }
 
 export async function createTeam(form: FormData) {
-  const context = await adminContext();
-  const name = value(form, "name");
-  if (!name) return;
-  const supabase = await createClient();
-  const { error } = await supabase.from("teams").insert({
-    tenant_id: context.tenantId,
-    name,
-    description: value(form, "description") || null,
-    department: value(form, "department") || null,
-    office: value(form, "office") || null,
-  });
-  if (error) throw error;
-  revalidatePath("/app/teams");
+  return createManagedTeam(form);
 }
 
 export async function inviteUser(form: FormData) {
-  const context = await adminContext();
-  const email = value(form, "email");
-  const role = value(form, "role") || "sales";
-  if (!email) redirect("/app/users?error=E-post krävs");
-  const admin = createAdminClient();
-  const env = serverEnv();
-  const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
-    redirectTo: `${env.NEXT_PUBLIC_APP_URL}/auth/callback`,
-    data: { invited_tenant_id: context.tenantId },
-  });
-  if (error) redirect(`/app/users?error=${encodeURIComponent(error.message)}`);
-  if (data.user) {
-    const { error: membershipError } = await admin.from("tenant_memberships").upsert({
-      tenant_id: context.tenantId,
-      user_id: data.user.id,
-      role,
-      status: "invited",
-      invited_by: context.userId,
-      invited_at: new Date().toISOString(),
-    });
-    if (membershipError) throw membershipError;
-  }
-  revalidatePath("/app/users");
-  redirect("/app/users");
+  return inviteTenantUser(form);
 }
 
 export async function save46ElksIntegration(form: FormData) {

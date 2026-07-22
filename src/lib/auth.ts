@@ -29,7 +29,7 @@ export const getAppContext = cache(async (): Promise<AppContext> => {
 
   const { data: membership } = await supabase
     .from("tenant_memberships")
-    .select("role, tenants(name,legal_name,timezone)")
+    .select("role, tenants(name,legal_name,timezone,status)")
     .eq("tenant_id", profile.active_tenant_id)
     .eq("user_id", user.id)
     .eq("status", "active")
@@ -51,10 +51,12 @@ export const getAppContext = cache(async (): Promise<AppContext> => {
       .maybeSingle(),
   ]);
 
-  const tenantsValue = membership.tenants as unknown as { name?: string; legal_name?: string; timezone?: string } | { name?: string; legal_name?: string; timezone?: string }[] | null;
+  const tenantsValue = membership.tenants as unknown as { name?: string; legal_name?: string; timezone?: string; status?: string } | { name?: string; legal_name?: string; timezone?: string; status?: string }[] | null;
   const tenantName = Array.isArray(tenantsValue) ? tenantsValue[0]?.name : tenantsValue?.name;
   const tenantLegalName = Array.isArray(tenantsValue) ? tenantsValue[0]?.legal_name : tenantsValue?.legal_name;
   const tenantTimezone = Array.isArray(tenantsValue) ? tenantsValue[0]?.timezone : tenantsValue?.timezone;
+  const tenantStatus = Array.isArray(tenantsValue) ? tenantsValue[0]?.status : tenantsValue?.status;
+  if (!tenantStatus || !["trial", "active"].includes(tenantStatus)) redirect("/login?error=Tenantkontot är pausat eller avslutat");
 
   return {
     userId: user.id,

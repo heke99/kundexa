@@ -2,7 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ListFilter, PhoneCall, Settings, Users } from "@/components/icons";
 import { addCustomersToList, materializeSegmentToList, setCustomerListSellers, updateCustomerList, updateCustomerListSellerAssignment, upsertListDisposition } from "@/app/actions/lists";
+import { splitListToTeam } from "@/app/actions/organization";
 import { createClient } from "@/lib/supabase/server";
+import { getAppContext } from "@/lib/auth";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
@@ -17,9 +19,10 @@ export default async function ListDetailPage({ params, searchParams }: {
 }) {
   const { id } = await params;
   const query = await searchParams;
+  const context = await getAppContext();
   const supabase = await createClient();
   // Kandidatstatus och medlemsantal aggregeras i databasen i stället för att hämta alla rader.
-  const [{ data: list }, { data: mayManage }, { data: members }, { data: assignments }, { data: memberships }, { data: teamMembers }, { data: customers }, { data: dispositions }, { data: segments }, { data: candidateCounts }, { data: listOverview }, { data: phoneNumbers }] = await Promise.all([
+  const [{ data: list }, { data: mayManage }, { data: members }, { data: assignments }, { data: memberships }, { data: teamMembers }, { data: customers }, { data: dispositions }, { data: segments }, { data: candidateCounts }, { data: listOverview }, { data: phoneNumbers }, { data: teams }] = await Promise.all([
     supabase.from("customer_lists").select("*").eq("id", id).single(),
     supabase.rpc("can_manage_customer_list", { p_list_id: id }),
     supabase.from("customer_list_members").select("id,customer_id,assigned_user_id,state,attempts,outcome,next_attempt_at,customers(display_name,phone_e164,city,do_not_call)").eq("list_id", id).order("priority", { ascending: false }).limit(500),
@@ -32,6 +35,7 @@ export default async function ListDetailPage({ params, searchParams }: {
     supabase.rpc("customer_list_candidate_counts", { p_list_id: id }),
     supabase.rpc("customer_list_overview", { p_list_id: id }),
     supabase.from("phone_numbers").select("id,number_e164").eq("status", "active").eq("supports_voice", true).order("number_e164"),
+    supabase.from("teams").select("id,name,status").eq("status", "active").order("name"),
   ]);
   if (!list) notFound();
   const memberStats = (listOverview?.[0] ?? { total_members: members?.length ?? 0, open_members: 0, active_sellers: 0 }) as { total_members: number; open_members: number; active_sellers: number };
@@ -120,6 +124,17 @@ export default async function ListDetailPage({ params, searchParams }: {
             <button className="button button-secondary" disabled={!segments?.length}>Kör segment och synkronisera</button>
           </form></CardContent>
         </Card>
+        {(["owner", "admin"].includes(context.role) && Number(memberStats.open_members) > 0) ? <Card>
+          <CardHeader><h3><Users size={16} /> Dela listan till team</h3></CardHeader>
+          <CardContent><form action={splitListToTeam} className="form-stack">
+            <input type="hidden" name="source_list_id" value={id} />
+            <SelectField label="Mottagande team" name="team_id" defaultValue="" required><option value="" disabled>Välj team</option>{teams?.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</SelectField>
+            <Field label="Namn på teamlistan" name="name" defaultValue={`${list.name} · team`} required />
+            <div className="form-grid"><Field label="Antal öppna poster" name="count" type="number" min="1" max={Number(memberStats.open_members)} required /><SelectField label="Fördelningsstrategi" name="distribution_strategy" defaultValue="shared_queue"><option value="shared_queue">Gemensam kö</option><option value="round_robin">Round robin</option><option value="manual">Manuell tilldelning</option><option value="fixed_owner">Fast ägare</option></SelectField></div>
+            <p className="muted">Endast obearbetade och olåsta poster flyttas. Samtal, callbacks och historik skrivs aldrig om.</p>
+            <button className="button button-secondary">Skapa teamlista och flytta poster</button>
+          </form></CardContent>
+        </Card> : null}
         <Card>
           <CardHeader><h3><Users size={16} /> Tilldela säljare</h3></CardHeader>
           <CardContent><form action={setCustomerListSellers} className="form-stack"><input type="hidden" name="list_id" value={id} />

@@ -12,6 +12,12 @@ export async function signIn(formData: FormData) {
   const supabase = await createClient();
   const { error } = await supabase.auth.signInWithPassword(parsed.data);
   if (error) redirect(`/login?error=${encodeURIComponent("Inloggningen misslyckades")}`);
+  const invitation = await supabase.rpc("activate_current_user_invitation");
+  if (invitation.error) {
+    const reference = crypto.randomUUID();
+    console.error("Tenant invitation activation after sign-in failed", { reference, error: invitation.error });
+    redirect(`/login?error=${encodeURIComponent(`Inbjudan kunde inte aktiveras. Referens: ${reference}`)}`);
+  }
   redirect("/app");
 }
 

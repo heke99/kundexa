@@ -226,6 +226,93 @@ try {
 if (!lastOwnerProtected) throw new Error("Last platform owner protection did not trigger");
 console.log("Executed idempotent onboarding and audited platform-administration runtime path.");
 
+// Platform list bank -> tenant -> team -> seller, including invitation activation,
+// team-level pause/capacity and safe revocation that preserves already-started work.
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000014',false)`);
+const distributedTenantResult = await db.query(`select public.create_platform_tenant('Distributed Verify','Distributed Verify AB','5599000001','SE','Europe/Stockholm','sv-SE') as id`);
+const distributedTenantId = String(distributedTenantResult.rows[0].id);
+const distributedDefaultTeam = await db.query(`select id from public.teams where tenant_id=$1 and is_default limit 1`, [distributedTenantId]);
+const distributedDefaultTeamId = String(distributedDefaultTeam.rows[0].id);
+await db.exec(`
+  insert into auth.users(id,email,raw_user_meta_data) values
+    ('00000000-0000-0000-0000-000000000040','distributed-owner@example.test','{"full_name":"Distributed Owner"}'),
+    ('00000000-0000-0000-0000-000000000041','distributed-seller@example.test','{"full_name":"Distributed Seller"}'),
+    ('00000000-0000-0000-0000-000000000042','distributed-lead@example.test','{"full_name":"Distributed Team Lead"}');
+`);
+await db.query(`select public.register_tenant_invitation($1,'00000000-0000-0000-0000-000000000040','distributed-owner@example.test','owner'::public.membership_role,array[$2]::uuid[],'Owner invite',now()+interval '7 days')`, [distributedTenantId, distributedDefaultTeamId]);
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000040',false)`);
+const activatedOwner = await db.query(`select public.activate_current_user_invitation() as tenant_id`);
+if (String(activatedOwner.rows[0].tenant_id) !== distributedTenantId) throw new Error(`Tenant owner invitation activation failed: ${JSON.stringify(activatedOwner.rows)}`);
+const distributedTeamResult = await db.query(`select public.create_managed_team('Distribution Team','Runtime team','Sales','Malmö','distribution',true,25,'automatic') as id`);
+const distributedTeamId = String(distributedTeamResult.rows[0].id);
+await db.query(`select public.register_tenant_invitation($1,'00000000-0000-0000-0000-000000000041','distributed-seller@example.test','sales'::public.membership_role,array[$2]::uuid[],'Seller invite',now()+interval '7 days')`, [distributedTenantId, distributedTeamId]);
+await db.query(`select public.register_tenant_invitation($1,'00000000-0000-0000-0000-000000000042','distributed-lead@example.test','team_lead'::public.membership_role,array[$2]::uuid[],'Lead invite',now()+interval '7 days')`, [distributedTenantId, distributedTeamId]);
+for (const userId of ['00000000-0000-0000-0000-000000000041','00000000-0000-0000-0000-000000000042']) {
+  await db.query(`select set_config('request.jwt.claim.sub',$1,false)`, [userId]);
+  const activation = await db.query(`select public.activate_current_user_invitation() as tenant_id`);
+  if (String(activation.rows[0].tenant_id) !== distributedTenantId) throw new Error(`Seller/team-lead invitation activation failed for ${userId}`);
+}
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000014',false)`);
+const platformListResult = await db.query(`
+  insert into public.platform_lists(name,source_provider,status,exclusivity_mode,default_exclusive_days,created_by)
+  values('Runtime central list','verify','active','exclusive',30,'00000000-0000-0000-0000-000000000014') returning id
+`);
+const platformListId = String(platformListResult.rows[0].id);
+await db.query(`
+  insert into public.platform_list_entries(platform_list_id,source_key,organization_number,display_name,company_name,phone_e164,email,city,industry,state,data_hash)
+  values
+    ($1,'runtime-entry-1','5599000100','Runtime Prospect One','Runtime Prospect One AB','+46700000041','prospect-one@example.test','Malmö','IT','available','runtime-hash-1'),
+    ($1,'runtime-entry-2','5599000101','Runtime Prospect Two','Runtime Prospect Two AB','+46700000042','prospect-two@example.test','Malmö','IT','available','runtime-hash-2')
+`, [platformListId]);
+await db.query(`select public.refresh_platform_list_counts($1)`, [platformListId]);
+const allocationResult = await db.query(`select public.allocate_platform_list_to_tenant($1,$2,'Runtime tenant allocation',2,'{"city":"Malmö"}'::jsonb,'exclusive',null,null) as id`, [platformListId, distributedTenantId]);
+const allocationId = String(allocationResult.rows[0].id);
+const targetListResult = await db.query(`select target_list_id from public.platform_list_allocations where id=$1`, [allocationId]);
+const targetListId = String(targetListResult.rows[0].target_list_id);
+const materialized = await db.query(`select count(*)::int as members from public.customer_list_members where tenant_id=$1 and list_id=$2`, [distributedTenantId, targetListId]);
+if (Number(materialized.rows[0].members) !== 2) throw new Error(`Platform allocation did not materialize two tenant leads: ${JSON.stringify(materialized.rows)}`);
+
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000040',false)`);
+const childListResult = await db.query(`select public.split_customer_list_to_team($1,$2,'Runtime team allocation',2,'shared_queue') as id`, [targetListId, distributedTeamId]);
+const childListId = String(childListResult.rows[0].id);
+await db.query(`update public.customer_lists set status='active' where id=$1`, [childListId]);
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000042',false)`);
+await db.query(`select public.set_customer_list_sellers($1,array['00000000-0000-0000-0000-000000000041']::uuid[])`, [childListId]);
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000041',false)`);
+const sellerCanWork = await db.query(`select public.can_work_customer_list($1) as allowed`, [childListId]);
+if (sellerCanWork.rows[0].allowed !== true) throw new Error(`Team seller could not work assigned list: ${JSON.stringify(sellerCanWork.rows)}`);
+
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000040',false)`);
+await db.query(`select public.set_managed_team_member($1,'00000000-0000-0000-0000-000000000041','member',true,null,true)`, [distributedTeamId]);
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000041',false)`);
+const pausedSeller = await db.query(`select public.can_work_customer_list($1) as allowed`, [childListId]);
+if (pausedSeller.rows[0].allowed !== false) throw new Error(`Paused team seller retained dialer access: ${JSON.stringify(pausedSeller.rows)}`);
+
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000040',false)`);
+await db.query(`select public.set_managed_team_member($1,'00000000-0000-0000-0000-000000000041','member',true,1,false)`, [distributedTeamId]);
+await db.query(`update public.customer_list_members set claimed_by='00000000-0000-0000-0000-000000000041',claim_expires_at=now()+interval '10 minutes',state='claimed' where id=(select id from public.customer_list_members where list_id=$1 order by created_at limit 1)`, [childListId]);
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000041',false)`);
+const cappedSeller = await db.query(`select public.can_work_customer_list($1) as allowed`, [childListId]);
+if (cappedSeller.rows[0].allowed !== false) throw new Error(`Team daily lead limit was not enforced: ${JSON.stringify(cappedSeller.rows)}`);
+
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000014',false)`);
+const revokedAllocation = await db.query(`select public.revoke_platform_list_allocation($1,'Runtime safe revocation test') as removed`, [allocationId]);
+if (Number(revokedAllocation.rows[0].removed) !== 1) throw new Error(`Expected one untouched lead to be reclaimed: ${JSON.stringify(revokedAllocation.rows)}`);
+const allocationState = await db.query(`
+  select
+    (select count(*)::int from public.platform_list_allocation_entries where allocation_id=$1 and status='converted') as converted,
+    (select count(*)::int from public.platform_list_allocation_entries where allocation_id=$1 and status='revoked') as revoked,
+    (select count(*)::int from public.customer_list_members where tenant_id=$2 and list_id=$3) as preserved_members,
+    (select count(*)::int from public.customer_lists where tenant_id=$2 and source_platform_allocation_id=$1 and status='paused') as paused_lists,
+    (select consumed_entries from public.platform_lists where id=$4) as consumed_entries,
+    (select available_entries from public.platform_lists where id=$4) as available_entries
+`, [allocationId, distributedTenantId, childListId, platformListId]);
+const allocationRuntime = allocationState.rows[0];
+if (Number(allocationRuntime.converted)!==1 || Number(allocationRuntime.revoked)!==1 || Number(allocationRuntime.preserved_members)!==1 || Number(allocationRuntime.paused_lists)!==2 || Number(allocationRuntime.consumed_entries)!==1 || Number(allocationRuntime.available_entries)!==1) {
+  throw new Error(`Safe platform allocation revocation failed: ${JSON.stringify(allocationRuntime)}`);
+}
+console.log("Executed platform list bank, tenant invitation, team distribution, seller capacity and safe revocation runtime paths.");
+
 // Execute the canonical prospect -> assigned list -> claim -> call -> after-work -> order path.
 await db.exec(`
   select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
