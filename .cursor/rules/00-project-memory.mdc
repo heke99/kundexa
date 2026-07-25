@@ -1,0 +1,10 @@
+---
+description: Read and maintain Kundexa's persistent project memory
+alwaysApply: true
+---
+
+Read `.agent-memory/README.md`, `current-state.md`, `open-blockers.md` and `next-actions.md` before changes.
+
+Treat executed tests, migrations and source code as stronger evidence than old prose. Mark unknown or externally untested facts `UNVERIFIED` or `NOT RUN`; never infer production readiness.
+
+At the end of a work session, update current state, blockers, verification matrix, completed work, next actions and session log. Record durable architecture choices in `decisions.md` and reproducible failures in `known-failures.md`.

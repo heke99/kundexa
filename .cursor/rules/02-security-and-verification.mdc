@@ -1,0 +1,12 @@
+---
+description: Enforce tenant boundaries and verification gates
+alwaysApply: true
+---
+
+- Derive authenticated tenant from active membership; never trust a client tenant ID by itself.
+- Tenant-parameterized `SECURITY DEFINER` functions are service-only and must validate each resource against the explicit tenant.
+- Use explicit `search_path`, least `EXECUTE`, RLS and negative two-tenant tests.
+- Keep secrets server-side. Use private Storage, signed/tokenized callbacks, SSRF controls and hashed/encrypted credentials.
+- Run `npm run verify` before delivery.
+- Report live Supabase, provider, browser, load, backup, SAST/DAST and penetration tests as `NOT RUN` unless actually executed.
+- The project is not production-approved until `docs/PRODUCTION_GATES.md` is closed.

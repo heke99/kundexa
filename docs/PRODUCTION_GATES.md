@@ -41,4 +41,4 @@ Följande måste godkännas före försäljning eller skarp kundtrafik.
 - Abonnemang, usage limits, överdebitering och avstängningsregler.
 - Support-, SLA-, status- och incidentkommunikation.
 - Onboardingmaterial och administratörsutbildning.
-- Schedulerövervakning för samtliga sex workers och larm på dead-letter/kvarstående jobb.
+- Schedulerövervakning för samtliga sju workers och larm på dead-letter/kvarstående jobb.

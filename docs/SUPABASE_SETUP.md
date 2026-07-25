@@ -54,7 +54,7 @@ Migrationerna skapar privata buckets för avtalsdokument, inspelningar, importer
 npm run functions:deploy -- --project-ref PROJECT_REF
 ```
 
-Deployskriptet publicerar sex funktioner:
+Deployskriptet publicerar sju funktioner:
 
 ```text
 process-outbox
@@ -63,6 +63,7 @@ data-worker
 ingestion-worker
 maintenance-worker
 compliance-worker
+parsehub-worker
 ```
 
 Funktionerna deployas med `--no-verify-jwt` för scheduleranrop, men varje request kräver korrekt `x-cron-secret`.

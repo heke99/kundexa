@@ -11,7 +11,7 @@ const schema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const identity = await authenticateRequest(request, "enrichment:write");
+    const identity = await authenticateRequest(request, "directory:refresh");
     const input = schema.parse(await request.json());
     const admin = createAdminClient();
     const [{ data: provider }, { data: account }, { data: permission }] = await Promise.all([

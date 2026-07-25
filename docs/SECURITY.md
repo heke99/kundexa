@@ -7,6 +7,7 @@
 - Vanliga sessionanrop använder användarens Supabase-klient och behåller RLS.
 - Service-role begränsas till workers, providerwebhooks och uttryckliga adminflöden.
 - Worker-RPC:er är återkallade från `anon` och `authenticated`.
+- Tenantparametrerade katalogprojektioner är service-only. Autentiserade segment-/kampanjflöden härleder aktiv tenant; servicewrappers korsvaliderar explicit tenant mot varje resurs.
 - `SECURITY DEFINER`-funktioner använder explicit `search_path`.
 
 ## Kommunikation och compliance

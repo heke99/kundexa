@@ -7,7 +7,7 @@ Repositoryt innehåller en körbar webbapplikation för Supabase Cloud. Docker k
 ## Teknisk grund
 
 - Next.js 16, React 19 och TypeScript 5.9
-- Supabase Auth, PostgreSQL, RLS, Storage och sex Edge Function-workers
+- Supabase Auth, PostgreSQL, RLS, Storage och sju Edge Function-workers
 - Central katalog med rådata, source facts, provenance, freshness, identitetsnycklar, konflikter, datakvalitet och materialiserade segment
 - Tillståndsstyrd ingestion med paginering, kontrollpunkter, kvoter, retry/dead-letter och parserkarantän
 - Discoveryadaptrar för JSON, NDJSON, CSV och uttryckligen tillåten HTML-regex; leverantörsspecifika kontrakt konfigureras separat
@@ -27,8 +27,8 @@ Repositoryt innehåller en körbar webbapplikation för Supabase Cloud. Docker k
 
 ### Krav
 
-- Node.js 22 eller senare
-- npm 10 eller senare
+- Node.js 22.x
+- npm 10.9.2
 - Ett Supabase Cloud-projekt
 
 ### Installera

@@ -188,6 +188,9 @@ const apiAuth = await readFile(join(root, "src/lib/api-auth.ts"), "utf8");
 assert.match(apiAuth, /identity\.source === "api_key" \? createAdminClient\(\) : createClient\(\)/, "Session API calls must retain RLS");
 const directoryLib = await readFile(join(root, "src/lib/directory.ts"), "utf8");
 assert.match(directoryLib, /shared_entity_refresh_managed_by_license_owner/, "Cross-tenant catalogue refresh must not mutate shared master data under another licence");
+const discoveryRoute = await readFile(join(root, "src/app/api/v1/directory/discover/route.ts"), "utf8");
+assert.match(discoveryRoute, /authenticateRequest\(request,\s*"directory:refresh"\)/, "Directory discovery must use the canonical directory:refresh scope");
+assert.doesNotMatch(discoveryRoute, /enrichment:write/, "Legacy unreachable discovery scope must not return");
 
 for (const relative of [
   "src/app/api/v1/directory/search/route.ts",

@@ -54,7 +54,7 @@ SUPABASE_PROJECT_REF=PROJECT_REF npm run types:generate
 npm run functions:deploy -- --project-ref PROJECT_REF
 ```
 
-Kommandot deployar alla sex workers. `maintenance-worker` innehåller nu även automatisk synk av dynamiska ringlistor efter segmentsnapshot.
+Kommandot deployar alla sju workers. `maintenance-worker` innehåller nu även automatisk synk av dynamiska ringlistor efter segmentsnapshot.
 
 ## Scheduler
 

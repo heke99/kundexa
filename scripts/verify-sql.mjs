@@ -61,6 +61,30 @@ const counts = result.rows[0];
 if (!counts || Number(counts.tables) < 100 || Number(counts.functions) < 30 || Number(counts.policies) < 100) {
   throw new Error(`Unexpected schema counts: ${JSON.stringify(counts)}`);
 }
+const directoryPrivileges = await db.query(`
+  select
+    has_function_privilege('authenticated','public.directory_search_v2_for_tenant(uuid,jsonb,integer,integer)','EXECUTE') as authenticated_directory_search,
+    has_function_privilege('service_role','public.directory_search_v2_for_tenant(uuid,jsonb,integer,integer)','EXECUTE') as service_directory_search,
+    has_function_privilege('authenticated','public.refresh_segment_materialization(uuid,uuid)','EXECUTE') as authenticated_segment_refresh,
+    has_function_privilege('service_role','public.refresh_segment_materialization_for_tenant(uuid,uuid,uuid)','EXECUTE') as service_segment_refresh,
+    has_function_privilege('service_role','public.refresh_segment_materialization(uuid,uuid)','EXECUTE') as unscoped_service_segment_refresh,
+    has_function_privilege('authenticated','public.materialize_segment_to_campaign(uuid,uuid,uuid)','EXECUTE') as authenticated_campaign_materialization,
+    has_function_privilege('service_role','public.materialize_segment_to_campaign_for_tenant(uuid,uuid,uuid,uuid)','EXECUTE') as service_campaign_materialization,
+    has_function_privilege('service_role','public.materialize_segment_to_campaign(uuid,uuid,uuid)','EXECUTE') as unscoped_service_campaign_materialization
+`);
+const privileges = directoryPrivileges.rows[0];
+if (
+  privileges.authenticated_directory_search
+  || !privileges.service_directory_search
+  || !privileges.authenticated_segment_refresh
+  || !privileges.service_segment_refresh
+  || privileges.unscoped_service_segment_refresh
+  || !privileges.authenticated_campaign_materialization
+  || !privileges.service_campaign_materialization
+  || privileges.unscoped_service_campaign_materialization
+) {
+  throw new Error(`Directory RPC privilege boundary failed: ${JSON.stringify(privileges)}`);
+}
 console.log(`Executed ${migrations.length} migrations: ${counts.tables} public tables, ${counts.functions} public functions, ${counts.policies} RLS policies.`);
 
 // Execute the canonical data path, not only DDL parsing: due scheduling -> lease ->
@@ -243,6 +267,34 @@ await db.query(`select public.register_tenant_invitation($1,'00000000-0000-0000-
 await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000040',false)`);
 const activatedOwner = await db.query(`select public.activate_current_user_invitation() as tenant_id`);
 if (String(activatedOwner.rows[0].tenant_id) !== distributedTenantId) throw new Error(`Tenant owner invitation activation failed: ${JSON.stringify(activatedOwner.rows)}`);
+let crossTenantSegmentBlocked = false;
+try {
+  await db.query(`select public.refresh_segment_materialization('00000000-0000-0000-0000-000000000008','00000000-0000-0000-0000-000000000040')`);
+} catch (error) {
+  crossTenantSegmentBlocked = String(error).includes("segment_not_found");
+}
+if (!crossTenantSegmentBlocked) throw new Error("Authenticated cross-tenant segment refresh was not blocked");
+let crossTenantCampaignBlocked = false;
+try {
+  await db.query(`select public.materialize_segment_to_campaign('00000000-0000-0000-0000-000000000008','00000000-0000-0000-0000-000000000012','00000000-0000-0000-0000-000000000040')`);
+} catch (error) {
+  crossTenantCampaignBlocked = String(error).includes("segment_or_campaign_not_found");
+}
+if (!crossTenantCampaignBlocked) throw new Error("Authenticated cross-tenant campaign materialization was not blocked");
+let scopedServiceTenantMismatchBlocked = false;
+try {
+  await db.query(`select public.refresh_segment_materialization_for_tenant($1,'00000000-0000-0000-0000-000000000008',null)`, [distributedTenantId]);
+} catch (error) {
+  scopedServiceTenantMismatchBlocked = String(error).includes("segment_not_found");
+}
+if (!scopedServiceTenantMismatchBlocked) throw new Error("Tenant-scoped service segment refresh accepted a foreign segment");
+let scopedServiceCampaignMismatchBlocked = false;
+try {
+  await db.query(`select public.materialize_segment_to_campaign_for_tenant($1,'00000000-0000-0000-0000-000000000008','00000000-0000-0000-0000-000000000012',null)`, [distributedTenantId]);
+} catch (error) {
+  scopedServiceCampaignMismatchBlocked = String(error).includes("segment_or_campaign_not_found");
+}
+if (!scopedServiceCampaignMismatchBlocked) throw new Error("Tenant-scoped service campaign materialization accepted foreign resources");
 const distributedTeamResult = await db.query(`select public.create_managed_team('Distribution Team','Runtime team','Sales','Malmö','distribution',true,25,'automatic') as id`);
 const distributedTeamId = String(distributedTeamResult.rows[0].id);
 await db.query(`select public.register_tenant_invitation($1,'00000000-0000-0000-0000-000000000041','distributed-seller@example.test','sales'::public.membership_role,array[$2]::uuid[],'Seller invite',now()+interval '7 days')`, [distributedTenantId, distributedTeamId]);
@@ -275,6 +327,16 @@ if (Number(materialized.rows[0].members) !== 2) throw new Error(`Platform alloca
 await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000040',false)`);
 const childListResult = await db.query(`select public.split_customer_list_to_team($1,$2,'Runtime team allocation',2,'shared_queue') as id`, [targetListId, distributedTeamId]);
 const childListId = String(childListResult.rows[0].id);
+const relinkedAllocationEntries = await db.query(`
+  select count(*)::int as relinked
+  from public.platform_list_allocation_entries ae
+  join public.customer_list_members lm
+    on lm.tenant_id=ae.tenant_id and lm.id=ae.list_member_id
+  where ae.allocation_id=$1 and ae.tenant_id=$2 and lm.list_id=$3
+`, [allocationId, distributedTenantId, childListId]);
+if (Number(relinkedAllocationEntries.rows[0].relinked) !== 2) {
+  throw new Error(`Platform allocation trail was not relinked to team members: ${JSON.stringify(relinkedAllocationEntries.rows)}`);
+}
 await db.query(`update public.customer_lists set status='active' where id=$1`, [childListId]);
 await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000042',false)`);
 await db.query(`select public.set_customer_list_sellers($1,array['00000000-0000-0000-0000-000000000041']::uuid[])`, [childListId]);
@@ -302,13 +364,15 @@ const allocationState = await db.query(`
   select
     (select count(*)::int from public.platform_list_allocation_entries where allocation_id=$1 and status='converted') as converted,
     (select count(*)::int from public.platform_list_allocation_entries where allocation_id=$1 and status='revoked') as revoked,
+    (select count(*)::int from public.platform_list_allocation_entries where allocation_id=$1 and tenant_id=$2) as tenant_scoped_entries,
+    (select count(*)::int from public.platform_list_allocation_entries where allocation_id=$1 and status='revoked' and list_member_id is null) as safely_detached_entries,
     (select count(*)::int from public.customer_list_members where tenant_id=$2 and list_id=$3) as preserved_members,
     (select count(*)::int from public.customer_lists where tenant_id=$2 and source_platform_allocation_id=$1 and status='paused') as paused_lists,
     (select consumed_entries from public.platform_lists where id=$4) as consumed_entries,
     (select available_entries from public.platform_lists where id=$4) as available_entries
 `, [allocationId, distributedTenantId, childListId, platformListId]);
 const allocationRuntime = allocationState.rows[0];
-if (Number(allocationRuntime.converted)!==1 || Number(allocationRuntime.revoked)!==1 || Number(allocationRuntime.preserved_members)!==1 || Number(allocationRuntime.paused_lists)!==2 || Number(allocationRuntime.consumed_entries)!==1 || Number(allocationRuntime.available_entries)!==1) {
+if (Number(allocationRuntime.converted)!==1 || Number(allocationRuntime.revoked)!==1 || Number(allocationRuntime.tenant_scoped_entries)!==2 || Number(allocationRuntime.safely_detached_entries)!==1 || Number(allocationRuntime.preserved_members)!==1 || Number(allocationRuntime.paused_lists)!==2 || Number(allocationRuntime.consumed_entries)!==1 || Number(allocationRuntime.available_entries)!==1) {
   throw new Error(`Safe platform allocation revocation failed: ${JSON.stringify(allocationRuntime)}`);
 }
 console.log("Executed platform list bank, tenant invitation, team distribution, seller capacity and safe revocation runtime paths.");

@@ -1,0 +1,13 @@
+---
+description: Preserve Kundexa's canonical domain and migration model
+alwaysApply: true
+---
+
+- Add forward-only migrations; do not rewrite delivered migrations.
+- `customers` is the canonical CRM record. Lists, calls, callbacks, notes and orders stay in their dedicated canonical tables.
+- Platform lists are supply/lineage; tenant `customer_lists` are operational queues.
+- Use atomic RPCs plus transactional outbox for multi-table/provider workflows.
+- Preserve idempotency, audit, claims, NIX/contact policy, retention and immutable contract evidence.
+- Keep API scopes centralized in `src/lib/permissions.ts`.
+- Do not hand-edit generated Supabase types; regenerate from a linked database.
+- Target Node 22.x and npm 10.9.2.

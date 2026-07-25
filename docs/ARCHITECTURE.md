@@ -14,6 +14,7 @@ Schedulers
   -> ingestion-worker   -> discovery/crawl/import + checkpoints
   -> maintenance-worker -> segments / dynamic lists / geography / retention
   -> compliance-worker  -> NIX provider + campaign resume
+  -> parsehub-worker    -> ParseHub runs / webhook-safe imports
 ```
 
 ## Tenantkontext
@@ -22,8 +23,10 @@ Schedulers
 2. Servern validerar aktivt medlemskap och scope.
 3. Tenant hämtas aldrig från en obetrodd klientparameter som ensam sanningskälla.
 4. Tenantägda tabeller har RLS och kanoniskt `tenant_id`.
-5. Worker-RPC:er är återkallade från `anon` och `authenticated` och körs med service-role.
+5. Worker-RPC:er och tenantparametrerade katalogprojektioner är återkallade från `anon` och `authenticated` och körs med service-role.
 6. Providerwebhooks härleder tenant från verifierad callbacktoken, mottagarnummer eller signerad integration.
+
+Autentiserad segmentrefresh och kampanjmaterialisering använder wrappers som härleder aktiv tenant och kontrollerar roll. Serviceflöden använder explicita `*_for_tenant`-funktioner som korsvaliderar tenant mot segment och kampanj.
 
 ## Datadomäner
 

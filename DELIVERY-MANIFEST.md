@@ -21,7 +21,7 @@ npm audit
 - `src/app` – webbapp, adminflöden och versionerat REST-API
 - `src/components` – UI, katalog, importer, API-nycklar och WebRTC-dialer
 - `src/lib` – auth, permissions, importparsers, validering, crypto och domänlogik
-- `supabase/migrations` – 30 ordnade migrationer
+- `supabase/migrations` – 32 ordnade migrationer
 - `supabase/functions/process-outbox` – telefoni, SMS, e-post och dokument
 - `supabase/functions/automation-runner` – automationer
 - `supabase/functions/data-worker` – entitetsberikning
@@ -44,9 +44,17 @@ Detaljer och driftsättningskontroll finns i:
 
 `docs/PLATFORM_LISTS_TENANTS_TEAMS_2026-07-22.md`
 
+## Hardening 2026-07-25
+
+- Kolumnspecifik FK-nollning och relänkning bevarar tenant/lineage när listor delas eller återkallas.
+- Tenantparametrerade katalogprojektioner är endast körbara av `service_role`.
+- Segmentrefresh och kampanjmaterialisering har separata authenticated- och explicit tenantvaliderade servicevägar.
+- Discovery använder det kanoniska API-scopet `directory:refresh`.
+- SQL-verifieringen testar execute-rättigheter och negativa tvåtenantförsök.
+
 ## Verifieringsstatus i leveransmiljön
 
-Den statiska projektverifieringen kontrollerar samtliga 30 migrationer, 163 TypeScript/TSX-källfiler och den nya arkitekturen. Runtime-verifiering med PGlite, Deno-kontroll och full Next.js-build kräver en komplett `npm ci`-installation. Paket kunde inte hämtas i leveransmiljön eftersom npm-nätverk/cache saknades. Dessa kommandon ska köras lokalt eller i CI innan produktionsdriftsättning.
+En komplett installation finns i leveransmiljön och `npm run verify` passerade 2026-07-25. PGlite körde samtliga 32 migrationer och rapporterade 145 publika tabeller, 246 publika funktioner och 273 RLS-policies samt de kanoniska runtimeflödena. TypeScript, Deno-kontroll, statiska invarianter, importtester och Next.js-produktionsbuild var gröna. Miljön använder Node 24; samma gate måste därför upprepas under projektets kanoniska Node 22.x/npm 10.9.2 före staging.
 
 ## Viktig avgränsning
 
