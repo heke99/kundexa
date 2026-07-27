@@ -1,0 +1,33 @@
+Kundexa contract delivery verification
+Date: 2026-07-27
+Node: v22.16.0
+npm: 10.9.2
+
+$ node scripts/contract-delivery-unit-tests.mjs
+Contract delivery unit tests passed: stable snapshot/PDF hashes, reminder quiet hours, Resend mapping and escaped email templates.
+[exit 0]
+
+$ static TypeScript transpile check (src + Supabase functions)
+Checked 189 TypeScript/TSX files.
+Static TypeScript syntax diagnostics: 0.
+[exit 0]
+
+$ node scripts/verify.mjs (temporary local TypeScript symlink)
+Verified 36 migrations, source-call-gated contracts, canonical PDFs, Resend delivery/webhooks, reminders, evidence, tenant/contact policy, licensed directory, ingestion, NIX compliance, retention and worker deployment.
+[exit 0]
+
+$ migration structural check
+202607270000_delivery_status_expansion.sql: dollar_quotes=0 (even), paren_balance=0
+202607270001_contract_delivery_call_resend_reminders.sql: dollar_quotes=28 (even), paren_balance=0
+202607270002_contract_api_execution_context.sql: dollar_quotes=10 (even), paren_balance=0
+202607270003_contract_draft_commercial_assignment.sql: dollar_quotes=2 (even), paren_balance=0
+Checked 4 new migrations; structural check passed.
+[exit 0]
+
+$ npm ci --offline --ignore-scripts --no-audit --no-fund
+npm error code ENOTCACHED
+npm error request to https://packages.applied-caas-gateway1.internal.api.openai.org/artifactory/api/npm/npm-public/tslib failed: cache mode is 'only-if-cached' but no cached response is available.
+npm error A complete log of this run can be found in: /home/oai/.npm/_logs/2026-07-27T12_36_26_069Z-debug-0.log
+[exit 1]
+
+Summary: unit=0 static_ts=0 verify=0 sql=0 npm_ci_offline=1

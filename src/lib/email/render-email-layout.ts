@@ -1,0 +1,9 @@
+const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character] ?? character);
+
+export function renderEmailLayout(input: { preheader: string; heading: string; bodyHtml: string; legalName: string; contact?: string | null; logoUrl?: string | null }) {
+  const safeLogoUrl = input.logoUrl && /^https:\/\//i.test(input.logoUrl) ? escapeHtml(input.logoUrl) : null;
+  const brand = safeLogoUrl ? `<img src="${safeLogoUrl}" alt="${escapeHtml(input.legalName)}" style="display:block;max-width:180px;max-height:54px;width:auto;height:auto">` : `<strong style="font-size:18px">${escapeHtml(input.legalName)}</strong>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head><body style="margin:0;background:#f3f6f5;font-family:Arial,sans-serif;color:#17202a"><div style="display:none;max-height:0;overflow:hidden">${escapeHtml(input.preheader)}</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f6f5"><tr><td align="center" style="padding:28px 12px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;background:#fff;border:1px solid #dfe7e5;border-radius:14px"><tr><td style="padding:26px 30px;background:#102b26;color:#fff;border-radius:14px 14px 0 0">${brand}</td></tr><tr><td style="padding:32px 30px"><h1 style="font-size:24px;line-height:1.25;margin:0 0 20px">${escapeHtml(input.heading)}</h1>${input.bodyHtml}</td></tr><tr><td style="padding:20px 30px;border-top:1px solid #edf1f0;color:#65716f;font-size:12px;line-height:1.5">${escapeHtml(input.legalName)}${input.contact ? `<br>${escapeHtml(input.contact)}` : ""}<br>Detta meddelande skickades genom Kundexa.</td></tr></table></td></tr></table></body></html>`;
+}
+
+export { escapeHtml };

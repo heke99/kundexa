@@ -19,6 +19,10 @@ const serverSchema = publicSchema.extend({
   KUNDEXA_ENCRYPTION_KEY: z.string().min(20),
   KUNDEXA_WEBHOOK_PEPPER: z.string().min(20),
   ENFORCE_46ELKS_IP_ALLOWLIST: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+  CRON_SECRET: z.string().min(20).optional(),
+  RESEND_API_KEY: z.string().min(1).optional(),
+  DEFAULT_EMAIL_FROM: z.string().min(3).optional(),
+  RESEND_WEBHOOK_SECRET: z.string().min(1).optional(),
 });
 
 export function serverEnv() {
@@ -30,5 +34,9 @@ export function serverEnv() {
     KUNDEXA_ENCRYPTION_KEY: process.env.KUNDEXA_ENCRYPTION_KEY,
     KUNDEXA_WEBHOOK_PEPPER: process.env.KUNDEXA_WEBHOOK_PEPPER,
     ENFORCE_46ELKS_IP_ALLOWLIST: process.env.ENFORCE_46ELKS_IP_ALLOWLIST ?? "false",
+    CRON_SECRET: process.env.CRON_SECRET,
+    RESEND_API_KEY: process.env.RESEND_API_KEY,
+    DEFAULT_EMAIL_FROM: process.env.DEFAULT_EMAIL_FROM,
+    RESEND_WEBHOOK_SECRET: process.env.RESEND_WEBHOOK_SECRET,
   });
 }

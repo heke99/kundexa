@@ -1,94 +1,113 @@
 import Link from "next/link";
 import { FileSignature, Plus } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
-import { createContract } from "@/app/actions/contracts";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Field, SelectField } from "@/components/ui/form-field";
 import { Badge } from "@/components/ui/badge";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatDate } from "@/lib/utils";
 
-type TemplateRelation = {
-  name: string;
-  audience: string;
-  active: boolean;
-  current_version_id: string | null;
-  legal_entity_id: string | null;
+const statusLabel: Record<string, string> = {
+  draft: "Utkast", ready: "Redo", sent: "Skickat", delivered: "Levererat", opened: "Öppnat",
+  accepted: "Accepterat", declined: "Avstått", expired: "Utgånget", signed: "Dokumenterat", active: "Aktivt",
+  cancelled: "Avbrutet", terminated: "Avslutat", superseded: "Ersatt",
 };
 
-export default async function ContractsPage({ searchParams }: { searchParams: Promise<{ error?: string; customer?: string }> }) {
+type Search = {
+  error?: string; message?: string; status?: string; call?: string; attention?: string; q?: string;
+  owner_user_id?: string; team_id?: string; product_id?: string; date_from?: string; date_to?: string;
+};
+
+export default async function ContractsPage({ searchParams }: { searchParams: Promise<Search> }) {
   const params = await searchParams;
   const supabase = await createClient();
-  const [{ data: contracts }, { data: customers }, { data: products }, { data: versions }, { data: legalEntities }] = await Promise.all([
-    supabase.from("contracts").select("id,contract_number,title,status,audience,value,currency,created_at,customers(display_name)").order("created_at", { ascending: false }).limit(100),
-    supabase.from("customers").select("id,display_name,customer_type").is("deleted_at", null).order("display_name"),
+  const [{ data: members }, { data: teams }, { data: products }] = await Promise.all([
+    supabase.from("tenant_memberships").select("user_id,profiles:user_id(full_name)").eq("status", "active").order("created_at"),
+    supabase.from("teams").select("id,name").eq("status", "active").order("name"),
     supabase.from("products").select("id,name").eq("active", true).order("name"),
-    supabase.from("contract_template_versions").select("id,version,template_id,status,contract_templates(name,audience,active,current_version_id,legal_entity_id)").eq("status", "approved").order("created_at", { ascending: false }),
-    supabase.from("tenant_legal_entities").select("id,legal_name,organization_number,is_default").eq("active", true).order("is_default", { ascending: false }).order("legal_name"),
   ]);
+  const ownerNames = new Map<string, string>();
+  for (const member of members ?? []) {
+    const profile = Array.isArray(member.profiles) ? member.profiles[0] : member.profiles;
+    ownerNames.set(member.user_id, profile?.full_name ?? member.user_id);
+  }
+  const teamNames = new Map((teams ?? []).map((team) => [team.id, team.name]));
 
-  const approvedVersions = (versions ?? []).filter((version) => {
-    const relation = Array.isArray(version.contract_templates) ? version.contract_templates[0] : version.contract_templates;
-    return relation?.active && relation.current_version_id === version.id;
-  });
+  let query = supabase.from("contracts")
+    .select("id,contract_number,title,status,audience,source_call_id,owner_user_id,team_id,product_id,expires_at,created_at,updated_at,customers(display_name),products(name)")
+    .order("updated_at", { ascending: false }).limit(500);
+  if (params.status) query = query.eq("status", params.status);
+  if (params.call === "missing") query = query.is("source_call_id", null);
+  if (params.attention === "waiting") query = query.in("status", ["sent", "delivered", "opened"]);
+  if (params.owner_user_id) query = query.eq("owner_user_id", params.owner_user_id);
+  if (params.team_id) query = query.eq("team_id", params.team_id);
+  if (params.product_id) query = query.eq("product_id", params.product_id);
+  if (params.date_from) query = query.gte("created_at", `${params.date_from}T00:00:00.000Z`);
+  if (params.date_to) query = query.lte("created_at", `${params.date_to}T23:59:59.999Z`);
+  const { data: contracts } = await query;
+  const ids = (contracts ?? []).map((contract) => contract.id);
+  const [{ data: deliveries }, { data: reminders }] = ids.length ? await Promise.all([
+    supabase.from("contract_deliveries").select("contract_id,status,channel,created_at,failure_message").in("contract_id", ids).order("created_at", { ascending: false }),
+    supabase.from("contract_reminders").select("contract_id,status,scheduled_at").in("contract_id", ids),
+  ]) : [{ data: [] }, { data: [] }];
+  const latestDelivery = new Map<string, { status: string; channel: string; failure_message: string | null }>();
+  for (const delivery of deliveries ?? []) if (!latestDelivery.has(delivery.contract_id)) latestDelivery.set(delivery.contract_id, delivery);
+  const reminderStats = new Map<string, { sent: number; overdue: number }>();
+  const now = Date.now();
+  for (const reminder of reminders ?? []) {
+    const current = reminderStats.get(reminder.contract_id) ?? { sent: 0, overdue: 0 };
+    if (reminder.status === "sent") current.sent += 1;
+    if (reminder.status === "scheduled" && new Date(reminder.scheduled_at).getTime() <= now) current.overdue += 1;
+    reminderStats.set(reminder.contract_id, current);
+  }
+  const search = (params.q ?? "").trim().toLocaleLowerCase("sv-SE");
+  const filteredContracts = (contracts ?? []).filter((contract) => {
+    const delivery = latestDelivery.get(contract.id);
+    const reminder = reminderStats.get(contract.id);
+    const customer = Array.isArray(contract.customers) ? contract.customers[0] : contract.customers;
+    if (params.attention === "delivery_error" && !["failed", "bounced", "complained", "suppressed", "dead_letter"].includes(delivery?.status ?? "")) return false;
+    if (params.attention === "reminder_overdue" && (reminder?.overdue ?? 0) === 0) return false;
+    if (search && !`${contract.contract_number} ${contract.title} ${customer?.display_name ?? ""}`.toLocaleLowerCase("sv-SE").includes(search)) return false;
+    return true;
+  }).slice(0, 200);
 
   return <>
-    <PageHeader title="Avtal" description="Skapa avtal från en juridiskt godkänd mall, versionslås, skicka, följ och bevisa varje steg." />
-    <div className="split-layout">
-      <Card>
-        <CardHeader><h2>Avtalsregister</h2><Badge>{contracts?.length ?? 0}</Badge></CardHeader>
-        <CardContent style={{ padding: 0 }}>
-          <DataTable headers={["Avtal", "Kund", "Typ", "Status", "Värde", "Skapat"]}>
-            {contracts?.map((contract) => {
-              const customer = Array.isArray(contract.customers) ? contract.customers[0] : contract.customers;
-              return <tr key={contract.id}>
-                <td><Link href={`/app/contracts/${contract.id}`}><strong>{contract.contract_number}</strong><br /><span className="muted">{contract.title}</span></Link></td>
-                <td>{customer?.display_name ?? "—"}</td>
-                <td>{contract.audience}</td>
-                <td><Badge className={["signed", "active"].includes(contract.status) ? "badge-success" : contract.status === "draft" ? "" : "badge-info"}>{contract.status}</Badge></td>
-                <td>{formatCurrency(Number(contract.value), contract.currency)}</td>
-                <td>{formatDate(contract.created_at)}</td>
-              </tr>;
-            })}
-          </DataTable>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader><h2><Plus size={16} /> Skapa avtal</h2></CardHeader>
-        <CardContent>
-          {params.error ? <p className="form-error">{params.error}</p> : null}
-          {!approvedVersions.length ? <div className="notice warning">Inget avtal kan skapas förrän en fullständig mallversion har skapats och godkänts under Avtalsmallar.</div> : null}
-          {!legalEntities?.length ? <div className="notice warning">Organisationen saknar ett aktivt juridiskt avsändarbolag.</div> : null}
-          <form action={createContract} className="form-stack">
-            <SelectField label="Kund" name="customer_id" defaultValue={params.customer ?? ""} required>
-              <option value="">Välj kund</option>
-              {customers?.map((customer) => <option value={customer.id} key={customer.id}>{customer.display_name} · {customer.customer_type === "person" ? "B2C" : "B2B"}</option>)}
-            </SelectField>
-            <SelectField label="Juridiskt avsändarbolag" name="legal_entity_id" defaultValue={legalEntities?.find((entity) => entity.is_default)?.id ?? ""} required>
-              <option value="">Välj juridiskt bolag</option>
-              {legalEntities?.map((entity) => <option value={entity.id} key={entity.id}>{entity.legal_name}{entity.organization_number ? ` · ${entity.organization_number}` : ""}</option>)}
-            </SelectField>
-            <SelectField label="Godkänd avtalsmall" name="template_version_id" required>
-              <option value="">Välj mall</option>
-              {approvedVersions.map((version) => {
-                const relation = (Array.isArray(version.contract_templates) ? version.contract_templates[0] : version.contract_templates) as TemplateRelation | null;
-                return <option value={version.id} key={version.id}>{relation?.name ?? "Mall"} · {relation?.audience} · version {version.version}</option>;
-              })}
-            </SelectField>
-            <SelectField label="Produkt" name="product_id">
-              <option value="">Utan produkt</option>
-              {products?.map((product) => <option value={product.id} key={product.id}>{product.name}</option>)}
-            </SelectField>
-            <Field label="Avtalstitel" name="title" placeholder="Företagsabonnemang" required />
-            <SelectField label="Försäljningskanal" name="sales_channel" defaultValue="telephone">
-              <option value="telephone">Telefonförsäljning</option><option value="web">Webb</option><option value="email">E-post</option>
-              <option value="in_person">Fysiskt möte</option><option value="partner">Partner</option><option value="api">API</option><option value="other">Övrigt</option>
-            </SelectField>
-            <button className="button button-primary" disabled={!approvedVersions.length || !legalEntities?.length}><FileSignature size={16} /> Skapa låsbar version</button>
-          </form>
-        </CardContent>
-      </Card>
-    </div>
+    <PageHeader title="Avtal" description="Spårbara avtalsversioner med källsamtal, kanonisk PDF, leveransstatus och påminnelser." action={<Link href="/app/contracts/new" className="button button-primary"><Plus size={16} /> Nytt avtal</Link>} />
+    {params.error ? <p className="form-error">{params.error}</p> : null}
+    {params.message ? <p className="notice">{params.message}</p> : null}
+    <Card style={{ marginBottom: 16 }}><CardContent><form method="get" className="form-stack">
+      <div className="grid grid-2"><Field label="Sök avtal eller kund" name="q" defaultValue={params.q ?? ""} placeholder="Avtalsnummer, titel eller kund" />
+        <SelectField label="Status" name="status" defaultValue={params.status ?? ""}><option value="">Alla statusar</option>{Object.entries(statusLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</SelectField></div>
+      <div className="grid grid-2">
+        <SelectField label="Säljare" name="owner_user_id" defaultValue={params.owner_user_id ?? ""}><option value="">Alla säljare</option>{Array.from(ownerNames.entries()).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</SelectField>
+        <SelectField label="Team" name="team_id" defaultValue={params.team_id ?? ""}><option value="">Alla team</option>{teams?.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</SelectField>
+        <SelectField label="Produkt" name="product_id" defaultValue={params.product_id ?? ""}><option value="">Alla produkter</option>{products?.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</SelectField>
+        <SelectField label="Källsamtal" name="call" defaultValue={params.call ?? ""}><option value="">Alla</option><option value="missing">Saknar giltigt samtal</option></SelectField>
+        <SelectField label="Behöver uppmärksamhet" name="attention" defaultValue={params.attention ?? ""}><option value="">Alla</option><option value="waiting">Väntar på kund</option><option value="delivery_error">Leveransfel</option><option value="reminder_overdue">Påminnelse förfallen</option></SelectField>
+      </div>
+      <div className="grid grid-2"><Field label="Skapad från" name="date_from" type="date" defaultValue={params.date_from ?? ""} /><Field label="Skapad till" name="date_to" type="date" defaultValue={params.date_to ?? ""} /></div>
+      <div><button className="button button-secondary">Filtrera</button> <Link href="/app/contracts" className="button button-ghost">Rensa</Link></div>
+    </form></CardContent></Card>
+    <Card><CardHeader><h2><FileSignature size={17} /> Avtalsregister</h2><Badge>{filteredContracts.length}</Badge></CardHeader><CardContent style={{ padding: 0 }}>
+      <DataTable headers={["Avtal", "Kund", "Produkt", "Säljare / team", "Källsamtal", "Status", "Senaste leverans", "Påminnelser", "Sista svar", "Senaste aktivitet"]}>
+        {filteredContracts.map((contract) => {
+          const customer = Array.isArray(contract.customers) ? contract.customers[0] : contract.customers;
+          const product = Array.isArray(contract.products) ? contract.products[0] : contract.products;
+          const delivery = latestDelivery.get(contract.id);
+          const stats = reminderStats.get(contract.id) ?? { sent: 0, overdue: 0 };
+          return <tr key={contract.id}>
+            <td><Link href={`/app/contracts/${contract.id}`}><strong>{contract.contract_number}</strong><br /><span className="muted">{contract.title}</span></Link></td>
+            <td>{customer?.display_name ?? "—"}</td><td>{product?.name ?? "—"}</td>
+            <td>{contract.owner_user_id ? ownerNames.get(contract.owner_user_id) ?? contract.owner_user_id : "—"}<br /><span className="muted">{contract.team_id ? teamNames.get(contract.team_id) ?? "Team" : "Inget team"}</span></td>
+            <td>{contract.source_call_id ? <Badge className="badge-success">Kopplat</Badge> : <Badge className="badge-warning">Saknas</Badge>}</td>
+            <td><Badge className={["accepted", "signed", "active"].includes(contract.status) ? "badge-success" : ["declined", "expired", "cancelled"].includes(contract.status) ? "badge-warning" : "badge-info"}>{statusLabel[contract.status] ?? contract.status}</Badge></td>
+            <td>{delivery ? <><span>{delivery.channel}</span><br /><Badge className={["failed", "bounced", "complained", "suppressed", "dead_letter"].includes(delivery.status) ? "badge-warning" : ""}>{delivery.status}</Badge></> : "—"}</td>
+            <td>{stats.sent}{stats.overdue ? <><br /><Badge className="badge-warning">{stats.overdue} förfallen</Badge></> : null}</td>
+            <td>{formatDate(contract.expires_at)}</td><td>{formatDate(contract.updated_at)}</td>
+          </tr>;
+        })}
+      </DataTable>
+    </CardContent></Card>
   </>;
 }

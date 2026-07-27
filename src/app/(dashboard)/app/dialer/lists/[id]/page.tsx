@@ -10,7 +10,7 @@ export default async function ListDialerPage({ params }: { params: Promise<{ id:
   const supabase = await createClient();
   const [{ data: list }, { data: dispositions }, { data: products }] = await Promise.all([
     supabase.from("customer_lists").select("id,name,status,dialing_mode").eq("id", id).single(),
-    supabase.from("list_dispositions").select("key,label,outcome_group,terminal,retry_after_minutes,requires_note,requires_callback,requires_order").eq("list_id", id).eq("active", true).order("sort_order"),
+    supabase.from("list_dispositions").select("key,label,outcome_group,terminal,retry_after_minutes,requires_note,requires_callback,requires_order,contract_eligible").eq("list_id", id).eq("active", true).order("sort_order"),
     supabase.from("products").select("id,name").eq("active", true).order("name"),
   ]);
   if (!list) notFound();

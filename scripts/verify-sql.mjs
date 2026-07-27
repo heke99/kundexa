@@ -20,6 +20,9 @@ await db.exec(`
   create function auth.uid() returns uuid language sql stable as $$
     select nullif(current_setting('request.jwt.claim.sub', true),'')::uuid
   $$;
+  create function auth.role() returns text language sql stable as $$
+    select coalesce(nullif(current_setting('request.jwt.claim.role', true),''), 'authenticated')
+  $$;
   create schema storage;
   create table storage.buckets (
     id text primary key, name text not null, public boolean not null default false,

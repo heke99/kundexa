@@ -6,7 +6,7 @@ import { getAppContext, isAdmin } from "@/lib/auth";
 import { createTeam as createManagedTeam, inviteUser as inviteTenantUser } from "@/app/actions/organization";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { encryptJson, randomToken, sha256 } from "@/lib/crypto";
+import { decryptJson, encryptJson, randomToken, sha256 } from "@/lib/crypto";
 import { serverEnv } from "@/lib/env";
 import { getScraperAdapter, identityFieldMapping, validateScraperFilter } from "../../../supabase/functions/_shared/providers";
 
@@ -60,26 +60,160 @@ export async function save46ElksIntegration(form: FormData) {
   redirect("/app/integrations?message=46elks är sparat krypterat");
 }
 
+type ResendCredentials = { apiKey?: string; webhookSigningSecret?: string; webhookPathToken?: string; from?: string };
+
 export async function saveEmailIntegration(form: FormData) {
   const context = await adminContext();
+  const accountMode = value(form, "account_mode") === "platform_managed" ? "platform_managed" : "tenant_owned";
   const apiKey = value(form, "api_key");
-  const from = value(form, "from_address").toLowerCase();
-  if (!apiKey || !/^\S+@\S+\.\S+$/.test(from)) redirect("/app/integrations?error=Giltig API-nyckel och avsändaradress krävs");
+  const fromName = value(form, "from_name").slice(0, 100);
+  const fromAddress = value(form, "from_address").toLowerCase();
+  const replyTo = value(form, "reply_to").toLowerCase();
+  const sendingDomain = value(form, "sending_domain").toLowerCase();
+  const testRecipient = value(form, "test_recipient").toLowerCase();
+  const webhookSigningSecret = value(form, "webhook_signing_secret");
+  const email = /^\S+@\S+\.\S+$/;
+  if (!fromName || !email.test(fromAddress) || !email.test(testRecipient) || (replyTo && !email.test(replyTo))) {
+    redirect("/app/integrations?error=Avsändarnamn, verifierad från-adress och testmottagare krävs");
+  }
+  if (sendingDomain && !fromAddress.endsWith(`@${sendingDomain}`)) redirect("/app/integrations?error=Från-adressen måste använda angiven sändningsdomän");
   const env = serverEnv();
   const admin = createAdminClient();
-  const { error } = await admin.from("tenant_integrations").upsert({
+  const { data: existing } = await admin.from("tenant_integrations").select("id,credentials_ciphertext,configuration").eq("tenant_id", context.tenantId).eq("provider_type", "email").eq("provider", "resend").eq("name", "Resend").maybeSingle();
+  let oldCredentials: ResendCredentials = {};
+  if (existing?.credentials_ciphertext) {
+    try { oldCredentials = decryptJson<ResendCredentials>(existing.credentials_ciphertext, env.KUNDEXA_ENCRYPTION_KEY); } catch { oldCredentials = {}; }
+  }
+  if (accountMode === "tenant_owned" && !apiKey && !oldCredentials.apiKey) redirect("/app/integrations?error=Resend API-nyckel krävs för tenantägt konto");
+  const pathToken = oldCredentials.webhookPathToken || randomToken(32);
+  const credentials: ResendCredentials = {
+    apiKey: apiKey || oldCredentials.apiKey,
+    webhookSigningSecret: webhookSigningSecret || oldCredentials.webhookSigningSecret,
+    webhookPathToken: pathToken,
+    from: fromAddress,
+  };
+  const oldConfig = (existing?.configuration ?? {}) as Record<string, unknown>;
+  const configuration = {
+    ...oldConfig,
+    account_mode: accountMode,
+    from_name: fromName,
+    from_address: fromAddress,
+    reply_to: replyTo || null,
+    sending_domain: sendingDomain || fromAddress.split("@")[1],
+    test_recipient: testRecipient,
+    webhook_path_token_hash: sha256(pathToken + env.KUNDEXA_WEBHOOK_PEPPER),
+    last_test_status: "pending",
+    last_error: null,
+  };
+  const { data: saved, error } = await admin.from("tenant_integrations").upsert({
     tenant_id: context.tenantId,
     provider_type: "email",
     provider: "resend",
     name: "Resend",
-    credentials_ciphertext: encryptJson({ apiKey, from }, env.KUNDEXA_ENCRYPTION_KEY),
-    configuration: { from },
-    status: "active",
+    credentials_ciphertext: encryptJson(credentials, env.KUNDEXA_ENCRYPTION_KEY),
+    configuration,
+    status: "pending",
     created_by: context.userId,
-  }, { onConflict: "tenant_id,provider_type,provider,name" });
-  if (error) throw error;
+  }, { onConflict: "tenant_id,provider_type,provider,name" }).select("id").single();
+  if (error || !saved) throw error ?? new Error("resend_integration_save_failed");
+  await admin.from("audit_logs").insert({
+    tenant_id: context.tenantId, actor_user_id: context.userId,
+    action: existing ? "integration.resend_updated" : "integration.resend_created", entity_type: "tenant_integration", entity_id: saved.id,
+    after_data: { account_mode: accountMode, from_address: fromAddress, reply_to: replyTo || null, sending_domain: sendingDomain || null, api_key_changed: Boolean(apiKey), webhook_secret_changed: Boolean(webhookSigningSecret), status: "pending" },
+  });
   revalidatePath("/app/integrations");
-  redirect("/app/integrations?message=E-postleverantören är sparad krypterat");
+  redirect(`/app/integrations?message=${encodeURIComponent("Resend sparades som väntande. Kör Testa anslutning innan avtalsutskick.")}&resendWebhook=${encodeURIComponent(`${env.NEXT_PUBLIC_APP_URL}/api/webhooks/resend/${pathToken}`)}`);
+}
+
+export async function testResendIntegration(form: FormData) {
+  const context = await adminContext();
+  const env = serverEnv();
+  const admin = createAdminClient();
+  const { data: integration } = await admin.from("tenant_integrations").select("id,status,credentials_ciphertext,configuration").eq("tenant_id", context.tenantId).eq("provider_type", "email").eq("provider", "resend").limit(1).maybeSingle();
+  if (!integration?.credentials_ciphertext) redirect("/app/integrations?error=Spara Resend-konfigurationen först");
+  const credentials = decryptJson<ResendCredentials>(integration.credentials_ciphertext, env.KUNDEXA_ENCRYPTION_KEY);
+  const configuration = (integration.configuration ?? {}) as Record<string, unknown>;
+  const accountMode = String(configuration.account_mode ?? "tenant_owned");
+  const apiKey = accountMode === "platform_managed" ? env.RESEND_API_KEY : credentials.apiKey;
+  const fromAddress = String(configuration.from_address ?? credentials.from ?? "");
+  const fromName = String(configuration.from_name ?? context.tenantLegalName);
+  const testRecipient = String(configuration.test_recipient ?? "");
+  if (!apiKey || !/^\S+@\S+\.\S+$/.test(fromAddress) || !/^\S+@\S+\.\S+$/.test(testRecipient)) redirect("/app/integrations?error=API-nyckel, från-adress eller testmottagare saknas");
+  let response: Response | null = null;
+  let result: Record<string, unknown> = {};
+  let safeError: string | null = null;
+  try {
+    response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "content-type": "application/json", "Idempotency-Key": `kundexa-resend-test/${integration.id}/${new Date().toISOString().slice(0, 13)}` },
+      body: JSON.stringify({
+        from: `${fromName.replace(/[<>\r\n]/g, " ")} <${fromAddress}>`, to: [testRecipient],
+        subject: "Kundexa – test av Resend-anslutning", text: `Resend-anslutningen för ${context.tenantLegalName} fungerar.`,
+        html: `<p>Resend-anslutningen för <strong>${context.tenantLegalName.replace(/[&<>]/g, "")}</strong> fungerar.</p>`,
+        tags: [{ name: "category", value: "integration_test" }],
+      }),
+    });
+    result = await response.json() as Record<string, unknown>;
+    if (!response.ok) safeError = `Resend svarade ${response.status}: ${String(result.message ?? result.name ?? "anslutningen misslyckades").slice(0, 300)}`;
+  } catch (error) { safeError = error instanceof Error ? error.message.slice(0, 300) : "Nätverksfel vid Resend-test"; }
+  const testedAt = new Date().toISOString();
+  const success = Boolean(response?.ok && result.id);
+  const nextConfig = { ...configuration, last_test_status: success ? "success" : "error", last_tested_at: testedAt, last_error: success ? null : safeError, last_test_provider_message_id: success ? result.id : null };
+  await admin.from("tenant_integrations").update({ status: success ? "active" : "error", last_verified_at: success ? testedAt : null, configuration: nextConfig }).eq("tenant_id", context.tenantId).eq("id", integration.id);
+  await admin.from("audit_logs").insert({ tenant_id: context.tenantId, actor_user_id: context.userId, action: success ? "integration.resend_test_succeeded" : "integration.resend_test_failed", entity_type: "tenant_integration", entity_id: integration.id, after_data: { tested_at: testedAt, provider_message_id: success ? result.id : null, error: safeError } });
+  revalidatePath("/app/integrations");
+  redirect(`/app/integrations?${success ? "message" : "error"}=${encodeURIComponent(success ? "Resend-testet lyckades. Integrationen är nu aktiv." : safeError ?? "Resend-testet misslyckades")}`);
+}
+
+export async function generateResendWebhookAddress(form: FormData) {
+  const context = await adminContext();
+  const integrationId = value(form, "integration_id");
+  const env = serverEnv();
+  const admin = createAdminClient();
+  const { data: integration } = await admin.from("tenant_integrations").select("id,credentials_ciphertext,configuration").eq("tenant_id", context.tenantId).eq("id", integrationId).eq("provider", "resend").single();
+  if (!integration?.credentials_ciphertext) redirect("/app/integrations?error=Resend-integrationen saknas");
+  const credentials = decryptJson<ResendCredentials>(integration.credentials_ciphertext, env.KUNDEXA_ENCRYPTION_KEY);
+  const token = randomToken(32);
+  credentials.webhookPathToken = token;
+  const configuration = { ...((integration.configuration ?? {}) as Record<string, unknown>), webhook_path_token_hash: sha256(token + env.KUNDEXA_WEBHOOK_PEPPER) };
+  const { error } = await admin.from("tenant_integrations").update({ credentials_ciphertext: encryptJson(credentials, env.KUNDEXA_ENCRYPTION_KEY), configuration, status: "pending" }).eq("tenant_id", context.tenantId).eq("id", integration.id);
+  if (error) throw error;
+  await admin.from("audit_logs").insert({ tenant_id: context.tenantId, actor_user_id: context.userId, action: "integration.resend_webhook_rotated", entity_type: "tenant_integration", entity_id: integration.id });
+  revalidatePath("/app/integrations");
+  redirect(`/app/integrations?message=${encodeURIComponent("Ny webhookadress skapad. Integrationen måste testas igen.")}&resendWebhook=${encodeURIComponent(`${env.NEXT_PUBLIC_APP_URL}/api/webhooks/resend/${token}`)}`);
+}
+
+export async function saveContractReminderPolicy(form: FormData) {
+  const context = await adminContext();
+  const parsed = {
+    first: Math.max(1, Math.min(8760, Number(value(form, "first_reminder_after_hours") || 24))),
+    second: Math.max(1, Math.min(8760, Number(value(form, "second_reminder_after_hours") || 72))),
+    final: Math.max(1, Math.min(8760, Number(value(form, "final_reminder_before_expiry_hours") || 24))),
+    max: Math.max(0, Math.min(10, Number(value(form, "max_automatic_reminders") || 3))),
+    channel: ["email", "sms", "both"].includes(value(form, "default_channel")) ? value(form, "default_channel") : "email",
+    quietStart: value(form, "quiet_hours_start") || "20:00",
+    quietEnd: value(form, "quiet_hours_end") || "08:00",
+    timezone: value(form, "timezone") || context.tenantTimezone,
+  };
+  if (parsed.second <= parsed.first) redirect("/app/integrations?error=Andra påminnelsen måste ligga efter den första");
+  const admin = createAdminClient();
+  const { error } = await admin.from("contract_reminder_policies").upsert({
+    tenant_id: context.tenantId,
+    enabled: form.get("enabled") === "on",
+    first_reminder_after_hours: parsed.first,
+    second_reminder_after_hours: parsed.second,
+    final_reminder_before_expiry_hours: parsed.final,
+    max_automatic_reminders: parsed.max,
+    default_channel: parsed.channel,
+    quiet_hours_start: parsed.quietStart,
+    quiet_hours_end: parsed.quietEnd,
+    timezone: parsed.timezone,
+    attach_pdf: form.get("attach_pdf") === "on",
+  }, { onConflict: "tenant_id" });
+  if (error) redirect(`/app/integrations?error=${encodeURIComponent(error.message)}`);
+  await admin.from("audit_logs").insert({ tenant_id: context.tenantId, actor_user_id: context.userId, action: "contract.reminder_policy_updated", entity_type: "contract_reminder_policy", entity_id: context.tenantId, after_data: parsed });
+  revalidatePath("/app/integrations");
+  redirect("/app/integrations?message=Påminnelsepolicyn är sparad");
 }
 
 export async function addPhoneNumber(form: FormData) {

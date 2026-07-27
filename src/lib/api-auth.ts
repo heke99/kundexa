@@ -28,7 +28,7 @@ export async function authenticateRequest(request: Request, requiredScope?: stri
     const raw = authorization.slice(7).trim();
     const { data: key } = await admin
       .from("api_keys")
-      .select("id,tenant_id,scopes,rate_limit_per_minute,expires_at,revoked_at")
+      .select("id,tenant_id,scopes,rate_limit_per_minute,expires_at,revoked_at,created_by")
       .eq("key_hash", sha256(raw))
       .single();
 
@@ -47,8 +47,21 @@ export async function authenticateRequest(request: Request, requiredScope?: stri
     });
     if (!allowed) throw jsonError("rate_limit_exceeded", 429, { "retry-after": "60" });
 
+    if (!key.created_by) throw jsonError("api_key_actor_missing", 403);
+    const { data: membership } = await admin.from("tenant_memberships")
+      .select("role,status")
+      .eq("tenant_id", key.tenant_id)
+      .eq("user_id", key.created_by)
+      .eq("status", "active")
+      .maybeSingle();
+    if (!membership) throw jsonError("api_key_actor_membership_inactive", 403);
+    if (requiredScope) {
+      const permission = apiScopePermission[requiredScope];
+      if (!permission || !can(membership.role, permission)) throw jsonError("api_key_actor_insufficient_permission", 403);
+    }
+
     await admin.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", key.id);
-    return { tenantId: key.tenant_id, userId: null, role: null, scopes: key.scopes, rateLimit: key.rate_limit_per_minute, source: "api_key" };
+    return { tenantId: key.tenant_id, userId: key.created_by, role: membership.role, scopes: key.scopes, rateLimit: key.rate_limit_per_minute, source: "api_key" };
   }
 
   const supabase = await createClient();

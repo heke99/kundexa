@@ -3,16 +3,17 @@ export type Permission =
   | "campaigns.manage" | "lists.manage" | "products.manage"
   | "calls.read" | "calls.create" | "recordings.read"
   | "messages.read" | "messages.send"
-  | "contracts.read" | "contracts.write" | "contracts.send"
+  | "contracts.read" | "contracts.write" | "contracts.send" | "contracts.remind" | "contracts.manage_expiry" | "contracts.activate" | "contracts.manage_templates"
+  | "integrations.manage" | "integrations.test"
   | "automations.manage" | "callbacks.create" | "orders.read" | "users.manage" | "settings.manage" | "reports.read"
   | "directory.read" | "directory.refresh" | "segments.manage" | "providers.manage";
 
 const rolePermissions: Record<string, Permission[]> = {
-  owner: ["customers.read", "customers.write", "customers.export", "imports.manage", "campaigns.manage", "lists.manage", "products.manage", "calls.read", "calls.create", "recordings.read", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "automations.manage", "callbacks.create", "orders.read", "users.manage", "settings.manage", "reports.read", "directory.read", "directory.refresh", "segments.manage", "providers.manage"],
-  admin: ["customers.read", "customers.write", "customers.export", "imports.manage", "campaigns.manage", "lists.manage", "products.manage", "calls.read", "calls.create", "recordings.read", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "automations.manage", "callbacks.create", "orders.read", "users.manage", "settings.manage", "reports.read", "directory.read", "directory.refresh", "segments.manage", "providers.manage"],
-  team_lead: ["customers.read", "customers.write", "imports.manage", "campaigns.manage", "lists.manage", "calls.read", "calls.create", "recordings.read", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "callbacks.create", "orders.read", "reports.read", "directory.read", "directory.refresh", "segments.manage"],
-  sales: ["customers.read", "customers.write", "calls.read", "calls.create", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "callbacks.create", "orders.read", "directory.read"],
-  contract_manager: ["customers.read", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "reports.read", "directory.read"],
+  owner: ["customers.read", "customers.write", "customers.export", "imports.manage", "campaigns.manage", "lists.manage", "products.manage", "calls.read", "calls.create", "recordings.read", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "contracts.remind", "contracts.manage_expiry", "contracts.activate", "contracts.manage_templates", "integrations.manage", "integrations.test", "automations.manage", "callbacks.create", "orders.read", "users.manage", "settings.manage", "reports.read", "directory.read", "directory.refresh", "segments.manage", "providers.manage"],
+  admin: ["customers.read", "customers.write", "customers.export", "imports.manage", "campaigns.manage", "lists.manage", "products.manage", "calls.read", "calls.create", "recordings.read", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "contracts.remind", "contracts.manage_expiry", "contracts.activate", "contracts.manage_templates", "integrations.manage", "integrations.test", "automations.manage", "callbacks.create", "orders.read", "users.manage", "settings.manage", "reports.read", "directory.read", "directory.refresh", "segments.manage", "providers.manage"],
+  team_lead: ["customers.read", "customers.write", "imports.manage", "campaigns.manage", "lists.manage", "calls.read", "calls.create", "recordings.read", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "contracts.remind", "contracts.manage_expiry", "callbacks.create", "orders.read", "reports.read", "directory.read", "directory.refresh", "segments.manage"],
+  sales: ["customers.read", "customers.write", "calls.read", "calls.create", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "contracts.remind", "callbacks.create", "orders.read", "directory.read"],
+  contract_manager: ["customers.read", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "contracts.remind", "contracts.manage_expiry", "contracts.activate", "contracts.manage_templates", "reports.read", "directory.read"],
   quality: ["customers.read", "calls.read", "recordings.read", "contracts.read", "reports.read"],
   backoffice: ["customers.read", "customers.write", "imports.manage", "messages.read", "messages.send", "contracts.read", "contracts.write", "callbacks.create", "orders.read", "directory.read", "directory.refresh", "segments.manage", "providers.manage"],
   finance: ["customers.read", "contracts.read", "reports.read"],
@@ -32,6 +33,11 @@ export const apiScopePermission: Record<string, Permission> = {
   "customers:write": "customers.write",
   "contracts:read": "contracts.read",
   "contracts:write": "contracts.write",
+  "contracts:send": "contracts.send",
+  "contracts:remind": "contracts.remind",
+  "contracts:manage_expiry": "contracts.manage_expiry",
+  "integrations:manage": "integrations.manage",
+  "integrations:test": "integrations.test",
   "calls:create": "calls.create",
   "messages:send": "messages.send",
   "imports:write": "imports.manage",

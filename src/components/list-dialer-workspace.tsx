@@ -7,7 +7,7 @@ import { Phone, PhoneOff, Pause, Play, StickyNote } from "@/components/icons";
 import { useWebRtcVoice } from "@/hooks/use-webrtc-voice";
 import { useCallRealtime } from "@/hooks/use-call-realtime";
 
-type Disposition = { key: string; label: string; outcome_group: string; terminal: boolean; retry_after_minutes: number | null; requires_note: boolean; requires_callback: boolean; requires_order: boolean };
+type Disposition = { key: string; label: string; outcome_group: string; terminal: boolean; retry_after_minutes: number | null; requires_note: boolean; requires_callback: boolean; requires_order: boolean; contract_eligible?: boolean };
 type Product = { id: string; name: string };
 type PhoneOption = {
   contactPersonId: string | null;
@@ -140,8 +140,10 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
     } catch (caught) { setError(cleanError(caught instanceof Error ? caught.message : "pause_failed")); setPhase("error"); }
   }
 
-  async function completeAfterCall(event: React.FormEvent) {
+  async function completeAfterCall(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const submitter = (event.nativeEvent as SubmitEvent).submitter;
+    const createContractAfterSave = submitter instanceof HTMLButtonElement && submitter.value === "create_contract";
     if (!callId || !selectedDisposition || !sessionId) return;
     setPhase("loading"); setError(null);
     try {
@@ -157,6 +159,10 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
         unitPrice: createOrder && unitPrice ? Number(unitPrice) : null,
         idempotencyKey: `dialer.complete:${callId}`,
       });
+      if (createContractAfterSave && claim?.customer) {
+        window.location.assign(`/app/contracts/new?customer_id=${encodeURIComponent(claim.customer.id)}&source_call_id=${encodeURIComponent(callId)}`);
+        return;
+      }
       const delay = claim?.autoNextDelaySeconds ?? 0;
       if (mode === "automatic") {
         if (delay) await new Promise((resolve) => window.setTimeout(resolve, delay * 1000));
@@ -206,7 +212,10 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
       {selectedDisposition?.requires_callback ? <div className="form-grid"><label className="field"><span>Återkomsttyp</span><select value={callbackScope} onChange={(event) => setCallbackScope(event.target.value as "personal" | "global")}><option value="personal">Personlig återkomst</option><option value="global">Global teamåterkomst</option></select></label><label className="field"><span>Tid för återkomst</span><input type="datetime-local" required value={callbackDueAt} onChange={(event) => setCallbackDueAt(event.target.value)} /></label></div> : null}
       <label className="check-row"><input type="checkbox" checked={createOrder} disabled={selectedDisposition?.requires_order} onChange={(event) => setCreateOrder(event.target.checked)} /> Skapa order från samtalet</label>
       {createOrder ? <div className="form-grid"><label className="field"><span>Produkt</span><select required value={productId} onChange={(event) => setProductId(event.target.value)}><option value="">Välj produkt</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></label><label className="field"><span>Antal</span><input type="number" min="0.0001" step="any" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><label className="field"><span>Pris per enhet (valfritt)</span><input type="number" min="0" step="0.01" value={unitPrice} onChange={(event) => setUnitPrice(event.target.value)} /></label></div> : null}
-      <button className="button button-primary" disabled={!dispositionKey}>Spara och {mode === "automatic" ? "ring nästa" : "hämta nästa"}</button>
+      <div className="toolbar-left">
+        <button className="button button-primary" type="submit" value="continue" disabled={!dispositionKey}>Spara och {mode === "automatic" ? "ring nästa" : "hämta nästa"}</button>
+        {selectedDisposition?.contract_eligible ? <button className="button button-secondary" type="submit" value="create_contract" disabled={!dispositionKey}>Spara och skapa avtal</button> : null}
+      </div>
     </form> : null}
   </div>;
 }

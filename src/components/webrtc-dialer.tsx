@@ -31,8 +31,10 @@ export function WebRtcDialer({ customers, initialCustomer, callbackActivityId }:
     } catch { /* status is displayed by the shared voice hook */ }
   }
 
-  async function complete(event: React.FormEvent) {
+  async function complete(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const submitter = (event.nativeEvent as SubmitEvent).submitter;
+    const createContractAfterSave = submitter instanceof HTMLButtonElement && submitter.value === "create_contract";
     if (!callId || !disposition) return;
     setError(null);
     const response = await fetch("/api/v1/calls/complete", {
@@ -44,6 +46,10 @@ export function WebRtcDialer({ customers, initialCustomer, callbackActivityId }:
     });
     const result = await response.json() as { error?: string };
     if (!response.ok) { setError((result.error ?? "after_call_failed").replaceAll("_", " ")); return; }
+    if (createContractAfterSave) {
+      window.location.assign(`/app/contracts/new?customer_id=${encodeURIComponent(selected)}&source_call_id=${encodeURIComponent(callId)}`);
+      return;
+    }
     setAfterCall(false); setCallId(null); setDisposition(""); setNotes(""); setCallbackDueAt("");
   }
 
@@ -60,7 +66,10 @@ export function WebRtcDialer({ customers, initialCustomer, callbackActivityId }:
       <label className="field"><span>Samtalsutfall</span><select required value={disposition} onChange={(event) => setDisposition(event.target.value)}><option value="">Välj utfall</option><option value="interested">Intresserad</option><option value="callback">Återkomst</option><option value="not_interested">Inte intresserad</option><option value="no_answer">Inget svar</option><option value="busy">Upptaget</option><option value="voicemail">Telefonsvarare</option><option value="wrong_number">Fel nummer</option><option value="do_not_call">Ring inte igen</option></select></label>
       <label className="field"><span>Anteckning</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
       {disposition === "callback" ? <><label className="field"><span>Återkomsttyp</span><select value={callbackScope} onChange={(event) => setCallbackScope(event.target.value as "personal" | "global")}><option value="personal">Personlig</option><option value="global">Global teamkö</option></select></label><label className="field"><span>Tidpunkt</span><input type="datetime-local" required value={callbackDueAt} onChange={(event) => setCallbackDueAt(event.target.value)} /></label></> : null}
-      <button className="button button-primary">Spara efterarbete</button>
+      <div className="toolbar-left">
+        <button className="button button-primary" type="submit" value="continue">Spara efterarbete</button>
+        {disposition === "interested" ? <button className="button button-secondary" type="submit" value="create_contract">Spara och skapa avtal</button> : null}
+      </div>
     </form> : null}
   </div>;
 }

@@ -1,0 +1,5 @@
+import { escapeHtml, renderEmailLayout } from "@/lib/email/render-email-layout";
+export function renderContractAcceptedEmail(input:{legalName:string;customerName:string;contractNumber:string;acceptedAt:string;contact?:string|null;logoUrl?:string|null}){
+  const bodyHtml=`<p style="font-size:16px;line-height:1.65">Hej ${escapeHtml(input.customerName)},</p><p style="font-size:15px;line-height:1.65">Ditt besked för avtal <strong>${escapeHtml(input.contractNumber)}</strong> registrerades ${escapeHtml(input.acceptedAt)}.</p><p style="font-size:15px;line-height:1.65">Den accepterade avtalskopian finns bifogad. Detta är en dokumenterad acceptans.</p>`;
+  return {subject:`Bekräftelse på avtal ${input.contractNumber}`,html:renderEmailLayout({preheader:`Avtal ${input.contractNumber} accepterat`,heading:"Din acceptans är registrerad",bodyHtml,legalName:input.legalName,contact:input.contact,logoUrl:input.logoUrl}),text:`Hej ${input.customerName},\n\nDin acceptans för avtal ${input.contractNumber} registrerades ${input.acceptedAt}. Den accepterade avtalskopian finns bifogad.`};
+}

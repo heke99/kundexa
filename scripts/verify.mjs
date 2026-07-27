@@ -14,7 +14,8 @@ for (const table of [
   "tenants", "tenant_memberships", "teams", "offices", "departments", "tenant_legal_entities",
   "customers", "import_runs", "campaigns", "deals", "calls", "sms_messages", "email_messages",
   "customer_list_seller_assignments", "customer_list_contact_candidates", "list_dispositions", "dialer_sessions", "note_revisions", "sales_orders", "sales_order_items",
-  "contracts", "contract_versions", "contract_acceptances", "evidence_packages", "automation_rules",
+  "contracts", "contract_versions", "contract_documents", "contract_recipients", "contract_deliveries",
+  "contract_acceptance_requests", "contract_acceptances", "contract_events", "contract_reminder_policies", "contract_reminders", "evidence_packages", "automation_rules",
   "automation_runs", "webhook_endpoints", "audit_logs", "outbox_jobs", "data_providers", "provider_accounts",
   "provider_permissions", "provider_field_permissions", "ingestion_jobs", "raw_payloads", "master_entities",
   "source_entities", "source_facts", "field_values", "entity_freshness", "enrichment_jobs", "enrichment_errors",
@@ -33,8 +34,16 @@ for (const [pattern, message] of [
   [/claim_outbox_jobs/i, "transactional outbox claim is required"],
   [/claim_automation_runs/i, "atomic automation leasing is required"],
   [/create_contract_draft_v2/i, "version-bound contract creation is required"],
-  [/prepare_contract_delivery/i, "atomic contract delivery is required"],
-  [/record_contract_acceptance/i, "atomic acceptance decision is required"],
+  [/create_contract_draft_v3/i, "complete commercial terms and assignment must be bound atomically"],
+  [/is_contract_call_eligible/i, "database-enforced source-call eligibility is required"],
+  [/register_external_manual_call/i, "audited external call registration is required"],
+  [/assert_contract_sendable_v2/i, "central contract sendability validation is required"],
+  [/prepare_contract_delivery_v2/i, "atomic version-two contract delivery is required"],
+  [/schedule_manual_contract_reminder/i, "manual contract reminders are required"],
+  [/enqueue_due_contract_reminders/i, "scheduled contract reminders are required"],
+  [/cancel_contract_reminders/i, "pending reminders must be cancellable atomically"],
+  [/record_contract_acceptance_v2/i, "document-bound atomic acceptance is required"],
+  [/dead_letter_outbox_job/i, "permanent provider failures require dead-letter handling"],
   [/activate_automation/i, "controlled automation activation is required"],
   [/enqueue_outgoing_webhook_event/i, "outgoing webhook routing is required"],
   [/process_import_run/i, "transactional import execution is required"],
@@ -136,6 +145,7 @@ const edgeFiles = [
   "supabase/functions/maintenance-worker/index.ts",
   "supabase/functions/compliance-worker/index.ts",
   "supabase/functions/_shared/crypto.ts",
+  "supabase/functions/_shared/reminder-time.ts",
 ];
 for (const relative of edgeFiles) {
   const file = join(root, relative);
@@ -151,12 +161,34 @@ for (const relative of edgeFiles) {
 }
 
 const outboxWorker = await readFile(join(root, "supabase/functions/process-outbox/index.ts"), "utf8");
-for (const job of ["sms.send", "call.start", "email.send", "recording.download", "evidence.generate", "contract.confirmation", "webhook.deliver"]) {
+for (const job of ["sms.send", "call.start", "email.send", "recording.download", "evidence.generate", "contract.confirmation", "contract.reminder.dispatch", "webhook.deliver"]) {
   assert.match(outboxWorker, new RegExp(job.replace(".", "\\.")), `Outbox worker does not support ${job}`);
 }
 assert.doesNotMatch(outboxWorker, /increment_usage/, "Worker must not double-count usage after database reservation");
-assert.match(outboxWorker, /queue_email_message_for_tenant/, "Contract confirmation email must use atomic service queue");
-assert.match(outboxWorker, /queue_sms_message_for_tenant/, "Contract confirmation SMS must use atomic service queue");
+assert.match(outboxWorker, /contract-confirmation\//, "Contract confirmation messages require stable business idempotency keys");
+assert.match(outboxWorker, /from\("outbox_jobs"\)\.upsert/, "Contract confirmations must still be dispatched through the durable outbox");
+assert.match(outboxWorker, /onConflict: "tenant_id,idempotency_key"/, "Worker-created confirmation records must be idempotent");
+assert.match(outboxWorker, /document_id/, "Email attachments must use private document references");
+assert.match(outboxWorker, /sha256Bytes/, "Worker must verify attachment hashes before sending");
+assert.match(outboxWorker, /Idempotency-Key/, "Resend requests require stable provider idempotency");
+assert.match(outboxWorker, /https:\/\/api\.resend\.com\/emails/, "Worker must use the Resend email endpoint");
+assert.match(outboxWorker, /enqueue_due_contract_reminders/, "Worker must atomically enqueue due reminders");
+assert.match(outboxWorker, /inQuietHours/, "Reminder delivery must respect tenant quiet hours");
+
+const resendWebhook = await readFile(join(root, "src/app/api/webhooks/resend/[token]/route.ts"), "utf8");
+for (const pattern of [/request\.text\(\)/, /svix-id/, /svix-timestamp/, /svix-signature/, /timingSafeEqual/, /provider_webhook_events/, /provider_message_id/, /resendStatusForEvent/, /isPermanentResendFailure/, /mapped === "delivered"/, /mapped === "suppressed"/]) {
+  assert.match(resendWebhook, pattern, `Resend webhook invariant missing: ${pattern}`);
+}
+const contractActions = await readFile(join(root, "src/app/actions/contracts.ts"), "utf8");
+for (const pattern of [/source_call_id/, /assertContractCallEligibility/, /ensureCanonicalContractDocument/, /prepare_contract_delivery_v2/, /schedule_manual_contract_reminder/, /cancel_contract_reminders/]) {
+  assert.match(contractActions, pattern, `Contract action invariant missing: ${pattern}`);
+}
+const publicContractActions = await readFile(join(root, "src/app/actions/public-contract.ts"), "utf8");
+assert.match(publicContractActions, /record_contract_acceptance_v2/, "Public acceptance must use the document-bound atomic RPC");
+assert.match(publicContractActions, /canonical_document_sha256/, "Public acceptance must bind the exact canonical PDF hash");
+const contractWizard = await readFile(join(root, "src/app/(dashboard)/app/contracts/new/page.tsx"), "utf8");
+assert.match(contractWizard, /Registrera tidigare samtal/, "Manual contract wizard must support audited external calls");
+assert.match(contractWizard, /source_call_id/, "Manual contract wizard must select a source call");
 
 const automationWorker = await readFile(join(root, "supabase/functions/automation-runner/index.ts"), "utf8");
 for (const action of ["create_activity", "block_contact", "update_status", "assign_customer", "send_sms", "send_email"]) {
@@ -186,6 +218,9 @@ for (const pattern of [/queue_due_nix_checks/, /claim_nix_check_jobs/, /complete
 
 const apiAuth = await readFile(join(root, "src/lib/api-auth.ts"), "utf8");
 assert.match(apiAuth, /identity\.source === "api_key" \? createAdminClient\(\) : createClient\(\)/, "Session API calls must retain RLS");
+assert.match(apiAuth, /api_key_actor_insufficient_permission/, "API keys must retain the creating actor role permission boundary");
+const contractApi = await readFile(join(root, "src/app/api/v1/contracts/route.ts"), "utf8");
+assert.match(contractApi, /getCorrelationId/, "Contract API responses require a correlation identifier");
 const directoryLib = await readFile(join(root, "src/lib/directory.ts"), "utf8");
 assert.match(directoryLib, /shared_entity_refresh_managed_by_license_owner/, "Cross-tenant catalogue refresh must not mutate shared master data under another licence");
 const discoveryRoute = await readFile(join(root, "src/app/api/v1/directory/discover/route.ts"), "utf8");
@@ -270,7 +305,7 @@ assert.doesNotMatch(projectionSql, /current_master/, "Directory projection must 
 
 const templatesAction = await readFile(join(root, "src/app/actions/contracts.ts"), "utf8");
 assert.match(templatesAction, /renderStrictTemplate/, "Contract creation must render the approved version, not hard-coded terms");
-assert.match(templatesAction, /create_contract_draft_v2/, "Contract creation must bind template, price and legal snapshots atomically");
+assert.match(templatesAction, /create_contract_draft_v3/, "Contract creation must bind template, price, legal snapshots, commercial terms and assignment atomically");
 
 // ---------------------------------------------------------------------------
 // Scraperadaptrar: normalisering, kontraktsparsning, robots och filtermodell.
@@ -423,6 +458,8 @@ if (/ignoreBuildErrors\s*:\s*true/.test(nextConfig)) {
 assert.equal(packageJson.dependencies.next, "16.2.10");
 assert.equal(packageJson.dependencies["@supabase/ssr"], "0.12.3");
 assert.equal(packageJson.dependencies["@supabase/supabase-js"], "2.110.7");
+assert.equal(packageJson.dependencies["pdf-lib"], "1.17.1");
+assert.match(packageJson.scripts.test, /test:contracts/, "Contract delivery unit tests must be part of the canonical test command");
 assert.equal(packageJson.engines.node, "22.x");
 assert.equal(packageJson.overrides.postcss, "8.5.19");
 assert.equal(packageJson.scripts["functions:deploy"], "node scripts/deploy-functions.mjs");
@@ -431,4 +468,4 @@ const deployFunctions = await readFile(join(root, "scripts/deploy-functions.mjs"
 for (const worker of ["process-outbox", "automation-runner", "data-worker", "ingestion-worker", "maintenance-worker", "compliance-worker", "parsehub-worker"]) assert.match(deployFunctions, new RegExp(worker), `Deployment must include ${worker}`);
 assert.match(packageJson.scripts.verify, /typecheck:edge/, "Full verification must type-check Edge Functions");
 
-console.log(`Verified ${migrations.length} migrations, tenant/contact policy, contracts, communications, licensed directory, raw-before-parse ingestion, parser quarantine, identity resolution, dynamic segments, secure multi-format imports, NIX campaign compliance, geographic normalization, DSAR, retention and worker deployment.`);
+console.log(`Verified ${migrations.length} migrations, source-call-gated contracts, canonical PDFs, Resend delivery/webhooks, reminders, evidence, tenant/contact policy, licensed directory, ingestion, NIX compliance, retention and worker deployment.`);
