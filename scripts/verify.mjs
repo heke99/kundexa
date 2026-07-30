@@ -146,6 +146,7 @@ const edgeFiles = [
   "supabase/functions/compliance-worker/index.ts",
   "supabase/functions/_shared/crypto.ts",
   "supabase/functions/_shared/reminder-time.ts",
+  "supabase/functions/_shared/rinkel.ts",
 ];
 for (const relative of edgeFiles) {
   const file = join(root, relative);
@@ -164,6 +165,9 @@ const outboxWorker = await readFile(join(root, "supabase/functions/process-outbo
 for (const job of ["sms.send", "call.start", "email.send", "recording.download", "evidence.generate", "contract.confirmation", "contract.reminder.dispatch", "webhook.deliver"]) {
   assert.match(outboxWorker, new RegExp(job.replace(".", "\\.")), `Outbox worker does not support ${job}`);
 }
+assert.match(outboxWorker, /permanent_legacy_46elks_voice_job_disabled_use_rinkel/, "Legacy voice jobs must be dead-lettered without provider execution");
+assert.doesNotMatch(outboxWorker, /post46Elks\("calls"/, "46elks must not remain an executable voice provider");
+assert.doesNotMatch(outboxWorker, /voice_start/, "The outbox worker must not retain the legacy 46elks voice bridge");
 assert.doesNotMatch(outboxWorker, /increment_usage/, "Worker must not double-count usage after database reservation");
 assert.match(outboxWorker, /contract-confirmation\//, "Contract confirmation messages require stable business idempotency keys");
 assert.match(outboxWorker, /from\("outbox_jobs"\)\.upsert/, "Contract confirmations must still be dispatched through the durable outbox");
@@ -213,11 +217,45 @@ assert.match(maintenanceWorker, /refresh_due_dynamic_customer_lists/, "Maintenan
 assert.match(maintenanceWorker, /run_retention_maintenance/, "Maintenance worker must execute retention");
 assert.match(maintenanceWorker, /normalize_due_geographies/, "Maintenance worker must normalize geographic reference data");
 assert.match(maintenanceWorker, /release_expired_platform_allocations/, "Maintenance worker must release expired platform list allocations");
+assert.match(maintenanceWorker, /rinkel\.reconcile_calls/, "Maintenance worker must schedule Rinkel reconciliation");
+assert.match(maintenanceWorker, /rinkel\.retention/, "Maintenance worker must schedule Rinkel retention");
 const complianceWorker = await readFile(join(root, "supabase/functions/compliance-worker/index.ts"), "utf8");
 for (const pattern of [/queue_due_nix_checks/, /claim_nix_check_jobs/, /complete_nix_check_job/, /fail_nix_check_job/, /redirect: "manual"/, /nix_private_network_forbidden/, /decryptJson/]) assert.match(complianceWorker, pattern, `Compliance worker invariant missing: ${pattern}`);
 
 const apiAuth = await readFile(join(root, "src/lib/api-auth.ts"), "utf8");
 assert.match(apiAuth, /identity\.source === "api_key" \? createAdminClient\(\) : createClient\(\)/, "Session API calls must retain RLS");
+
+const rinkelClient = await readFile(join(root, "supabase/functions/_shared/rinkel.ts"), "utf8");
+assert.match(rinkelClient, /"x-rinkel-api-key"/, "Rinkel client must use the documented authentication header");
+assert.match(rinkelClient, /retrySafe && method === "GET" \? 3 : 1/, "Only safe Rinkel GET calls may retry");
+assert.match(rinkelClient, /\/call-recordings\/.*\/stream/, "Rinkel recordings need fresh temporary stream URLs");
+assert.match(rinkelClient, /\(\?:v1\\\/\)\?call-recordings/, "Rinkel recording references must accept webhook URLs with and without /v1");
+const rinkelWebhook = await readFile(join(root, "src/app/api/webhooks/rinkel/[connection]/[secret]/[event]/route.ts"), "utf8");
+for (const pattern of [/verifyRinkelNetwork/, /authenticateRinkelWebhook/, /parseRinkelWebhookRequest/, /provider_webhook_events/, /rinkel\.process_event/, /ignoreDuplicates: true/]) {
+  assert.match(rinkelWebhook, pattern, `Rinkel webhook invariant missing: ${pattern}`);
+}
+const rinkelCalls = await readFile(join(root, "src/app/api/v1/calls/route.ts"), "utf8");
+assert.match(rinkelCalls, /rinkel_reserve_outbound_call/, "Rinkel calls require an atomic local reservation before provider dial");
+assert.match(rinkelCalls, /client\.dial/, "Rinkel calls must use the canonical provider client");
+assert.doesNotMatch(rinkelCalls, /fetch\([^)]*api\.rinkel/, "Rinkel route must not bypass the canonical provider client");
+const rinkelMigration = await readFile(join(root, "supabase/migrations/202607300001_rinkel_telephony_completion.sql"), "utf8");
+assert.match(rinkelMigration, /automatic_dialer_requires_healthy_rinkel_webhooks/, "Automatic Rinkel calls need a database-enforced webhook health gate");
+assert.match(rinkelMigration, /revoke select on public\.rinkel_users,public\.rinkel_numbers from authenticated/, "Raw Rinkel provider data must not be table-readable by authenticated clients");
+assert.match(rinkelMigration, /grant select\(\s*id,tenant_id,connection_id,external_user_id,external_device_id,email,display_name,[\s\S]*?\) on public\.rinkel_users to authenticated/, "Rinkel user clients need an explicit safe-column grant");
+assert.doesNotMatch(rinkelMigration, /call_attempts_operator_write/, "Authenticated clients must not mutate provider call attempts directly");
+assert.doesNotMatch(rinkelMigration, /call_transcripts_tenant_select/, "Transcript access must follow canonical call access, not tenant-wide visibility");
+assert.match(rinkelMigration, /public\.can_access_call\(call_id\)/, "Call artifacts must inherit canonical call access");
+assert.match(outboxWorker, /RINKEL_WEBHOOK_STALE/, "Reconciliation must degrade stale Rinkel webhook health");
+const rinkelActions = await readFile(join(root, "src/app/actions/rinkel.ts"), "utf8");
+assert.match(rinkelActions, /transcription:\s*false/, "Connection tests must not infer transcription from webhook access");
+assert.match(rinkelActions, /ai_insights:\s*false/, "Connection tests must not infer AI Insights from webhook access");
+assert.match(rinkelActions, /reset_reason:\s*"api_key_changed"/, "API key rotation must invalidate old Rinkel provider evidence");
+assert.doesNotMatch(rinkelActions, /webhook_status:\s*existing\s*\?\s*undefined/, "Rinkel updates must not send undefined webhook state");
+assert.doesNotMatch(rinkelActions, /\.not\("external_(?:user|number)_id",\s*"in"/, "Provider identifiers must not be interpolated into PostgREST filters");
+assert.match(rinkelActions, /replace_rinkel_user_mapping/, "Rinkel seller mapping replacement must be transactional");
+assert.match(rinkelMigration, /create or replace function public\.replace_rinkel_user_mapping/, "Rinkel mapping replacement RPC is missing");
+assert.match(outboxWorker, /transcription:\s*true/, "Observed transcriptions must promote the Rinkel capability");
+assert.match(outboxWorker, /ai_insights:\s*true/, "Observed call insights must promote the Rinkel capability");
 assert.match(apiAuth, /api_key_actor_insufficient_permission/, "API keys must retain the creating actor role permission boundary");
 const contractApi = await readFile(join(root, "src/app/api/v1/contracts/route.ts"), "utf8");
 assert.match(contractApi, /getCorrelationId/, "Contract API responses require a correlation identifier");

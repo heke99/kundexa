@@ -23,6 +23,11 @@ const serverSchema = publicSchema.extend({
   RESEND_API_KEY: z.string().min(1).optional(),
   DEFAULT_EMAIL_FROM: z.string().min(3).optional(),
   RESEND_WEBHOOK_SECRET: z.string().min(1).optional(),
+  RINKEL_API_BASE_URL: z.string().url().default("https://api.rinkel.com/v1"),
+  RINKEL_WEBHOOK_PUBLIC_BASE_URL: z.string().url().optional(),
+  RINKEL_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(15000),
+  RINKEL_ENFORCE_WEBHOOK_IP_ALLOWLIST: z.enum(["true", "false"]).default("true").transform((value) => value === "true"),
+  RINKEL_RECONCILIATION_ENABLED: z.enum(["true", "false"]).default("true").transform((value) => value === "true"),
 });
 
 export function serverEnv() {
@@ -38,5 +43,10 @@ export function serverEnv() {
     RESEND_API_KEY: process.env.RESEND_API_KEY,
     DEFAULT_EMAIL_FROM: process.env.DEFAULT_EMAIL_FROM,
     RESEND_WEBHOOK_SECRET: process.env.RESEND_WEBHOOK_SECRET,
+    RINKEL_API_BASE_URL: process.env.RINKEL_API_BASE_URL ?? "https://api.rinkel.com/v1",
+    RINKEL_WEBHOOK_PUBLIC_BASE_URL: process.env.RINKEL_WEBHOOK_PUBLIC_BASE_URL,
+    RINKEL_REQUEST_TIMEOUT_MS: process.env.RINKEL_REQUEST_TIMEOUT_MS ?? "15000",
+    RINKEL_ENFORCE_WEBHOOK_IP_ALLOWLIST: process.env.RINKEL_ENFORCE_WEBHOOK_IP_ALLOWLIST ?? "true",
+    RINKEL_RECONCILIATION_ENABLED: process.env.RINKEL_RECONCILIATION_ENABLED ?? "true",
   });
 }

@@ -4,10 +4,10 @@ Följande måste godkännas före försäljning eller skarp kundtrafik.
 
 ## Leverantörer och data
 
-- Signerat upplägg och livecredentials för 46elks, e-postleverantör, dataleverantör och NIX-källa.
+- Signerat upplägg och livecredentials för Rinkel-telefoni, 46elks SMS, e-postleverantör, dataleverantör och NIX-källa.
 - Exakta providerfält, kvoter, cacheomfattning, lagring, filtrering, visning, export och retention registrerade från avtalet.
 - Officiellt och aktuellt geografiskt referensregister importerat och verifierat.
-- Verifierade callbackpayloads och providerfel mot staging.
+- Verifierade Rinkel-webhookpayloads, eventordning, oklara `/dial`-utfall, inspelningslänkar och providerfel mot staging.
 - NIX-resultatmapping, giltighet och omkontroll testad med verklig källa.
 - SPF, DKIM och DMARC verifierade för alla avsändardomäner.
 - Vald BankID/e-signleverantör där stark identitet krävs.

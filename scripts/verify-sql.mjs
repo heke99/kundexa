@@ -446,6 +446,111 @@ const manualState = await db.query(`select a.status,c.disposition,c.callback_act
 if (manualState.rows[0].status !== 'completed' || manualState.rows[0].disposition !== 'interested' || Number(manualState.rows[0].notes) !== 1) throw new Error(`Manual callback after-work failed: ${JSON.stringify(manualState.rows[0])}`);
 console.log("Executed prospecting/list assignment, atomic claim, contact-person target selection, NIX gating, canonical calls, caller-ID/recording policy, order after-work and personal/global callback runtime paths.");
 
+// Rinkel runtime path: tenant-owned connection, seller mapping, transactional
+// reservation, idempotent replay, provider finalization and one-device lock.
+await db.exec(`
+  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
+  select set_config('request.jwt.claim.role','authenticated',false);
+  update public.telephony_policies set allowed_days='{1,2,3,4,5,6,7}',allowed_start_time='00:00',allowed_end_time='23:59:59'
+    where tenant_id='00000000-0000-0000-0000-000000000001';
+  insert into public.customers(id,tenant_id,customer_type,display_name,phone_e164,lifecycle,marketing_allowed,legal_basis,created_by)
+  values('00000000-0000-0000-0000-000000000040','00000000-0000-0000-0000-000000000001','company','Rinkel Runtime AB','+46704444444','customer',true,'contract','00000000-0000-0000-0000-000000000002');
+  insert into public.tenant_integrations(id,tenant_id,provider_type,provider,name,credentials_ciphertext,status,created_by)
+  values('00000000-0000-0000-0000-000000000041','00000000-0000-0000-0000-000000000001','telephony','rinkel','Rinkel Runtime','encrypted-test-value','connected','00000000-0000-0000-0000-000000000002');
+  insert into public.rinkel_users(id,tenant_id,connection_id,external_user_id,external_device_id,display_name)
+  values('00000000-0000-0000-0000-000000000042','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000041','rinkel-user-runtime','rinkel-device-runtime','Runtime Owner');
+  insert into public.rinkel_numbers(id,tenant_id,connection_id,external_number_id,phone_number_e164,display_name,active)
+  values('00000000-0000-0000-0000-000000000043','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000041','rinkel-number-runtime','+46855554444','Runtime number',true);
+  select public.replace_rinkel_user_mapping(
+    '00000000-0000-0000-0000-000000000002',
+    '00000000-0000-0000-0000-000000000042',
+    '00000000-0000-0000-0000-000000000043'
+  );
+`);
+const rinkelAutomaticList = await db.query(`select public.create_managed_customer_list('Rinkel Webhook Gate','Runtime webhook health gate','static',$1,'automatic',100,'00:00','23:59:59',3,60,0,'both',true,false,'Runtime') as id`, [runtimeTeamId]);
+const rinkelAutomaticListId = String(rinkelAutomaticList.rows[0].id);
+await db.query(`select public.update_customer_list_configuration($1,'Rinkel Webhook Gate','Runtime webhook health gate','active','automatic',100,'00:00','23:59:59',3,60,0,'both',true,false,true,'Runtime','Europe/Stockholm','{1,2,3,4,5,6,7}',null,false,null,null)`, [rinkelAutomaticListId]);
+await db.query(`select public.add_customers_to_list($1,array['00000000-0000-0000-0000-000000000040']::uuid[])`, [rinkelAutomaticListId]);
+const rinkelAutomaticSession = await db.query(`select public.start_dialer_session($1) as id`, [rinkelAutomaticListId]);
+const rinkelAutomaticSessionId = String(rinkelAutomaticSession.rows[0].id);
+const rinkelAutomaticClaim = await db.query(`select public.claim_next_list_member($1,$2) as claim`, [rinkelAutomaticListId, rinkelAutomaticSessionId]);
+const rinkelAutomaticMemberId = String(rinkelAutomaticClaim.rows[0].claim.memberId);
+let unhealthyAutomaticBlocked = false;
+try {
+  await db.query(`
+    select public.rinkel_reserve_outbound_call(
+      '00000000-0000-0000-0000-000000000040',null,'+46704444444',$1,$2,null,
+      '00000000-0000-0000-0000-000000000047','rinkel-runtime-auto-blocked','customer_service'
+    )
+  `, [rinkelAutomaticSessionId, rinkelAutomaticMemberId]);
+} catch (error) {
+  unhealthyAutomaticBlocked = String(error).includes("automatic_dialer_requires_healthy_rinkel_webhooks");
+}
+if (!unhealthyAutomaticBlocked) throw new Error("Automatic Rinkel dialer bypassed the database webhook health gate");
+await db.exec(`
+  insert into public.rinkel_capabilities(tenant_id,connection_id,api_access,dial,webhooks)
+  values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000041',true,true,true);
+  update public.tenant_integrations set webhook_status='active'
+  where id='00000000-0000-0000-0000-000000000041';
+`);
+const healthyAutomatic = await db.query(`
+  select public.rinkel_reserve_outbound_call(
+    '00000000-0000-0000-0000-000000000040',null,'+46704444444',$1,$2,null,
+    '00000000-0000-0000-0000-000000000048','rinkel-runtime-auto-healthy','customer_service'
+  ) as result
+`, [rinkelAutomaticSessionId, rinkelAutomaticMemberId]);
+if (!healthyAutomatic.rows[0].result.callId) throw new Error(`Healthy automatic Rinkel reservation failed: ${JSON.stringify(healthyAutomatic.rows[0])}`);
+await db.query(`update public.calls set status='completed',ended_at=now() where id=$1`, [healthyAutomatic.rows[0].result.callId]);
+await db.query(`update public.call_attempts set status='completed' where id=$1`, [healthyAutomatic.rows[0].result.attemptId]);
+const rinkelFirst = await db.query(`
+  select public.rinkel_reserve_outbound_call(
+    '00000000-0000-0000-0000-000000000040',null,'+46704444444',null,null,null,
+    '00000000-0000-0000-0000-000000000044','rinkel-runtime-1','customer_service'
+  ) as result
+`);
+const rinkelFirstResult = rinkelFirst.rows[0].result;
+if (rinkelFirstResult.idempotentReplay !== false || !rinkelFirstResult.callId || !rinkelFirstResult.attemptId) {
+  throw new Error(`Rinkel reservation failed: ${JSON.stringify(rinkelFirstResult)}`);
+}
+const rinkelReplay = await db.query(`
+  select public.rinkel_reserve_outbound_call(
+    '00000000-0000-0000-0000-000000000040',null,'+46704444444',null,null,null,
+    '00000000-0000-0000-0000-000000000044','rinkel-runtime-1','customer_service'
+  ) as result
+`);
+if (rinkelReplay.rows[0].result.idempotentReplay !== true || rinkelReplay.rows[0].result.callId !== rinkelFirstResult.callId) {
+  throw new Error(`Rinkel idempotent replay failed: ${JSON.stringify(rinkelReplay.rows[0])}`);
+}
+let rinkelConcurrentBlocked = false;
+try {
+  await db.query(`
+    select public.rinkel_reserve_outbound_call(
+      '00000000-0000-0000-0000-000000000040',null,'+46704444444',null,null,null,
+      '00000000-0000-0000-0000-000000000045','rinkel-runtime-2','customer_service'
+    )
+  `);
+} catch (error) {
+  rinkelConcurrentBlocked = String(error).includes("active_call_already_exists");
+}
+if (!rinkelConcurrentBlocked) throw new Error("Rinkel one-device active-call lock failed");
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.query(`select public.rinkel_finalize_dial_request($1,$2,'accepted',null,null)`, [rinkelFirstResult.callId, rinkelFirstResult.attemptId]);
+const finalizedRinkel = await db.query(`select c.status call_status,a.status attempt_status from public.calls c join public.call_attempts a on a.call_id=c.id where c.id=$1`, [rinkelFirstResult.callId]);
+if (finalizedRinkel.rows[0].call_status !== "dial_requested" || finalizedRinkel.rows[0].attempt_status !== "awaiting_provider_event") {
+  throw new Error(`Rinkel dial finalization failed: ${JSON.stringify(finalizedRinkel.rows[0])}`);
+}
+await db.query(`update public.calls set status='completed',ended_at=now() where id=$1`, [rinkelFirstResult.callId]);
+await db.query(`update public.call_attempts set status='completed' where id=$1`, [rinkelFirstResult.attemptId]);
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
+const rinkelNext = await db.query(`
+  select public.rinkel_reserve_outbound_call(
+    '00000000-0000-0000-0000-000000000040',null,'+46704444444',null,null,null,
+    '00000000-0000-0000-0000-000000000046','rinkel-runtime-3','customer_service'
+  ) as result
+`);
+if (!rinkelNext.rows[0].result.callId) throw new Error(`Rinkel lock release failed: ${JSON.stringify(rinkelNext.rows[0])}`);
+console.log("Executed Rinkel tenant mapping, automatic webhook health gate, atomic reservation, idempotent replay, provider finalization and one-device lock runtime paths.");
+
 // Performance/scraper operations runtime path: aggregated RPCs, atomic ingestion
 // quota reservation, admin run controls, dead-letter re-drive and duplicate-run guards.
 await db.exec(`

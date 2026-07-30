@@ -3,6 +3,7 @@ import { createClient } from "npm:@supabase/supabase-js@2.110.7";
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const cronSecret = Deno.env.get("CRON_SECRET")!;
+const rinkelReconciliationEnabled = Deno.env.get("RINKEL_RECONCILIATION_ENABLED") !== "false";
 const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
 type SegmentJob = { id: string; tenant_id: string; segment_id: string };
@@ -35,7 +36,32 @@ Deno.serve(async (request) => {
   const { data: tenants, error: tenantError } = await supabase.from("tenants").select("id").eq("status", "active").limit(500);
   if (tenantError) return Response.json({ error: tenantError.message }, { status: 500 });
   const retentionResults: unknown[] = [];
+  const maintenanceBucket = new Date().toISOString().slice(0, 13);
+  const retentionBucket = new Date().toISOString().slice(0, 10);
   for (const tenant of tenants ?? []) {
+    const { data: rinkelConnections } = await supabase.from("tenant_integrations").select("id")
+      .eq("tenant_id", tenant.id).eq("provider", "rinkel").is("disabled_at", null)
+      .in("status", ["connected", "degraded", "active"]);
+    for (const connection of rinkelReconciliationEnabled ? rinkelConnections ?? [] : []) {
+      await supabase.from("outbox_jobs").upsert({
+        tenant_id: tenant.id,
+        job_type: "rinkel.reconcile_calls",
+        aggregate_type: "tenant_integration",
+        aggregate_id: connection.id,
+        payload: { connection_id: connection.id },
+        idempotency_key: `rinkel.reconcile_calls:${connection.id}:${maintenanceBucket}`,
+        priority: 70,
+      }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true });
+    }
+    await supabase.from("outbox_jobs").upsert({
+      tenant_id: tenant.id,
+      job_type: "rinkel.retention",
+      aggregate_type: "tenant",
+      aggregate_id: tenant.id,
+      payload: {},
+      idempotency_key: `rinkel.retention:${tenant.id}:${retentionBucket}`,
+      priority: 90,
+    }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true });
     const { data, error } = await supabase.rpc("run_retention_maintenance", { p_tenant_id: tenant.id, p_limit: Math.max(1, Math.min(Number(body.retentionLimit ?? 1000), 10000)) });
     retentionResults.push(error ? { tenantId: tenant.id, error: error.message } : data);
   }

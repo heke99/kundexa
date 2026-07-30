@@ -1,18 +1,20 @@
 # Current state
 
-Datum: 2026-07-25
+Datum: 2026-07-30
 
 ## Kodstatus
 
-- 32 migrationer.
-- 145 publika tabeller, 246 publika funktioner och 273 RLS-policies i PGlite-verifieringen.
-- Två verifierade P0-fel i listdistribution och katalogtenantgräns är åtgärdade med regressionstest.
-- Discovery-routens scope matchar nu kanonisk API-key-modell.
-- `npm run verify` passerade efter samtliga kod- och dokumentändringar: Edge Function-kontroll, statiska invarianter, importparsers, SQL-runtime, TypeScript och Next.js-produktionsbuild.
+- 37 migrationer.
+- 157 publika tabeller, 270 publika funktioner och 292 RLS-policies i PGlite-verifieringen.
+- Rinkel är enda exekverbara voice-provider; 46elks används endast för SMS.
+- Utgående Rinkel-samtal reserveras atomiskt mot kanoniska `calls`, låser säljare/enhet, korreleras av webhookar och avslutas med transaktionellt efterarbete.
+- Inspelning, transkript, Insights, retention, reconciliation, tenantmappning och capability-status är kopplade till samma kanoniska samtalsmodell.
+- Rinkel-tabellernas RLS och kolumnprivilegier begränsar providerdata efter roll, team, användare och kanonisk samtalsåtkomst.
+- `npm run verify` passerar lokalt: Edge Function-kontroll, Rinkel-/kontrakt-/importtester, statiska invarianter, 37 exekverade migrationer, SQL-runtime, TypeScript och Next.js-produktionsbuild.
 
 ## Produktionsstatus
 
-`NOT COMPLETE`. Ingen känd lokalt reproducerbar P0 återstår efter fixarna och hela lokala gaten är grön, men produktionsgodkännande saknas. Live Supabase, riktiga tenants/RLS-sessioner, providers, juridik, säkerhet, återställning och belastning är inte verifierade.
+`NOT READY`. Ingen känd lokalt reproducerbar P0 återstår och hela lokala gaten är grön, men produktionsgodkännande saknas. Live Supabase, riktiga tenant-/JWT-/RLS-sessioner, Rinkel-samtal/webhookar, övriga providers, juridik, säkerhet, återställning och belastning är inte verifierade.
 
 ## Källstatus
 

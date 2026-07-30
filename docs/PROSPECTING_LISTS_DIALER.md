@@ -9,7 +9,7 @@ Kundexa använder nu ett sammanhängande flöde från prospektering till avsluta
 3. En eller flera säljare kopplas många-till-många till en eller flera listor.
 4. Administratören väljer manuellt eller automatiskt sekventiellt ringläge, ringtider, tidszon, försökstak, callbackpolicy, caller-ID, inspelning och utfall.
 5. Säljaren öppnar en tilldelad lista i sidomenyn. Systemet prioriterar förfallna återkomster, låser exakt ett prospekt och visar det kanoniska kundkortet.
-6. Samtalet köas genom den befintliga 46elks/outbox-motorn. Inga providerhemligheter går till webbläsaren.
+6. Samtalet reserveras atomiskt i Kundexa och startas server-side genom tenantens Rinkel-anslutning. Inga providerhemligheter går till webbläsaren.
 7. Nästa samtal blockeras tills providerhangup och obligatoriskt efterarbete är klara.
 8. Utfall, anteckning, återkomst, order, kundlivscykel och liststatus skrivs i en databastransaktion.
 
@@ -41,7 +41,7 @@ På `/app/lists` kan behörig owner, admin eller team lead skapa listor. På lis
 - ange start/slut, maxförsök, retrytid och paus före nästa automatiska samtal;
 - välja om återkomster får vara personliga, globala eller båda;
 - tillåta hopp, låsa bearbetade prospekt till säljare och lagra bläddringsregeln;
-- välja ett aktivt 46elks-nummer som caller-ID och aktivera inspelning enligt tenantens retentionpolicy;
+- välja ett aktivt Rinkel-nummer som caller-ID och aktivera inspelning enligt tenantens retentionpolicy;
 - skriva samtalsmanus och konfigurera listans utfall;
 - masskoppla säljare samt pausa, återaktivera, tidsstyra och kapacitetsbegränsa varje tilldelning;
 - lägga till befintliga kunder manuellt eller köra ett sparat katalogsegment;
@@ -91,7 +91,7 @@ Listutfall är konfigurerbara. Standardutfallen är intresserad, order, återkom
 
 `complete_dialer_work` är idempotent och transaktionell. Funktionen vägrar köras innan samtalet har terminal status och `ended_at`. Den kan skapa kanonisk anteckning, ny personlig/global återkomst, order/orderrad, kontaktspärr och kundlivscykeländring samtidigt som listclaim och session frisläpps.
 
-Den fristående WebRTC-dialern använder `complete_manual_call_work` och har samma krav på avslutat samtal, utfall, anteckning, ny återkomst och kontaktspärr.
+Den fristående Rinkel-dialern använder `complete_manual_call_work_v2` och har samma krav på provideravslutat samtal, utfall, anteckning, ny återkomst och kontaktspärr.
 
 ## Återkomster
 
@@ -132,4 +132,4 @@ Rapportvyn summerar faktiska samtals-, callback-, medlems- och orderhändelser p
 
 ## Produktionsberoenden
 
-Kodflödet är klart, men skarp drift kräver livecredentials och stagingprov för 46elks, e-post, NIX och valda dataleverantörer samt juridiskt beslut om inspelning/retention. Prediktiv dialer, medlyssning och coachning ingår avsiktligt inte i denna sekventiella power-dialer-version.
+Kodflödet är klart, men skarp telefoni kräver ett Rinkel-konto med API-access, en verifierad användar-/enhets-/nummermappning, aktiva webhookar och stagingprov med riktiga samtal. 46elks används endast för SMS. E-post, NIX och valda dataleverantörer behöver egna liveprov, och inspelning/transkribering kräver juridiskt beslut och tenantpolicy. Prediktiv dialer, medlyssning och coachning ingår avsiktligt inte i denna sekventiella power-dialer-version.

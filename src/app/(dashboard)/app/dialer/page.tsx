@@ -4,7 +4,7 @@ import { createManualProspect } from "@/app/actions/customers";
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { WebRtcDialer } from "@/components/webrtc-dialer";
+import { RinkelDialer } from "@/components/rinkel-dialer";
 import { Badge } from "@/components/ui/badge";
 import { Field, SelectField } from "@/components/ui/form-field";
 import { formatDate } from "@/lib/utils";
@@ -27,7 +27,7 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
       {!lists?.length ? <div className="notice">Du har inga aktiva och tilldelade ringlistor.</div> : null}
     </div>
     <div className="dialer-grid">
-      <div className="phone-panel"><WebRtcDialer customers={customers ?? []} initialCustomer={params.customer} callbackActivityId={params.callback} /></div>
+      <div className="phone-panel"><RinkelDialer customers={customers ?? []} initialCustomer={params.customer} callbackActivityId={params.callback} /></div>
       <div className="grid">
         <Card><CardHeader><h2><Plus size={17} /> Ring ett nytt nummer</h2></CardHeader><CardContent><p className="muted">Numret matchas först mot befintliga kundkort. Finns ingen träff skapas ett enda nytt prospekt.</p><form action={createManualProspect} className="form-grid"><Field label="Namn eller nummer" name="display_name" placeholder="Nytt prospekt" /><Field label="Telefonnummer" name="phone" type="tel" required placeholder="070 123 45 67" /><SelectField label="Typ" name="customer_type" defaultValue="person"><option value="person">Privatperson</option><option value="company">Företag</option></SelectField><button className="button button-secondary" style={{ alignSelf: "end" }}>Matcha och öppna</button></form></CardContent></Card>
         <Card><CardHeader><h2><Clock3 size={17} /> Förfallna återkomster</h2><Badge className={callbacks?.length ? "badge-warning" : ""}>{callbacks?.length ?? 0}</Badge></CardHeader><CardContent>{callbacks?.map((callback) => {

@@ -329,33 +329,6 @@ export async function createWebhookEndpoint(form: FormData) {
   redirect(`/app/webhooks?secret=${encodeURIComponent(secret)}`);
 }
 
-export async function addVoiceClient(form: FormData) {
-  const context = await adminContext();
-  const userId = value(form, "user_id");
-  const clientNumber = value(form, "client_number_e164");
-  const sipUsername = value(form, "sip_username");
-  const sipPassword = value(form, "sip_password");
-  if (!userId || !/^\+[1-9]\d{7,14}$/.test(clientNumber) || !sipUsername || !sipPassword) {
-    redirect("/app/integrations?error=Alla WebRTC-fält krävs och klientnumret måste vara E.164");
-  }
-  const env = serverEnv();
-  const admin = createAdminClient();
-  const { data: integration } = await admin.from("tenant_integrations").select("id")
-    .eq("tenant_id", context.tenantId).eq("provider", "46elks").eq("status", "active").limit(1).maybeSingle();
-  const { error } = await admin.from("voice_clients").upsert({
-    tenant_id: context.tenantId,
-    assigned_user_id: userId,
-    integration_id: integration?.id,
-    client_number_e164: clientNumber,
-    sip_username: sipUsername,
-    sip_password_ciphertext: encryptJson({ password: sipPassword }, env.KUNDEXA_ENCRYPTION_KEY),
-    status: "active",
-  }, { onConflict: "tenant_id,assigned_user_id" });
-  if (error) throw error;
-  revalidatePath("/app/integrations");
-  redirect("/app/integrations?message=WebRTC-klienten är tilldelad");
-}
-
 export async function toggleTenantFeature(form: FormData) {
   await adminContext();
   const featureKey = value(form, "feature_key");

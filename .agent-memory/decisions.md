@@ -22,8 +22,16 @@ Autentiserade användarflöden härleder aktiv tenant. Serviceflöden använder 
 
 ## ADR-0006 — Providerarbete går via adapters/outbox
 
-46elks, Resend, ParseHub och NIX isoleras bakom adapters/workers. Domänmutation och köläggning sker atomiskt och idempotent.
+Rinkel, 46elks SMS, Resend, ParseHub och NIX isoleras bakom adapters/workers. Domänmutation och köläggning sker atomiskt och idempotent.
 
 ## ADR-0007 — Node 22 är kanonisk runtime
 
 `package.json` styr Node 22.x och npm 10.9.2. Verifiering under annan Node-version är informativ men ersätter inte CI/staging på Node 22.
+
+## ADR-0008 — Rinkel är enda voice-provider
+
+Kundexa äger CRM-, list-, policy- och samtalsmodellen; Rinkel äger telefonin. `/dial` anropas exakt en gång efter atomisk lokal reservation och får inte återförsökas efter ett oklart nätverksutfall. Webhookar och avstämning är sanningskälla för providerstatus. Äldre 46elks/WebRTC-voiceflöden är permanent avstängda.
+
+## ADR-0009 — Providerartefakter ärver samtalsåtkomst
+
+Samtalsförsök, transkript och Insights får endast läsas av användare som kan läsa det kanoniska samtalet. Rå providerdata exponeras inte för autentiserade klienter; konfigurations- och konfliktdata kräver administrativ roll.

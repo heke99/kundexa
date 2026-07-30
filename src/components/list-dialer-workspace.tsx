@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
-import { Phone, PhoneOff, Pause, Play, StickyNote } from "@/components/icons";
-import { useWebRtcVoice } from "@/hooks/use-webrtc-voice";
+import { Phone, Pause, Play, StickyNote } from "@/components/icons";
+import { useRinkelDialer } from "@/hooks/use-rinkel-dialer";
 import { useCallRealtime } from "@/hooks/use-call-realtime";
 
 type Disposition = { key: string; label: string; outcome_group: string; terminal: boolean; retry_after_minutes: number | null; requires_note: boolean; requires_callback: boolean; requires_order: boolean; contract_eligible?: boolean };
@@ -61,8 +61,11 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
   const [unitPrice, setUnitPrice] = useState("");
   const [selectedTargetKey, setSelectedTargetKey] = useState("");
   const selectedDisposition = useMemo(() => dispositions.find((item) => item.key === dispositionKey), [dispositionKey, dispositions]);
-  const voice = useWebRtcVoice(() => setPhase("after_call"));
-  useCallRealtime(callId, () => setPhase("after_call"));
+  const voice = useRinkelDialer();
+  useCallRealtime(callId, () => {
+    voice.markEnded();
+    setPhase("after_call");
+  });
 
   useEffect(() => { if (voice.calling) setPhase("calling"); }, [voice.calling]);
   useEffect(() => { if (selectedDisposition?.requires_order) setCreateOrder(true); }, [selectedDisposition]);
@@ -95,6 +98,11 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
   }
 
   async function begin() {
+    if (mode === "automatic" && !voice.automaticReady) {
+      setError("Automatisk uppringning är pausad tills alla Rinkel-webhookar är aktiva.");
+      setPhase("error");
+      return;
+    }
     setPhase("loading"); setError(null);
     try {
       const data = await requestJson("/api/v1/dialer/sessions", { listId });
@@ -105,6 +113,11 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
   }
 
   async function dial(target = claim, explicitTarget?: PhoneOption | null) {
+    if (mode === "automatic" && !voice.automaticReady) {
+      setError("Automatisk uppringning är pausad eftersom Rinkel-webhookarna inte är friska.");
+      setPhase("paused");
+      return;
+    }
     if (!target?.customer || !target.memberId || !sessionId && !target.sessionId) return;
     const selectedTarget = explicitTarget
       ?? target.phoneOptions?.find((option) => phoneOptionKey(option) === selectedTargetKey)
@@ -124,6 +137,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
         callbackActivityId: target.callbackActivityId ?? null,
         contactPersonId: selectedTarget.contactPersonId,
         targetPhone: selectedTarget.phone,
+        clientRequestId: crypto.randomUUID(),
         idempotencyKey: `list.call:${target.memberId}:${selectedTarget.phone}:${crypto.randomUUID()}`,
       });
       setCallId(id);
@@ -132,7 +146,6 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
 
   async function pause(reason: "paused" | "skip" | "end") {
     if (!sessionId) return;
-    if (voice.calling) voice.hangup();
     try {
       await requestJson("/api/v1/dialer/pause", { sessionId, reason });
       setClaim(null); setCallId(null); setPhase(reason === "skip" ? "loading" : reason === "end" ? "ended" : "paused");
@@ -172,7 +185,6 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
   }
 
   return <div className="dialer-workspace">
-    <audio ref={voice.audioRef} autoPlay />
     <div className="dialer-workspace-header">
       <div><span className="eyebrow">{mode === "automatic" ? "Automatisk sekventiell dialer" : "Manuell lista"}</span><h2>{listName}</h2></div>
       <div className="toolbar-right">
@@ -194,7 +206,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
         <div className="dialer-call-controls">
           {phase === "ready" ? <button className="call-button" type="button" onClick={() => dial()} disabled={!voice.registered}><Phone size={25} /></button> : null}
           {phase === "dialing" ? <Badge className="badge-info">Kopplar samtalet…</Badge> : null}
-          {phase === "calling" ? <button className="call-button hangup" type="button" onClick={voice.hangup}><PhoneOff size={25} /></button> : null}
+          {phase === "calling" ? <div className="notice">Samtalet hanteras på din Rinkel-enhet. Kundexa inväntar callEnd innan efterarbetet öppnas.</div> : null}
           {phase === "ready" && claim.allowSkip ? <button className="button button-ghost button-sm" type="button" onClick={() => pause("skip")}>Hoppa över</button> : null}
         </div>
         <Link className="muted" href={`/app/customers/${claim.customer.id}`}>Öppna fullständigt kundkort</Link>

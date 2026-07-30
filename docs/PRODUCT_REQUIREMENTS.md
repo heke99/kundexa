@@ -382,8 +382,8 @@ Den ska stödja:
 * Inkommande samtal
 * Utgående samtal
 * Blandade inkommande och utgående kampanjer
-* WebRTC i webbläsaren
-* SIP-telefoner
+* Rinkel click-to-call från webbläsaren utan providerhemligheter i klienten
+* Rinkel-enheter och SIP-/mobilklienter som konfigureras hos providern
 * Mobil vidarekoppling
 * Samtalsköer
 * Svarsgrupper
@@ -1103,7 +1103,10 @@ Kan användas som:
 * Referens för anpassningsbara objekt
 * Referens för Frappe-ekosystemet
 
-36. Open-source för telefoni
+36. Referensalternativ för telefoni
+
+Kundexas implementerade och kanoniska telefoniprovider är Rinkel. Följande lösningar är endast framtida referensalternativ och får inte aktiveras som parallella voicevägar utan en ny arkitektur- och säkerhetsprövning.
+
 Asterisk
 Asterisk kan användas som underliggande telefonimotor för:
 * SIP
@@ -1118,7 +1121,7 @@ Asterisk ska helst ligga bakom vårt eget moderna CRM-gränssnitt.
 Wazo
 Wazo kan användas för:
 * API-baserad telefoni
-* WebRTC
+* WebRTC som framtida referensalternativ
 * JavaScript-SDK
 * WebSockets
 * Samtal

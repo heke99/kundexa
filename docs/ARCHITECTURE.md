@@ -8,7 +8,7 @@ Browser / API client
      -> private Storage
 
 Schedulers
-  -> process-outbox      -> 46elks / Resend / Storage
+  -> process-outbox      -> Rinkel / 46elks SMS / Resend / private Storage
   -> automation-runner  -> atomic service queues
   -> data-worker        -> permitted entity refresh
   -> ingestion-worker   -> discovery/crawl/import + checkpoints
@@ -73,9 +73,9 @@ Alla avancerade filter använder samma databasfunktion. Dynamiska segment materi
 
 Ett sparat katalogsegment materialiseras genom `materialize_segment_to_customer_list`. Befintliga `tenant_entities` återanvänds, nya kundkort skapas bara när en katalogpost saknar tenantkoppling och varje kandidat körs genom samma kontakt-/NIX-policy som övriga kanaler. Compliance-workern frisläpper godkända `pending_nix`-kandidater. Maintenance-workern håller aktiva dynamiska listor synkroniserade med nya segmentsnapshots utan att radera redan bearbetad historik.
 
-Säljaren startar en `dialer_session`. `claim_next_list_member` prioriterar förfallna personliga/globala återkomster och använder radlås med `SKIP LOCKED`, claim-expiration och sessionsägarskap. `queue_list_outbound_call` återanvänder den kanoniska samtalskön och applicerar listans caller-ID och inspelningspolicy. `complete_dialer_work` kräver en bekräftat avslutad operatörscall och skriver utfall, anteckning, ny återkomst, order, kundlivscykel, liststatus och audit atomiskt innan nästa automatiska samtal får starta.
+Säljaren startar en `dialer_session`. `claim_next_list_member` prioriterar förfallna personliga/globala återkomster och använder radlås med `SKIP LOCKED`, claim-expiration och sessionsägarskap. `rinkel_reserve_outbound_call` skapar samtal och försök atomiskt, validerar Rinkel-mappning och låser säljare/enhet mot samtidiga samtal. Kundexas server anropar därefter Rinkel `/dial`; webhookar är sanningskälla för samtalsförloppet och avstämning hanterar oklara providerutfall. `complete_dialer_work_v2` kräver en bekräftat avslutad operatörscall och skriver utfall, anteckning, ny återkomst, order, kundlivscykel, liststatus och audit atomiskt innan nästa automatiska samtal får starta.
 
-Den manuella dialern använder samma kundmatchning, kontaktpolicy och outbox. `complete_manual_call_work` ger samma serverkontrollerade efterarbete för enstaka samtal. Globala fristående återkomster tas med ett atomiskt claim; listbundna återkomster tas i listkön.
+Den manuella dialern använder samma Rinkel-reservation, kundmatchning och kontaktpolicy. `complete_manual_call_work_v2` ger samma serverkontrollerade efterarbete för enstaka samtal. Globala fristående återkomster tas med ett atomiskt claim; listbundna återkomster tas i listkön. Äldre 46elks/WebRTC-RPC:er saknar exekveringsrätt och historiska `call.start`-jobb dead-letteras utan provideranrop.
 
 ### Geografi
 

@@ -106,6 +106,6 @@ Filen kan vara JSON eller NDJSON och bör innehålla stabil kod, områdestyp, na
 
 I produktion ska `REQUIRE_IMPORT_MALWARE_SCAN=true`. Scanner-endpointen ska returnera ett maskinläsbart rent/infekterat resultat. Importen får inte commitas om scanning saknas, misslyckas eller markerar filen som osäker.
 
-## 46elks callbacks
+## Telefoni och SMS
 
-Registrera callbacktoken per tenant/nummer och konfigurera 46elks mot URL:erna i webbappen. Aktivera IP-allowlist först efter att aktuella nät verifierats bakom rätt proxy.
+Rinkel är enda telefoniprovider. Konfigurera tenantens Rinkel API-nyckel, synkronisera användare/nummer, mappa varje säljare och registrera alla webhookevent enligt `docs/integrations/rinkel.md`. 46elks används endast för SMS-callbackar; dess äldre voice-endpoints svarar permanent `410 Gone`.

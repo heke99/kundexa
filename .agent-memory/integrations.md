@@ -3,7 +3,8 @@
 | Integration | Användning | Status |
 |---|---|---|
 | Supabase | Auth, PostgreSQL, RLS, Storage, Realtime, Edge Functions | Lokal struktur verifierad; liveprojekt `NOT RUN` |
-| 46elks | Telefoni, SMS, WebRTC/callbacks | Adapter finns; livecredentials/callbacks `NOT RUN` |
+| Rinkel | Click-to-call, power dialer, webhookar, inspelning, transkript och Insights | Kod-/SQL-flöden verifierade lokalt; livekonto och riktiga samtal `NOT RUN` |
+| 46elks | SMS-callbackar | SMS-adapter finns; äldre voice-väg permanent avstängd; livecredentials `NOT RUN` |
 | Resend | E-post via outbox | Adapter finns; domän/SPF/DKIM/DMARC `NOT RUN` |
 | ParseHub | Primär discovery/importväg | Worker/profiler finns; liveprojekt/webhook `NOT RUN` |
 | NIX-provider | Compliance före kontakt | Adapter/queue finns; live mapping/TTL `NOT RUN` |

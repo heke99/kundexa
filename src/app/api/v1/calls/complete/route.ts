@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     const body = schema.parse(await request.json());
     const callbackDueAt = body.callbackDueAt ? zonedLocalDateTimeToIso(body.callbackDueAt, context.tenantTimezone) : null;
     const supabase = await createClient();
-    const { data, error } = await supabase.rpc("complete_manual_call_work", {
+    const { data, error } = await supabase.rpc("complete_manual_call_work_v2", {
       p_call_id: body.callId,
       p_disposition: body.disposition,
       p_notes: body.notes ?? null,

@@ -4,8 +4,6 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getAppContext } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { randomToken, sha256 } from "@/lib/crypto";
-import { serverEnv } from "@/lib/env";
 import { assertPermission } from "@/lib/permissions";
 
 const value = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
@@ -55,34 +53,6 @@ export async function queueEmail(form: FormData) {
   if (error) redirect(`/app/email?error=${encodeURIComponent(errorMessage(error))}`);
   revalidatePath("/app/email");
   redirect("/app/email");
-}
-
-export async function startCall(form: FormData) {
-  const ctx = await getAppContext();
-  assertPermission(ctx.role, "calls.create");
-  const customerId = value(form, "customer_id");
-  if (!customerId) redirect("/app/dialer?error=Välj en kund");
-  const supabase = await createClient();
-  const { data: voiceClient } = await supabase.from("voice_clients")
-    .select("client_number_e164")
-    .eq("assigned_user_id", ctx.userId)
-    .eq("status", "active")
-    .maybeSingle();
-  if (!voiceClient?.client_number_e164) redirect("/app/dialer?error=Din användare saknar en aktiv WebRTC-klient");
-
-  const token = randomToken();
-  const env = serverEnv();
-  const { data: callId, error } = await supabase.rpc("queue_outbound_call", {
-    p_customer_id: customerId,
-    p_callback_token_hash: sha256(token + env.KUNDEXA_WEBHOOK_PEPPER),
-    p_callback_token: token,
-    p_voice_client_number: voiceClient.client_number_e164,
-    p_idempotency_key: requestKey(form, "ui.call"),
-    p_purpose: "direct_marketing",
-  });
-  if (error || !callId) redirect(`/app/dialer?error=${encodeURIComponent(errorMessage(error ?? new Error("Samtalet kunde inte köas")))}`);
-  revalidatePath("/app/dialer");
-  redirect(`/app/calls?started=${callId}`);
 }
 
 export async function setCallDisposition(form: FormData) {

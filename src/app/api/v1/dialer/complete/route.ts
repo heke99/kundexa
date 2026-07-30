@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     assertPermission(context.role, "calls.create");
     const body = bodySchema.parse(await request.json());
     const supabase = await createClient();
-    const { data, error } = await supabase.rpc("complete_dialer_work", {
+    const { data, error } = await supabase.rpc("complete_dialer_work_v2", {
       p_call_id: body.callId,
       p_disposition_key: body.dispositionKey,
       p_notes: body.notes ?? null,

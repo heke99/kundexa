@@ -59,10 +59,11 @@ export async function GET() {
         post: { operationId: "previewFileImport", summary: "Säkerhetsskanna, ladda upp och validera CSV, JSON, NDJSON, XML eller XLSX", security: [{ bearerAuth: [] }], requestBody: { required: true, content: { "multipart/form-data": { schema: { type: "object", required: ["name", "file"], properties: { name: { type: "string" }, file: { type: "string", format: "binary", description: "Högst 50 MB" }, simulate: { type: "boolean" } } } } } }, responses: { "303": { description: "Resultat visas i webbappen" } } },
       },
       "/calls": {
-        post: { operationId: "startBrowserCall", summary: "Köa ett WebRTC-bryggat samtal för inloggad användare", requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["customerId"], properties: { customerId: { type: "string", format: "uuid" } } } } } }, responses: { "202": { description: "Samtalet är köat" }, "409": { description: "Telefoni saknas eller kunden är spärrad" } } },
+        get: { operationId: "listCalls", summary: "Lista tenantseparerade kanoniska samtal", responses: { "200": { description: "Samtalslista" } } },
+        post: { operationId: "startRinkelCall", summary: "Reservera lokalt och starta ett tenantägt Rinkel-samtal", requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["customerId", "targetPhone", "clientRequestId", "idempotencyKey"], properties: { customerId: { type: "string", format: "uuid" }, contactPersonId: { type: ["string", "null"], format: "uuid" }, targetPhone: { type: "string", pattern: "^\\\\+[1-9][0-9]{7,14}$" }, clientRequestId: { type: "string", format: "uuid" }, idempotencyKey: { type: "string", minLength: 8 }, purpose: { type: "string" } } } } } }, responses: { "202": { description: "Rinkel-begäran accepterad eller inväntar säker reconciliation" }, "409": { description: "Telefoni, policy, mappning eller aktiv enhet blockerar" } } },
       },
-      "/voice-client": {
-        get: { operationId: "getVoiceClient", summary: "Hämta kortlivad WebRTC-konfiguration för aktuell användare", responses: { "200": { description: "WebRTC-konfiguration" } } },
+      "/integrations/rinkel/status": {
+        get: { operationId: "getRinkelStatus", summary: "Hämta aktuell användares Rinkel-, mappnings- och webhookstatus", responses: { "200": { description: "Capability- och driftstatus" } } },
       },
 
       "/directory/discover": {

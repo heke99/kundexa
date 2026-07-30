@@ -27,7 +27,7 @@ export default async function CallsPage() {
           const customer = Array.isArray(call.customers) ? call.customers[0] : call.customers;
           const contractEligible = call.status === "completed" && call.answered_at && call.ended_at && call.disposition && eligible.has(call.disposition);
           return <tr key={call.id}>
-            <td><strong>{customer?.display_name ?? call.to_number}</strong><br /><span className="muted">{call.from_number} → {call.to_number}</span></td>
+            <td><Link href={`/app/calls/${call.id}`}><strong>{customer?.display_name ?? call.to_number}</strong></Link><br /><span className="muted">{call.from_number} → {call.to_number}</span></td>
             <td>{call.direction}</td>
             <td><Badge className={call.status === "completed" ? "badge-success" : "badge-info"}>{call.status}</Badge></td>
             <td>{call.disposition ?? "—"}{call.metadata && typeof call.metadata === "object" && (call.metadata as Record<string, unknown>).registered_manually === true ? <><br /><span className="muted">Manuellt registrerat</span></> : null}</td>

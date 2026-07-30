@@ -3,7 +3,17 @@
 import { useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 
-const terminalStatuses = new Set(["completed", "busy", "no_answer", "failed", "cancelled"]);
+const terminalStatuses = new Set([
+  "completed",
+  "busy",
+  "no_answer",
+  "unanswered",
+  "voicemail",
+  "failed",
+  "cancelled",
+  "blocked",
+  "outside_business_hours",
+]);
 
 export function useCallRealtime(callId: string | null, onTerminal: (status: string) => void) {
   const handler = useRef(onTerminal);

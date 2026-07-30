@@ -1,6 +1,16 @@
 import { createClient } from "npm:@supabase/supabase-js@2.110.7";
 import { decryptJson } from "../_shared/crypto.ts";
 import { inQuietHours } from "../_shared/reminder-time.ts";
+import {
+  RinkelClient,
+  extractRinkelRecordingId,
+  isTerminalCallStatus,
+  mapRinkelCause,
+  parseRinkelWebhookPayload,
+  safeRinkelError,
+  type RinkelWebhookEvent,
+  type RinkelWebhookPayload,
+} from "../_shared/rinkel.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -22,6 +32,7 @@ type Job = {
 type ElksCredentials = { username: string; password: string };
 type EmailCredentials = { apiKey?: string; from?: string; webhookSigningSecret?: string; webhookPathToken?: string };
 type EmailAttachmentRef = { document_id: string; filename?: string; mime_type?: string };
+type RinkelCredentials = { apiKey: string };
 
 function cleanHeaderName(value: string) {
   return value.replace(/[<>\r\n]/g, " ").replace(/\s+/g, " ").trim().slice(0, 100);
@@ -117,32 +128,6 @@ async function processSms(job: Job) {
   }).eq("id", sms.id);
   await supabase.from("contract_deliveries").update({ status: "sent", provider_status: "submitted", sent_at: sentAt }).eq("sms_message_id", sms.id);
   await supabase.from("contract_reminders").update({ status: "sent", sent_at: sentAt }).eq("tenant_id", job.tenant_id).eq("sms_message_id", sms.id).in("status", ["queued", "scheduled"]);
-}
-
-async function processCall(job: Job) {
-  const { data: call, error } = await supabase.from("calls").select("*")
-    .eq("tenant_id", job.tenant_id).eq("id", job.aggregate_id).single();
-  if (error || !call) throw new Error("call_not_found");
-  if (call.provider_call_id || ["initiating", "ringing", "answered", "completed"].includes(call.status)) return;
-
-  const clientNumber = String(job.payload.voice_client_number ?? "");
-  const callbackToken = String(job.payload.callback_token ?? "");
-  if (!clientNumber || !callbackToken) throw new Error("webrtc_bridge_configuration_missing");
-
-  const action: Record<string, unknown> = { connect: call.to_number, callerid: call.from_number };
-  if (call.recording_enabled) action.recordcall = `${appUrl}/api/webhooks/46elks/voice/recording?token=${encodeURIComponent(callbackToken)}`;
-  const result = await post46Elks("calls", await get46ElksCredentials(job.tenant_id), {
-    from: call.from_number,
-    to: clientNumber,
-    voice_start: JSON.stringify(action),
-    whenhangup: `${appUrl}/api/webhooks/46elks/voice/hangup?token=${encodeURIComponent(callbackToken)}`,
-    timeout: "60",
-  });
-  await supabase.from("calls").update({
-    provider_call_id: String(result.id ?? ""),
-    status: "initiating",
-    started_at: String(result.created ?? new Date().toISOString()),
-  }).eq("id", call.id);
 }
 
 function bytesToBase64(bytes: Uint8Array) {
@@ -616,15 +601,653 @@ async function processWebhook(job: Job) {
   if (!response.ok) throw new Error(`webhook_http_${response.status}`);
 }
 
+async function sha256Text(value: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function getRinkelClient(tenantId: string, connectionId: string) {
+  const { data: connection, error } = await supabase.from("tenant_integrations")
+    .select("credentials_ciphertext")
+    .eq("tenant_id", tenantId)
+    .eq("id", connectionId)
+    .eq("provider", "rinkel")
+    .is("disabled_at", null)
+    .single();
+  if (error || !connection?.credentials_ciphertext) throw new Error("permanent_rinkel_connection_missing");
+  const credentials = await decryptJson<RinkelCredentials>(connection.credentials_ciphertext, encryptionKey);
+  return new RinkelClient({
+    apiKey: credentials.apiKey,
+    baseUrl: Deno.env.get("RINKEL_API_BASE_URL") ?? "https://api.rinkel.com/v1",
+    timeoutMs: Number(Deno.env.get("RINKEL_REQUEST_TIMEOUT_MS") ?? 15000),
+  });
+}
+
+async function findRinkelCall(tenantId: string, connectionId: string, externalCallId: string) {
+  const { data } = await supabase.from("calls").select("*")
+    .eq("tenant_id", tenantId)
+    .eq("provider_connection_id", connectionId)
+    .eq("external_call_id", externalCallId)
+    .maybeSingle();
+  return data;
+}
+
+async function findUniqueCustomerByPhone(tenantId: string, phone: string) {
+  if (!/^\+[1-9]\d{7,14}$/.test(phone)) return { customerId: null, ambiguous: false };
+  const { data } = await supabase.from("customers").select("id,assigned_user_id,assigned_team_id")
+    .eq("tenant_id", tenantId)
+    .is("deleted_at", null)
+    .or(`phone_e164.eq.${phone},alternate_phone_e164.eq.${phone}`)
+    .limit(2);
+  return {
+    customerId: data?.length === 1 ? data[0].id : null,
+    assignedUserId: data?.length === 1 ? data[0].assigned_user_id : null,
+    assignedTeamId: data?.length === 1 ? data[0].assigned_team_id : null,
+    ambiguous: (data?.length ?? 0) > 1,
+  };
+}
+
+async function createRinkelCallFromEvent(
+  tenantId: string,
+  connectionId: string,
+  payload: RinkelWebhookPayload,
+  eventHash: string,
+) {
+  const existing = await findRinkelCall(tenantId, connectionId, payload.id);
+  if (existing) return existing;
+  const isIncoming = payload.event === "incomingCall";
+  const isOutgoing = payload.event === "outgoingCall";
+  const from = isIncoming || isOutgoing ? payload.from : "unknown";
+  const to = isIncoming || isOutgoing ? payload.to : "unknown";
+  const externalPhone = isIncoming ? from : isOutgoing ? to : "unknown";
+  const match = await findUniqueCustomerByPhone(tenantId, externalPhone);
+  let userId = match.assignedUserId ?? null;
+  let teamId = match.assignedTeamId ?? null;
+  let providerUserId: string | null = null;
+  let phoneNumberId: string | null = null;
+  if (isOutgoing) providerUserId = payload.userId;
+  if (isIncoming || isOutgoing) {
+    const internalNumber = isIncoming ? payload.to : payload.from;
+    const { data: rinkelNumber } = await supabase.from("rinkel_numbers")
+      .select("phone_number_id")
+      .eq("tenant_id", tenantId)
+      .eq("connection_id", connectionId)
+      .eq("phone_number_e164", internalNumber)
+      .maybeSingle();
+    phoneNumberId = rinkelNumber?.phone_number_id ?? null;
+  }
+  if (providerUserId) {
+    const { data: providerUser } = await supabase.from("rinkel_users").select("id")
+      .eq("tenant_id", tenantId).eq("connection_id", connectionId).eq("external_user_id", providerUserId).maybeSingle();
+    if (providerUser) {
+      const { data: mapping } = await supabase.from("rinkel_user_mappings").select("kundexa_user_id")
+        .eq("tenant_id", tenantId).eq("connection_id", connectionId).eq("rinkel_user_id", providerUser.id).eq("active", true).maybeSingle();
+      userId = mapping?.kundexa_user_id ?? userId;
+    }
+  }
+  const { data: policy } = await supabase.from("telephony_policies").select("*").eq("tenant_id", tenantId).maybeSingle();
+  const occurredAt = "datetime" in payload ? payload.datetime : new Date().toISOString();
+  const { data: created, error } = await supabase.from("calls").insert({
+    tenant_id: tenantId,
+    provider: "rinkel",
+    provider_connection_id: connectionId,
+    provider_call_id: payload.id,
+    external_call_id: payload.id,
+    customer_id: match.customerId,
+    phone_number_id: phoneNumberId,
+    user_id: userId,
+    team_id: teamId,
+    direction: isIncoming ? "inbound" : "outbound",
+    from_number: from,
+    to_number: to,
+    status: isIncoming || isOutgoing ? "initiated" : "reconciliation_required",
+    provider_user_id: providerUserId,
+    initiated_at: occurredAt,
+    started_at: occurredAt,
+    callback_token_hash: eventHash,
+    recording_enabled: policy?.recording_enabled ?? false,
+    recording_status: policy?.recording_enabled ? "pending" : "not_expected",
+    transcription_status: policy?.transcription_enabled ? "pending" : "disabled",
+    insights_status: "pending",
+    purpose: isIncoming ? "customer_service" : "provider_initiated",
+    metadata: { unmatched_provider_call: true, ambiguous_customer_match: match.ambiguous },
+  }).select("*").single();
+  if (error || !created) {
+    const raced = await findRinkelCall(tenantId, connectionId, payload.id);
+    if (raced) return raced;
+    throw new Error(`rinkel_call_create_failed:${error?.message ?? "unknown"}`);
+  }
+  return created;
+}
+
+async function correlateOutgoingCall(
+  tenantId: string,
+  connectionId: string,
+  eventId: string,
+  payload: Extract<RinkelWebhookPayload, { event: "outgoingCall" }>,
+  eventHash: string,
+) {
+  const providerTime = new Date(payload.datetime).getTime();
+  const windowStart = new Date(providerTime - 5 * 60_000).toISOString();
+  const windowEnd = new Date(providerTime + 2 * 60_000).toISOString();
+  const { data: user } = await supabase.from("rinkel_users").select("id")
+    .eq("tenant_id", tenantId).eq("connection_id", connectionId).eq("external_user_id", payload.userId).maybeSingle();
+  let query = supabase.from("call_attempts").select("id,call_id")
+    .eq("tenant_id", tenantId)
+    .eq("connection_id", connectionId)
+    .eq("destination_number_e164", payload.to)
+    .eq("source_number_e164", payload.from)
+    .gte("requested_at", windowStart)
+    .lte("requested_at", windowEnd)
+    .in("status", ["requested", "dial_requested", "awaiting_provider_event", "provider_outcome_unknown"]);
+  if (user?.id) query = query.eq("rinkel_user_id", user.id);
+  const { data: candidates, error } = await query;
+  if (error) throw error;
+  if ((candidates?.length ?? 0) === 1) {
+    const candidate = candidates![0];
+    const { data: call } = await supabase.from("calls").update({
+      provider_call_id: payload.id,
+      external_call_id: payload.id,
+      provider_user_id: payload.userId,
+      from_number: payload.from,
+      to_number: payload.to,
+      status: "initiated",
+      initiated_at: payload.datetime,
+      started_at: payload.datetime,
+    }).eq("tenant_id", tenantId).eq("id", candidate.call_id).select("*").single();
+    await supabase.from("call_attempts").update({
+      status: "matched",
+      matched_at: new Date().toISOString(),
+      external_call_id: payload.id,
+    }).eq("tenant_id", tenantId).eq("id", candidate.id);
+    return call;
+  }
+  if ((candidates?.length ?? 0) > 1) {
+    const candidateIds = candidates!.map((candidate) => candidate.id);
+    await supabase.from("call_attempts").update({ status: "reconciliation_required" }).in("id", candidateIds);
+    await supabase.from("call_correlation_conflicts").upsert({
+      tenant_id: tenantId,
+      connection_id: connectionId,
+      external_call_id: payload.id,
+      event_id: eventId,
+      candidate_attempt_ids: candidateIds,
+      status: "open",
+    }, { onConflict: "connection_id,external_call_id" });
+    return null;
+  }
+  return createRinkelCallFromEvent(tenantId, connectionId, payload, eventHash);
+}
+
+async function appendRinkelCallEvent(
+  tenantId: string,
+  connectionId: string,
+  callId: string,
+  eventId: string,
+  event: RinkelWebhookEvent,
+  payload: RinkelWebhookPayload,
+  payloadHash: string,
+) {
+  const occurredAt = "datetime" in payload ? payload.datetime : new Date().toISOString();
+  await supabase.from("call_events").upsert({
+    tenant_id: tenantId,
+    connection_id: connectionId,
+    call_id: callId,
+    external_call_id: payload.id,
+    event_type: event,
+    provider_event_id: eventId,
+    occurred_at: occurredAt,
+    payload_hash: payloadHash,
+    payload,
+    processing_status: "processed",
+    processing_attempts: 1,
+    processed_at: new Date().toISOString(),
+  }, { onConflict: "tenant_id,provider_event_id", ignoreDuplicates: true });
+}
+
+async function processRinkelEvent(job: Job) {
+  const eventId = String(job.payload.event_id ?? job.aggregate_id ?? "");
+  const { data: event, error } = await supabase.from("provider_webhook_events").select("*")
+    .eq("tenant_id", job.tenant_id).eq("id", eventId).eq("provider", "rinkel").single();
+  if (error || !event) throw new Error("permanent_rinkel_event_not_found");
+  if (event.status === "processed" || event.status === "conflict") return;
+  const connectionId = String(event.connection_id ?? "");
+  if (!connectionId) throw new Error("permanent_rinkel_event_connection_missing");
+  const eventType = String(event.event_type) as RinkelWebhookEvent;
+  let payload: RinkelWebhookPayload;
+  try {
+    payload = parseRinkelWebhookPayload(eventType, event.payload);
+  } catch (parseError) {
+    await supabase.from("provider_webhook_events").update({
+      status: "dead_letter",
+      dead_lettered_at: new Date().toISOString(),
+      last_error: parseError instanceof Error ? parseError.message.slice(0, 500) : "payload_invalid",
+    }).eq("id", event.id);
+    throw new Error("permanent_rinkel_event_schema_invalid");
+  }
+  await supabase.from("provider_webhook_events").update({
+    status: "processing",
+    processing_started_at: new Date().toISOString(),
+    attempts: Number(event.attempts ?? 0) + 1,
+  }).eq("id", event.id);
+
+  let call = await findRinkelCall(job.tenant_id, connectionId, payload.id);
+  if (payload.event === "outgoingCall" && !call) {
+    call = await correlateOutgoingCall(job.tenant_id, connectionId, event.id, payload, String(event.payload_hash ?? ""));
+    if (!call) {
+      await supabase.from("provider_webhook_events").update({
+        status: "conflict",
+        processed_at: new Date().toISOString(),
+        last_error: "multiple_call_attempt_candidates",
+      }).eq("id", event.id);
+      return;
+    }
+  } else if (!call) {
+    call = await createRinkelCallFromEvent(job.tenant_id, connectionId, payload, String(event.payload_hash ?? ""));
+  }
+
+  if (payload.event === "incomingCall" || payload.event === "outgoingCall") {
+    if (!isTerminalCallStatus(String(call.status))) {
+      const match = payload.event === "incomingCall"
+        ? await findUniqueCustomerByPhone(job.tenant_id, payload.from)
+        : await findUniqueCustomerByPhone(job.tenant_id, payload.to);
+      const update: Record<string, unknown> = {
+        direction: payload.event === "incomingCall" ? "inbound" : "outbound",
+        from_number: payload.from,
+        to_number: payload.to,
+        status: "initiated",
+        initiated_at: payload.datetime,
+        started_at: payload.datetime,
+        customer_id: call.customer_id ?? match.customerId,
+      };
+      if (payload.event === "outgoingCall") update.provider_user_id = payload.userId;
+      const { data: updated } = await supabase.from("calls").update(update)
+        .eq("tenant_id", job.tenant_id).eq("id", call.id).select("*").single();
+      if (updated) call = updated;
+    }
+  } else if (payload.event === "callStart") {
+    let answeredByUserId: string | null = null;
+    if (payload.userId) {
+      const { data: providerUser } = await supabase.from("rinkel_users").select("id")
+        .eq("tenant_id", job.tenant_id).eq("connection_id", connectionId).eq("external_user_id", payload.userId).maybeSingle();
+      if (providerUser) {
+        const { data: mapping } = await supabase.from("rinkel_user_mappings").select("kundexa_user_id")
+          .eq("tenant_id", job.tenant_id).eq("rinkel_user_id", providerUser.id).eq("active", true).maybeSingle();
+        answeredByUserId = mapping?.kundexa_user_id ?? null;
+      }
+    }
+    if (!isTerminalCallStatus(String(call.status))) {
+      const existingAnswered = call.answered_at ? new Date(call.answered_at).getTime() : Number.POSITIVE_INFINITY;
+      const incomingAnswered = new Date(payload.datetime).getTime();
+      const { data: updated } = await supabase.from("calls").update({
+        status: "in_progress",
+        answered_at: incomingAnswered < existingAnswered ? payload.datetime : call.answered_at,
+        answered_by_user_id: answeredByUserId ?? call.answered_by_user_id,
+        provider_user_id: payload.userId ?? call.provider_user_id,
+        metadata: { ...((call.metadata ?? {}) as Record<string, unknown>), voice_menu_choice: payload.choice },
+      }).eq("tenant_id", job.tenant_id).eq("id", call.id).select("*").single();
+      if (updated) call = updated;
+    }
+  } else if (payload.event === "callEnd") {
+    const finalStatus = mapRinkelCause(payload.cause);
+    const endedAt = new Date(payload.datetime);
+    const base = call.answered_at ?? call.initiated_at ?? call.started_at;
+    const duration = base ? Math.max(0, Math.round((endedAt.getTime() - new Date(base).getTime()) / 1000)) : 0;
+    const { data: updated } = await supabase.from("calls").update({
+      status: finalStatus,
+      end_cause: payload.cause,
+      ended_at: payload.datetime,
+      duration_seconds: duration,
+      recording_status: payload.callRecordingUrl ? "available_at_provider" : call.recording_enabled ? "unavailable" : "not_expected",
+      insights_status: call.insights_status === "disabled" ? "disabled" : "pending",
+      transcription_status: call.transcription_status === "disabled" ? "disabled" : "pending",
+    }).eq("tenant_id", job.tenant_id).eq("id", call.id).select("*").single();
+    if (updated) call = updated;
+    await supabase.from("call_attempts").update({
+      status: "completed",
+      external_call_id: payload.id,
+      provider_request_finished_at: new Date().toISOString(),
+    }).eq("tenant_id", job.tenant_id).eq("call_id", call.id)
+      .in("status", ["requested", "dial_requested", "awaiting_provider_event", "matched", "provider_outcome_unknown", "reconciliation_required"]);
+    if (payload.callRecordingUrl) {
+      const recordingId = extractRinkelRecordingId(payload.callRecordingUrl);
+      const { data: policy } = await supabase.from("telephony_policies").select("recording_storage_mode,recording_retention_days")
+        .eq("tenant_id", job.tenant_id).maybeSingle();
+      const retention = Number(policy?.recording_retention_days ?? 90);
+      await supabase.from("call_recordings").upsert({
+        tenant_id: job.tenant_id,
+        call_id: call.id,
+        connection_id: connectionId,
+        provider: "rinkel",
+        provider_recording_id: recordingId,
+        provider_reference: recordingId,
+        storage_mode: policy?.recording_storage_mode ?? "provider_only",
+        status: "available_at_provider",
+        available_at: payload.datetime,
+        last_checked_at: new Date().toISOString(),
+        retention_until: new Date(Date.now() + retention * 86400000).toISOString(),
+        retention_delete_at: new Date(Date.now() + retention * 86400000).toISOString(),
+      }, { onConflict: "tenant_id,provider_recording_id" });
+      await supabase.from("rinkel_capabilities").update({
+        recordings: true,
+        detected_at: new Date().toISOString(),
+      }).eq("tenant_id", job.tenant_id).eq("connection_id", connectionId);
+    }
+    if (call.list_member_id) {
+      await supabase.from("customer_list_members").update({ state: "after_call" })
+        .eq("tenant_id", job.tenant_id).eq("id", call.list_member_id);
+    }
+    if (call.dialer_session_id) {
+      await supabase.from("dialer_sessions").update({ state: "after_call", last_seen_at: new Date().toISOString() })
+        .eq("tenant_id", job.tenant_id).eq("id", call.dialer_session_id);
+    }
+    if (call.customer_id) {
+      await supabase.from("customers").update({ last_contact_at: payload.datetime })
+        .eq("tenant_id", job.tenant_id).eq("id", call.customer_id);
+    }
+    await supabase.from("outbox_jobs").upsert({
+      tenant_id: job.tenant_id,
+      job_type: "rinkel.enrich_call",
+      aggregate_type: "call",
+      aggregate_id: call.id,
+      payload: { call_id: call.id, connection_id: connectionId, external_call_id: payload.id },
+      idempotency_key: `rinkel.enrich_call:${call.id}`,
+      priority: 20,
+      available_at: new Date(Date.now() + 30_000).toISOString(),
+    }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true });
+  } else {
+    await supabase.from("call_insights").upsert({
+      tenant_id: job.tenant_id,
+      call_id: call.id,
+      source: "rinkel",
+      status: "available",
+      sentiment: payload.sentiment,
+      topics: payload.topics,
+      summary: payload.summary,
+      generated_at: new Date().toISOString(),
+    }, { onConflict: "call_id,source" });
+    await supabase.from("calls").update({ insights_status: "available" })
+      .eq("tenant_id", job.tenant_id).eq("id", call.id);
+    await supabase.from("rinkel_capabilities").update({
+      ai_insights: true,
+      detected_at: new Date().toISOString(),
+    }).eq("tenant_id", job.tenant_id).eq("connection_id", connectionId);
+  }
+
+  await appendRinkelCallEvent(
+    job.tenant_id,
+    connectionId,
+    call.id,
+    event.id,
+    eventType,
+    payload,
+    String(event.payload_hash ?? await sha256Text(JSON.stringify(payload))),
+  );
+  await supabase.from("provider_webhook_events").update({
+    status: "processed",
+    processed_at: new Date().toISOString(),
+    last_error: null,
+  }).eq("id", event.id);
+}
+
+async function processRinkelEnrichment(job: Job) {
+  const callId = String(job.payload.call_id ?? job.aggregate_id ?? "");
+  const connectionId = String(job.payload.connection_id ?? "");
+  const externalCallId = String(job.payload.external_call_id ?? "");
+  if (!callId || !connectionId || !externalCallId) throw new Error("permanent_rinkel_enrichment_payload_invalid");
+  const [{ data: call }, { data: policy }] = await Promise.all([
+    supabase.from("calls").select("*").eq("tenant_id", job.tenant_id).eq("id", callId).eq("provider", "rinkel").single(),
+    supabase.from("telephony_policies").select("*").eq("tenant_id", job.tenant_id).single(),
+  ]);
+  if (!call || !policy) throw new Error("permanent_rinkel_enrichment_context_missing");
+  const client = await getRinkelClient(job.tenant_id, connectionId);
+  const cdr = await client.getCallByCallId(externalCallId, true);
+  if (!cdr) throw new Error("rinkel_cdr_pending");
+  const cdrDuration = typeof cdr.duration === "number" ? Math.max(0, Math.round(cdr.duration)) : null;
+  await supabase.from("calls").update({
+    duration_seconds: cdrDuration ?? call.duration_seconds,
+  }).eq("tenant_id", job.tenant_id).eq("id", callId);
+
+  if (policy.transcription_enabled) {
+    const transcript = await client.getTranscription(externalCallId);
+    if (!transcript.available) {
+      await supabase.from("call_transcripts").upsert({
+        tenant_id: job.tenant_id,
+        call_id: callId,
+        provider: "rinkel",
+        status: "pending",
+        last_checked_at: new Date().toISOString(),
+        retry_count: job.attempts + 1,
+        next_retry_at: new Date(Date.now() + Math.min(3600, 30 * 2 ** job.attempts) * 1000).toISOString(),
+      }, { onConflict: "call_id,provider" });
+      await supabase.from("calls").update({ transcription_status: "pending" })
+        .eq("tenant_id", job.tenant_id).eq("id", callId);
+      if (job.attempts < 7) throw new Error("rinkel_transcription_pending");
+      await supabase.from("call_transcripts").update({ status: "not_available" })
+        .eq("tenant_id", job.tenant_id).eq("call_id", callId).eq("provider", "rinkel");
+    } else {
+      const rawTranscript = typeof transcript.value === "string" ? transcript.value : JSON.stringify(transcript.value);
+      await supabase.from("call_transcripts").upsert({
+        tenant_id: job.tenant_id,
+        call_id: callId,
+        provider: "rinkel",
+        status: "available",
+        raw_transcript: rawTranscript,
+        structured_transcript: typeof transcript.value === "object" ? transcript.value : null,
+        generated_at: new Date().toISOString(),
+        last_checked_at: new Date().toISOString(),
+        retention_delete_at: new Date(Date.now() + Number(policy.recording_retention_days) * 86400000).toISOString(),
+      }, { onConflict: "call_id,provider" });
+      await supabase.from("calls").update({ transcription_status: "available" })
+        .eq("tenant_id", job.tenant_id).eq("id", callId);
+      await supabase.from("rinkel_capabilities").update({
+        transcription: true,
+        detected_at: new Date().toISOString(),
+      }).eq("tenant_id", job.tenant_id).eq("connection_id", connectionId);
+    }
+  }
+
+  if (policy.recording_storage_mode === "kundexa_private_copy") {
+    const { data: recording } = await supabase.from("call_recordings").select("*")
+      .eq("tenant_id", job.tenant_id).eq("call_id", callId).eq("provider", "rinkel").maybeSingle();
+    if (recording?.provider_recording_id && recording.status !== "stored_privately") {
+      const audioUrl = await client.getRecordingUrl(recording.provider_recording_id);
+      const response = await fetch(audioUrl, { redirect: "error" });
+      if (!response.ok) throw new Error(`rinkel_recording_download_${response.status}`);
+      const contentType = response.headers.get("content-type") ?? "audio/mpeg";
+      if (!contentType.startsWith("audio/")) throw new Error("permanent_rinkel_recording_content_type_invalid");
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (bytes.length <= 0 || bytes.length > 100 * 1024 * 1024) throw new Error("permanent_rinkel_recording_size_invalid");
+      const path = `${job.tenant_id}/${callId}/${crypto.randomUUID()}`;
+      const { error: uploadError } = await supabase.storage.from("call-recordings")
+        .upload(path, bytes, { contentType, upsert: false });
+      if (uploadError) throw uploadError;
+      await supabase.from("call_recordings").update({
+        storage_path: path,
+        storage_mode: "kundexa_private_copy",
+        mime_type: contentType,
+        size_bytes: bytes.length,
+        sha256: await sha256Bytes(bytes),
+        status: "stored_privately",
+        last_checked_at: new Date().toISOString(),
+      }).eq("tenant_id", job.tenant_id).eq("id", recording.id);
+      await supabase.from("calls").update({ recording_status: "stored_privately" })
+        .eq("tenant_id", job.tenant_id).eq("id", callId);
+    }
+  }
+}
+
+function providerString(record: Record<string, unknown>, ...keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value) return value;
+  }
+  return null;
+}
+
+function providerNumber(record: Record<string, unknown>, ...keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+async function processRinkelReconciliation(job: Job) {
+  const connectionId = String(job.payload.connection_id ?? job.aggregate_id ?? "");
+  if (!connectionId) throw new Error("permanent_rinkel_reconciliation_connection_missing");
+  const client = await getRinkelClient(job.tenant_id, connectionId);
+  const { data: pendingCalls, error: callError } = await supabase.from("calls")
+    .select("id,external_call_id,duration_seconds,status")
+    .eq("tenant_id", job.tenant_id).eq("provider_connection_id", connectionId)
+    .not("external_call_id", "is", null)
+    .in("status", ["initiated", "ringing", "in_progress", "provider_outcome_unknown", "reconciliation_required"])
+    .limit(100);
+  if (callError) throw callError;
+  for (const call of pendingCalls ?? []) {
+    const cdr = await client.getCallByCallId(String(call.external_call_id), true);
+    if (!cdr) continue;
+    const duration = providerNumber(cdr, "duration", "durationSeconds", "duration_seconds");
+    if (duration !== null && duration !== Number(call.duration_seconds ?? 0)) {
+      await supabase.from("calls").update({ duration_seconds: Math.max(0, Math.round(duration)) })
+        .eq("tenant_id", job.tenant_id).eq("id", call.id);
+    }
+  }
+
+  const startDate = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const endDate = new Date().toISOString();
+  const records = await client.listCallDetailRecords({ startDate, endDate });
+  const { data: attempts, error: attemptError } = await supabase.from("call_attempts")
+    .select("id,call_id,destination_number_e164,source_number_e164,requested_at,rinkel_user_id")
+    .eq("tenant_id", job.tenant_id).eq("connection_id", connectionId)
+    .is("external_call_id", null)
+    .in("status", ["awaiting_provider_event", "provider_outcome_unknown", "reconciliation_required"])
+    .gte("requested_at", startDate).limit(250);
+  if (attemptError) throw attemptError;
+  for (const attempt of attempts ?? []) {
+    const requestedAt = new Date(attempt.requested_at).getTime();
+    const matches = records.filter((record) => {
+      const from = providerString(record, "from", "fromNumber", "caller");
+      const to = providerString(record, "to", "toNumber", "callee");
+      const timestamp = providerString(record, "datetime", "startedAt", "startDate", "createdAt");
+      if (!from || !to || !timestamp) return false;
+      const time = Date.parse(timestamp);
+      return from === attempt.source_number_e164 && to === attempt.destination_number_e164
+        && Number.isFinite(time) && Math.abs(time - requestedAt) <= 5 * 60_000;
+    });
+    if (matches.length === 1) {
+      const externalCallId = providerString(matches[0], "callId", "call_id", "id");
+      if (!externalCallId) continue;
+      await supabase.from("calls").update({
+        provider_call_id: externalCallId,
+        external_call_id: externalCallId,
+        status: "reconciliation_required",
+      }).eq("tenant_id", job.tenant_id).eq("id", attempt.call_id);
+      await supabase.from("call_attempts").update({
+        external_call_id: externalCallId,
+        status: "matched",
+        matched_at: new Date().toISOString(),
+      }).eq("tenant_id", job.tenant_id).eq("id", attempt.id);
+      await supabase.from("outbox_jobs").upsert({
+        tenant_id: job.tenant_id,
+        job_type: "rinkel.enrich_call",
+        aggregate_type: "call",
+        aggregate_id: attempt.call_id,
+        payload: { call_id: attempt.call_id, connection_id: connectionId, external_call_id: externalCallId },
+        idempotency_key: `rinkel.enrich_call:${attempt.call_id}`,
+        priority: 20,
+      }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true });
+    } else if (matches.length > 1) {
+      await supabase.from("call_attempts").update({ status: "reconciliation_required" })
+        .eq("tenant_id", job.tenant_id).eq("id", attempt.id);
+      await supabase.from("call_correlation_conflicts").upsert({
+        tenant_id: job.tenant_id,
+        connection_id: connectionId,
+        external_call_id: `reconcile:${attempt.id}`,
+        candidate_attempt_ids: [attempt.id],
+        status: "open",
+        resolution: JSON.stringify({ reason: "multiple_cdr_matches", record_count: matches.length }),
+      }, { onConflict: "connection_id,external_call_id" });
+    }
+  }
+  const { data: unresolvedAttempts, error: healthError } = await supabase.from("call_attempts")
+    .select("status,requested_at")
+    .eq("tenant_id", job.tenant_id)
+    .eq("connection_id", connectionId)
+    .in("status", ["awaiting_provider_event", "matched", "provider_outcome_unknown", "reconciliation_required"])
+    .limit(250);
+  if (healthError) throw healthError;
+  const now = Date.now();
+  const webhookStale = (unresolvedAttempts ?? []).some((attempt) => {
+    const age = now - Date.parse(attempt.requested_at);
+    return ["provider_outcome_unknown", "reconciliation_required"].includes(attempt.status)
+      ? age > 15 * 60_000
+      : age > 2 * 60 * 60_000;
+  });
+  const healthUpdate: Record<string, unknown> = {
+    last_reconciled_at: new Date().toISOString(),
+    last_error_code: webhookStale ? "RINKEL_WEBHOOK_STALE" : null,
+    last_error_message: webhookStale
+      ? "Rinkel-webhookar saknas för ett eller flera pågående samtal. Automatisk dialer har pausats."
+      : null,
+  };
+  if (webhookStale) healthUpdate.webhook_status = "degraded";
+  await supabase.from("tenant_integrations").update(healthUpdate)
+    .eq("tenant_id", job.tenant_id).eq("id", connectionId);
+}
+
+async function processRinkelRetention(job: Job) {
+  const now = new Date().toISOString();
+  const { data: policy, error: policyError } = await supabase.from("telephony_policies").select("*")
+    .eq("tenant_id", job.tenant_id).maybeSingle();
+  if (policyError) throw policyError;
+  if (!policy) return;
+  const { data: recordings, error: recordingError } = await supabase.from("call_recordings").select("*")
+    .eq("tenant_id", job.tenant_id).eq("provider", "rinkel")
+    .lte("retention_delete_at", now).is("deleted_at", null).limit(250);
+  if (recordingError) throw recordingError;
+  for (const recording of recordings ?? []) {
+    if (recording.storage_path) {
+      const { error: storageError } = await supabase.storage.from("call-recordings").remove([recording.storage_path]);
+      if (storageError) throw storageError;
+    }
+    if (policy.delete_provider_recording_on_retention && recording.provider_recording_id && recording.connection_id) {
+      const client = await getRinkelClient(job.tenant_id, recording.connection_id);
+      await client.deleteCallRecording(recording.provider_recording_id);
+    }
+    await supabase.from("call_recordings").update({
+      status: "purged",
+      storage_path: null,
+      provider_reference: null,
+      deleted_at: now,
+    }).eq("tenant_id", job.tenant_id).eq("id", recording.id);
+    await supabase.from("calls").update({ recording_status: "deleted" })
+      .eq("tenant_id", job.tenant_id).eq("id", recording.call_id);
+  }
+  await supabase.from("call_transcripts").update({
+    status: "deleted", raw_transcript: null, structured_transcript: null, provider_payload: {}, deleted_at: now,
+  }).eq("tenant_id", job.tenant_id).lte("retention_delete_at", now).is("deleted_at", null);
+  await supabase.from("call_insights").update({
+    status: "deleted", sentiment: null, topics: [], summary: null, analysis: {}, deleted_at: now,
+  }).eq("tenant_id", job.tenant_id).lte("retention_delete_at", now).is("deleted_at", null);
+  const rawCutoff = new Date(Date.now() - Number(policy.raw_event_retention_days ?? 30) * 86400000).toISOString();
+  await supabase.from("provider_webhook_events").update({ payload: {}, headers: {} })
+    .eq("tenant_id", job.tenant_id).eq("provider", "rinkel").lt("received_at", rawCutoff)
+    .in("status", ["processed", "dead_letter", "conflict"]);
+}
+
 async function processJob(job: Job) {
   if (job.job_type === "sms.send") return processSms(job);
-  if (job.job_type === "call.start") return processCall(job);
+  if (job.job_type === "call.start") throw new Error("permanent_legacy_46elks_voice_job_disabled_use_rinkel");
   if (job.job_type === "email.send") return processEmail(job);
   if (job.job_type === "contract.reminder.dispatch") return processContractReminder(job);
   if (job.job_type === "recording.download") return processRecording(job);
   if (job.job_type === "evidence.generate") return processEvidence(job);
   if (job.job_type === "contract.confirmation") return processContractConfirmation(job);
   if (job.job_type === "webhook.deliver") return processWebhook(job);
+  if (job.job_type === "rinkel.process_event") return processRinkelEvent(job);
+  if (job.job_type === "rinkel.enrich_call") return processRinkelEnrichment(job);
+  if (job.job_type === "rinkel.reconcile_calls") return processRinkelReconciliation(job);
+  if (job.job_type === "rinkel.retention") return processRinkelRetention(job);
   throw new Error(`unsupported_job_type:${job.job_type}`);
 }
 

@@ -5,7 +5,8 @@
 - Primär marknad/språk: Sverige, svensk UI och compliance
 - Webb: Next.js 16 / React 19 / TypeScript
 - Backend: Supabase Auth, PostgreSQL/RLS, Storage, Realtime och Edge Functions
-- Telefoni: 46elks via provideradapter
+- Telefoni: Rinkel via tenantägd server-side-provideradapter och webhookar
+- SMS: 46elks via outbox/provideradapter
 - E-post: Resend via outbox/provideradapter
 - Pakethanterare: npm 10.9.2
 - Avsedd runtime: Node 22.x
