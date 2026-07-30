@@ -23,3 +23,10 @@ SUPABASE_PROJECT_REF=<SUPABASE_PROJECT_REF> npm run types:generate
 npm run functions:deploy -- --project-ref <SUPABASE_PROJECT_REF>
 npm run verify
 ```
+
+## Efter Rinkel-statuspatch
+
+1. Synka patchfilerna och kör `npm ci && npm run verify` lokalt under Node 22/npm 10.9.2.
+2. Kör migration `202607300001_rinkel_telephony_completion.sql` via `npm run db:push` om den inte redan finns i staging/produktion.
+3. Sätt webb- och Edge-secrets, spara tenantens API-nyckel i **Integrationer → Rinkel**, testa, synka katalogen och mappa säljaren.
+4. Logga in som den mappade säljaren och verifiera att statusen blir `Rinkel redo`.

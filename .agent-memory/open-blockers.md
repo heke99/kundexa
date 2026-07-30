@@ -16,3 +16,8 @@
 - Ingen gitmetadata finns, så patchen kan inte bindas till branch/commit.
 
 Detaljer: `docs/PRODUCTION_GATES.md`.
+
+## Rinkel-statuspatch
+
+- Liveverifiering med en tenantadmin som ansluter Rinkel och en mappad säljare som öppnar dialern: `NOT RUN`.
+- Sandboxens `npm ci` blockeras av intern registry-404 för `pdf-lib@1.17.1`; kör `npm ci && npm run verify` lokalt/CI.

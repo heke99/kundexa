@@ -35,3 +35,7 @@ Kundexa äger CRM-, list-, policy- och samtalsmodellen; Rinkel äger telefonin. 
 ## ADR-0009 — Providerartefakter ärver samtalsåtkomst
 
 Samtalsförsök, transkript och Insights får endast läsas av användare som kan läsa det kanoniska samtalet. Rå providerdata exponeras inte för autentiserade klienter; konfigurations- och konfliktdata kräver administrativ roll.
+
+## ADR-0010 — Rinkel-status läses server-side med verifierad tenant
+
+Dialerns statusendpoint autentiserar användaren med `getAppContext`, men läser den administrativt skyddade integrationsraden med service role och explicita filter på `tenant_id`, provider och anslutning. Inga credentials returneras. Detta undviker att säljarens avsiktligt begränsade RLS feltolkas som att tenantens Rinkel-anslutning saknas.

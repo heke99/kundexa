@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 type StatusResponse = {
   ready?: boolean;
   automaticReady?: boolean;
-  configured?: boolean;
+  configured?: boolean | null;
   status?: string;
   webhookStatus?: string | null;
   mappingReady?: boolean;
@@ -26,7 +26,8 @@ export function useRinkelDialer() {
         if (!active) return;
         setRegistered(Boolean(response.ok && data.ready));
         setAutomaticReady(Boolean(response.ok && data.automaticReady));
-        if (!data.configured) setStatus("Rinkel är inte anslutet");
+        if (!response.ok) setStatus(data.errorMessage ?? "Rinkel-status kunde inte hämtas");
+        else if (data.configured === false) setStatus("Rinkel är inte anslutet");
         else if (!data.mappingReady) setStatus("Rinkel-mappning saknas");
         else if (!data.ready) setStatus(data.errorMessage ?? `Rinkel: ${data.status ?? "inte redo"}`);
         else setStatus("Rinkel redo");

@@ -34,3 +34,9 @@
 - Inkluderar Edge/Deno check, statiska invarianter, importparserstest, 32 migrationer och runtime-RPC-flöden, TypeScript samt Next.js 16.2.10 produktionsbuild.
 - SQL-resultat: 145 publika tabeller, 246 publika funktioner och 273 RLS-policies.
 - Ren zip-leverans skapad och integritetstestad utan `node_modules`, `.next` eller `.env.local`.
+
+## 2026-07-30 Rinkel-statuskorrigering
+
+- Rättade dialerns statusendpoint så att säljare kan läsa säker, tenantbegränsad integrationsstatus utan att få credentials eller bred tabellåtkomst.
+- Lade explicit felhantering för databas-/migrationsfel i stället för att visa dem som ”Rinkel är inte anslutet”.
+- Rättade klientstatusen så att endast `configured === false` visas som en verkligt saknad Rinkel-anslutning.

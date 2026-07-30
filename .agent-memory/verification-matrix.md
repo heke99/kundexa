@@ -21,3 +21,7 @@
 | Last/SAST/DAST/pentest | externa gates | NOT RUN |
 
 Uppdatera matrisen med exakt kommando, datum och resultat; ersätt aldrig `NOT RUN` med antagande.
+
+| Rinkel-statussyntax | TypeScript `transpileModule` för ändrade filer | PASS 2026-07-30 |
+| Rinkel-status live | adminanslutning + säljar-JWT i staging | NOT RUN |
+| Patchens kompletta gate | `npm run verify` | BLOCKED i sandbox: intern npm-registry saknar `pdf-lib@1.17.1` |

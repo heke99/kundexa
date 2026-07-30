@@ -42,3 +42,10 @@
 - Fix: precisa roll-/team-/samtalspolicies, borttagen klientskrivning av samtalsförsök samt kolumnspecifika grants utan `raw_provider_data`.
 - Regressionstest: SQL-exekvering och statiska invarianter i `scripts/verify.mjs`.
 - Status: `RESOLVED`.
+
+## FAILURE-0007 — Säljare såg felaktigt ”Rinkel är inte anslutet”
+
+- Upptäckt: granskning av dialerns statusflöde 2026-07-30.
+- Orsak: statusendpointen läste `tenant_integrations` med användarens Supabase-session, medan tabellens SELECT-policy endast tillåter tenantadmin. Ett RLS-tomt resultat behandlades som `not_configured`.
+- Fix: endpointen använder nu service role efter verifierad auth/tenant och alla frågor är explicit tenant- och anslutningsfiltrerade. UI skiljer dessutom ett serverfel från en verkligt saknad anslutning.
+- Status: `RESOLVED IN CODE`; live Supabase/Rinkel-verifiering återstår.

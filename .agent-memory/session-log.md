@@ -26,3 +26,10 @@
 - Full `npm run verify` passerade efter alla ändringar, inklusive Next.js-produktionsbuild.
 - Paketerade en ren leverans utan dependencies, buildcache eller lokala hemligheter; zip-integritet verifierad.
 - Den uppdaterade projektversionen ersatte den bifogade projektfilen med bibehållen filidentitet/versionhistorik.
+
+### Rinkel-statusgranskning
+
+- Reproducerade kodorsaken till att säljare alltid kunde se ”Rinkel är inte anslutet”: `tenant_integrations` har admin-only SELECT men statusrouten använde säljarens RLS-session.
+- Ändrade statusrouten till autentiserad, explicit tenantfiltrerad service-role-läsning utan credentialexponering.
+- Ändrade dialerhooken så att 500-/migrationsfel inte maskeras som en frånvarande integration.
+- Paketinstallation/verifiering kunde inte köras i denna sandbox eftersom den interna npm-spegeln returnerade 404 för `pdf-lib@1.17.1`; detta är en verifieringsmiljöbegränsning, inte ett observerat projektfel.

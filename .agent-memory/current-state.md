@@ -10,6 +10,7 @@ Datum: 2026-07-30
 - Utgående Rinkel-samtal reserveras atomiskt mot kanoniska `calls`, låser säljare/enhet, korreleras av webhookar och avslutas med transaktionellt efterarbete.
 - Inspelning, transkript, Insights, retention, reconciliation, tenantmappning och capability-status är kopplade till samma kanoniska samtalsmodell.
 - Rinkel-tabellernas RLS och kolumnprivilegier begränsar providerdata efter roll, team, användare och kanonisk samtalsåtkomst.
+- Dialerns Rinkel-status läses tenantverifierat server-side; säljarens adminbegränsade integrations-RLS maskeras inte längre som en saknad anslutning.
 - `npm run verify` passerar lokalt: Edge Function-kontroll, Rinkel-/kontrakt-/importtester, statiska invarianter, 37 exekverade migrationer, SQL-runtime, TypeScript och Next.js-produktionsbuild.
 
 ## Produktionsstatus
