@@ -84,6 +84,10 @@ export default async function PlatformPage({ searchParams }: { searchParams: Pro
       <CardHeader><h2><ListFilter size={17} /> Central listbank</h2><Badge>{platformLists?.length ?? 0} listor</Badge></CardHeader>
       <CardContent><p>Importera CSV, JSON och Excel centralt, filtrera urval och materialisera dem till valda tenants utan att blanda tenantdata.</p><Link href="/app/platform/lists" className="button button-primary">Öppna listbanken</Link></CardContent>
     </Card>
+    {isPlatformAdmin(context.platformRole) ? <Card>
+      <CardHeader><h2><ShieldCheck size={17} /> Central telefoni</h2></CardHeader>
+      <CardContent><p>Hantera Kundexas enda Rinkel-anslutning, centrala katalog, webhookar och historiserade tenantallokeringar.</p><Link href="/app/platform/telephony" className="button button-primary">Öppna Rinkel-plattformen</Link></CardContent>
+    </Card> : null}
 
     <div className="split-layout">
       <Card>

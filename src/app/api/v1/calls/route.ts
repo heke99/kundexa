@@ -3,10 +3,8 @@ import { z } from "zod";
 import { getAppContext } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { decryptJson } from "@/lib/crypto";
-import { serverEnv } from "@/lib/env";
 import { assertPermission } from "@/lib/permissions";
-import { RinkelClient } from "@/lib/integrations/rinkel/client";
+import { createPlatformRinkelClient } from "@/lib/integrations/rinkel/client";
 import { safeRinkelError } from "@/lib/integrations/rinkel/errors";
 
 const bodySchema = z.object({
@@ -28,15 +26,12 @@ const bodySchema = z.object({
 type Reservation = {
   callId: string;
   attemptId: string;
-  connectionId?: string;
   deviceId?: string;
   numberId?: string;
   to?: string;
   status: string;
   idempotentReplay: boolean;
 };
-
-type RinkelCredentials = { apiKey: string };
 
 export async function GET(request: Request) {
   try {
@@ -69,7 +64,7 @@ export async function POST(request: Request) {
     assertPermission(context.role, "calls.create");
     const parsed = bodySchema.parse(await request.json());
     const supabase = await createClient();
-    const result = await supabase.rpc("rinkel_reserve_outbound_call", {
+    const result = await supabase.rpc("rinkel_reserve_platform_outbound_call", {
       p_customer_id: parsed.customerId,
       p_contact_person_id: parsed.contactPersonId ?? null,
       p_target_phone: parsed.targetPhone,
@@ -89,33 +84,17 @@ export async function POST(request: Request) {
     if (reserved.idempotentReplay) {
       return NextResponse.json({ callId: reserved.callId, status: reserved.status, idempotentReplay: true }, { status: 200 });
     }
-    if (!reserved.connectionId || !reserved.deviceId || !reserved.numberId || !reserved.to) {
+    if (!reserved.deviceId || !reserved.numberId || !reserved.to) {
       throw new Error("rinkel_reservation_contract_invalid");
     }
 
-    const env = serverEnv();
     const admin = createAdminClient();
-    const { data: integration } = await admin.from("tenant_integrations")
-      .select("credentials_ciphertext")
-      .eq("tenant_id", context.tenantId)
-      .eq("id", reserved.connectionId)
-      .eq("provider", "rinkel")
-      .in("status", ["connected", "degraded", "active"])
-      .is("disabled_at", null)
-      .single();
-    if (!integration?.credentials_ciphertext) throw new Error("rinkel_integration_not_active");
-    const credentials = decryptJson<RinkelCredentials>(integration.credentials_ciphertext, env.KUNDEXA_ENCRYPTION_KEY);
-    await admin.from("call_attempts").update({
+    await admin.from("rinkel_call_attempts_v2").update({
       status: "dial_requested",
       provider_request_started_at: new Date().toISOString(),
     }).eq("tenant_id", context.tenantId).eq("id", reserved.attemptId).eq("call_id", reserved.callId);
 
-    const client = new RinkelClient({
-      apiKey: credentials.apiKey,
-      baseUrl: env.RINKEL_API_BASE_URL,
-      timeoutMs: env.RINKEL_REQUEST_TIMEOUT_MS,
-      requestId: reserved.attemptId,
-    });
+    const client = createPlatformRinkelClient(reserved.attemptId);
     await client.dial({
       deviceId: reserved.deviceId,
       to: reserved.to,
@@ -123,7 +102,7 @@ export async function POST(request: Request) {
       anonymous: false,
     });
     dialSubmitted = true;
-    const { error: finalizeError } = await admin.rpc("rinkel_finalize_dial_request", {
+    const { error: finalizeError } = await admin.rpc("rinkel_finalize_platform_dial", {
       p_call_id: reserved.callId,
       p_attempt_id: reserved.attemptId,
       p_outcome: "accepted",
@@ -144,7 +123,7 @@ export async function POST(request: Request) {
     const outcomeUnknown = safe.outcomeUnknown || dialSubmitted;
     if (reserved) {
       const admin = createAdminClient();
-      await admin.rpc("rinkel_finalize_dial_request", {
+      await admin.rpc("rinkel_finalize_platform_dial", {
         p_call_id: reserved.callId,
         p_attempt_id: reserved.attemptId,
         p_outcome: outcomeUnknown ? "unknown" : "failed",

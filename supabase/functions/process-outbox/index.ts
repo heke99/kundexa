@@ -32,7 +32,6 @@ type Job = {
 type ElksCredentials = { username: string; password: string };
 type EmailCredentials = { apiKey?: string; from?: string; webhookSigningSecret?: string; webhookPathToken?: string };
 type EmailAttachmentRef = { document_id: string; filename?: string; mime_type?: string };
-type RinkelCredentials = { apiKey: string };
 
 function cleanHeaderName(value: string) {
   return value.replace(/[<>\r\n]/g, " ").replace(/\s+/g, " ").trim().slice(0, 100);
@@ -606,18 +605,11 @@ async function sha256Text(value: string) {
   return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function getRinkelClient(tenantId: string, connectionId: string) {
-  const { data: connection, error } = await supabase.from("tenant_integrations")
-    .select("credentials_ciphertext")
-    .eq("tenant_id", tenantId)
-    .eq("id", connectionId)
-    .eq("provider", "rinkel")
-    .is("disabled_at", null)
-    .single();
-  if (error || !connection?.credentials_ciphertext) throw new Error("permanent_rinkel_connection_missing");
-  const credentials = await decryptJson<RinkelCredentials>(connection.credentials_ciphertext, encryptionKey);
+async function getRinkelClient(..._legacyArguments: unknown[]) {
+  const apiKey = Deno.env.get("RINKEL_API_KEY") ?? "";
+  if (!apiKey) throw new Error("permanent_rinkel_platform_not_configured");
   return new RinkelClient({
-    apiKey: credentials.apiKey,
+    apiKey,
     baseUrl: Deno.env.get("RINKEL_API_BASE_URL") ?? "https://api.rinkel.com/v1",
     timeoutMs: Number(Deno.env.get("RINKEL_REQUEST_TIMEOUT_MS") ?? 15000),
   });
@@ -1210,8 +1202,8 @@ async function processRinkelRetention(job: Job) {
       const { error: storageError } = await supabase.storage.from("call-recordings").remove([recording.storage_path]);
       if (storageError) throw storageError;
     }
-    if (policy.delete_provider_recording_on_retention && recording.provider_recording_id && recording.connection_id) {
-      const client = await getRinkelClient(job.tenant_id, recording.connection_id);
+    if (policy.delete_provider_recording_on_retention && recording.provider_recording_id) {
+      const client = await getRinkelClient();
       await client.deleteCallRecording(recording.provider_recording_id);
     }
     await supabase.from("call_recordings").update({
@@ -1244,9 +1236,9 @@ async function processJob(job: Job) {
   if (job.job_type === "evidence.generate") return processEvidence(job);
   if (job.job_type === "contract.confirmation") return processContractConfirmation(job);
   if (job.job_type === "webhook.deliver") return processWebhook(job);
-  if (job.job_type === "rinkel.process_event") return processRinkelEvent(job);
-  if (job.job_type === "rinkel.enrich_call") return processRinkelEnrichment(job);
-  if (job.job_type === "rinkel.reconcile_calls") return processRinkelReconciliation(job);
+  if (["rinkel.process_event", "rinkel.enrich_call", "rinkel.reconcile_calls"].includes(job.job_type)) {
+    throw new Error("permanent_legacy_tenant_rinkel_job_disabled_use_platform_worker");
+  }
   if (job.job_type === "rinkel.retention") return processRinkelRetention(job);
   throw new Error(`unsupported_job_type:${job.job_type}`);
 }

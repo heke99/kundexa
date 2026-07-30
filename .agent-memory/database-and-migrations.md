@@ -2,19 +2,18 @@
 
 Snapshot 2026-07-30:
 
-- 37 ordnade SQL-migrationer i `supabase/migrations`.
-- PGlite-verifiering: 157 publika tabeller, 270 publika funktioner och 292 RLS-policies.
-- Senaste migrationer:
-  - `202607300001_rinkel_telephony_completion.sql`
+- 38 ordnade SQL-migrationer.
+- PGlite: 170 publika tabeller, 277 publika funktioner och 297 RLS-policies.
+- `202607300001_rinkel_telephony_completion.sql` är distribueringshistorik och får inte ändras.
+- `202607300002_central_rinkel_platform.sql` gör central cutover, backfill, konfliktmarkering och avveckling av tenant-Rinkel-vägen.
 
 Regler:
 
-- Ändra aldrig en redan levererad migration; lägg till en ny framåtriktad migration.
-- Tenantägda tabeller ska ha `tenant_id`, RLS och testad policy.
-- `SECURITY DEFINER` ska ha explicit `search_path` och minsta möjliga `EXECUTE`.
-- Tenantparametrar i service-RPC:er måste valideras mot resursernas tenant.
-- Providerartefakter ska ärva åtkomst från kanonisk domänresurs; rå providerdata får inte följa generella klientprivilegier.
-- En sammansatt FK får inte använda generell `ON DELETE SET NULL` om den skulle nolla en obligatorisk `tenant_id`; använd kolumnspecifik SET NULL eller relänkning.
-- Kör `node scripts/verify-sql.mjs` efter varje migrationsändring.
+- En aktiv `platform_integrations`-rad för Rinkel, utan credentials eller `tenant_id`.
+- Centrala providerposter är service-role-skyddade; tenants använder historiserade allokeringar, grants och serverfiltrerade RPC:er.
+- Historiska samtal sparar snapshots och får inte ändra tenant vid framtida resursflytt.
+- `SECURITY DEFINER` ska ha låst `search_path` och explicita execute-grants.
+- Ändra aldrig en levererad migration; lägg en ny framåtriktad migration.
+- Kör `node scripts/verify-sql.mjs` efter migrationsändringar.
 
-Live `db push` och typgenerering mot ett länkat Supabase-projekt är `NOT RUN`.
+Live `db push` och typgenerering är `NOT RUN`.

@@ -60,10 +60,16 @@ export async function GET() {
       },
       "/calls": {
         get: { operationId: "listCalls", summary: "Lista tenantseparerade kanoniska samtal", responses: { "200": { description: "Samtalslista" } } },
-        post: { operationId: "startRinkelCall", summary: "Reservera lokalt och starta ett tenantägt Rinkel-samtal", requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["customerId", "targetPhone", "clientRequestId", "idempotencyKey"], properties: { customerId: { type: "string", format: "uuid" }, contactPersonId: { type: ["string", "null"], format: "uuid" }, targetPhone: { type: "string", pattern: "^\\\\+[1-9][0-9]{7,14}$" }, clientRequestId: { type: "string", format: "uuid" }, idempotencyKey: { type: "string", minLength: 8 }, purpose: { type: "string" } } } } } }, responses: { "202": { description: "Rinkel-begäran accepterad eller inväntar säker reconciliation" }, "409": { description: "Telefoni, policy, mappning eller aktiv enhet blockerar" } } },
+        post: { operationId: "startRinkelCall", summary: "Reservera lokalt och starta ett samtal genom Kundexas centrala Rinkel-integration", requestBody: { required: true, content: { "application/json": { schema: { type: "object", additionalProperties: false, required: ["customerId", "targetPhone", "clientRequestId", "idempotencyKey"], properties: { customerId: { type: "string", format: "uuid" }, contactPersonId: { type: ["string", "null"], format: "uuid" }, targetPhone: { type: "string", pattern: "^\\\\+[1-9][0-9]{7,14}$" }, clientRequestId: { type: "string", format: "uuid" }, idempotencyKey: { type: "string", minLength: 8 }, purpose: { type: "string" } } } } } }, responses: { "202": { description: "Rinkel-begäran accepterad eller inväntar säker reconciliation" }, "409": { description: "Telefoni, policy, mappning eller aktiv enhet blockerar" } } },
       },
-      "/integrations/rinkel/status": {
-        get: { operationId: "getRinkelStatus", summary: "Hämta aktuell användares Rinkel-, mappnings- och webhookstatus", responses: { "200": { description: "Capability- och driftstatus" } } },
+      "/telephony/status": {
+        get: { operationId: "getTelephonyStatus", summary: "Hämta aktuell användares säkra telefoni-, mappnings- och nummerstatus", responses: { "200": { description: "Telefonistatus", content: { "application/json": { schema: { type: "object", additionalProperties: false, required: ["platformConfigured", "platformReady", "tenantEnabled", "manualReady", "automaticReady", "webhookReady", "status"], properties: { platformConfigured: { type: "boolean" }, platformReady: { type: "boolean" }, tenantEnabled: { type: "boolean" }, tenantHasNumber: { type: "boolean" }, userMapped: { type: "boolean" }, userHasDevice: { type: "boolean" }, userHasNumberAccess: { type: "boolean" }, manualReady: { type: "boolean" }, automaticReady: { type: "boolean" }, webhookReady: { type: "boolean" }, status: { type: "string" }, errorCode: { type: ["string", "null"] }, errorMessage: { type: ["string", "null"] } } } } } } } },
+      },
+      "/calls/{id}/recording": {
+        get: { operationId: "playCallRecording", summary: "Skapa tenant- och rollverifierad kortlivad uppspelningsredirect", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], responses: { "307": { description: "Kortlivad privat eller providerstream" }, "403": { description: "Åtkomst nekad" }, "404": { description: "Inspelning saknas" } } },
+      },
+      "/calls/{id}/transcription/retry": {
+        post: { operationId: "retryCallTranscription", summary: "Köa capability-styrd transkriptionshämtning", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], responses: { "202": { description: "Jobbet är köat" }, "409": { description: "Samtalet kan inte berikas" } } },
       },
 
       "/directory/discover": {

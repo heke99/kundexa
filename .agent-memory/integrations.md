@@ -3,13 +3,10 @@
 | Integration | Användning | Status |
 |---|---|---|
 | Supabase | Auth, PostgreSQL, RLS, Storage, Realtime, Edge Functions | Lokal struktur verifierad; liveprojekt `NOT RUN` |
-| Rinkel | Click-to-call, power dialer, webhookar, inspelning, transkript och Insights | Kod-/SQL-flöden verifierade lokalt; livekonto och riktiga samtal `NOT RUN` |
-| 46elks | SMS-callbackar | SMS-adapter finns; äldre voice-väg permanent avstängd; livecredentials `NOT RUN` |
-| Resend | E-post via outbox | Adapter finns; domän/SPF/DKIM/DMARC `NOT RUN` |
-| ParseHub | Primär discovery/importväg | Worker/profiler finns; liveprojekt/webhook `NOT RUN` |
-| NIX-provider | Compliance före kontakt | Adapter/queue finns; live mapping/TTL `NOT RUN` |
-| Extern malware-scanner | Importskanning | Konfigurationsyta finns; skarp scanner `NOT RUN` |
-| Geografikälla | Kommun/län/post/geokodning | Importverktyg finns; officiell aktuell dataset `NOT RUN` |
-| E-sign/BankID | Avtal/signering när stark identitet krävs | Leverantörsval `BLOCKED` |
+| Rinkel | En central plattformsintegration för voice, webhookar, recording, transcript och Insights | Kod/SQL PASS; livekonto/samtal `NOT RUN` |
+| 46elks | SMS-callbackar | Voice permanent avstängd; SMS live `NOT RUN` |
+| Resend | E-post via outbox | Adapter finns; domän/live `NOT RUN` |
+| ParseHub | Discovery/import | Worker finns; live `NOT RUN` |
+| NIX-provider | Compliance före kontakt | Adapter/queue finns; live `NOT RUN` |
 
-Hemligheter ska endast ligga i server-/Edge Function-miljö. Direkt legacy-scraping är avstängt om inte en godkänd fallback uttryckligen aktiveras.
+Rinkel använder exakt en logisk `RINKEL_API_KEY` i server-/Edge-miljön. Tenants lagrar inga Rinkel-credentials och får endast centralt allokerade resurser.

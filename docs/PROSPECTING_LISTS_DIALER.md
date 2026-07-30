@@ -9,7 +9,7 @@ Kundexa använder nu ett sammanhängande flöde från prospektering till avsluta
 3. En eller flera säljare kopplas många-till-många till en eller flera listor.
 4. Administratören väljer manuellt eller automatiskt sekventiellt ringläge, ringtider, tidszon, försökstak, callbackpolicy, caller-ID, inspelning och utfall.
 5. Säljaren öppnar en tilldelad lista i sidomenyn. Systemet prioriterar förfallna återkomster, låser exakt ett prospekt och visar det kanoniska kundkortet.
-6. Samtalet reserveras atomiskt i Kundexa och startas server-side genom tenantens Rinkel-anslutning. Inga providerhemligheter går till webbläsaren.
+6. Samtalet reserveras atomiskt i Kundexa mot centralt allokerade Rinkel-resurser och startas server-side med plattformens enda API-nyckel. Inga providerhemligheter går till webbläsaren.
 7. Nästa samtal blockeras tills providerhangup och obligatoriskt efterarbete är klara.
 8. Utfall, anteckning, återkomst, order, kundlivscykel och liststatus skrivs i en databastransaktion.
 
@@ -132,4 +132,4 @@ Rapportvyn summerar faktiska samtals-, callback-, medlems- och orderhändelser p
 
 ## Produktionsberoenden
 
-Kodflödet är klart, men skarp telefoni kräver ett Rinkel-konto med API-access, en verifierad användar-/enhets-/nummermappning, aktiva webhookar och stagingprov med riktiga samtal. 46elks används endast för SMS. E-post, NIX och valda dataleverantörer behöver egna liveprov, och inspelning/transkribering kräver juridiskt beslut och tenantpolicy. Prediktiv dialer, medlyssning och coachning ingår avsiktligt inte i denna sekventiella power-dialer-version.
+Kodflödet är klart, men skarp telefoni kräver Kundexas centrala Rinkel-konto med API-access, centralt allokerade användare/nummer, en verifierad säljar-/enhetsmappning, aktiva centrala webhookar och stagingprov med riktiga samtal. Tenants ansluter inte egna Rinkel-konton. 46elks används endast för SMS. E-post, NIX och valda dataleverantörer behöver egna liveprov, och inspelning/transkribering kräver juridiskt beslut och tenantpolicy. Prediktiv dialer, medlyssning och coachning ingår avsiktligt inte i denna sekventiella power-dialer-version.

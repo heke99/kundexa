@@ -108,4 +108,4 @@ I produktion ska `REQUIRE_IMPORT_MALWARE_SCAN=true`. Scanner-endpointen ska retu
 
 ## Telefoni och SMS
 
-Rinkel är enda telefoniprovider. Konfigurera tenantens Rinkel API-nyckel, synkronisera användare/nummer, mappa varje säljare och registrera alla webhookevent enligt `docs/integrations/rinkel.md`. 46elks används endast för SMS-callbackar; dess äldre voice-endpoints svarar permanent `410 Gone`.
+Rinkel är enda telefoniprovider. Sätt Kundexas enda centrala `RINKEL_API_KEY` som server-/Edge-secret, synkronisera det centrala användar- och nummerinventariet, allokera resurser till tenants, mappa varje säljare och registrera alla fem centrala webhookevent enligt `docs/integrations/rinkel.md`. Tenants får inte ange eller lagra egna Rinkel-credentials. 46elks används endast för SMS-callbackar; dess äldre voice-endpoints svarar permanent `410 Gone`.

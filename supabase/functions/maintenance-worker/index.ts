@@ -38,21 +38,19 @@ Deno.serve(async (request) => {
   const retentionResults: unknown[] = [];
   const maintenanceBucket = new Date().toISOString().slice(0, 13);
   const retentionBucket = new Date().toISOString().slice(0, 10);
-  for (const tenant of tenants ?? []) {
-    const { data: rinkelConnections } = await supabase.from("tenant_integrations").select("id")
-      .eq("tenant_id", tenant.id).eq("provider", "rinkel").is("disabled_at", null)
-      .in("status", ["connected", "degraded", "active"]);
-    for (const connection of rinkelReconciliationEnabled ? rinkelConnections ?? [] : []) {
-      await supabase.from("outbox_jobs").upsert({
-        tenant_id: tenant.id,
-        job_type: "rinkel.reconcile_calls",
-        aggregate_type: "tenant_integration",
-        aggregate_id: connection.id,
-        payload: { connection_id: connection.id },
-        idempotency_key: `rinkel.reconcile_calls:${connection.id}:${maintenanceBucket}`,
-        priority: 70,
-      }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true });
+  if (rinkelReconciliationEnabled) {
+    const { data: platformRinkel } = await supabase.from("platform_integrations").select("id")
+      .eq("provider", "rinkel").is("disabled_at", null).in("status", ["connected", "degraded"]).limit(1).maybeSingle();
+    if (platformRinkel) {
+      await supabase.from("platform_rinkel_jobs").upsert({
+        job_type: "rinkel.reconcile_platform",
+        aggregate_id: platformRinkel.id,
+        idempotency_key: `rinkel.reconcile_platform:${maintenanceBucket}`,
+        payload: { platform_integration_id: platformRinkel.id },
+      }, { onConflict: "idempotency_key", ignoreDuplicates: true });
     }
+  }
+  for (const tenant of tenants ?? []) {
     await supabase.from("outbox_jobs").upsert({
       tenant_id: tenant.id,
       job_type: "rinkel.retention",

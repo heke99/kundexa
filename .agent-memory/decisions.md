@@ -36,6 +36,10 @@ Kundexa äger CRM-, list-, policy- och samtalsmodellen; Rinkel äger telefonin. 
 
 Samtalsförsök, transkript och Insights får endast läsas av användare som kan läsa det kanoniska samtalet. Rå providerdata exponeras inte för autentiserade klienter; konfigurations- och konfliktdata kräver administrativ roll.
 
-## ADR-0010 — Rinkel-status läses server-side med verifierad tenant
+## ADR-0010 — Telefonistatus härleds server-side
 
-Dialerns statusendpoint autentiserar användaren med `getAppContext`, men läser den administrativt skyddade integrationsraden med service role och explicita filter på `tenant_id`, provider och anslutning. Inga credentials returneras. Detta undviker att säljarens avsiktligt begränsade RLS feltolkas som att tenantens Rinkel-anslutning saknas.
+Dialerns statusendpoint autentiserar användaren med `getAppContext` och använder `get_rinkel_telephony_status`, som kombinerar central plattformsstatus med den aktiva tenantens policy, allokeringar, grants och aktuell säljar­mappning. Inga credentials, centrala katalogposter eller andra tenants data returneras.
+
+## ADR-0011 — Rinkel är en central plattformsintegration
+
+Rinkel har exakt en logisk `RINKEL_API_KEY` i servermiljön och en aktiv `platform_integrations`-rad utan `tenant_id`. Centrala användare och nummer allokeras historiserat till tenants och filtreras genom serververifierade RPC:er. Tenantcredentials, connection-ID-baserade webhookar och fallback till den gamla modellen är permanent avvecklade.

@@ -5,7 +5,7 @@
 - Primär marknad/språk: Sverige, svensk UI och compliance
 - Webb: Next.js 16 / React 19 / TypeScript
 - Backend: Supabase Auth, PostgreSQL/RLS, Storage, Realtime och Edge Functions
-- Telefoni: Rinkel via tenantägd server-side-provideradapter och webhookar
+- Telefoni: en central Rinkel-plattformsintegration och en server-side API-nyckel; resurser allokeras historiserat till isolerade tenants
 - SMS: 46elks via outbox/provideradapter
 - E-post: Resend via outbox/provideradapter
 - Pakethanterare: npm 10.9.2

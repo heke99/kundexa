@@ -2,6 +2,13 @@
 
 ## 2026-07-30
 
+- Genomförde en andra arkitektur-cutover från tenantägd till central Rinkel-plattform.
+- Lade migration `202607300002_central_rinkel_platform.sql`, central katalog, allokeringar, grants, mapping v2, centrala webhookar och worker.
+- Tog bort connectionbaserad webhookroute och alla exekverbara läsningar av tenantens Rinkel-credentials.
+- Uppdaterade plattforms-/tenant-UI, status-API, dial, recording/transcription, OpenAPI, drift och dokumentation.
+- Full `npm run verify`: PASS; SQL visar 38 migrationer, 170 tabeller, 277 funktioner och 297 policies.
+- Live Supabase/Rinkel och Node 22 återstår som `NOT RUN`.
+
 - Inventerade målkontraktet och befintliga telefoni-, outbox-, RLS-, krypterings- och dialerflöden.
 - Implementerade Rinkel över den kanoniska samtalsmodellen utan parallellt CRM eller parallell samtalstabell.
 - Lade tenantanslutning, katalogsynk, transaktionell användarmappning, click-to-call/power dialer, webhookingest, eventprocessning, Realtime, inspelning, transkript och Insights.

@@ -3,12 +3,18 @@
 import { useCallback, useEffect, useState } from "react";
 
 type StatusResponse = {
-  ready?: boolean;
+  manualReady?: boolean;
   automaticReady?: boolean;
-  configured?: boolean | null;
+  platformConfigured?: boolean | null;
+  platformReady?: boolean;
+  tenantEnabled?: boolean;
+  tenantHasNumber?: boolean;
+  userMapped?: boolean;
+  userHasDevice?: boolean;
+  userHasNumberAccess?: boolean;
+  webhookReady?: boolean;
   status?: string;
-  webhookStatus?: string | null;
-  mappingReady?: boolean;
+  errorCode?: string | null;
   errorMessage?: string | null;
 };
 
@@ -16,27 +22,31 @@ export function useRinkelDialer() {
   const [registered, setRegistered] = useState(false);
   const [automaticReady, setAutomaticReady] = useState(false);
   const [calling, setCalling] = useState(false);
-  const [status, setStatus] = useState("Kontrollerar Rinkel…");
+  const [status, setStatus] = useState("Kontrollerar telefoni…");
 
   useEffect(() => {
     let active = true;
-    void fetch("/api/v1/integrations/rinkel/status", { cache: "no-store" })
+    void fetch("/api/v1/telephony/status", { cache: "no-store" })
       .then(async (response) => {
         const data = await response.json() as StatusResponse;
         if (!active) return;
-        setRegistered(Boolean(response.ok && data.ready));
+        setRegistered(Boolean(response.ok && data.manualReady));
         setAutomaticReady(Boolean(response.ok && data.automaticReady));
-        if (!response.ok) setStatus(data.errorMessage ?? "Rinkel-status kunde inte hämtas");
-        else if (data.configured === false) setStatus("Rinkel är inte anslutet");
-        else if (!data.mappingReady) setStatus("Rinkel-mappning saknas");
-        else if (!data.ready) setStatus(data.errorMessage ?? `Rinkel: ${data.status ?? "inte redo"}`);
-        else setStatus("Rinkel redo");
+        if (!response.ok) setStatus(data.errorMessage ?? "Telefonistatus kunde inte hämtas");
+        else if (!data.platformReady) setStatus("Telefonileverantören är tillfälligt otillgänglig");
+        else if (!data.tenantEnabled) setStatus("Telefoni är pausad för företaget");
+        else if (!data.tenantHasNumber) setStatus("Inget telefonnummer har tilldelats företaget");
+        else if (!data.userMapped) setStatus("Du saknar en telefonimappning");
+        else if (!data.userHasDevice) setStatus("Din Rinkel-enhet saknas");
+        else if (!data.userHasNumberAccess) setStatus("Du saknar åtkomst till ett utgående nummer");
+        else if (!data.manualReady) setStatus(data.errorMessage ?? "Telefoni är inte redo");
+        else setStatus("Telefoni redo");
       })
       .catch(() => {
         if (active) {
           setRegistered(false);
           setAutomaticReady(false);
-          setStatus("Rinkel-status kunde inte hämtas");
+          setStatus("Telefonistatus kunde inte hämtas");
         }
       });
     return () => {
@@ -75,7 +85,7 @@ export function useRinkelDialer() {
 
   const markEnded = useCallback(() => {
     setCalling(false);
-    setStatus("Rinkel redo");
+    setStatus("Telefoni redo");
   }, []);
 
   return { registered, automaticReady, calling, status, startCall, markEnded };

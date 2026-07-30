@@ -1,211 +1,139 @@
-# Kundexa + Rinkel — leverans 2026-07-30
+# Kundexa central Rinkel-plattform — leverans 2026-07-30
 
 ## Resultat
 
-Kundexa använder nu Rinkel som enda exekverbara voice-provider. Rinkel äger telefonin; Kundexas befintliga `calls`, kunder, listor, callbacks, aktiviteter, anteckningar, avtal och rapportering är fortsatt kanoniska. 46elks används endast för SMS.
+Kundexa använder nu exakt en central, server-side Rinkel-integration. `RINKEL_API_KEY` finns endast i driftmiljön och sparas aldrig per tenant. Kundexa synkroniserar det centrala användar- och nummerinventariet, medan historiserade allokeringar, nummergrants och säljar­mappningar avgör vad varje tenant får se och använda.
 
-Lokalt resultat: `npm run verify` passerar under Node 24.14.0/npm 11.9.0. SQL-gaten exekverar 37 migrationer och verifierar 157 publika tabeller, 270 publika funktioner och 292 RLS-policies.
+Rinkel är enda exekverbara voice-provider. 46elks används fortsatt endast för SMS. Webbläsaren startar ingen SIP- eller WebRTC-session och får aldrig providercredentials eller provider-ID:n som betrodda auktorisationsvärden.
 
-Produktionsstatus: `NOT READY`. Se blockerare längst ned.
+Lokalt resultat: hela `npm run verify` passerar under den tillgängliga Node 24.14.0/npm 11.9.0-miljön. Projektets kanoniska Node 22.x/npm 10.9.2 måste fortfarande köras i staging/CI.
 
-## Brister som stängdes
+Produktionsstatus: `NOT READY` tills livepunkterna i slutet av dokumentet är verifierade.
 
-- Den gamla voicevägen skapade 46elks/WebRTC-jobb i stället för tenantens Rinkel-samtal.
-- Webbläsaren registrerade en parallell SIP/WebRTC-session.
-- Rinkel saknade tenantanslutning, krypterad credentialhantering, katalogsynk och säljar-/enhets-/nummermappning.
-- `/dial` saknade atomisk lokal reservation, idempotens och lås för säljare/enhet.
-- Webhookar, eventordning, inkommande samtal, oklara providerutfall och reconciliation saknade ett sammanhängande flöde.
-- Inspelning, väntande transkript, Insights, privat lagring och retention saknade en komplett livscykel.
-- Automatisk dialer stoppades inte databas-side när webhookhälsan var dålig.
-- Providerartefakter hade initialt för bred tenantläsning; de följer nu roll-, team-, användar- och kanonisk samtalsåtkomst.
-- Rå providerdata kunde följa generella tabellprivilegier; autentiserade klienter får nu endast säkra kolumner.
+## Vad som korrigerades
 
-## Tillagda filer
+- Den gamla Rinkel-modellen läste och dekrypterade `tenant_integrations.credentials_ciphertext` per tenant.
+- Användare, nummer, capabilities och webhookar var knutna till tenantanslutningar.
+- Tenantadmin kunde mata in en egen Rinkel API-nyckel.
+- Status, dial, webhookar och workers använde connection-ID och tenantcredentials.
+- Samma centrala resurs kunde förekomma hos flera tenants utan en explicit historiserad allokering.
 
-- `RINKEL_DELIVERY.md`
-- `docs/integrations/rinkel.md`
-- `scripts/rinkel-unit-tests.mts`
-- `src/app/(dashboard)/app/calls/[id]/page.tsx`
-- `src/app/actions/rinkel.ts`
-- `src/app/api/v1/calls/[id]/recording/route.ts`
-- `src/app/api/v1/calls/[id]/transcription/retry/route.ts`
-- `src/app/api/v1/integrations/rinkel/status/route.ts`
-- `src/app/api/webhooks/rinkel/[connection]/[secret]/[event]/route.ts`
-- `src/components/rinkel-dialer.tsx`
-- `src/components/transcription-retry-button.tsx`
-- `src/hooks/use-rinkel-dialer.ts`
-- `src/lib/integrations/rinkel/client.ts`
-- `src/lib/integrations/rinkel/errors.ts`
-- `src/lib/integrations/rinkel/normalizers.ts`
-- `src/lib/integrations/rinkel/schemas.ts`
-- `src/lib/integrations/rinkel/types.ts`
-- `src/lib/webhooks/rinkel.ts`
-- `supabase/functions/_shared/rinkel.ts`
-- `supabase/migrations/202607300001_rinkel_telephony_completion.sql`
+Den nya migrationen gör en hård cutover utan permanent fallback: gamla Rinkel-credentials nollställs, gamla tenantanslutningar inaktiveras, execute-/tabellrättigheter för den gamla modellen återkallas och alla exekverbara flöden använder den centrala plattformsvägen.
 
-## Ändrade filer
+## Databas
 
-- `.agent-memory/completed-work.md`
-- `.agent-memory/current-state.md`
-- `.agent-memory/database-and-migrations.md`
-- `.agent-memory/decisions.md`
-- `.agent-memory/integrations.md`
-- `.agent-memory/known-failures.md`
-- `.agent-memory/next-actions.md`
-- `.agent-memory/open-blockers.md`
-- `.agent-memory/project-identity.md`
-- `.agent-memory/session-log.md`
-- `.agent-memory/verification-matrix.md`
-- `.env.example`
-- `docs/ARCHITECTURE.md`
-- `docs/IMPLEMENTED_SCOPE.md`
-- `docs/PRODUCTION_GATES.md`
-- `docs/PRODUCT_REQUIREMENTS.md`
-- `docs/PROSPECTING_LISTS_DIALER.md`
-- `docs/SUPABASE_SETUP.md`
-- `package.json`
-- `scripts/verify-sql.mjs`
-- `scripts/verify.mjs`
-- `src/app/(dashboard)/app/calls/page.tsx`
-- `src/app/(dashboard)/app/dialer/page.tsx`
-- `src/app/(dashboard)/app/integrations/page.tsx`
-- `src/app/actions/admin.ts`
-- `src/app/actions/communications.ts`
-- `src/app/api/openapi.json/route.ts`
-- `src/app/api/v1/calls/complete/route.ts`
-- `src/app/api/v1/calls/route.ts`
-- `src/app/api/v1/dialer/complete/route.ts`
-- `src/app/api/v1/voice-client/route.ts`
-- `src/app/api/webhooks/46elks/voice/hangup/route.ts`
-- `src/app/api/webhooks/46elks/voice/recording/route.ts`
-- `src/app/api/webhooks/46elks/voice/start/route.ts`
-- `src/app/page.tsx`
-- `src/components/list-dialer-workspace.tsx`
-- `src/components/webrtc-dialer.tsx`
-- `src/hooks/use-call-realtime.ts`
-- `src/hooks/use-webrtc-voice.ts`
-- `src/lib/env.ts`
-- `src/lib/permissions.ts`
-- `supabase/functions/maintenance-worker/index.ts`
-- `supabase/functions/process-outbox/index.ts`
+Ny framåtriktad migration:
 
-## Nya databasobjekt
+```text
+supabase/migrations/202607300002_central_rinkel_platform.sql
+```
 
-Migration: `supabase/migrations/202607300001_rinkel_telephony_completion.sql`.
+Den tidigare distribuerbara migrationen `202607300001_rinkel_telephony_completion.sql` lämnas oförändrad som historik.
 
-Nya tabeller:
+Nya centrala objekt:
 
-- `rinkel_users`
-- `rinkel_numbers`
-- `rinkel_user_mappings`
-- `telephony_policies`
-- `rinkel_capabilities`
-- `rinkel_webhook_subscriptions`
-- `call_attempts`
-- `call_transcripts`
-- `call_insights`
-- `call_correlation_conflicts`
+- `platform_integrations`
+- `platform_rinkel_users`
+- `platform_rinkel_numbers`
+- `rinkel_user_allocations`
+- `rinkel_number_allocations`
+- `rinkel_number_grants`
+- `rinkel_user_mappings_v2`
+- `platform_rinkel_capabilities`
+- `platform_rinkel_webhook_subscriptions`
+- `platform_rinkel_conflicts`
+- `platform_rinkel_events`
+- `platform_rinkel_jobs`
+- `rinkel_call_attempts_v2`
 
-Nya eller ersatta funktioner:
+Viktiga RPC:er:
 
-- `seed_telephony_policy`
-- `rinkel_reserve_outbound_call`
-- `rinkel_finalize_dial_request`
-- `replace_rinkel_user_mapping`
-- `complete_manual_call_work_v2`
-- `complete_dialer_work_v2`
+- `get_platform_rinkel_overview`
+- `allocate_platform_rinkel_resource`
+- `revoke_platform_rinkel_resource`
+- `get_tenant_rinkel_resources`
+- `replace_rinkel_user_mapping_v2`
+- `get_rinkel_telephony_status`
+- `rinkel_reserve_platform_outbound_call`
+- `rinkel_finalize_platform_dial_request`
+- `ingest_platform_rinkel_event`
 
-Migrationen utökar även `tenant_integrations`, `calls`, `provider_webhook_events` och `call_recordings`, lägger provider-/korrelationsindex, aktiva säljar-/enhetslås, RLS, säkra kolumnprivilegier, audit och Realtime-publicering.
+Partiella unika index förhindrar mer än en aktiv central integration, dubbel aktiv tenantallokering, dubbel säljar­mappning och parallella samtal per säljare eller provider-enhet. Samtal och försök sparar resurs-, mapping- och allokeringssnapshots så att en framtida nummerflytt inte ändrar historik.
 
-## Nya miljövariabler
+Backfill deduplicerar legacy-användare och nummer via provider-ID/E.164. Entydiga resurser och giltiga mappningar migreras. Konkurrerande tenantanspråk blir öppna `platform_rinkel_conflicts` och allokeras inte automatiskt.
+
+## Routes, actions och workers
+
+- `GET /api/v1/telephony/status` — säker status för aktuell tenant/användare.
+- `GET /api/v1/integrations/rinkel/status` — kompatibilitetsalias till telefoni­status utan credentials.
+- `POST /api/v1/calls` — serverhärledd central mapping, device, nummerallokering och grant; exakt ett `POST /dial`.
+- `GET /api/v1/calls` — kanonisk tenantisolerad historik.
+- `GET /api/v1/calls/:id/recording` — åtkomstkontrollerad temporär stream eller privat kopia.
+- `POST /api/v1/calls/:id/transcription/retry` — capability- och policykontrollerat återförsök.
+- `POST /api/webhooks/rinkel/:secret/:event` — central, snabb och idempotent ingest.
+- `rinkel-platform-worker` — central eventbearbetning, katalog/reconciliation, inspelning, transkript och Insights.
+- `maintenance-worker` — köar central reconciliation och retention.
+- `process-outbox` — legacy Rinkel-jobb dead-letteras permanent utan provideranrop.
+
+Den gamla routen `/api/webhooks/rinkel/:connection/:secret/:event` ska tas bort enligt leveransens deletion manifest.
+
+## Administration
+
+`/app/platform/telephony` kräver plattformssuperadmin och visar endast om servernyckeln finns, aldrig värdet. Där kan plattformen testa anslutningen, synka katalogen, konfigurera de fem webhookarna, allokera/flytta/återkalla användare och nummer, se historik och konflikter samt pausa central telefoni.
+
+Tenantens integrationsvy har inget Rinkel-nyckelfält. Den visar endast allokerade resurser, säkra readiness-statusar, säljar­mappning, standardnummer och tenantens telefoni-, inspelnings- och retentionpolicy.
+
+## Miljövariabler
+
+Samma logiska `RINKEL_API_KEY` sätts i Vercel och i Supabase Edge Secrets när båda runtime-miljöerna gör Rinkel-anrop:
 
 ```dotenv
+RINKEL_API_KEY=
 RINKEL_API_BASE_URL=https://api.rinkel.com/v1
 RINKEL_WEBHOOK_PUBLIC_BASE_URL=https://app.kundexa.se
+RINKEL_WEBHOOK_SECRET=
 RINKEL_REQUEST_TIMEOUT_MS=15000
 RINKEL_ENFORCE_WEBHOOK_IP_ALLOWLIST=true
 RINKEL_RECONCILIATION_ENABLED=true
+CRON_SECRET=
 ```
 
-Tenantens Rinkel API-nyckel är inte en miljövariabel. Den tas emot server-side, krypteras med befintlig `KUNDEXA_ENCRYPTION_KEY` och sparas per tenant.
+`RINKEL_WEBHOOK_SECRET` ska vara en separat slumpmässig hemlighet på minst 40 tecken. API-nyckeln får aldrig återanvändas som webhooksecret.
 
-## Nya API-routes och ändrade workers
+## Migrations- och deployordning
 
-- `POST /api/v1/calls` — atomisk reservation och ett enda Rinkel `/dial`-anrop.
-- `GET /api/v1/calls` — kanonisk samtalshistorik.
-- `GET /api/v1/calls/:id/recording` — behörighetskontrollerad färsk stream-URL.
-- `POST /api/v1/calls/:id/transcription/retry` — säkert nytt transkriptförsök.
-- `GET /api/v1/integrations/rinkel/status` — integrations- och webhookhälsa.
-- `POST /api/webhooks/rinkel/:connection/:secret/:event` — snabb, validerad och idempotent webhookingest.
-- `process-outbox` — Rinkel-event, reconciliation, enrichment, inspelning, transkript, Insights och retention.
-- `maintenance-worker` — schemalägger Rinkel reconciliation och retention.
+1. Packa upp och rsynca patchen utan extra projektmapp.
+2. Ta bort filerna i `KUNDEXA_CENTRAL_RINKEL_DELETED_FILES.txt`.
+3. Kör Node 22.x och npm 10.9.2 samt `npm ci`.
+4. Länka först ett separat Supabase stagingprojekt.
+5. Kör `npm run db:push`; den nya migrationen appliceras efter `202607300001`.
+6. Generera Supabase-typer.
+7. Sätt samma centrala Rinkel-nyckel och övriga secrets i berörda runtimes.
+8. Deploya Edge Functions, inklusive nya `rinkel-platform-worker`.
+9. Kör `npm run verify`.
+10. Deploya webbappen till staging och därefter produktion efter godkända livegates.
 
-Inga nya Edge Function-mappar behövdes; befintliga workers utökades och den gemensamma Edge-klienten lades i `_shared/rinkel.ts`.
+## Lokal verifiering
 
-## Installation och synk
+- `npm ci`: PASS med isolerad npm-cache.
+- `npm run typecheck`: PASS.
+- `npm run typecheck:edge`: PASS.
+- `npm run test:rinkel`: PASS, 8/8.
+- `npm run test`: PASS.
+- SQL: PASS, 38 migrationer, 170 tabeller, 277 funktioner och 297 RLS-policies.
+- Tvåtenant-Rinkel-runtime: PASS för exklusiva allokeringar, tenantfiltrerad läsning, atomisk reservation, idempotent replay, providerfinalisering och oföränderlig samtalshistorik.
+- `npm run build`: PASS, inklusive de nya telefoni- och webhookroutterna.
+- `npm run verify`: PASS.
 
-Packa upp patchzippen i en temporär katalog och synkronisera den över projektet:
+## Externa produktionssteg — NOT RUN
 
-```bash
-KUNDEXA_PATCH_DIR="$(mktemp -d)"
-ditto -x -k "$HOME/Downloads/Kundexa-Rinkel-production-completion-2026-07-30.zip" "$KUNDEXA_PATCH_DIR"
-rsync -avh --progress "$KUNDEXA_PATCH_DIR/" "/Users/hekmath/Desktop/Projects/kundexa/"
-cd "/Users/hekmath/Desktop/Projects/kundexa"
-npm ci
-```
+- Verklig central Rinkel API-nyckel och plan-/capabilitytest.
+- Synk av riktiga användare, `deviceId` och nummer.
+- Riktigt utgående samtal samt `incomingCall`, `outgoingCall`, `callStart`, `callEnd` och `callInsights`.
+- Webhookretry, leverantörsinaktiverad webhook och reconciliation efter saknat event.
+- Inspelning, temporär stream, privat Storage-kopia, transkript och Insights mot aktuell plan.
+- Tvåtenanttest med riktiga Supabase JWT-sessioner i länkat stagingprojekt.
+- Node 22.x/npm 10.9.2-verifiering.
+- Juridiskt beslut om inspelning/retention, backup/restore, belastningstest och extern penetrationstest.
 
-Patchen innehåller endast tillagda och ändrade filer. Kommandot raderar inte andra lokala filer.
-
-## Migration, typer, secrets och deployment
-
-Kör först mot ett separat Supabase stagingprojekt:
-
-```bash
-cd "/Users/hekmath/Desktop/Projects/kundexa"
-npm run supabase:login
-npm run supabase:link -- --project-ref <SUPABASE_PROJECT_REF>
-npm run db:push
-SUPABASE_PROJECT_REF=<SUPABASE_PROJECT_REF> npm run types:generate
-```
-
-Sätt Edge-secrets. `KUNDEXA_ENCRYPTION_KEY` måste vara exakt samma hemlighet som webbappen använder:
-
-```bash
-npx supabase@2.109.1 secrets set \
-  APP_URL=https://staging.kundexa.se \
-  KUNDEXA_ENCRYPTION_KEY='<SAME_BASE64_KEY_AS_WEB_APP>' \
-  RINKEL_API_BASE_URL=https://api.rinkel.com/v1 \
-  RINKEL_REQUEST_TIMEOUT_MS=15000 \
-  RINKEL_RECONCILIATION_ENABLED=true \
-  --project-ref <SUPABASE_PROJECT_REF>
-```
-
-Deploya workers och verifiera:
-
-```bash
-npm run functions:deploy -- --project-ref <SUPABASE_PROJECT_REF>
-npm run verify
-```
-
-## Manuella steg i Rinkel och Kundexa
-
-1. Säkerställ Rinkel-plan med API- och webhookstöd.
-2. Öppna **Inställningar → Integrationer → Rinkel** som tenantägare/admin.
-3. Spara och testa tenantens API-nyckel.
-4. Synkronisera Rinkel-användare och nummer.
-5. Mappa varje säljare till rätt Rinkel-användare, `deviceId` och standardnummer.
-6. Sätt publik HTTPS-webhookbas och konfigurera alla event: `incomingCall`, `outgoingCall`, `callStart`, `callEnd`, `callInsights`.
-7. Verifiera med kontrollerade inkommande, besvarade, obesvarade och timeoutliknande testsamtal.
-8. Verifiera recording/transcription/Insights enligt den aktuella Rinkel-planen.
-9. Kontrollera privat `call-recordings`-bucket, retention, juridisk information och audit.
-
-## Produktionsblockerare
-
-Status: `NOT READY`.
-
-- Fil/funktion: `supabase/migrations/202607300001_rinkel_telephony_completion.sql` och `rinkel_reserve_outbound_call`. Blockerare: migrationen och tenant-/RLS-gränserna är inte körda med riktiga Supabase JWT-sessioner i ett länkat tvåtenant-stagingprojekt.
-- Fil/funktion: `src/app/api/v1/calls/route.ts` (`POST`) och `src/lib/integrations/rinkel/client.ts` (`dial`). Blockerare: ett verkligt Rinkel-konto, en verklig enhet och riktiga utgående samtal har inte kunnat verifieras i leveransmiljön.
-- Fil/funktion: `src/app/api/webhooks/rinkel/[connection]/[secret]/[event]/route.ts`. Blockerare: publik HTTPS, proxy-IP-kedja och alla fem riktiga Rinkel-event är inte liveverifierade.
-- Fil/funktion: `src/app/api/v1/calls/[id]/recording/route.ts` och `supabase/functions/process-outbox/index.ts`. Blockerare: verklig inspelning, 204→pending-transkript, Insights, privat Storage och providerretention är inte verifierade mot tenantens aktuella Rinkel-plan.
-- Fil/funktion: hela `npm run verify`. Blockerare: slutgaten är körd under Node 24.14.0/npm 11.9.0 och måste upprepas under projektets kanoniska Node 22.x/npm 10.9.2.
-- Externa gates: juridiskt godkännande för inspelning/retention, backup/restore, belastningstest och extern penetrationstest återstår enligt `docs/PRODUCTION_GATES.md`.
+Livegates ska rapporteras som `NOT RUN` tills de faktiskt har körts; lokal kodverifiering ersätter dem inte.

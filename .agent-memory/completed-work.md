@@ -1,5 +1,14 @@
 # Completed work
 
+## 2026-07-30 central Rinkel-cutover
+
+- Ersatte tenantägda Rinkel-credentials med en central plattformsintegration och en server-side miljönyckel.
+- Lade centralt användar-/nummerinventarium, historiserade tenantallokeringar, nummergrants, säljar­mappningar, capabilities, webhookstatus, konfliktkö, event och jobb.
+- Backfillar entydig legacydata, flaggar multi-tenantanspråk och nollställer/inaktiverar gamla Rinkel-credentials utan permanent fallback.
+- Lade plattformsvy för test, synk, webhookar, allokering/flytt/återkallning, konflikter och nödstopp.
+- Bytte dial, status, webhook, recording, transcription och workers till central väg och lade `rinkel-platform-worker`.
+- Verifierade 38 migrationer samt realistisk tvåtenantisolering, atomisk reservation, idempotens och oföränderlig historik.
+
 ## 2026-07-30 Rinkel-telefoni
 
 - Implementerade tenantägd Rinkel-anslutning, krypterad API-nyckel, katalogsynk och atomisk säljar-/enhets-/nummermappning.

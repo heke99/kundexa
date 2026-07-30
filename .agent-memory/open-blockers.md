@@ -2,22 +2,16 @@
 
 ## P0 launch gates
 
-- `db push` till ren Supabase staging och tom produktionsmiljö: `NOT RUN`.
+- `db push` av alla 38 migrationer till separat Supabase staging: `NOT RUN`.
 - Supabase-typer genererade från den verkliga databasen: `NOT RUN`.
-- RLS-/Storage-integrationstest med minst två tenants och alla roller: `NOT RUN`.
-- Livecredentials, kontrakt och verifierade Rinkel-samtal/webhookar samt callbacks för e-post, data och NIX: `BLOCKED EXTERNALLY`.
-- Juridiskt godkända avtal, DPIA, retention, inspelning och DSAR: `BLOCKED EXTERNALLY`.
-- Extern malware-scanner i enforced mode: `BLOCKED EXTERNALLY`.
-- Backup/restore, RTO/RPO, lasttest och extern penetrationstest: `NOT RUN`.
+- Tvåtenant-RLS/Storage med riktiga JWT-sessioner och alla roller: `NOT RUN`.
+- Central Rinkel API-nyckel, riktig katalogsynk, device, dial och alla fem webhookar: `BLOCKED EXTERNALLY`.
+- Inspelning, transkript, Insights, webhookretry/inaktivering och reconciliation: `BLOCKED EXTERNALLY`.
+- Juridik/DPIA/retention, backup/restore, lasttest och extern penetrationstest: `NOT RUN`.
 
 ## Miljö
 
-- Slutverifiering i detta arkiv körs i Node 24.14.0/npm 11.9.0 trots att Node 22.x/npm 10.9.2 är avsedd runtime.
+- Slutverifieringen kördes i Node 24.14.0/npm 11.9.0. Projektets Node 22.x/npm 10.9.2 är `NOT RUN`.
 - Ingen gitmetadata finns, så patchen kan inte bindas till branch/commit.
 
-Detaljer: `docs/PRODUCTION_GATES.md`.
-
-## Rinkel-statuspatch
-
-- Liveverifiering med en tenantadmin som ansluter Rinkel och en mappad säljare som öppnar dialern: `NOT RUN`.
-- Sandboxens `npm ci` blockeras av intern registry-404 för `pdf-lib@1.17.1`; kör `npm ci && npm run verify` lokalt/CI.
+Detaljer: `docs/PRODUCTION_GATES.md` och `RINKEL_DELIVERY.md`.

@@ -1,0 +1,41 @@
+Kundexa central Rinkel verification — 2026-07-30
+
+Runtime used:
+Node 24.14.0
+npm 11.9.0
+Canonical Node 22.x/npm 10.9.2: NOT RUN in delivery environment
+
+npm ci: PASS (isolated cache)
+npm run typecheck: PASS
+npm run typecheck:edge: PASS
+node scripts/verify.mjs: PASS
+npm run test:rinkel: PASS (8 passed, 0 failed)
+npm run test:contracts: PASS
+npm run test:imports: PASS
+node scripts/verify-sql.mjs: PASS
+npm run build: PASS
+npm run verify: PASS
+
+SQL runtime:
+38 migrations
+170 public tables
+277 public functions
+297 RLS policies
+
+Central Rinkel runtime:
+PASS — one active central integration constraint
+PASS — exclusive user and number allocations
+PASS — two-tenant filtered resource access
+PASS — atomic dial reservation
+PASS — idempotent replay
+PASS — provider finalization
+PASS — immutable historical tenant/call ownership after resource move
+
+NOT RUN:
+Live Supabase db push and generated types
+Real Supabase JWT/RLS/Storage two-tenant test
+Real central Rinkel API key and directory
+Real outgoing call and all five webhook events
+Recording, transcription and Insights against the live plan
+Webhook retry/disable/reconciliation live scenarios
+Legal, backup/restore, load and external security gates

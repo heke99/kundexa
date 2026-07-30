@@ -3,7 +3,7 @@
 ## Verifierat i denna leverans
 
 - Next.js/TypeScript-webbapp med server actions och versionerat REST-API
-- 37 reproducerbara SQL-migrationer med 157 publika tabeller, 270 funktioner och 292 RLS-policyer i SQL-testmiljön
+- 38 reproducerbara SQL-migrationer med 170 publika tabeller, 277 funktioner och 297 RLS-policyer i SQL-testmiljön
 - Tenant, juridiska bolag, kontor/avdelningar, medlemskap, roller, team och feature-flaggor
 - CRM-kunder, företag, prospekt, anteckningar, aktiviteter, listor, kampanjer och pipeline
 - Säker multi-formatimport: CSV, JSON, NDJSON, XML och grundläggande tabulär XLSX
@@ -23,7 +23,8 @@
 - Geografiskt referensregister, normalisering och versionsstyrd import
 - NIX-konfiguration, kö, claim, provideradapter, separat giltighet och automatisk kampanjresume
 - Många-till-många-säljtilldelning, manuella/automatiska listor, atomiska prospektclaims, återkomstprioritet och daglig säljargräns
-- Sekventiell Rinkel click-to-call/power dialer med atomisk reservation, säljar-/enhetslås, caller-ID, inspelningspolicy, webhookstyrd realtidsstatus, avstämning och obligatoriskt transaktionellt efterarbete
+- Central Rinkel-plattformsintegration med ett server-side API-secret, central katalog, historiserade tenantallokeringar, nummergrants och säljar­mappningar
+- Sekventiell Rinkel click-to-call/power dialer med serverhärledda resurser, atomisk reservation, säljar-/enhetslås, caller-ID, inspelningspolicy, centrala webhookar, avstämning och obligatoriskt transaktionellt efterarbete
 - Fristående manuell dialer med kanonisk nummermatchning, callbackkoppling, utfall, anteckning och kontaktspärr
 - Personliga/globala återkomster med claim, snooze, omfördelning, session-release, badges och tenanttidszon
 - Kanoniska anteckningar med typer, synlighet, fästning, revisionshistorik och arkivering

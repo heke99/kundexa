@@ -5,34 +5,12 @@ import { serverEnv } from "@/lib/env";
 import { isRinkelWebhookEvent, parseRinkelWebhookPayload } from "@/lib/integrations/rinkel/schemas";
 import type { RinkelWebhookEvent, RinkelWebhookPayload } from "@/lib/integrations/rinkel/types";
 
-export type RinkelWebhookConnection = {
-  id: string;
-  tenant_id: string;
-  public_id: string;
-  webhook_secret_hash: string;
-};
-
-function constantTimeHexEqual(left: string, right: string) {
-  if (!/^[a-f0-9]{64}$/i.test(left) || !/^[a-f0-9]{64}$/i.test(right)) return false;
-  const a = Buffer.from(left, "hex");
-  const b = Buffer.from(right, "hex");
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
-}
-
-export async function authenticateRinkelWebhook(connectionPublicId: string, secret: string) {
+export function authenticatePlatformRinkelWebhook(secret: string) {
   const env = serverEnv();
-  if (!/^[0-9a-f-]{36}$/i.test(connectionPublicId) || secret.length < 40 || secret.length > 128) return null;
-  const admin = createAdminClient();
-  const { data } = await admin.from("tenant_integrations")
-    .select("id,tenant_id,public_id,webhook_secret_hash")
-    .eq("public_id", connectionPublicId)
-    .eq("provider", "rinkel")
-    .is("disabled_at", null)
-    .maybeSingle();
-  if (!data?.webhook_secret_hash) return null;
-  const supplied = sha256(secret + env.KUNDEXA_WEBHOOK_PEPPER);
-  if (!constantTimeHexEqual(supplied, data.webhook_secret_hash)) return null;
-  return data as RinkelWebhookConnection;
+  if (!env.RINKEL_WEBHOOK_SECRET || secret.length < 40 || secret.length > 128) return false;
+  const supplied = Buffer.from(secret);
+  const expected = Buffer.from(env.RINKEL_WEBHOOK_SECRET);
+  return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
 }
 
 export function trustedRinkelSourceIp(request: Request) {

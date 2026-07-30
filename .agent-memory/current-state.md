@@ -4,18 +4,18 @@ Datum: 2026-07-30
 
 ## Kodstatus
 
-- 37 migrationer.
-- 157 publika tabeller, 270 publika funktioner och 292 RLS-policies i PGlite-verifieringen.
-- Rinkel är enda exekverbara voice-provider; 46elks används endast för SMS.
-- Utgående Rinkel-samtal reserveras atomiskt mot kanoniska `calls`, låser säljare/enhet, korreleras av webhookar och avslutas med transaktionellt efterarbete.
-- Inspelning, transkript, Insights, retention, reconciliation, tenantmappning och capability-status är kopplade till samma kanoniska samtalsmodell.
-- Rinkel-tabellernas RLS och kolumnprivilegier begränsar providerdata efter roll, team, användare och kanonisk samtalsåtkomst.
-- Dialerns Rinkel-status läses tenantverifierat server-side; säljarens adminbegränsade integrations-RLS maskeras inte längre som en saknad anslutning.
-- `npm run verify` passerar lokalt: Edge Function-kontroll, Rinkel-/kontrakt-/importtester, statiska invarianter, 37 exekverade migrationer, SQL-runtime, TypeScript och Next.js-produktionsbuild.
+- 38 ordnade migrationer; den senaste är `202607300002_central_rinkel_platform.sql`.
+- 170 publika tabeller, 277 publika funktioner och 297 RLS-policies i PGlite-verifieringen.
+- Rinkel är en central plattformsintegration med exakt en logisk server-side `RINKEL_API_KEY`; inga tenantcredentials eller connectionbaserade webhookar är exekverbara.
+- Centrala användare och nummer allokeras historiserat till tenants. Grants och `rinkel_user_mappings_v2` begränsar team/säljare och standardnummer.
+- Utgående samtal reserveras atomiskt med serverhärledda providerresurser. `POST /dial` körs högst en gång och okänt utfall går till reconciliation.
+- Centrala webhookar routar inkommande samtal via nummerallokeringens giltighetstid och placerar tvetydigheter i konfliktkö.
+- Rinkel är enda voice-provider; 46elks används endast för SMS och SIP/WebRTC-flöden saknar exekveringsväg.
+- `npm run verify` passerar lokalt med Edge-kontroll, tester, 38 migrationer, SQL-runtime, tvåtenant-Rinkeltest, TypeScript och Next.js-build.
 
 ## Produktionsstatus
 
-`NOT READY`. Ingen känd lokalt reproducerbar P0 återstår och hela lokala gaten är grön, men produktionsgodkännande saknas. Live Supabase, riktiga tenant-/JWT-/RLS-sessioner, Rinkel-samtal/webhookar, övriga providers, juridik, säkerhet, återställning och belastning är inte verifierade.
+`NOT READY`. Lokal kodgate är grön men riktig central Rinkel-nyckel, live-Supabase/JWT/RLS, alla fem webhookar, riktiga samtal, inspelning/transkript/Insights, Node 22, juridik, backup/restore, belastning och extern säkerhetsgranskning är `NOT RUN`.
 
 ## Källstatus
 

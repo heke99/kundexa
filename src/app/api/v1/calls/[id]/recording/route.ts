@@ -3,12 +3,8 @@ import { getAppContext } from "@/lib/auth";
 import { assertPermission } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { decryptJson } from "@/lib/crypto";
-import { serverEnv } from "@/lib/env";
-import { RinkelClient } from "@/lib/integrations/rinkel/client";
+import { createPlatformRinkelClient } from "@/lib/integrations/rinkel/client";
 import { safeRinkelError } from "@/lib/integrations/rinkel/errors";
-
-type Credentials = { apiKey: string };
 
 export async function GET(
   request: Request,
@@ -21,7 +17,7 @@ export async function GET(
     assertPermission(app.role, "recordings.read");
     const supabase = await createClient();
     const [{ data: call }, { data: policy }] = await Promise.all([
-      supabase.from("calls").select("id,user_id,team_id,provider_connection_id").eq("id", callId).single(),
+      supabase.from("calls").select("id,user_id,team_id").eq("id", callId).single(),
       supabase.from("telephony_policies").select("*").maybeSingle(),
     ]);
     if (!call || !policy) throw new Error("recording_not_found");
@@ -43,17 +39,9 @@ export async function GET(
       if (error || !data?.signedUrl) throw new Error("recording_signed_url_failed");
       target = data.signedUrl;
     } else {
-      if (!recording.provider_recording_id || !call.provider_connection_id) throw new Error("recording_provider_reference_missing");
-      const env = serverEnv();
-      const { data: connection } = await admin.from("tenant_integrations").select("credentials_ciphertext")
-        .eq("tenant_id", app.tenantId).eq("id", call.provider_connection_id).eq("provider", "rinkel").single();
-      if (!connection?.credentials_ciphertext) throw new Error("rinkel_connection_missing");
-      const credentials = decryptJson<Credentials>(connection.credentials_ciphertext, env.KUNDEXA_ENCRYPTION_KEY);
-      target = await new RinkelClient({
-        apiKey: credentials.apiKey,
-        baseUrl: env.RINKEL_API_BASE_URL,
-        timeoutMs: env.RINKEL_REQUEST_TIMEOUT_MS,
-      }).getRecordingUrl(recording.provider_recording_id);
+      if (!recording.provider_recording_id) throw new Error("recording_provider_reference_missing");
+      target = await createPlatformRinkelClient(`recording:${callId}`)
+        .getRecordingUrl(recording.provider_recording_id);
     }
     await admin.from("recording_access_logs").insert({
       tenant_id: app.tenantId,
