@@ -77,6 +77,7 @@ RINKEL_WEBHOOK_PUBLIC_BASE_URL=https://app.example.com
 RINKEL_WEBHOOK_SECRET=
 RINKEL_REQUEST_TIMEOUT_MS=15000
 RINKEL_ENFORCE_WEBHOOK_IP_ALLOWLIST=true
+RINKEL_TRUST_X_REAL_IP=false
 RINKEL_RECONCILIATION_ENABLED=true
 CRON_SECRET=
 ```
@@ -94,3 +95,10 @@ Tenant owner/admin använder `/app/integrations` för att se egna allokeringar, 
 ## Liveverifiering
 
 Kör i separat staging: central anslutning, verklig katalogsynk, riktig device och dial, alla fem event, obesvarat samtal, webhookretry/inaktivering, reconciliation, inspelning, transkript och Insights. Dessa punkter är `NOT RUN` tills riktiga credentials och samtal används.
+
+## Betrodd proxy och webhookskydd
+
+I Vercel läses käll-IP endast från `x-vercel-forwarded-for`. Utanför Vercel ignoreras `x-real-ip` om inte infrastrukturen uttryckligen är en betrodd reverse proxy och `RINKEL_TRUST_X_REAL_IP=true` har satts. Standardvärdet är `false` för att en direkt klient inte ska kunna injicera ett tillåtet IP-värde.
+
+Rinkels publicerade webhookguide dokumenterar HTTPS och käll-IP-allowlist men ingen payloadsignatur. Endpointen använder därför ett roterbart, högentropiskt path-secret, IP-allowlist, payloadhash, unik provider-eventnyckel och idempotent eventlagring. Om Rinkel senare publicerar HMAC/signatur ska rå body verifieras innan parsing och lagring.
+

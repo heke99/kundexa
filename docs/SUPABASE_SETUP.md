@@ -14,7 +14,8 @@ KUNDEXA_WEBHOOK_PEPPER=...
 ENFORCE_46ELKS_IP_ALLOWLIST=false
 CRON_SECRET=...
 RESEND_API_KEY=
-DEFAULT_EMAIL_FROM=no-reply@dindomän.se
+DEFAULT_EMAIL_FROM_NAME=Kundexa
+DEFAULT_EMAIL_FROM_ADDRESS=no-reply@dindomän.se
 IMPORT_SCANNER_URL=https://scanner.internal.example/scan
 IMPORT_SCANNER_TOKEN=...
 IMPORT_SCANNER_TIMEOUT_MS=20000
@@ -54,10 +55,11 @@ Migrationerna skapar privata buckets för avtalsdokument, inspelningar, importer
 npm run functions:deploy -- --project-ref PROJECT_REF
 ```
 
-Deployskriptet publicerar sju funktioner:
+Deployskriptet publicerar åtta funktioner:
 
 ```text
 process-outbox
+rinkel-platform-worker
 automation-runner
 data-worker
 ingestion-worker
@@ -73,13 +75,14 @@ Funktionerna deployas med `--no-verify-jwt` för scheduleranrop, men varje reque
 Anropa med `POST` och headern `x-cron-secret`:
 
 ```text
-/functions/v1/process-outbox      varje minut
-/functions/v1/automation-runner  varje minut
-/functions/v1/data-worker        varje minut
-/functions/v1/ingestion-worker   varje minut
-/functions/v1/compliance-worker
-/functions/v1/parsehub-worker  varje minut
-/functions/v1/maintenance-worker varje timme
+/functions/v1/process-outbox          varje minut
+/functions/v1/rinkel-platform-worker varje minut
+/functions/v1/automation-runner      varje minut
+/functions/v1/data-worker            varje minut
+/functions/v1/ingestion-worker       varje minut
+/functions/v1/compliance-worker      varje minut
+/functions/v1/parsehub-worker        varje minut
+/functions/v1/maintenance-worker     varje timme
 ```
 
 Frekvensen kan sänkas när volymen är låg, men övervaka köålder, retries och dead-letter-status.

@@ -762,4 +762,209 @@ if (cancelledRun.rows[0].status !== "cancelled") throw new Error(`Ingestion canc
 const controlAudit = await db.query(`select count(*)::int as count from public.audit_logs where tenant_id='00000000-0000-0000-0000-000000000001' and entity_type='ingestion_run' and action in ('ingestion_run.pause','ingestion_run.resume','ingestion_run.cancel')`);
 if (Number(controlAudit.rows[0].count) !== 3) throw new Error(`Ingestion run controls were not audited: ${JSON.stringify(controlAudit.rows)}`);
 console.log("Executed dashboard/list aggregation, ingestion quota, run-control, dead-letter resume and duplicate-run protection runtime paths.");
+
+// Production consistency hardening: truncated imports are non-committable,
+// provider projections are monotonic and post-sign automation is exactly once.
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.exec(`
+  insert into public.import_runs(
+    id,tenant_id,name,source_type,status,uploaded_by,total_rows,simulation,scan_status,
+    source_row_count,parsed_row_count,accepted_row_count,rejected_row_count,truncated,truncation_reason
+  ) values(
+    '00000000-0000-0000-0000-000000000080','00000000-0000-0000-0000-000000000001',
+    'Truncated verify import','csv','preview_ready','00000000-0000-0000-0000-000000000002',10001,true,'clean',
+    10001,10000,10000,0,true,'max_rows_exceeded'
+  );
+`);
+let truncatedCommitBlocked = false;
+try {
+  await db.exec(`update public.import_runs set status='processing',execution_idempotency_key='verify-truncated-commit' where id='00000000-0000-0000-0000-000000000080'`);
+} catch (error) {
+  truncatedCommitBlocked = String(error).includes('truncated_import_cannot_be_committed');
+}
+if (!truncatedCommitBlocked) throw new Error('Truncated import was allowed to enter processing');
+
+await db.exec(`
+  update public.calls set status='completed',provider_status='callEnd',provider_state_updated_at='2026-08-01T10:00:00Z'
+  where id='${centralResult.callId}';
+  update public.calls set status='answered',provider_status='callStart',provider_state_updated_at='2026-08-01T10:05:00Z'
+  where id='${centralResult.callId}';
+`);
+const monotonicCall = await db.query(`select status,provider_status from public.calls where id=$1`, [centralResult.callId]);
+if (monotonicCall.rows[0].status !== 'completed' || monotonicCall.rows[0].provider_status !== 'callEnd') {
+  throw new Error(`Late Rinkel start regressed terminal projection: ${JSON.stringify(monotonicCall.rows[0])}`);
+}
+
+const platformIntegration = await db.query(`select id from public.platform_integrations where provider='rinkel' and disabled_at is null limit 1`);
+const platformIntegrationId = String(platformIntegration.rows[0].id);
+await db.query(`
+  insert into public.platform_rinkel_webhook_events(
+    id,platform_integration_id,event_type,external_call_id,provider_event_id,payload_hash,content_type,payload,event_at
+  ) values(
+    '00000000-0000-0000-0000-000000000081',$1,'callStart','late-correlated-call','verify-rinkel-late-start',
+    'verify-hash','application/json','{"userId":"platform-user-a"}','2026-08-01T11:00:00Z'
+  )
+`, [platformIntegrationId]);
+const pendingCorrelation = await db.query(`select public.apply_rinkel_call_event('00000000-0000-0000-0000-000000000081') as result`);
+if (pendingCorrelation.rows[0].result.status !== 'pending_correlation') {
+  throw new Error(`Uncorrelated Rinkel event was not buffered: ${JSON.stringify(pendingCorrelation.rows[0])}`);
+}
+await db.exec(`
+  insert into public.calls(
+    id,tenant_id,customer_id,provider,external_call_id,direction,from_number,to_number,status,initiated_at,callback_token_hash
+  ) values(
+    '00000000-0000-0000-0000-000000000082','00000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000021','rinkel','late-correlated-call','outbound','+46811111111','+46702222221',
+    'ringing','2026-08-01T10:59:00Z','verify-late-correlation-token'
+  );
+`);
+const correlatedReplay = await db.query(`select public.apply_rinkel_call_event('00000000-0000-0000-0000-000000000081') as result`);
+if (correlatedReplay.rows[0].result.status !== 'processed') throw new Error(`Buffered Rinkel event did not replay: ${JSON.stringify(correlatedReplay.rows[0])}`);
+const correlatedCall = await db.query(`select status from public.calls where id='00000000-0000-0000-0000-000000000082'`);
+if (correlatedCall.rows[0].status !== 'answered') throw new Error(`Replayed Rinkel event did not update the call: ${JSON.stringify(correlatedCall.rows[0])}`);
+
+await db.exec(`
+  insert into public.email_messages(
+    id,tenant_id,customer_id,provider_message_id,from_address,to_addresses,subject,status
+  ) values(
+    '00000000-0000-0000-0000-000000000083','00000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000021','verify-resend-message','verify@kundexa.test','{customer@example.test}',
+    'Verify delivery reducer','sent'
+  );
+`);
+const deliveredProjection = await db.query(`select public.apply_resend_delivery_event(
+  '00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000083',
+  'verify-resend-delivered','email.delivered','delivered','2026-08-01T12:00:00Z','{}',null
+) as result`);
+if (!deliveredProjection.rows[0].result.applied) throw new Error(`Initial Resend projection was not applied: ${JSON.stringify(deliveredProjection.rows[0])}`);
+const olderOpened = await db.query(`select public.apply_resend_delivery_event(
+  '00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000083',
+  'verify-resend-older-open','email.opened','opened','2026-08-01T11:59:00Z','{}',null
+) as result`);
+if (olderOpened.rows[0].result.applied || olderOpened.rows[0].result.reason !== 'older_provider_event') {
+  throw new Error(`Older Resend event changed the projection: ${JSON.stringify(olderOpened.rows[0])}`);
+}
+const openedProjection = await db.query(`select public.apply_resend_delivery_event(
+  '00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000083',
+  'verify-resend-opened','email.opened','opened','2026-08-01T12:01:00Z','{}',null
+) as result`);
+if (!openedProjection.rows[0].result.applied) throw new Error(`Newer Resend open was not applied: ${JSON.stringify(openedProjection.rows[0])}`);
+const regressiveDelivered = await db.query(`select public.apply_resend_delivery_event(
+  '00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000083',
+  'verify-resend-regressive-delivered','email.delivered','delivered','2026-08-01T12:02:00Z','{}',null
+) as result`);
+if (regressiveDelivered.rows[0].result.applied || regressiveDelivered.rows[0].result.reason !== 'regressive_provider_event') {
+  throw new Error(`Newer but lower Resend event regressed the projection: ${JSON.stringify(regressiveDelivered.rows[0])}`);
+}
+const finalEmailProjection = await db.query(`select status from public.email_messages where id='00000000-0000-0000-0000-000000000083'`);
+if (finalEmailProjection.rows[0].status !== 'opened') throw new Error(`Resend projection did not remain opened: ${JSON.stringify(finalEmailProjection.rows[0])}`);
+
+await db.exec(`
+  insert into public.contract_templates(id,tenant_id,name,contract_type,audience)
+  values('00000000-0000-0000-0000-000000000084','00000000-0000-0000-0000-000000000001','Signing verify','sales','B2B');
+  insert into public.contract_template_versions(
+    id,tenant_id,template_id,version,title_template,body_template,signature_policy,created_by
+  ) values(
+    '00000000-0000-0000-0000-000000000085','00000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000084',1,'Verify','Verify body',
+    '{"method":"external_esign","identityAssuranceLevel":"high","orderedSigning":true,"requireFinalProviderDocument":true}',
+    '00000000-0000-0000-0000-000000000002'
+  );
+  insert into public.contracts(
+    id,tenant_id,contract_number,customer_id,template_id,owner_user_id,audience,status,title
+  ) values(
+    '00000000-0000-0000-0000-000000000086','00000000-0000-0000-0000-000000000001','VERIFY-SIGN-1',
+    '00000000-0000-0000-0000-000000000021','00000000-0000-0000-0000-000000000084',
+    '00000000-0000-0000-0000-000000000002','B2B','ready','Signing verify contract'
+  );
+  insert into public.contract_versions(
+    id,tenant_id,contract_id,version,template_version_id,title,rendered_body,document_hash,created_by
+  ) values(
+    '00000000-0000-0000-0000-000000000087','00000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000086',1,'00000000-0000-0000-0000-000000000085',
+    'Signing verify contract','Rendered body','source-sha-256','00000000-0000-0000-0000-000000000002'
+  );
+  update public.contracts set active_version_id='00000000-0000-0000-0000-000000000087'
+    where id='00000000-0000-0000-0000-000000000086';
+  insert into public.contract_documents(
+    id,tenant_id,contract_id,contract_version_id,document_type,file_name,storage_path,mime_type,sha256
+  ) values(
+    '00000000-0000-0000-0000-000000000088','00000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000086','00000000-0000-0000-0000-000000000087',
+    'signed_pdf','signed.pdf','contracts/verify/signed.pdf','application/pdf','final-signed-sha-256'
+  );
+  insert into public.contract_recipients(
+    id,tenant_id,contract_id,full_name,email,role,signing_order,required,status,identity_assurance_level,signed_at
+  ) values(
+    '00000000-0000-0000-0000-000000000089','00000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000086','Required Signer','signer@example.test','signer',1,true,'signed','high',now()
+  );
+  insert into public.contract_recipients(
+    id,tenant_id,contract_id,full_name,email,role,signing_order,required,status,identity_assurance_level
+  ) values(
+    '00000000-0000-0000-0000-000000000093','00000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000086','Second Required Signer','second-signer@example.test','signer',2,true,'pending','high'
+  );
+  update public.contracts set status='accepted' where id='00000000-0000-0000-0000-000000000086';
+  insert into public.signing_envelopes(
+    id,tenant_id,contract_id,contract_version_id,provider,provider_envelope_id,signature_policy,status,created_by
+  ) values(
+    '00000000-0000-0000-0000-000000000090','00000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000086','00000000-0000-0000-0000-000000000087',
+    'verify-provider','verify-envelope-1',
+    '{"method":"external_esign","identityAssuranceLevel":"high","orderedSigning":true,"requireFinalProviderDocument":true}',
+    'partially_signed','00000000-0000-0000-0000-000000000002'
+  );
+  insert into public.signing_recipients(
+    id,tenant_id,envelope_id,contract_recipient_id,required,role,signing_order,status,identity_assurance_level,signed_at
+  ) values(
+    '00000000-0000-0000-0000-000000000091','00000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000090','00000000-0000-0000-0000-000000000089',
+    true,'signer',1,'signed','high',now()
+  );
+  insert into public.signing_events(
+    id,tenant_id,envelope_id,signing_recipient_id,provider,provider_event_id,event_type,event_at,verified,processing_status,payload
+  ) values(
+    '00000000-0000-0000-0000-000000000092','00000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000090','00000000-0000-0000-0000-000000000091',
+    'verify-provider','verify-signing-event-1','recipient.signed',now(),true,'processed','{}'
+  );
+`);
+const partialSigningState = await db.query(`select status from public.contracts where id='00000000-0000-0000-0000-000000000086'`);
+if (partialSigningState.rows[0].status !== 'signing') {
+  throw new Error(`A single recipient acceptance completed a multi-recipient contract: ${JSON.stringify(partialSigningState.rows[0])}`);
+}
+await db.exec(`
+  update public.contract_recipients set status='signed',signed_at=now()
+  where id='00000000-0000-0000-0000-000000000093';
+  insert into public.signing_recipients(
+    id,tenant_id,envelope_id,contract_recipient_id,required,role,signing_order,status,identity_assurance_level,signed_at
+  ) values(
+    '00000000-0000-0000-0000-000000000094','00000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000090','00000000-0000-0000-0000-000000000093',
+    true,'signer',2,'signed','high',now()
+  );
+`);
+const firstFinalize = await db.query(`select public.finalize_signing_envelope(
+  '00000000-0000-0000-0000-000000000090','00000000-0000-0000-0000-000000000088','{"verified":true}'
+) as result`);
+if (!firstFinalize.rows[0].result.post_sign_executed) throw new Error(`Post-sign process did not execute: ${JSON.stringify(firstFinalize.rows[0])}`);
+const replayFinalize = await db.query(`select public.finalize_signing_envelope(
+  '00000000-0000-0000-0000-000000000090','00000000-0000-0000-0000-000000000088','{"verified":true}'
+) as result`);
+if (replayFinalize.rows[0].result.post_sign_executed) throw new Error(`Post-sign replay executed twice: ${JSON.stringify(replayFinalize.rows[0])}`);
+const postSignState = await db.query(`
+  select
+    (select status from public.contracts where id='00000000-0000-0000-0000-000000000086') contract_status,
+    (select lifecycle from public.customers where id='00000000-0000-0000-0000-000000000021') customer_lifecycle,
+    (select count(*)::int from public.contract_post_sign_runs where contract_id='00000000-0000-0000-0000-000000000086') post_sign_runs,
+    (select count(*)::int from public.activities where metadata->>'post_sign_contract_id'='00000000-0000-0000-0000-000000000086') onboarding_activities,
+    (select count(*)::int from public.signing_documents where envelope_id='00000000-0000-0000-0000-000000000090' and document_role='final_signed') final_documents,
+    (select count(*)::int from public.outbox_jobs where idempotency_key='contract.signed.confirmation:00000000-0000-0000-0000-000000000086') confirmation_jobs
+`);
+const postSign = postSignState.rows[0];
+if (postSign.contract_status !== 'signed' || postSign.customer_lifecycle !== 'customer' || Number(postSign.post_sign_runs) !== 1 || Number(postSign.onboarding_activities) !== 1 || Number(postSign.final_documents) !== 1 || Number(postSign.confirmation_jobs) !== 1) {
+  throw new Error(`Post-sign exactly-once state invalid: ${JSON.stringify(postSign)}`);
+}
+console.log("Executed production hardening runtime paths: import truncation, Rinkel buffering/monotonicity, Resend reducer and exactly-once signing finalization.");
 await db.close();

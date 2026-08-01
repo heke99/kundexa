@@ -14,9 +14,14 @@ export function authenticatePlatformRinkelWebhook(secret: string) {
 }
 
 export function trustedRinkelSourceIp(request: Request) {
-  const vercel = request.headers.get("x-vercel-forwarded-for")?.split(",")[0]?.trim();
-  const real = request.headers.get("x-real-ip")?.trim();
-  return vercel || real || null;
+  const env = serverEnv();
+  if (process.env.VERCEL === "1") {
+    return request.headers.get("x-vercel-forwarded-for")?.split(",")[0]?.trim() || null;
+  }
+  if (env.RINKEL_TRUST_X_REAL_IP) {
+    return request.headers.get("x-real-ip")?.trim() || null;
+  }
+  return null;
 }
 
 export async function verifyRinkelNetwork(request: Request) {

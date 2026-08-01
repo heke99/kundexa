@@ -45,16 +45,13 @@ export default async function AcceptPage({ params, searchParams }: { params: Pro
     await admin.rpc("cancel_contract_reminders", { p_acceptance_request_id: request.id, p_reason: "expired" });
   }
   if (!request.opened_at && !expired && request.status === "pending") {
-    const openedAt = new Date().toISOString();
-    await Promise.all([
-      admin.from("contract_acceptance_requests").update({ opened_at: openedAt }).eq("id", request.id).is("opened_at", null),
-      contract?.id ? admin.from("contract_events").insert({ tenant_id: request.tenant_id, contract_id: contract.id, event_type: "acceptance.opened", payload: { request_id: request.id, opened_at: openedAt } }) : Promise.resolve(),
-    ]);
+    const opened = await admin.rpc("mark_acceptance_opened", { p_request_id: request.id });
+    if (opened.error) console.error("Acceptance opened projection failed", { requestId: request.id, message: opened.error.message });
   }
 
   const completed = query.accepted === "1" || request.status === "accepted_via_web";
   const declined = query.declined === "1" || request.status === "declined";
-  if (completed || declined) return <main className="landing" style={{ display: "grid", placeItems: "center", padding: 24, minHeight: "100vh" }}><Card style={{ maxWidth: 620 }}><CardContent style={{ textAlign: "center", padding: 45 }}><CheckCircle2 size={48} color="#10866c" /><h1 style={{ marginTop: 18 }}>{completed ? "Avtalet är accepterat" : "Ditt besked är registrerat"}</h1><p className="muted">{completed ? "Din dokumenterade acceptans har tidsstämplats och bundits till exakt avtalsversion och PDF-hash. En bekräftelse köas enligt avsändarens inställningar." : "Du har avstått från avtalet. Inga framtida påminnelser skickas för denna acceptbegäran."}</p>{document ? <Link href={`/api/public/contracts/${token}/document`} className="button button-secondary"><Download size={16} /> Hämta avtalskopian</Link> : null}</CardContent></Card></main>;
+  if (completed || declined) return <main className="landing" style={{ display: "grid", placeItems: "center", padding: 24, minHeight: "100vh" }}><Card style={{ maxWidth: 620 }}><CardContent style={{ textAlign: "center", padding: 45 }}><CheckCircle2 size={48} color="#10866c" /><h1 style={{ marginTop: 18 }}>{completed ? "Din acceptans är registrerad" : "Ditt besked är registrerat"}</h1><p className="muted">{completed ? "Din dokumenterade acceptans har tidsstämplats och bundits till exakt avtalsversion och PDF-hash. Avtalet blir fullständigt signerat först när samtliga obligatoriska signerare och vald signeringspolicy är klara. En bekräftelse köas enligt avsändarens inställningar." : "Du har avstått från avtalet. Inga framtida påminnelser skickas för denna acceptbegäran."}</p>{document ? <Link href={`/api/public/contracts/${token}/document`} className="button button-secondary"><Download size={16} /> Hämta avtalskopian</Link> : null}</CardContent></Card></main>;
 
   const inactive = expired || ["expired", "cancelled", "superseded"].includes(request.status);
   return <main className="landing" style={{ minHeight: "100vh", padding: 24 }}><div style={{ maxWidth: 820, margin: "0 auto" }}><div style={{ padding: "20px 0" }}>{logoUrl ? <img src={logoUrl} alt={legalName} style={{ display: "block", maxWidth: 210, maxHeight: 72, width: "auto", height: "auto" }} /> : <Logo />}</div><Card><CardHeader><div><span className="eyebrow">Säker avtalsgranskning</span><h1 style={{ margin: "14px 0 0" }}>{contract?.title}</h1></div><FileSignature size={28} /></CardHeader><CardContent>

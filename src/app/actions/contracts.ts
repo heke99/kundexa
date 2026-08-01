@@ -503,7 +503,7 @@ export async function sendContract(form: FormData) {
     if (integration?.status !== "active") redirect(`/app/contracts/${contractId}?error=Resend-integrationen måste testas och vara aktiv innan utskick`);
     if (accountMode === "platform_managed" && !env.RESEND_API_KEY) redirect(`/app/contracts/${contractId}?error=Kundexas plattformshanterade Resend-konto är inte konfigurerat`);
     if (accountMode !== "platform_managed" && !integration.credentials_ciphertext) redirect(`/app/contracts/${contractId}?error=Tenantens Resend API-nyckel saknas`);
-    emailFrom = String(configuration.from_address ?? configuration.from ?? env.DEFAULT_EMAIL_FROM ?? "");
+    emailFrom = String(configuration.from_address ?? configuration.from ?? env.DEFAULT_EMAIL_FROM_ADDRESS ?? "");
     replyTo = replyTo || (configuration.reply_to ? String(configuration.reply_to) : null);
     if (!/^\S+@\S+\.\S+$/.test(emailFrom)) redirect(`/app/contracts/${contractId}?error=Verifierad från-adress saknas`);
   }

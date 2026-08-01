@@ -13,6 +13,12 @@ export type ParsedImportFile = {
   selectedWorksheet: string | null;
   recordsPath: string | null;
   headerRow: number;
+  sourceRowCount: number;
+  parsedRowCount: number;
+  acceptedRowCount: number;
+  rejectedRowCount: number;
+  truncated: boolean;
+  truncationReason: string | null;
 };
 
 export type ParseImportOptions = {
@@ -78,7 +84,7 @@ function discoverArrayPaths(value: unknown, prefix = "", depth = 0): string[] {
   return paths;
 }
 
-function rowsFromJsonValue(value: unknown, recordsPath: string | null | undefined, maxRows: number): { rows: ImportedRow[]; recordsPath: string | null } {
+function rowsFromJsonValue(value: unknown, recordsPath: string | null | undefined, maxRows: number): { rows: ImportedRow[]; recordsPath: string | null; sourceRowCount: number } {
   let selectedPath = recordsPath?.trim() || null;
   if (!selectedPath && !Array.isArray(value)) {
     const paths = discoverArrayPaths(value);
@@ -91,6 +97,7 @@ function rowsFromJsonValue(value: unknown, recordsPath: string | null | undefine
   const candidate = Array.isArray(value) && !selectedPath ? value : resolveRecordsPath(value, selectedPath);
   return {
     recordsPath: selectedPath,
+    sourceRowCount: candidate.length,
     rows: candidate.slice(0, maxRows).map((row, index) => {
       if (!row || typeof row !== "object" || Array.isArray(row)) throw new Error(`json_row_${index + 1}_must_be_object`);
       return normalizeObject(row as Record<string, unknown>);
@@ -102,19 +109,22 @@ function decodeXml(value: string) {
   return value.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&").trim();
 }
 
-function parseXmlRows(xml: string, maxRows: number): ImportedRow[] {
+function parseXmlRows(xml: string, maxRows: number): { rows: ImportedRow[]; sourceRowCount: number } {
   const rows: ImportedRow[] = [];
+  let sourceRowCount = 0;
   const rowPattern = /<(row|record|item)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/gi;
   for (const match of xml.matchAll(rowPattern)) {
     const row: ImportedRow = {};
     for (const child of match[2].matchAll(/<([A-Za-z_][\w:.-]*)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/g)) {
       row[normalizeHeader(child[1].split(":").pop() ?? child[1])] = decodeXml(child[2].replace(/<[^>]+>/g, ""));
     }
-    if (Object.keys(row).length) rows.push(row);
-    if (rows.length >= maxRows) break;
+    if (Object.keys(row).length) {
+      sourceRowCount += 1;
+      if (rows.length < maxRows) rows.push(row);
+    }
   }
-  if (!rows.length) throw new Error("xml_row_record_or_item_elements_required");
-  return rows;
+  if (!sourceRowCount) throw new Error("xml_row_record_or_item_elements_required");
+  return { rows, sourceRowCount };
 }
 
 function assertXlsxZipSafety(buffer: Buffer) {
@@ -174,21 +184,24 @@ async function parseXlsx(buffer: Buffer, options: Required<Pick<ParseImportOptio
   if (!rawHeaders.some(Boolean)) throw new Error("xlsx_header_row_empty");
   const rows: ImportedRow[] = [];
   const parserErrors: ParserIssue[] = [];
-  const finalRow = Math.min(worksheet.rowCount, options.headerRow + options.maxRows);
-  for (let rowNumber = options.headerRow + 1; rowNumber <= finalRow; rowNumber++) {
+  let sourceRowCount = 0;
+  for (let rowNumber = options.headerRow + 1; rowNumber <= worksheet.rowCount; rowNumber++) {
     const sourceRow = worksheet.getRow(rowNumber);
     const row: ImportedRow = {};
     let populated = false;
     for (let column = 1; column <= rawHeaders.length; column++) {
       const key = rawHeaders[column - 1];
-      const value = validateCell(excelCellValue(sourceRow.getCell(column).value), rowNumber, key, options.maxCellCharacters, parserErrors);
-      if (value != null && String(value).trim() !== "") populated = true;
-      row[key] = value;
+      const rawValue = excelCellValue(sourceRow.getCell(column).value);
+      if (rawValue != null && String(rawValue).trim() !== "") populated = true;
+      if (rows.length < options.maxRows) row[key] = validateCell(rawValue, rowNumber, key, options.maxCellCharacters, parserErrors);
     }
-    if (populated) rows.push(row);
+    if (populated) {
+      sourceRowCount += 1;
+      if (rows.length < options.maxRows) rows.push(row);
+    }
   }
-  if (!rows.length) throw new Error("xlsx_contains_no_data_rows");
-  return { rows, parserErrors, worksheets, selectedWorksheet: worksheet.name };
+  if (!sourceRowCount) throw new Error("xlsx_contains_no_data_rows");
+  return { rows, parserErrors, worksheets, selectedWorksheet: worksheet.name, sourceRowCount };
 }
 
 function assertExtensionAndMime(extension: string | undefined, mimeType: string) {
@@ -205,6 +218,20 @@ function assertExtensionAndMime(extension: string | undefined, mimeType: string)
   if (!allowed[extension].includes(mime)) throw new Error("import_file_mime_mismatch");
 }
 
+function resultMetrics(rows: ImportedRow[], sourceRowCount: number, parserErrors: ParserIssue[], maxRows: number) {
+  const truncated = sourceRowCount > maxRows;
+  const rejectedRowCount = Math.max(0, sourceRowCount - rows.length - (truncated ? sourceRowCount - maxRows : 0));
+  return {
+    sourceRowCount,
+    parsedRowCount: rows.length,
+    acceptedRowCount: rows.length,
+    rejectedRowCount,
+    truncated,
+    truncationReason: truncated ? "max_rows_exceeded" : null,
+    parserErrors,
+  };
+}
+
 export async function parseImportFile(buffer: Buffer, fileName: string, mimeType: string, options: ParseImportOptions = {}): Promise<ParsedImportFile> {
   const extension = fileName.toLowerCase().split(".").pop();
   assertExtensionAndMime(extension, mimeType);
@@ -215,32 +242,34 @@ export async function parseImportFile(buffer: Buffer, fileName: string, mimeType
 
   if (extension === "xlsx") {
     const parsed = await parseXlsx(buffer, { worksheetName: options.worksheetName, headerRow, maxRows, maxColumns, maxCellCharacters });
-    return { sourceType: "xlsx", rows: parsed.rows, parserErrors: parsed.parserErrors, columns: collectColumns(parsed.rows), worksheets: parsed.worksheets, selectedWorksheet: parsed.selectedWorksheet, recordsPath: null, headerRow };
+    return { sourceType: "xlsx", rows: parsed.rows, columns: collectColumns(parsed.rows), worksheets: parsed.worksheets, selectedWorksheet: parsed.selectedWorksheet, recordsPath: null, headerRow, ...resultMetrics(parsed.rows, parsed.sourceRowCount, parsed.parserErrors, maxRows) };
   }
 
   const text = buffer.toString("utf8").replace(/^\uFEFF/, "");
   if (extension === "json") {
     const parsed = rowsFromJsonValue(JSON.parse(text), options.recordsPath, maxRows);
-    return { sourceType: "json", rows: parsed.rows, parserErrors: [], columns: collectColumns(parsed.rows), worksheets: [], selectedWorksheet: null, recordsPath: parsed.recordsPath, headerRow: 1 };
+    return { sourceType: "json", rows: parsed.rows, columns: collectColumns(parsed.rows), worksheets: [], selectedWorksheet: null, recordsPath: parsed.recordsPath, headerRow: 1, ...resultMetrics(parsed.rows, parsed.sourceRowCount, [], maxRows) };
   }
   if (extension === "ndjson" || extension === "jsonl") {
     const parserErrors: ParserIssue[] = [];
     const rows: ImportedRow[] = [];
+    let sourceRowCount = 0;
     text.split(/\r?\n/).forEach((line, index) => {
-      if (!line.trim() || rows.length >= maxRows) return;
+      if (!line.trim()) return;
+      sourceRowCount += 1;
       try {
         const parsed = JSON.parse(line);
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("row_must_be_object");
-        rows.push(normalizeObject(parsed));
+        if (rows.length < maxRows) rows.push(normalizeObject(parsed));
       } catch (error) {
         parserErrors.push({ row: index + 1, code: "invalid_ndjson", message: error instanceof Error ? error.message : "invalid_json" });
       }
     });
-    return { sourceType: "ndjson", rows, parserErrors, columns: collectColumns(rows), worksheets: [], selectedWorksheet: null, recordsPath: null, headerRow: 1 };
+    return { sourceType: "ndjson", rows, columns: collectColumns(rows), worksheets: [], selectedWorksheet: null, recordsPath: null, headerRow: 1, ...resultMetrics(rows, sourceRowCount, parserErrors, maxRows) };
   }
   if (extension === "xml") {
-    const rows = parseXmlRows(text, maxRows);
-    return { sourceType: "xml", rows, parserErrors: [], columns: collectColumns(rows), worksheets: [], selectedWorksheet: null, recordsPath: null, headerRow: 1 };
+    const parsedXml = parseXmlRows(text, maxRows);
+    return { sourceType: "xml", rows: parsedXml.rows, columns: collectColumns(parsedXml.rows), worksheets: [], selectedWorksheet: null, recordsPath: null, headerRow: 1, ...resultMetrics(parsedXml.rows, parsedXml.sourceRowCount, [], maxRows) };
   }
 
   const parserErrors: ParserIssue[] = [];
@@ -250,8 +279,9 @@ export async function parseImportFile(buffer: Buffer, fileName: string, mimeType
     transformHeader: normalizeHeader,
     transform: (value, column) => validateCell(value, 0, String(column), maxCellCharacters, parserErrors) as string,
   });
+  const sourceRowCount = parsed.data.length;
   const rows = parsed.data.slice(0, maxRows).map(normalizeObject);
   if (collectColumns(rows).length > maxColumns) throw new Error("csv_too_many_columns");
   parserErrors.push(...parsed.errors.map((error) => ({ row: error.row == null ? undefined : error.row + 2, code: error.code, message: error.message })));
-  return { sourceType: "csv", rows, parserErrors, columns: collectColumns(rows), worksheets: [], selectedWorksheet: null, recordsPath: null, headerRow: 1 };
+  return { sourceType: "csv", rows, columns: collectColumns(rows), worksheets: [], selectedWorksheet: null, recordsPath: null, headerRow: 1, ...resultMetrics(rows, sourceRowCount, parserErrors, maxRows) };
 }

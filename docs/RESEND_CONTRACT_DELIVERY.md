@@ -74,11 +74,11 @@ KUNDEXA_ENCRYPTION_KEY=
 KUNDEXA_WEBHOOK_PEPPER=
 CRON_SECRET=
 RESEND_API_KEY=
-DEFAULT_EMAIL_FROM="Kundexa <avtal@utskick.kundexa.se>"
+DEFAULT_EMAIL_FROM_NAME="Kundexa"   DEFAULT_EMAIL_FROM_ADDRESS="avtal@utskick.kundexa.se"
 RESEND_WEBHOOK_SECRET=
 ```
 
-`RESEND_API_KEY` och `DEFAULT_EMAIL_FROM` behövs bara för plattformshanterad fallback. Tenantägda API-nycklar lagras krypterade i `tenant_integrations`.
+`RESEND_API_KEY`, `DEFAULT_EMAIL_FROM_NAME` och `DEFAULT_EMAIL_FROM_ADDRESS` behövs bara för plattformshanterad fallback. Tenantägda API-nycklar lagras krypterade i `tenant_integrations`.
 
 ### Supabase Edge Functions
 
@@ -89,7 +89,7 @@ SUPABASE_SERVICE_ROLE_KEY=
 KUNDEXA_ENCRYPTION_KEY=
 CRON_SECRET=
 RESEND_API_KEY=
-DEFAULT_EMAIL_FROM="Kundexa <avtal@utskick.kundexa.se>"
+DEFAULT_EMAIL_FROM_NAME="Kundexa"   DEFAULT_EMAIL_FROM_ADDRESS="avtal@utskick.kundexa.se"
 ```
 
 `KUNDEXA_ENCRYPTION_KEY` måste vara identisk i webbappen och Edge Functions.
@@ -102,7 +102,7 @@ npx supabase@2.109.1 secrets set \
   KUNDEXA_ENCRYPTION_KEY="<SAMMA_SOM_WEBBAPPEN>" \
   CRON_SECRET="<LÅNG_SLUMPMÄSSIG_HEMLIGHET>" \
   RESEND_API_KEY="<PLATTFORMSNYCKEL_OM_GLOBAL_FALLBACK_ANVÄNDS>" \
-  DEFAULT_EMAIL_FROM="Kundexa <avtal@utskick.kundexa.se>" \
+  DEFAULT_EMAIL_FROM_NAME="Kundexa"   DEFAULT_EMAIL_FROM_ADDRESS="avtal@utskick.kundexa.se" \
   --project-ref "<SUPABASE_PROJECT_REF>"
 ```
 

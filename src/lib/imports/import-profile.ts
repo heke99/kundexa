@@ -20,12 +20,25 @@ const companyTargets = [
   "employee_count", "revenue", "result", "founded_year", "source_external_id", "source_url",
 ] as const;
 
+
+export const entityTypePolicySchema = z.object({
+  mode: z.enum(["fixed_company", "fixed_person", "from_field", "infer_organization_number"]).default("fixed_company"),
+  source: z.string().max(300).optional(),
+  companyValues: z.array(z.string().min(1).max(80)).max(30).default(["company", "organization", "företag", "bolag", "b2b"]),
+  personValues: z.array(z.string().min(1).max(80)).max(30).default(["person", "private", "privatperson", "b2c"]),
+}).superRefine((policy, context) => {
+  if (policy.mode === "from_field" && !policy.source) {
+    context.addIssue({ code: "custom", path: ["source"], message: "source krävs när kundtyp mappas från ett fält" });
+  }
+});
+
 const contactTargets = [
   "full_name", "first_name", "last_name", "title", "role", "ownership_percentage", "phone_e164",
   "alternate_phone_e164", "email", "is_primary", "is_signatory", "source_external_id",
 ] as const;
 
 export const importFieldMappingSchema = z.object({
+  entityType: entityTypePolicySchema.default({ mode: "fixed_company", companyValues: ["company", "organization", "företag", "bolag", "b2b"], personValues: ["person", "private", "privatperson", "b2c"] }),
   company: z.partialRecord(z.enum(companyTargets), mappingRuleSchema).default({}),
   contacts: z.object({
     recordsPath: z.string().max(300).optional(),

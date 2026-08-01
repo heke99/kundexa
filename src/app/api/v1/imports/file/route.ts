@@ -78,7 +78,14 @@ export async function POST(request: Request) {
     if (scan.status === "infected") throw new Error("import_file_infected");
     if (scan.status === "failed") throw new Error("import_file_scan_failed");
 
-    const idempotencyKey = `file:${scan.sha256}:${profileVersion?.id ?? "adhoc"}:${targetListId ?? "crm"}`;
+    const parserConfiguration = profileVersion?.id ?? [
+      recordsPath ?? profile?.records_path ?? "root",
+      worksheetName ?? profile?.worksheet_name ?? "first_sheet",
+      profile?.header_row ?? headerRow,
+    ].map((value) => encodeURIComponent(String(value))).join(":");
+    const validationFingerprint = `file:${scan.sha256}:${parserConfiguration}:${targetListId ?? "crm"}`;
+    const executionIdempotencyKey = simulate ? null : `commit:${validationFingerprint}`;
+    const idempotencyKey = `${simulate ? "preview" : "commit"}:${validationFingerprint}`;
     const existing = await supabase.from("import_runs").select("id,status").eq("idempotency_key", idempotencyKey).not("status", "in", "(failed,rolled_back,cancelled)").maybeSingle();
     if (existing.error) throw new Error(existing.error.message);
     if (existing.data) return redirectWith(request, `/app/imports/${existing.data.id}`, "message", "Samma fil, profil och mål har redan behandlats. Befintlig import visas.");
@@ -90,6 +97,9 @@ export async function POST(request: Request) {
       maxRows: MAX_ROWS,
     });
     if (!parsed.rows.length) throw new Error("import_file_contains_no_rows");
+    if (parsed.truncated) {
+      throw new Error(`import_row_limit_exceeded:${parsed.sourceRowCount}:${MAX_ROWS}`);
+    }
 
     const mapping = profileVersion
       ? importFieldMappingSchema.parse(profileVersion.field_mapping)
@@ -107,7 +117,13 @@ export async function POST(request: Request) {
       source_file_path: path,
       status: "validating",
       uploaded_by: ctx.userId,
-      total_rows: parsed.rows.length,
+      total_rows: parsed.sourceRowCount,
+      source_row_count: parsed.sourceRowCount,
+      parsed_row_count: parsed.parsedRowCount,
+      accepted_row_count: parsed.acceptedRowCount,
+      rejected_row_count: parsed.rejectedRowCount,
+      truncated: parsed.truncated,
+      truncation_reason: parsed.truncationReason,
       simulation: simulate,
       file_mime_type: file.type || "application/octet-stream",
       file_size_bytes: file.size,
@@ -117,6 +133,8 @@ export async function POST(request: Request) {
       scan_completed_at: new Date().toISOString(),
       file_sha256: scan.sha256,
       idempotency_key: idempotencyKey,
+      validation_fingerprint: validationFingerprint,
+      execution_idempotency_key: executionIdempotencyKey,
       import_profile_id: profile?.id ?? null,
       import_profile_version_id: profileVersion?.id ?? null,
       profile_version: profileVersion?.version ?? null,
@@ -128,7 +146,16 @@ export async function POST(request: Request) {
       header_row: parsed.headerRow,
       records_path: parsed.recordsPath,
       target_list_id: targetListId,
-      validation_report: jsonValue({ parser_errors: parsed.parserErrors, malware_scan: scan.details, columns: parsed.columns, worksheets: parsed.worksheets }),
+      validation_report: jsonValue({
+        parser_errors: parsed.parserErrors,
+        malware_scan: scan.details,
+        columns: parsed.columns,
+        worksheets: parsed.worksheets,
+        source_row_count: parsed.sourceRowCount,
+        parsed_row_count: parsed.parsedRowCount,
+        truncated: parsed.truncated,
+        truncation_reason: parsed.truncationReason,
+      }),
     }).select("id").single();
     if (error || !run) throw new Error(error?.message ?? "import_run_create_failed");
     createdRunId = run.id;
@@ -165,6 +192,8 @@ export async function POST(request: Request) {
       status: finalStatus,
       error_count: errors,
       warning_count: warnings + parsed.parserErrors.length,
+      accepted_row_count: valid + warnings,
+      rejected_row_count: errors,
       validation_report: jsonValue({
         valid_rows: valid,
         warning_rows: warnings,
@@ -175,6 +204,12 @@ export async function POST(request: Request) {
         selected_worksheet: parsed.selectedWorksheet,
         records_path: parsed.recordsPath,
         malware_scan: { status: scan.status, provider: scan.provider, sha256: scan.sha256 },
+        source_row_count: parsed.sourceRowCount,
+        parsed_row_count: parsed.parsedRowCount,
+        accepted_row_count: valid + warnings,
+        rejected_row_count: errors,
+        truncated: parsed.truncated,
+        truncation_reason: parsed.truncationReason,
       }),
     }).eq("id", run.id);
     if (updated.error) throw new Error(updated.error.message);
@@ -185,8 +220,13 @@ export async function POST(request: Request) {
     }
     return redirectWith(request, `/app/imports/${run.id}`, "message", `Importen validerades: ${valid} giltiga, ${warnings} varningar och ${errors} fel.`);
   } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown_error";
+    if (message.startsWith("import_row_limit_exceeded:")) {
+      const [, sourceRows, limit] = message.split(":");
+      return redirectWith(request, "/app/imports", "error", `Filen innehåller ${sourceRows} poster och gränsen är ${limit}. Importen stoppades utan att någon post kapades.`);
+    }
     const referenceId = crypto.randomUUID();
-    console.error("Import failed", { referenceId, message: error instanceof Error ? error.message : "unknown_error", createdRunId });
+    console.error("Import failed", { referenceId, message, createdRunId });
     if (cleanupClient && createdRunId) {
       await cleanupClient.from("import_runs").update({
         status: "failed",

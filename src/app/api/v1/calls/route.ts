@@ -7,6 +7,8 @@ import { assertPermission } from "@/lib/permissions";
 import { createPlatformRinkelClient } from "@/lib/integrations/rinkel/client";
 import { safeRinkelError } from "@/lib/integrations/rinkel/errors";
 
+const callDirectionSchema = z.enum(["inbound", "outbound"]);
+
 const bodySchema = z.object({
   customerId: z.uuid(),
   sessionId: z.uuid().nullable().optional(),
@@ -39,15 +41,25 @@ export async function GET(request: Request) {
     assertPermission(context.role, "calls.read");
     const url = new URL(request.url);
     const limit = Math.max(1, Math.min(100, Number(url.searchParams.get("limit") ?? 50)));
+    const callId = url.searchParams.get("id");
     const supabase = await createClient();
+    const selection = "id,direction,status,end_cause,from_number,to_number,initiated_at,answered_at,ended_at,duration_seconds,disposition,recording_status,transcription_status,insights_status,created_at,customers(display_name)";
+    if (callId) {
+      const parsedId = z.uuid().safeParse(callId);
+      if (!parsedId.success) return NextResponse.json({ error: "invalid_call_id" }, { status: 422 });
+      const { data, error } = await supabase.from("calls").select(selection).eq("id", parsedId.data).maybeSingle();
+      if (error) return NextResponse.json({ error: "call_query_failed" }, { status: 500 });
+      if (!data) return NextResponse.json({ error: "call_not_found" }, { status: 404 });
+      return NextResponse.json({ data });
+    }
     let query = supabase.from("calls")
-      .select("id,direction,status,end_cause,from_number,to_number,initiated_at,answered_at,ended_at,duration_seconds,disposition,recording_status,transcription_status,insights_status,created_at,customers(display_name)")
+      .select(selection)
       .order("created_at", { ascending: false })
       .limit(limit);
     const status = url.searchParams.get("status");
-    const direction = url.searchParams.get("direction");
+    const direction = callDirectionSchema.safeParse(url.searchParams.get("direction"));
     if (status) query = query.eq("status", status);
-    if (direction) query = query.eq("direction", direction);
+    if (direction.success) query = query.eq("direction", direction.data);
     const { data, error } = await query;
     if (error) return NextResponse.json({ error: "calls_query_failed" }, { status: 500 });
     return NextResponse.json({ data: data ?? [] });

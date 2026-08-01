@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { decryptJson, sha256 } from "@/lib/crypto";
 import { serverEnv } from "@/lib/env";
 import { isPermanentResendFailure, resendStatusForEvent } from "@/lib/contracts/resend-status";
+import { toJson } from "@/lib/supabase/json";
 
 type ResendCredentials = { webhookSigningSecret?: string };
 type ResendPayload = { type?: string; created_at?: string; data?: { email_id?: string; id?: string; to?: string[]; bounce?: { message?: string }; reason?: string } };
@@ -54,7 +55,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   const safeHeaders = { "svix-id": svixId, "svix-timestamp": svixTimestamp, "svix-signature-present": true };
   const { data: event, error: eventError } = await admin.from("provider_webhook_events").upsert({
     tenant_id: integration.tenant_id, provider: "resend", event_type: eventType, provider_event_id: svixId,
-    route_key: tokenHash, headers: safeHeaders, payload, status: "received",
+    route_key: tokenHash, headers: toJson(safeHeaders), payload: toJson(payload), status: "received",
   }, { onConflict: "provider,provider_event_id", ignoreDuplicates: true }).select("id,status").maybeSingle();
   if (eventError) return Response.json({ error: "webhook_event_store_failed" }, { status: 500 });
   if (!event) return Response.json({ ok: true, duplicate: true });
@@ -73,36 +74,45 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   }
 
   const occurredAt = payload.created_at && Number.isFinite(new Date(payload.created_at).getTime()) ? payload.created_at : new Date().toISOString();
-  const permanent = isPermanentResendFailure(mapped);
   const failureMessage = String(payload.data?.bounce?.message ?? payload.data?.reason ?? eventType).slice(0, 500);
-  const emailUpdate: Record<string, unknown> = { status: mapped, provider_status: eventType };
-  if (mapped === "sent") emailUpdate.sent_at = occurredAt;
-  if (mapped === "delivered") emailUpdate.delivered_at = occurredAt;
-  if (mapped === "opened") emailUpdate.opened_at = occurredAt;
-  if (mapped === "clicked") emailUpdate.clicked_at = occurredAt;
-  if (mapped === "delayed") emailUpdate.delayed_at = occurredAt;
-  if (mapped === "bounced") emailUpdate.bounced_at = occurredAt;
-  if (mapped === "complained") emailUpdate.complained_at = occurredAt;
-  if (mapped === "suppressed") emailUpdate.suppressed_at = occurredAt;
-  if (["failed", "bounced", "complained", "suppressed"].includes(mapped)) { emailUpdate.error_message = failureMessage; emailUpdate.failure_code = mapped; }
-  await admin.from("email_messages").update(emailUpdate).eq("tenant_id", integration.tenant_id).eq("id", email.id);
+  const projection = await admin.rpc("apply_resend_delivery_event", {
+    p_tenant_id: integration.tenant_id,
+    p_email_message_id: email.id,
+    p_provider_event_id: svixId,
+    p_provider_event_type: eventType,
+    p_status: mapped,
+    p_occurred_at: occurredAt,
+    p_payload: toJson(payload),
+    p_failure_message: failureMessage,
+  });
+  if (projection.error) {
+    await admin.from("provider_webhook_events").update({
+      status: "failed",
+      processed_at: new Date().toISOString(),
+      attempts: 1,
+      last_error: projection.error.message.slice(0, 500),
+    }).eq("id", event.id);
+    return Response.json({ error: "delivery_projection_failed" }, { status: 500 });
+  }
+  const projectionResult = projection.data && typeof projection.data === "object" && !Array.isArray(projection.data)
+    ? projection.data as Record<string, unknown>
+    : {};
+  const applied = projectionResult.applied === true;
+  const permanent = projectionResult.permanent === true || isPermanentResendFailure(mapped);
 
-  const deliveryUpdate: Record<string, unknown> = { status: mapped, provider_status: eventType };
-  if (mapped === "sent") deliveryUpdate.sent_at = occurredAt;
-  if (mapped === "delivered") deliveryUpdate.delivered_at = occurredAt;
-  if (mapped === "opened") deliveryUpdate.opened_at = occurredAt;
-  if (mapped === "clicked") deliveryUpdate.clicked_at = occurredAt;
-  if (mapped === "delayed") deliveryUpdate.delayed_at = occurredAt;
-  if (mapped === "bounced") deliveryUpdate.bounced_at = occurredAt;
-  if (mapped === "complained") deliveryUpdate.complained_at = occurredAt;
-  if (mapped === "suppressed") deliveryUpdate.suppressed_at = occurredAt;
-  if (["failed", "bounced", "complained", "suppressed"].includes(mapped)) { deliveryUpdate.failure_code = mapped; deliveryUpdate.failure_message = failureMessage; }
-  await admin.from("contract_deliveries").update(deliveryUpdate).eq("tenant_id", integration.tenant_id).eq("email_message_id", email.id);
-
-  if (email.contract_id) {
+  if (applied && email.contract_id) {
     await admin.from("contract_events").insert({
-      tenant_id: integration.tenant_id, contract_id: email.contract_id, event_type: eventType,
-      payload: { provider_message_id: providerEmailId, provider_event_id: svixId, email_message_id: email.id, status: mapped, occurred_at: occurredAt },
+      tenant_id: integration.tenant_id,
+      contract_id: email.contract_id,
+      event_type: eventType,
+      payload: toJson({
+        provider_message_id: providerEmailId,
+        provider_event_id: svixId,
+        email_message_id: email.id,
+        status: mapped,
+        occurred_at: occurredAt,
+        projection_reason: projectionResult.reason ?? null,
+      }),
     });
     if (mapped === "delivered") await admin.from("contracts").update({ status: "delivered" }).eq("tenant_id", integration.tenant_id).eq("id", email.contract_id).eq("status", "sent");
     if (["opened", "clicked"].includes(mapped)) await admin.from("contracts").update({ status: "opened" }).eq("tenant_id", integration.tenant_id).eq("id", email.contract_id).in("status", ["sent", "delivered"]);
@@ -114,16 +124,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
         .eq("status", "pending");
       for (const requestRow of activeRequests ?? []) {
         await admin.rpc("cancel_contract_reminders", {
-          p_tenant_id: integration.tenant_id,
           p_acceptance_request_id: requestRow.id,
           p_reason: mapped,
         });
       }
     }
   }
-  if (email.customer_id && ["complained", "suppressed"].includes(mapped)) {
+  if (applied && email.customer_id && ["complained", "suppressed"].includes(mapped)) {
     await admin.from("customers").update({ do_not_email: true, blocked_reason: `Resend ${mapped}` }).eq("tenant_id", integration.tenant_id).eq("id", email.customer_id);
   }
   await admin.from("provider_webhook_events").update({ status: "processed", processed_at: new Date().toISOString(), attempts: 1 }).eq("id", event.id);
-  return Response.json({ ok: true });
+  return Response.json({ ok: true, applied, projectionReason: projectionResult.reason ?? null });
 }

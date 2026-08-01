@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { authenticateRequest } from "@/lib/api-auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { isJsonObject } from "@/lib/supabase/json";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -9,7 +10,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const admin = createAdminClient();
     const { data, error } = await admin.rpc("directory_entity_projection_for_tenant", { p_tenant_id: identity.tenantId, p_entity_id: id });
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-    const entity = data;
+    const candidate = Array.isArray(data) ? data[0] : data;
+    const entity = isJsonObject(candidate) ? candidate : null;
     if (!entity) return NextResponse.json({ error: "not_found" }, { status: 404 });
     const [{ data: fields, error: fieldError }, { data: freshness }, { data: sources }, { data: quality }] = await Promise.all([
       admin.rpc("directory_visible_fields_for_tenant", { p_tenant_id: identity.tenantId, p_entity_id: id }),

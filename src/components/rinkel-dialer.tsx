@@ -26,7 +26,7 @@ export function RinkelDialer({
   const [error, setError] = useState<string | null>(null);
   const requestKeyRef = useRef<string | null>(null);
   const rinkel = useRinkelDialer();
-  useCallRealtime(callId, () => {
+  const callState = useCallRealtime(callId, () => {
     rinkel.markEnded();
     setAfterCall(true);
   });
@@ -108,6 +108,8 @@ export function RinkelDialer({
       <Phone size={25} />
     </button>
     {rinkel.calling ? <p className="notice">Samtalet hanteras på din Rinkel-enhet. Kundexa uppdateras av Rinkels webhookar.</p> : null}
+    {callState.recovering ? <p className="notice">Rinkels slutstatus är ännu inte säkerställd. Kundexa fortsätter automatisk avstämning—starta inte ett nytt samtal.</p> : null}
+    {callId && callState.connectionState === "degraded" ? <p className="notice">Realtime är tillfälligt frånkopplat. Samtalsstatus hämtas via säker fallback.</p> : null}
     {error ? <p className="form-error">{error}</p> : null}
     {afterCall && callId ? <form className="manual-after-call" onSubmit={complete}>
       <h3>Efterarbete</h3>

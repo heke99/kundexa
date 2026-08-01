@@ -53,6 +53,10 @@ function objectValue(value: unknown): JsonObject {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : {};
 }
 
+function stringArrayValue(value: unknown, fallback: string[]) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : fallback;
+}
+
 function ruleSources(rule: unknown): string[] {
   const source = objectValue(rule).source;
   if (typeof source === "string") return [source];
@@ -140,22 +144,40 @@ export function ImportFieldMappingEditor({ importRunId, initialMapping, companyC
   const [companyAssignments, setCompanyAssignments] = useState(() => initialAssignments(initialMapping, "company"));
   const [contactAssignments, setContactAssignments] = useState(() => initialAssignments(initialMapping, "contact"));
   const [transforms, setTransforms] = useState(() => ({ ...initialTransformValues(initialMapping, "company"), ...initialTransformValues(initialMapping, "contact") }));
+  const initialEntityType = objectValue(initialMapping.entityType);
+  const [entityTypeMode, setEntityTypeMode] = useState(String(initialEntityType.mode ?? "fixed_company"));
+  const [entityTypeSource, setEntityTypeSource] = useState(String(initialEntityType.source ?? ""));
+  const [companyTypeValues, setCompanyTypeValues] = useState(() => stringArrayValue(initialEntityType.companyValues, ["company", "organization", "företag", "bolag", "b2b"]).join(", "));
+  const [personTypeValues, setPersonTypeValues] = useState(() => stringArrayValue(initialEntityType.personValues, ["person", "private", "privatperson", "b2c"]).join(", "));
   const [contactRecordsPath, setContactRecordsPath] = useState(initialContactRecordsPath);
   const [mergePolicy, setMergePolicy] = useState(String(initialMapping.mergePolicy ?? "safe_upsert"));
   const mapping = useMemo(() => ({
+    entityType: {
+      mode: entityTypeMode,
+      ...(entityTypeMode === "from_field" ? {
+        source: entityTypeSource.trim(),
+        companyValues: companyTypeValues.split(",").map((item) => item.trim()).filter(Boolean),
+        personValues: personTypeValues.split(",").map((item) => item.trim()).filter(Boolean),
+      } : {}),
+    },
     company: buildRules(companyColumns, companyAssignments, transforms, "company"),
     ...(contactColumns.length || contactRecordsPath ? { contacts: { recordsPath: contactRecordsPath || undefined, fields: buildRules(contactColumns, contactAssignments, transforms, "contact") } } : {}),
     mergePolicy,
-  }), [companyColumns, companyAssignments, contactColumns, contactAssignments, contactRecordsPath, mergePolicy, transforms]);
+  }), [companyColumns, companyAssignments, companyTypeValues, contactColumns, contactAssignments, contactRecordsPath, entityTypeMode, entityTypeSource, mergePolicy, personTypeValues, transforms]);
 
   return <form action={updateImportMapping} className="form-stack">
     <input type="hidden" name="import_run_id" value={importRunId} />
     <input type="hidden" name="mapping_json" value={JSON.stringify(mapping)} />
     <div className="form-grid two">
+      <label className="field"><span>Kundtyp</span><select value={entityTypeMode} onChange={(event) => setEntityTypeMode(event.target.value)}><option value="fixed_company">Alla poster är företag</option><option value="fixed_person">Alla poster är privatpersoner</option><option value="from_field">Mappa från ett källfält</option><option value="infer_organization_number">Härled från organisationsnummer</option></select></label>
+      {entityTypeMode === "from_field" ? <label className="field"><span>Källfält för kundtyp</span><input value={entityTypeSource} onChange={(event) => setEntityTypeSource(event.target.value)} placeholder="customer_type eller typ" required /></label> : <div className="notice">Kundtypen lagras i importprofilen och valideras server-side. Okänd typ får aldrig falla tillbaka till företag.</div>}
+    </div>
+    {entityTypeMode === "from_field" ? <div className="form-grid two"><label className="field"><span>Värden som betyder företag</span><input value={companyTypeValues} onChange={(event) => setCompanyTypeValues(event.target.value)} placeholder="företag, bolag, b2b" required /></label><label className="field"><span>Värden som betyder privatperson</span><input value={personTypeValues} onChange={(event) => setPersonTypeValues(event.target.value)} placeholder="person, privatperson, b2c" required /></label></div> : null}
+    <div className="form-grid two">
       <label className="field"><span>Merge-policy</span><select value={mergePolicy} onChange={(event) => setMergePolicy(event.target.value)}><option value="safe_upsert">Säker upsert</option><option value="create_only">Skapa endast nya</option><option value="review_conflicts">Granska konflikter</option></select></label>
       <label className="field"><span>Kontaktpersonernas records path</span><input value={contactRecordsPath} onChange={(event) => setContactRecordsPath(event.target.value)} placeholder="owners eller contacts" /></label>
     </div>
-    <h3>Företagsfält</h3>
+    <h3>Kund- och företagsfält</h3>
     <MappingRows columns={companyColumns} options={companyTargets} assignments={companyAssignments} setAssignments={setCompanyAssignments} transforms={transforms} setTransforms={setTransforms} />
     {contactColumns.length ? <><h3>Kontaktpersonsfält</h3><MappingRows columns={contactColumns} options={contactTargets} assignments={contactAssignments} setAssignments={setContactAssignments} transforms={transforms} setTransforms={setTransforms} /></> : <div className="notice">Ingen kontaktarray hittades i exempelraden. Ange korrekt records path och ladda om, eller använd profilens sparade kontaktmappning.</div>}
     <details><summary>Genererad versionsbar mappning</summary><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{JSON.stringify(mapping, null, 2)}</pre></details>

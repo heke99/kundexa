@@ -4,6 +4,7 @@ import { normalizeOrganizationNumber, passesLuhn } from "../src/lib/imports/orga
 import { parseJsonPath, resolveJsonPath, resolveRecordsPath } from "../src/lib/imports/json-path";
 import { parseImportFile } from "../src/lib/imports/file-parser";
 import { inferFieldMapping, applyFieldMapping } from "../src/lib/imports/field-mapping";
+import { normalizeImportedRow } from "../src/lib/imports/normalize-row";
 
 async function main() {
 assert.equal(passesLuhn("5560160680"), true);
@@ -24,6 +25,8 @@ assert.throws(() => parseJsonPath("data.__proto__.constructor()"), /json_path/);
 const csv = Buffer.from("\uFEFFFöretagsnamn;Organisationsnummer;Ägare;Mobil\nTest AB;556016-0680;Anna Andersson;0701234567\n", "utf8");
 const parsedCsv = await parseImportFile(csv, "allabolag.csv", "text/csv");
 assert.equal(parsedCsv.rows.length, 1);
+assert.equal(parsedCsv.sourceRowCount, 1);
+assert.equal(parsedCsv.truncated, false);
 assert.deepEqual(parsedCsv.columns, ["foretagsnamn", "organisationsnummer", "agare", "mobil"]);
 const inferred = inferFieldMapping(parsedCsv.rows[0]);
 const mapped = applyFieldMapping(parsedCsv.rows[0], inferred);
@@ -32,6 +35,13 @@ assert.equal(mapped.company.organization_number, "5560160680");
 assert.equal(mapped.contacts[0]?.full_name, "Anna Andersson");
 assert.equal(mapped.contacts[0]?.phone_e164, "+46701234567");
 assert.equal(mapped.company.phone_e164, undefined, "Owner mobile must not leak into company phone");
+const personResult = normalizeImportedRow({ namn: "Privat Person", typ: "privatperson" }, {
+  entityType: { mode: "from_field", source: "typ", companyValues: ["företag"], personValues: ["privatperson"] },
+  company: { display_name: { source: "namn", transforms: ["trim"] } },
+  mergePolicy: "safe_upsert",
+});
+assert.equal(personResult.normalized.customer_type, "person");
+assert.deepEqual(personResult.errors, []);
 
 const parsedJson = await parseImportFile(
   Buffer.from(JSON.stringify({ allabolag_companies: [{ company_name: "Nested AB", owners: [{ name: "Owner" }] }] })),
@@ -61,9 +71,18 @@ for (let index = 0; index < 5_000; index += 1) rows.push(`Företag ${index};5560
 const started = performance.now();
 const bulk = await parseImportFile(Buffer.from(rows.join("\n")), "bulk.csv", "text/csv", { maxRows: 5_000 });
 assert.equal(bulk.rows.length, 5_000);
+assert.equal(bulk.sourceRowCount, 5_000);
+assert.equal(bulk.truncated, false);
 assert.ok(performance.now() - started < 15_000, "5,000-row parser test exceeded 15 seconds");
 
-console.log("Import core tests passed: organization numbers, safe JSON paths, CSV/BOM/semicolon, nested JSON, XLSX worksheets/formula results, mapping separation and 5,000-row parsing.");
+const overLimitRows = ["Namn", ...Array.from({ length: 10_001 }, (_, index) => `Post ${index}`)];
+const truncated = await parseImportFile(Buffer.from(overLimitRows.join("\n")), "too-large.csv", "text/csv", { maxRows: 10_000 });
+assert.equal(truncated.rows.length, 10_000);
+assert.equal(truncated.sourceRowCount, 10_001);
+assert.equal(truncated.truncated, true);
+assert.equal(truncated.truncationReason, "max_rows_exceeded");
+
+console.log("Import core tests passed: organization numbers, customer types, safe JSON paths, CSV/BOM/semicolon, nested JSON, XLSX worksheets/formula results, mapping separation, explicit truncation and 5,000-row parsing.");
 }
 
 void main().catch((error) => { console.error(error); process.exitCode = 1; });

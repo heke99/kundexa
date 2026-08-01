@@ -8,6 +8,7 @@ import { serverEnv } from "@/lib/env";
 import { ensureCanonicalContractDocument } from "@/lib/contracts/canonical-document";
 import { renderContractDeliveryEmail } from "@/lib/email/templates/contract-delivery";
 import { normalizeVariableFees } from "@/lib/contracts/price-terms";
+import { readJsonObject, toJson, toJsonObject } from "@/lib/supabase/json";
 
 export const apiCreateContractSchema = z.object({
   customer_id: z.uuid(),
@@ -130,7 +131,7 @@ export async function createContractFromApi(identity: ApiIdentity, input: Create
     variable_fees: variableFees.fees,
     binding_months: price?.binding_months ?? null, notice_months: price?.notice_months ?? null,
     payment_terms_days: price?.payment_terms_days ?? null, product_id: product?.id ?? null,
-    product_name: product?.name ?? null, price_version: price?.version ?? null, additional_terms: price?.terms ?? {},
+    product_name: product?.name ?? null, price_version: price?.version ?? null, additional_terms: toJsonObject(price?.terms ?? {}),
   };
   const sellerSnapshot = { ...legalEntity };
   const counterpartySnapshot = { ...customer };
@@ -156,8 +157,8 @@ export async function createContractFromApi(identity: ApiIdentity, input: Create
     p_customer_id: input.customer_id, p_product_id: input.product_id ?? null, p_price_version_id: price?.id ?? null,
     p_template_id: template.id, p_template_version_id: templateVersion.id, p_legal_entity_id: legalEntity.id,
     p_title: renderedTitle, p_rendered_body: renderedBody, p_rendered_terms: renderedTerms,
-    p_commercial_terms: commercialTerms, p_document_hash: documentHash, p_seller_snapshot: sellerSnapshot,
-    p_counterparty_snapshot: counterpartySnapshot, p_source_call_id: input.source_call_id, p_idempotency_key: input.idempotency_key,
+    p_commercial_terms: toJson(commercialTerms), p_document_hash: documentHash, p_seller_snapshot: toJson(sellerSnapshot),
+    p_counterparty_snapshot: toJson(counterpartySnapshot), p_source_call_id: input.source_call_id, p_idempotency_key: input.idempotency_key,
   });
   if (error) {
     if (error.code === "23505") {
@@ -199,11 +200,11 @@ export async function sendContractFromApi(identity: ApiIdentity, contractId: str
       .select("status,configuration,credentials_ciphertext").eq("tenant_id", identity.tenantId)
       .eq("provider_type", "email").eq("provider", "resend").limit(1).maybeSingle();
     if (integration?.status !== "active") throw new Error("resend_integration_not_active");
-    const configuration = (integration.configuration ?? {}) as Record<string, unknown>;
+    const configuration = readJsonObject(integration.configuration);
     const accountMode = String(configuration.account_mode ?? "tenant_owned");
     if (accountMode === "platform_managed" && !env.RESEND_API_KEY) throw new Error("platform_resend_key_missing");
     if (accountMode !== "platform_managed" && !integration.credentials_ciphertext) throw new Error("tenant_resend_key_missing");
-    emailFrom = String(configuration.from_address ?? configuration.from ?? env.DEFAULT_EMAIL_FROM ?? "");
+    emailFrom = String(configuration.from_address ?? configuration.from ?? env.DEFAULT_EMAIL_FROM_ADDRESS ?? "");
     replyTo = replyTo ?? (configuration.reply_to ? String(configuration.reply_to) : null);
     if (!/^\S+@\S+\.\S+$/.test(emailFrom)) throw new Error("verified_from_address_required");
   }

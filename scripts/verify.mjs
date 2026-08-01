@@ -15,7 +15,8 @@ for (const table of [
   "customers", "import_runs", "campaigns", "deals", "calls", "sms_messages", "email_messages",
   "customer_list_seller_assignments", "customer_list_contact_candidates", "list_dispositions", "dialer_sessions", "note_revisions", "sales_orders", "sales_order_items",
   "contracts", "contract_versions", "contract_documents", "contract_recipients", "contract_deliveries",
-  "contract_acceptance_requests", "contract_acceptances", "contract_events", "contract_reminder_policies", "contract_reminders", "evidence_packages", "automation_rules",
+  "contract_acceptance_requests", "contract_acceptances", "contract_events", "contract_reminder_policies", "contract_reminders", "evidence_packages", "email_delivery_events",
+  "signing_envelopes", "signing_recipients", "signing_attempts", "signing_events", "signing_documents", "contract_post_sign_runs", "automation_rules",
   "automation_runs", "webhook_endpoints", "audit_logs", "outbox_jobs", "data_providers", "provider_accounts",
   "provider_permissions", "provider_field_permissions", "ingestion_jobs", "raw_payloads", "master_entities",
   "source_entities", "source_facts", "field_values", "entity_freshness", "enrichment_jobs", "enrichment_errors",
@@ -47,6 +48,16 @@ for (const [pattern, message] of [
   [/activate_automation/i, "controlled automation activation is required"],
   [/enqueue_outgoing_webhook_event/i, "outgoing webhook routing is required"],
   [/process_import_run/i, "transactional import execution is required"],
+  [/prevent_truncated_import_execution/i, "truncated imports must be blocked in the database"],
+  [/apply_rinkel_call_event/i, "Rinkel events require a canonical database reducer"],
+  [/correlate_rinkel_incoming_event/i, "incoming Rinkel correlation must be transactional"],
+  [/correlate_rinkel_outgoing_event/i, "outgoing Rinkel correlation must be transactional"],
+  [/protect_rinkel_call_projection/i, "Rinkel call state must be monotonic"],
+  [/apply_resend_delivery_event/i, "Resend events require an immutable monotonic reducer"],
+  [/finalize_signing_envelope/i, "multi-recipient signing requires atomic finalization"],
+  [/sync_contract_recipient_from_acceptance/i, "legacy acceptance must update the canonical recipient state"],
+  [/protect_contract_signing_projection/i, "contracts must not become signed before all required recipients and final evidence exist"],
+  [/mark_acceptance_opened/i, "acceptance opening must be idempotent and transactional"],
   [/rollback_import_run/i, "import rollback is required"],
   [/evaluate_contact_policy_for_tenant/i, "central contact policy is required"],
   [/reserve_usage_for_tenant/i, "atomic usage reservation is required"],
@@ -163,14 +174,15 @@ for (const relative of edgeFiles) {
 }
 
 const outboxWorker = await readFile(join(root, "supabase/functions/process-outbox/index.ts"), "utf8");
-for (const job of ["sms.send", "call.start", "email.send", "recording.download", "evidence.generate", "contract.confirmation", "contract.reminder.dispatch", "webhook.deliver"]) {
+for (const job of ["sms.send", "call.start", "email.send", "recording.download", "evidence.generate", "contract.confirmation", "contract.signed.confirmation", "contract.reminder.dispatch", "webhook.deliver"]) {
   assert.match(outboxWorker, new RegExp(job.replace(".", "\\.")), `Outbox worker does not support ${job}`);
 }
 assert.match(outboxWorker, /permanent_legacy_46elks_voice_job_disabled_use_rinkel/, "Legacy voice jobs must be dead-lettered without provider execution");
 assert.doesNotMatch(outboxWorker, /post46Elks\("calls"/, "46elks must not remain an executable voice provider");
 assert.doesNotMatch(outboxWorker, /voice_start/, "The outbox worker must not retain the legacy 46elks voice bridge");
 assert.doesNotMatch(outboxWorker, /increment_usage/, "Worker must not double-count usage after database reservation");
-assert.match(outboxWorker, /contract-confirmation\//, "Contract confirmation messages require stable business idempotency keys");
+assert.match(outboxWorker, /contract-confirmation\//, "Contract acceptance confirmations require stable business idempotency keys");
+assert.match(outboxWorker, /contract-signed\//, "Final signed-document confirmations require stable business idempotency keys");
 assert.match(outboxWorker, /from\("outbox_jobs"\)\.upsert/, "Contract confirmations must still be dispatched through the durable outbox");
 assert.match(outboxWorker, /onConflict: "tenant_id,idempotency_key"/, "Worker-created confirmation records must be idempotent");
 assert.match(outboxWorker, /document_id/, "Email attachments must use private document references");
@@ -179,9 +191,11 @@ assert.match(outboxWorker, /Idempotency-Key/, "Resend requests require stable pr
 assert.match(outboxWorker, /https:\/\/api\.resend\.com\/emails/, "Worker must use the Resend email endpoint");
 assert.match(outboxWorker, /enqueue_due_contract_reminders/, "Worker must atomically enqueue due reminders");
 assert.match(outboxWorker, /inQuietHours/, "Reminder delivery must respect tenant quiet hours");
+assert.doesNotMatch(outboxWorker, /async function processRinkelEvent/, "Legacy tenant Rinkel event processing must be removed from the general outbox worker");
+assert.doesNotMatch(outboxWorker, /async function processRinkelEnrichment/, "Legacy tenant Rinkel enrichment must be removed from the general outbox worker");
 
 const resendWebhook = await readFile(join(root, "src/app/api/webhooks/resend/[token]/route.ts"), "utf8");
-for (const pattern of [/request\.text\(\)/, /svix-id/, /svix-timestamp/, /svix-signature/, /timingSafeEqual/, /provider_webhook_events/, /provider_message_id/, /resendStatusForEvent/, /isPermanentResendFailure/, /mapped === "delivered"/, /mapped === "suppressed"/]) {
+for (const pattern of [/request\.text\(\)/, /svix-id/, /svix-timestamp/, /svix-signature/, /timingSafeEqual/, /provider_webhook_events/, /provider_message_id/, /resendStatusForEvent/, /isPermanentResendFailure/, /mapped === "delivered"/, /\["complained", "suppressed"\]\.includes\(mapped\)/]) {
   assert.match(resendWebhook, pattern, `Resend webhook invariant missing: ${pattern}`);
 }
 const contractActions = await readFile(join(root, "src/app/actions/contracts.ts"), "utf8");
@@ -232,6 +246,9 @@ assert.match(rinkelClient, /retrySafe && method === "GET" \? 3 : 1/, "Only safe 
 assert.match(rinkelClient, /\/call-recordings\/.*\/stream/, "Rinkel recordings need fresh temporary stream URLs");
 assert.match(rinkelClient, /\(\?:v1\\\/\)\?call-recordings/, "Rinkel recording references must accept webhook URLs with and without /v1");
 const rinkelWebhook = await readFile(join(root, "src/app/api/webhooks/rinkel/[secret]/[event]/route.ts"), "utf8");
+const rinkelWebhookSecurity = await readFile(join(root, "src/lib/webhooks/rinkel.ts"), "utf8");
+assert.match(rinkelWebhookSecurity, /process\.env\.VERCEL === "1"/, "Rinkel IP extraction must trust Vercel's controlled forwarding header only on Vercel");
+assert.match(rinkelWebhookSecurity, /RINKEL_TRUST_X_REAL_IP/, "Non-Vercel x-real-ip trust must be explicit and disabled by default");
 for (const pattern of [/verifyRinkelNetwork/, /authenticatePlatformRinkelWebhook/, /parseRinkelWebhookRequest/, /platform_rinkel_webhook_events/, /rinkel\.process_event/, /ignoreDuplicates: true/]) {
   assert.match(rinkelWebhook, pattern, `Rinkel webhook invariant missing: ${pattern}`);
 }
@@ -319,6 +336,9 @@ for (const relative of [
   "src/app/(dashboard)/app/teams/page.tsx",
   "src/app/(dashboard)/app/users/page.tsx",
   "src/components/app-shell/topbar.tsx",
+  "src/lib/signing/provider.ts",
+  "src/lib/signing/policy.ts",
+  "src/lib/supabase/runtime-database.types.ts",
   "src/app/auth/callback/route.ts",
 ]) assert.ok((await stat(join(root, relative))).size > 100, `Missing implementation ${relative}`);
 
@@ -332,11 +352,13 @@ assert.match(platformImportRoute, /employee_count: nullableInteger/, "Employee c
 const importRoute = await readFile(join(root, "src/app/api/v1/imports/file/route.ts"), "utf8");
 assert.match(importRoute, /scanImportFile/, "Import files must be security scanned before parsing and storage");
 assert.ok(importRoute.indexOf("const scan = await scanImportFile") < importRoute.indexOf("const parsed = await parseImportFile"), "Malware scan must run before parser execution");
+assert.match(importRoute, /parsed\.truncated/, "Truncated imports must be blocked before storage and execution");
+assert.match(importRoute, /preview.*validationFingerprint|commit.*validationFingerprint/s, "Preview and commit require separate idempotency namespaces");
 const importParser = await readFile(join(root, "src/lib/imports/file-parser.ts"), "utf8");
 for (const format of ["ExcelJS", "parseXlsx", "parseXmlRows", "ndjson", "Papa.parse", "resolveRecordsPath", "MAX_XLSX_COMPRESSION_RATIO"]) assert.match(importParser, new RegExp(format), `Import parser must support ${format}`);
 assert.doesNotMatch(importParser, /function parseZipEntries|inflateRawSync|sharedStrings\.xml/, "XLSX parsing must use the maintained ExcelJS library rather than a handwritten ZIP/XML parser");
 const importMappingEditor = await readFile(join(root, "src/components/import-field-mapping-editor.tsx"), "utf8");
-for (const pattern of [/company\.organization_number/, /contact\.phone_e164/, /mergePolicy/, /mapping_json/, /Transformkedja/]) assert.match(importMappingEditor, pattern, `Dynamic import mapping UI invariant missing: ${pattern}`);
+for (const pattern of [/company\.organization_number/, /contact\.phone_e164/, /entityType/, /fixed_person/, /from_field/, /mergePolicy/, /mapping_json/, /Transformkedja/]) assert.match(importMappingEditor, pattern, `Dynamic import mapping UI invariant missing: ${pattern}`);
 const parseHubWorker = await readFile(join(root, "supabase/functions/parsehub-worker/index.ts"), "utf8");
 for (const pattern of [/x-cron-secret/, /claim_parsehub_runs/, /decryptJson/, /runs\/\$\{encodeURIComponent\(runToken\)\}\/data/, /process_parsehub_import_run/]) assert.match(parseHubWorker, pattern, `ParseHub worker invariant missing: ${pattern}`);
 const projectionSql = sql.match(/create or replace function public\.directory_entity_projection_for_tenant[\s\S]*?\$\$;/i)?.[0] ?? "";
@@ -346,6 +368,31 @@ assert.doesNotMatch(projectionSql, /current_master/, "Directory projection must 
 const templatesAction = await readFile(join(root, "src/app/actions/contracts.ts"), "utf8");
 assert.match(templatesAction, /renderStrictTemplate/, "Contract creation must render the approved version, not hard-coded terms");
 assert.match(templatesAction, /create_contract_draft_v3/, "Contract creation must bind template, price, legal snapshots, commercial terms and assignment atomically");
+
+const callRealtime = await readFile(join(root, "src/hooks/use-call-realtime.ts"), "utf8");
+for (const pattern of [/fetchCurrentStatus/, /schedulePoll/, /scheduleReconnect/, /visibilitychange/, /SUBSCRIBED/, /reconciliation_required/]) {
+  assert.match(callRealtime, pattern, `Dialer recovery invariant missing: ${pattern}`);
+}
+const productionRinkelWorker = await readFile(join(root, "supabase/functions/rinkel-platform-worker/index.ts"), "utf8");
+assert.match(productionRinkelWorker, /pending_correlation/, "Uncorrelated Rinkel lifecycle events must remain retryable");
+assert.match(productionRinkelWorker, /correlate_rinkel_incoming_event/, "Incoming Rinkel correlation must use the atomic database RPC");
+assert.match(productionRinkelWorker, /correlate_rinkel_outgoing_event/, "Outgoing Rinkel correlation must use the atomic database RPC");
+assert.match(productionRinkelWorker, /apply_rinkel_call_event/, "Rinkel lifecycle projection must use the canonical reducer");
+assert.match(productionRinkelWorker, /select\("id"\)\.maybeSingle\(\)/, "Rinkel event processing must claim an event atomically");
+const resendWebhookProjection = await readFile(join(root, "src/app/api/webhooks/resend/[token]/route.ts"), "utf8");
+assert.match(resendWebhookProjection, /apply_resend_delivery_event/, "Resend webhook delivery state must use the monotonic reducer");
+const signingProvider = await readFile(join(root, "src/lib/signing/provider.ts"), "utf8");
+for (const method of ["createEnvelope", "createSignerSession", "fetchFinalDocument", "verifyWebhook"]) assert.match(signingProvider, new RegExp(method), `Signing provider contract missing ${method}`);
+const proxySource = await readFile(join(root, "src/lib/supabase/proxy.ts"), "utf8");
+assert.match(proxySource, /Content-Security-Policy/, "A nonce-based CSP is required");
+const topbarSource = await readFile(join(root, "src/components/app-shell/topbar.tsx"), "utf8");
+assert.doesNotMatch(topbarSource, /Global sökning/, "Non-functional global search must not be rendered");
+const generatedSchemaVerifier = await readFile(join(root, "scripts/verify-generated-schema.mjs"), "utf8");
+assert.match(generatedSchemaVerifier, /finalize_signing_envelope/, "Generated schema verification must include the hardening migration contract");
+assert.match(proxySource, /Strict-Transport-Security/, "HSTS is required");
+const runtimeTypes = await readFile(join(root, "src/lib/supabase/runtime-database.types.ts"), "utf8");
+assert.match(runtimeTypes, /RuntimeDatabase/, "Supabase clients must use the generated schema contract with migration compatibility");
+assert.match(sql, /contract\.signed\.confirmation/, "Post-sign completion must enqueue the final signed-document confirmation through the canonical outbox");
 
 // ---------------------------------------------------------------------------
 // Scraperadaptrar: normalisering, kontraktsparsning, robots och filtermodell.
@@ -505,7 +552,7 @@ assert.equal(packageJson.overrides.postcss, "8.5.19");
 assert.equal(packageJson.scripts["functions:deploy"], "node scripts/deploy-functions.mjs");
 assert.equal(packageJson.scripts["geography:import"], "node scripts/import-geography.mjs");
 const deployFunctions = await readFile(join(root, "scripts/deploy-functions.mjs"), "utf8");
-for (const worker of ["process-outbox", "automation-runner", "data-worker", "ingestion-worker", "maintenance-worker", "compliance-worker", "parsehub-worker"]) assert.match(deployFunctions, new RegExp(worker), `Deployment must include ${worker}`);
+for (const worker of ["process-outbox", "rinkel-platform-worker", "automation-runner", "data-worker", "ingestion-worker", "maintenance-worker", "compliance-worker", "parsehub-worker"]) assert.match(deployFunctions, new RegExp(worker), `Deployment must include ${worker}`);
 assert.match(packageJson.scripts.verify, /typecheck:edge/, "Full verification must type-check Edge Functions");
 
-console.log(`Verified ${migrations.length} migrations, source-call-gated contracts, canonical PDFs, Resend delivery/webhooks, reminders, evidence, tenant/contact policy, licensed directory, ingestion, NIX compliance, retention and worker deployment.`);
+console.log(`Verified ${migrations.length} migrations, monotonic Rinkel/Resend projections, non-truncating imports, multi-recipient signing, dialer recovery, canonical contracts, tenant isolation and worker deployment.`);

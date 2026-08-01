@@ -8,9 +8,26 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { decryptJson, encryptJson, randomToken, sha256 } from "@/lib/crypto";
 import { serverEnv } from "@/lib/env";
+import { readJsonObject, toJson, toJsonObject } from "@/lib/supabase/json";
+import type { RuntimeDatabase } from "@/lib/supabase/runtime-database.types";
 import { getScraperAdapter, identityFieldMapping, validateScraperFilter } from "../../../supabase/functions/_shared/providers";
 
 const value = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
+
+type DirectoryEntityType = RuntimeDatabase["public"]["Enums"]["directory_entity_type"];
+type ProviderCacheScope = RuntimeDatabase["public"]["Enums"]["provider_cache_scope"];
+type IngestionJobInsert = RuntimeDatabase["public"]["Tables"]["ingestion_jobs"]["Insert"];
+
+const DIRECTORY_ENTITY_TYPES = new Set<DirectoryEntityType>(["organization", "establishment", "person"]);
+const PROVIDER_CACHE_SCOPES = new Set<ProviderCacheScope>(["global", "provider_account", "tenant", "one_time"]);
+
+function isDirectoryEntityType(entry: string): entry is DirectoryEntityType {
+  return DIRECTORY_ENTITY_TYPES.has(entry as DirectoryEntityType);
+}
+
+function providerCacheScope(entry: string): ProviderCacheScope {
+  return PROVIDER_CACHE_SCOPES.has(entry as ProviderCacheScope) ? entry as ProviderCacheScope : "tenant";
+}
 
 async function adminContext() {
   const context = await getAppContext();
@@ -92,8 +109,8 @@ export async function saveEmailIntegration(form: FormData) {
     webhookPathToken: pathToken,
     from: fromAddress,
   };
-  const oldConfig = (existing?.configuration ?? {}) as Record<string, unknown>;
-  const configuration = {
+  const oldConfig = readJsonObject(existing?.configuration);
+  const configuration = toJsonObject({
     ...oldConfig,
     account_mode: accountMode,
     from_name: fromName,
@@ -104,7 +121,7 @@ export async function saveEmailIntegration(form: FormData) {
     webhook_path_token_hash: sha256(pathToken + env.KUNDEXA_WEBHOOK_PEPPER),
     last_test_status: "pending",
     last_error: null,
-  };
+  });
   const { data: saved, error } = await admin.from("tenant_integrations").upsert({
     tenant_id: context.tenantId,
     provider_type: "email",
@@ -132,7 +149,7 @@ export async function testResendIntegration(form: FormData) {
   const { data: integration } = await admin.from("tenant_integrations").select("id,status,credentials_ciphertext,configuration").eq("tenant_id", context.tenantId).eq("provider_type", "email").eq("provider", "resend").limit(1).maybeSingle();
   if (!integration?.credentials_ciphertext) redirect("/app/integrations?error=Spara Resend-konfigurationen först");
   const credentials = decryptJson<ResendCredentials>(integration.credentials_ciphertext, env.KUNDEXA_ENCRYPTION_KEY);
-  const configuration = (integration.configuration ?? {}) as Record<string, unknown>;
+  const configuration = readJsonObject(integration.configuration);
   const accountMode = String(configuration.account_mode ?? "tenant_owned");
   const apiKey = accountMode === "platform_managed" ? env.RESEND_API_KEY : credentials.apiKey;
   const fromAddress = String(configuration.from_address ?? credentials.from ?? "");
@@ -157,10 +174,11 @@ export async function testResendIntegration(form: FormData) {
     if (!response.ok) safeError = `Resend svarade ${response.status}: ${String(result.message ?? result.name ?? "anslutningen misslyckades").slice(0, 300)}`;
   } catch (error) { safeError = error instanceof Error ? error.message.slice(0, 300) : "Nätverksfel vid Resend-test"; }
   const testedAt = new Date().toISOString();
-  const success = Boolean(response?.ok && result.id);
-  const nextConfig = { ...configuration, last_test_status: success ? "success" : "error", last_tested_at: testedAt, last_error: success ? null : safeError, last_test_provider_message_id: success ? result.id : null };
+  const providerMessageId = typeof result.id === "string" ? result.id : null;
+  const success = Boolean(response?.ok && providerMessageId);
+  const nextConfig = toJsonObject({ ...configuration, last_test_status: success ? "success" : "error", last_tested_at: testedAt, last_error: success ? null : safeError, last_test_provider_message_id: success ? providerMessageId : null });
   await admin.from("tenant_integrations").update({ status: success ? "active" : "error", last_verified_at: success ? testedAt : null, configuration: nextConfig }).eq("tenant_id", context.tenantId).eq("id", integration.id);
-  await admin.from("audit_logs").insert({ tenant_id: context.tenantId, actor_user_id: context.userId, action: success ? "integration.resend_test_succeeded" : "integration.resend_test_failed", entity_type: "tenant_integration", entity_id: integration.id, after_data: { tested_at: testedAt, provider_message_id: success ? result.id : null, error: safeError } });
+  await admin.from("audit_logs").insert({ tenant_id: context.tenantId, actor_user_id: context.userId, action: success ? "integration.resend_test_succeeded" : "integration.resend_test_failed", entity_type: "tenant_integration", entity_id: integration.id, after_data: toJson({ tested_at: testedAt, provider_message_id: success ? providerMessageId : null, error: safeError }) });
   revalidatePath("/app/integrations");
   redirect(`/app/integrations?${success ? "message" : "error"}=${encodeURIComponent(success ? "Resend-testet lyckades. Integrationen är nu aktiv." : safeError ?? "Resend-testet misslyckades")}`);
 }
@@ -175,7 +193,7 @@ export async function generateResendWebhookAddress(form: FormData) {
   const credentials = decryptJson<ResendCredentials>(integration.credentials_ciphertext, env.KUNDEXA_ENCRYPTION_KEY);
   const token = randomToken(32);
   credentials.webhookPathToken = token;
-  const configuration = { ...((integration.configuration ?? {}) as Record<string, unknown>), webhook_path_token_hash: sha256(token + env.KUNDEXA_WEBHOOK_PEPPER) };
+  const configuration = toJsonObject({ ...readJsonObject(integration.configuration), webhook_path_token_hash: sha256(token + env.KUNDEXA_WEBHOOK_PEPPER) });
   const { error } = await admin.from("tenant_integrations").update({ credentials_ciphertext: encryptJson(credentials, env.KUNDEXA_ENCRYPTION_KEY), configuration, status: "pending" }).eq("tenant_id", context.tenantId).eq("id", integration.id);
   if (error) throw error;
   await admin.from("audit_logs").insert({ tenant_id: context.tenantId, actor_user_id: context.userId, action: "integration.resend_webhook_rotated", entity_type: "tenant_integration", entity_id: integration.id });
@@ -265,7 +283,7 @@ export async function createAutomation(form: FormData) {
     version: 1,
     conditions: [],
     delay_config: { minutes: delayMinutes },
-    actions: [action],
+    actions: toJson([action]),
     limits: { max_executions_per_entity: 1, max_actions_per_run: 10, max_sms_per_run: 1, max_email_per_run: 1 },
     test_mode: true,
     created_by: context.userId,
@@ -384,7 +402,7 @@ export async function configureGenericJsonProvider(form: FormData) {
   const allowedDomains = csvValues(value(form, "allowed_domains")).map((domain) => domain.toLowerCase());
   const allowedPaths = csvValues(value(form, "allowed_paths"));
   const allowedPurposes = csvValues(value(form, "allowed_purposes"));
-  const entityTypes = form.getAll("entity_types").map(String).filter((entry) => ["organization", "establishment", "person"].includes(entry));
+  const entityTypes = form.getAll("entity_types").map(String).filter(isDirectoryEntityType);
   let fieldMapping: Record<string, string>;
   try {
     const parsed = JSON.parse(value(form, "field_mapping"));
@@ -428,7 +446,7 @@ export async function configureGenericJsonProvider(form: FormData) {
     p_allowed_paths: allowedPaths,
     p_allowed_entity_types: entityTypes,
     p_allowed_purposes: allowedPurposes,
-    p_cache_scope: value(form, "cache_scope") || "tenant",
+    p_cache_scope: providerCacheScope(value(form, "cache_scope")),
     p_raw_storage_allowed: form.get("raw_storage_allowed") === "on",
     p_tenant_display_allowed: form.get("tenant_display_allowed") === "on",
     p_cross_tenant_reuse_allowed: form.get("cross_tenant_reuse_allowed") === "on",
@@ -465,7 +483,7 @@ export async function configureGenericJsonProvider(form: FormData) {
     timeout_ms: Math.max(1000, Number(value(form, "timeout_ms") || 30000)),
   } : {};
   const sourceClass = value(form, "source_class") || "licensed_provider";
-  const { error: providerUpdateError } = await supabase.from("data_providers").update({ source_class: sourceClass, discovery_configuration: discoveryConfiguration }).eq("tenant_id", context.tenantId).eq("id", ids.provider_id);
+  const { error: providerUpdateError } = await supabase.from("data_providers").update({ source_class: sourceClass, discovery_configuration: toJson(discoveryConfiguration) }).eq("tenant_id", context.tenantId).eq("id", ids.provider_id);
   if (providerUpdateError) redirect(`/app/data-sources?error=${encodeURIComponent(providerUpdateError.message)}`);
 
   for (const entityType of entityTypes) {
@@ -482,12 +500,12 @@ export async function configureGenericJsonProvider(form: FormData) {
     if (discoveryEndpoint) {
       const jobName = `${name} – ${entityType} – femdagarsinsamling`;
       const { data: existingJob } = await supabase.from("ingestion_jobs").select("id").eq("tenant_id", context.tenantId).eq("data_provider_id", ids.provider_id).eq("name", jobName).maybeSingle();
-      const payload = {
+      const payload: IngestionJobInsert = {
         tenant_id: context.tenantId, data_provider_id: ids.provider_id, provider_account_id: ids.account_id, permission_id: ids.permission_id,
         name: jobName, entity_type: entityType, schedule_expression: "every 5 days", schedule_interval_seconds: Math.max(3600, Number(value(form, "schedule_interval_seconds") || 432000)),
         priority: 100, max_records: Math.max(1, Math.min(Number(value(form, "ingestion_max_records") || 5000), 5000)), quota_interpretation: value(form, "quota_interpretation") || "per_run",
-        filter_definition: {}, status: "active", next_run_at: form.get("start_ingestion_now") === "on" ? new Date().toISOString() : new Date(Date.now() + 432000000).toISOString(),
-        adapter_key: "generic_json", adapter_configuration: discoveryConfiguration, created_by: context.userId,
+        filter_definition: toJson({}), status: "active", next_run_at: form.get("start_ingestion_now") === "on" ? new Date().toISOString() : new Date(Date.now() + 432000000).toISOString(),
+        adapter_key: "generic_json", adapter_configuration: toJson(discoveryConfiguration), created_by: context.userId,
       };
       const jobQuery = existingJob ? supabase.from("ingestion_jobs").update(payload).eq("id", existingJob.id) : supabase.from("ingestion_jobs").insert(payload);
       const { error: jobError } = await jobQuery;
@@ -582,7 +600,7 @@ export async function configureScraperProvider(form: FormData) {
     max_retries: maxRetries,
   };
   const { error: providerUpdateError } = await supabase.from("data_providers")
-    .update({ adapter_key: adapter.key, integration_type: "scrape_html", source_class: adapter.sourceClass, discovery_configuration: discoveryConfiguration })
+    .update({ adapter_key: adapter.key, integration_type: "scrape_html", source_class: adapter.sourceClass, discovery_configuration: toJson(discoveryConfiguration) })
     .eq("tenant_id", context.tenantId).eq("id", ids.provider_id);
   if (providerUpdateError) redirect(`/app/data-sources?error=${encodeURIComponent(providerUpdateError.message)}`);
 
@@ -606,13 +624,13 @@ export async function configureScraperProvider(form: FormData) {
     }
     const jobName = `${adapter.name} – ${entityType} – femdagarsinsamling`;
     const { data: existingJob } = await supabase.from("ingestion_jobs").select("id").eq("tenant_id", context.tenantId).eq("data_provider_id", ids.provider_id).eq("name", jobName).maybeSingle();
-    const payload = {
+    const payload: IngestionJobInsert = {
       tenant_id: context.tenantId, data_provider_id: ids.provider_id, provider_account_id: ids.account_id, permission_id: ids.permission_id,
       name: jobName, entity_type: entityType, schedule_expression: "every 5 days", schedule_interval_seconds: scheduleIntervalSeconds,
       priority: 100, max_records: maxRecords, quota_interpretation: "per_run",
-      filter_definition: filter as Record<string, unknown>, status: "active",
+      filter_definition: toJson(filter), status: "active",
       next_run_at: form.get("start_ingestion_now") === "on" ? new Date().toISOString() : new Date(Date.now() + scheduleIntervalSeconds * 1000).toISOString(),
-      adapter_key: adapter.key, adapter_configuration: discoveryConfiguration, created_by: context.userId,
+      adapter_key: adapter.key, adapter_configuration: toJson(discoveryConfiguration), created_by: context.userId,
     };
     const jobQuery = existingJob ? supabase.from("ingestion_jobs").update(payload).eq("id", existingJob.id) : supabase.from("ingestion_jobs").insert(payload);
     const { error: jobError } = await jobQuery;
@@ -727,14 +745,14 @@ export async function configureNixProvider(form: FormData) {
     allowed_domains: allowedDomains,
     allowed_paths: allowedPaths,
     credentials_ciphertext: credentialsCiphertext,
-    request_configuration: {
+    request_configuration: toJson({
       headers: requestHeaders,
       query: requestQuery,
       body: requestBody,
       source_version_path: value(form, "source_version_path") || undefined,
-    },
+    }),
     result_path: value(form, "result_path") || "result",
-    result_mapping: resultMapping,
+    result_mapping: toJson(resultMapping),
     validity_days: Math.max(1, Math.min(Number(value(form, "validity_days") || 60), 365)),
     timeout_ms: Math.max(1000, Math.min(Number(value(form, "timeout_ms") || 15000), 120000)),
     max_retries: Math.max(0, Math.min(Number(value(form, "max_retries") || 5), 20)),

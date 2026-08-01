@@ -7,12 +7,19 @@ import { DataTable } from "@/components/ui/data-table";
 import { Field, SelectField } from "@/components/ui/form-field";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
+import type { RuntimeDatabase } from "@/lib/supabase/runtime-database.types";
 
-const statusLabel: Record<string, string> = {
+type ContractStatus = RuntimeDatabase["public"]["Enums"]["contract_status"];
+
+const statusLabel: Record<ContractStatus, string> = {
   draft: "Utkast", ready: "Redo", sent: "Skickat", delivered: "Levererat", opened: "Öppnat",
-  accepted: "Accepterat", declined: "Avstått", expired: "Utgånget", signed: "Dokumenterat", active: "Aktivt",
+  signing: "Signering pågår", accepted: "Accepterat", declined: "Avstått", expired: "Utgånget", signed: "Dokumenterat", active: "Aktivt",
   cancelled: "Avbrutet", terminated: "Avslutat", superseded: "Ersatt",
 };
+
+function isContractStatus(value: string): value is ContractStatus {
+  return Object.prototype.hasOwnProperty.call(statusLabel, value);
+}
 
 type Search = {
   error?: string; message?: string; status?: string; call?: string; attention?: string; q?: string;
@@ -37,7 +44,7 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
   let query = supabase.from("contracts")
     .select("id,contract_number,title,status,audience,source_call_id,owner_user_id,team_id,product_id,expires_at,created_at,updated_at,customers(display_name),products(name)")
     .order("updated_at", { ascending: false }).limit(500);
-  if (params.status) query = query.eq("status", params.status);
+  if (params.status && isContractStatus(params.status)) query = query.eq("status", params.status);
   if (params.call === "missing") query = query.is("source_call_id", null);
   if (params.attention === "waiting") query = query.in("status", ["sent", "delivered", "opened"]);
   if (params.owner_user_id) query = query.eq("owner_user_id", params.owner_user_id);

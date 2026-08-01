@@ -7,6 +7,7 @@ import { DataTable } from "@/components/ui/data-table";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/utils";
+import { readJsonObject } from "@/lib/supabase/json";
 
 export default async function ProductsPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const params = await searchParams;
@@ -24,7 +25,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
             const prices = Array.isArray(product.product_price_versions) ? product.product_price_versions : [];
             const price = prices.sort((a, b) => b.version - a.version)[0];
             const variableFees = Array.isArray(price?.variable_fees) ? price.variable_fees : [];
-            const variableTotal = variableFees.reduce((sum, row) => sum + Number((row as Record<string, unknown>)?.amount ?? 0), 0);
+            const variableTotal = variableFees.reduce<number>((sum, row) => sum + Number(readJsonObject(row).amount ?? 0), 0);
             return <tr key={product.id}>
               <td><strong>{product.name}</strong></td><td>{product.sku ?? "—"}</td><td>{product.product_type}</td>
               <td>{formatCurrency(Number(price?.setup_fee))}</td><td>{formatCurrency(Number(price?.recurring_fee))}</td>

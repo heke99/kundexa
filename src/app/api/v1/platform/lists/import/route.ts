@@ -5,10 +5,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { parseImportFile } from "@/lib/imports/file-parser";
 import { normalizeImportedRow } from "@/lib/imports/normalize-row";
 import { scanImportFile } from "@/lib/imports/malware-scan";
+import { toJson } from "@/lib/supabase/json";
+import type { RuntimeDatabase } from "@/lib/supabase/runtime-database.types";
 
 export const runtime = "nodejs";
 const MAX_BYTES = 50 * 1024 * 1024;
 const MAX_ROWS = 50_000;
+type PlatformListEntryInsert = RuntimeDatabase["public"]["Tables"]["platform_list_entries"]["Insert"];
 
 const redirectWith = (request: Request, key: "message" | "error", value: string) => {
   const url = new URL("/app/platform/lists", request.url);
@@ -97,7 +100,7 @@ export async function POST(request: Request) {
     let invalid = 0;
     const seenHashes = new Set<string>();
     const seenSourceKeys = new Set<string>();
-    const entries = parsed.rows.flatMap((row, index) => {
+    const entries: PlatformListEntryInsert[] = parsed.rows.flatMap((row, index): PlatformListEntryInsert[] => {
       const normalized = normalizeImportedRow(row, firstNormalized.mapping);
       const company = normalized.normalized as Record<string, unknown>;
       const contacts = Array.isArray(company.contacts) ? company.contacts as Array<Record<string, unknown>> : [];
@@ -145,8 +148,8 @@ export async function POST(request: Request) {
         source_external_id: nullableText(company.source_external_id),
         state: isValid ? "available" : "invalid",
         data_hash: dataHash,
-        raw_data: row,
-        metadata: { row_number: index + 1, errors: normalized.errors, warnings: normalized.warnings },
+        raw_data: toJson(row),
+        metadata: toJson({ row_number: index + 1, errors: normalized.errors, warnings: normalized.warnings }),
       }];
     });
 

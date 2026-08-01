@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateRequest } from "@/lib/api-auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readJsonObject, toJson } from "@/lib/supabase/json";
 
 const schema = z.object({
   providerId: z.uuid(), providerAccountId: z.uuid(), permissionId: z.uuid(), entityType: z.enum(["organization", "establishment", "person"]),
@@ -22,16 +23,16 @@ export async function POST(request: Request) {
     if (!provider || !account || !permission) return NextResponse.json({ error: "provider_configuration_invalid" }, { status: 409 });
     if (!(permission.allowed_entity_types ?? []).includes(input.entityType)) return NextResponse.json({ error: "entity_type_not_permitted" }, { status: 403 });
     if (permission.expires_at && new Date(permission.expires_at) <= new Date()) return NextResponse.json({ error: "provider_permission_expired" }, { status: 403 });
-    const endpoint = (provider.discovery_configuration as Record<string, unknown> | null)?.endpoint_template ?? (account.configuration as Record<string, unknown> | null)?.discovery_endpoint_template;
+    const endpoint = readJsonObject(provider.discovery_configuration).endpoint_template ?? readJsonObject(account.configuration).discovery_endpoint_template;
     if (!endpoint) return NextResponse.json({ error: "provider_discovery_endpoint_missing" }, { status: 409 });
     const { data: job, error } = await admin.from("ingestion_jobs").insert({
       tenant_id: identity.tenantId, data_provider_id: provider.id, provider_account_id: account.id, permission_id: permission.id,
       name: input.name, entity_type: input.entityType, priority: 10, max_records: input.maxRecords, quota_interpretation: "per_run",
-      filter_definition: input.filters, adapter_key: provider.adapter_key ?? "generic_json", adapter_configuration: provider.discovery_configuration ?? {},
+      filter_definition: toJson(input.filters), adapter_key: provider.adapter_key ?? "generic_json", adapter_configuration: provider.discovery_configuration ?? {},
       status: "active", next_run_at: input.runNow ? new Date().toISOString() : null, created_by: identity.userId,
     }).select("*").single();
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-    await admin.from("audit_logs").insert({ tenant_id: identity.tenantId, actor_user_id: identity.userId, action: "ingestion_job.created", entity_type: "ingestion_job", entity_id: job.id, after_data: job });
+    await admin.from("audit_logs").insert({ tenant_id: identity.tenantId, actor_user_id: identity.userId, action: "ingestion_job.created", entity_type: "ingestion_job", entity_id: job.id, after_data: toJson(job) });
     return NextResponse.json({ data: job }, { status: 201 });
   } catch (error) {
     if (error instanceof Response) return error;

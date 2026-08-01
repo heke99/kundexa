@@ -7,6 +7,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { sha256 } from "@/lib/crypto";
 import { serverEnv } from "@/lib/env";
+import { toJson } from "@/lib/supabase/json";
 import { createPlatformRinkelClient } from "@/lib/integrations/rinkel/client";
 import { safeRinkelError } from "@/lib/integrations/rinkel/errors";
 import { RINKEL_WEBHOOK_EVENTS } from "@/lib/integrations/rinkel/schemas";
@@ -68,7 +69,7 @@ async function platformAudit(
     entity_type: entityType,
     entity_id: entityId,
     tenant_id: tenantId ?? null,
-    metadata,
+    metadata: toJson(metadata),
   });
 }
 
@@ -176,7 +177,7 @@ export async function syncPlatformRinkelDirectory() {
         email: user.email,
         display_name: user.fullName,
         active: user.active,
-        raw_provider_data: user.raw,
+        raw_provider_data: toJson(user.raw),
         last_synced_at: syncedAt,
       }, { onConflict: "platform_integration_id,external_user_id" });
       if (error) throw error;
@@ -192,7 +193,7 @@ export async function syncPlatformRinkelDirectory() {
         provider_status: number.status,
         active: number.active,
         recording_enabled: number.recordingEnabled,
-        raw_provider_data: number.raw,
+        raw_provider_data: toJson(number.raw),
         last_synced_at: syncedAt,
       }, { onConflict: "platform_integration_id,external_number_id" });
       if (error) throw error;

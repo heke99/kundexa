@@ -20,6 +20,32 @@ export async function processImport(form: FormData) {
   const importRunId = String(form.get("import_run_id") ?? "");
   if (!importRunId) return;
   const supabase = await createClient();
+  const runResult = await supabase.from("import_runs")
+    .select("id,truncated,validation_fingerprint,execution_idempotency_key")
+    .eq("id", importRunId)
+    .single();
+  if (runResult.error || !runResult.data) {
+    redirect(`/app/imports/${importRunId}?error=${encodeURIComponent(runResult.error?.message ?? "Importen hittades inte")}`);
+  }
+  if (runResult.data.truncated) {
+    redirect(`/app/imports/${importRunId}?error=${encodeURIComponent("Importen är trunkerad och får inte verkställas. Ladda upp filen i mindre batcher.")}`);
+  }
+  const executionKey = runResult.data.execution_idempotency_key
+    ?? `commit:${runResult.data.validation_fingerprint ?? `run:${importRunId}`}`;
+  if (!runResult.data.execution_idempotency_key) {
+    const executionUpdate = await supabase.from("import_runs")
+      .update({ execution_idempotency_key: executionKey })
+      .eq("id", importRunId)
+      .is("execution_idempotency_key", null);
+    if (executionUpdate.error) {
+      const existing = await supabase.from("import_runs").select("id")
+        .eq("execution_idempotency_key", executionKey)
+        .neq("id", importRunId)
+        .maybeSingle();
+      if (existing.data) redirect(`/app/imports/${existing.data.id}?message=${encodeURIComponent("Den här importen har redan verkställts.")}`);
+      redirect(`/app/imports/${importRunId}?error=${encodeURIComponent(executionUpdate.error.message)}`);
+    }
+  }
   const { data, error } = await supabase.rpc("process_import_run", { p_import_run_id: importRunId });
   if (error) redirect(`/app/imports/${importRunId}?error=${encodeURIComponent(error.message)}`);
   const result = data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, Json | undefined> : {};
@@ -93,7 +119,9 @@ export async function updateImportMapping(form: FormData) {
     status: errors === runResult.data.total_rows ? "mapping_required" : "preview_ready",
     error_count: errors,
     warning_count: warnings,
-    validation_report: jsonValue({ valid_rows: valid, warning_rows: warnings, error_rows: errors, mapping_updated_at: new Date().toISOString() }),
+    accepted_row_count: valid + warnings,
+    rejected_row_count: errors,
+    validation_report: jsonValue({ valid_rows: valid, warning_rows: warnings, error_rows: errors, accepted_row_count: valid + warnings, rejected_row_count: errors, mapping_updated_at: new Date().toISOString() }),
   }).eq("id", importRunId);
   if (updated.error) redirect(`/app/imports/${importRunId}?error=${encodeURIComponent(updated.error.message)}`);
   revalidatePath(`/app/imports/${importRunId}`);
