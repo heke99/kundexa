@@ -1,17 +1,17 @@
 # Open blockers
 
-## P0 launch gates
+## P0 release gates
 
-- `db push` av alla 38 migrationer till separat Supabase staging: `NOT RUN`.
-- Supabase-typer genererade från den verkliga databasen: `NOT RUN`.
-- Tvåtenant-RLS/Storage med riktiga JWT-sessioner och alla roller: `NOT RUN`.
-- Central Rinkel API-nyckel, riktig katalogsynk, device, dial och alla fem webhookar: `BLOCKED EXTERNALLY`.
-- Inspelning, transkript, Insights, webhookretry/inaktivering och reconciliation: `BLOCKED EXTERNALLY`.
-- Juridik/DPIA/retention, backup/restore, lasttest och extern penetrationstest: `NOT RUN`.
+- Applicera alla 40 migrationer på separat Kundexa Supabase staging: `NOT RUN`.
+- Generera och checka in `src/lib/supabase/database.types.ts` från staging: `NOT RUN`.
+- Kör `npm run types:verify`, Edge/Deno, SQL-runtime, full test, build och komplett verify efter fungerande dependencyinstallation: `NOT RUN`.
+- Verifiera tvåtenant-RLS/Storage med riktiga JWT-sessioner: `NOT RUN`.
+- Verifiera central Rinkel API-nyckel, katalogsynk, device, nummer, dial och fem webhookevents: `BLOCKED EXTERNALLY`.
+- Verifiera CDR-reparation, recording, transcript och Insights mot verklig plan: `BLOCKED EXTERNALLY`.
+- Juridik/DPIA/retention, backup/restore, belastningstest och extern penetrationstest: `NOT RUN`.
 
 ## Miljö
 
-- Slutverifieringen kördes i Node 24.14.0/npm 11.9.0. Projektets Node 22.x/npm 10.9.2 är `NOT RUN`.
-- Ingen gitmetadata finns, så patchen kan inte bindas till branch/commit.
-
-Detaljer: `docs/PRODUCTION_GATES.md` och `RINKEL_DELIVERY.md`.
+- Sandboxen kör korrekt Node 22.16.0/npm 10.9.2 men kunde inte installera låsta dependencies: intern proxy gav 404 för `pdf-lib@1.17.1` och direkt registryförsök gav DNS `EAI_AGAIN`.
+- Deno, PGlite/Postgres och Supabase CLI var därför inte körbara lokalt.
+- Ingen `.git`-metadata finns i zip-arkivet.

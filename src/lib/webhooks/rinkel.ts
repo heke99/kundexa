@@ -29,6 +29,7 @@ export async function verifyRinkelNetwork(request: Request) {
   if (!env.RINKEL_ENFORCE_WEBHOOK_IP_ALLOWLIST) return { allowed: true, ip: trustedRinkelSourceIp(request) };
   const ip = trustedRinkelSourceIp(request);
   if (!ip) return { allowed: false, ip: null };
+  if (env.RINKEL_WEBHOOK_ALLOWED_IPS.includes(ip)) return { allowed: true, ip };
   const admin = createAdminClient();
   const { data, error } = await admin.rpc("is_provider_ip_allowed", { p_provider: "rinkel", p_ip: ip });
   return { allowed: !error && data === true, ip };

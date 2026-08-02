@@ -27,12 +27,13 @@ Deno.test("normalizes Rinkel users and numbers", () => {
 });
 
 Deno.test("maps every documented callEnd cause", () => {
-  equal(mapRinkelCause("ANSWERED"), "completed", "answered");
-  equal(mapRinkelCause("CALLCENTER"), "completed", "callcenter");
-  equal(mapRinkelCause("UNANSWERED"), "unanswered", "unanswered");
+  equal(mapRinkelCause("ANSWERED"), "answered", "answered");
+  equal(mapRinkelCause("CALLCENTER"), "answering_service", "callcenter");
+  equal(mapRinkelCause("UNANSWERED"), "no_answer", "unanswered");
   equal(mapRinkelCause("BLACKLISTED"), "blocked", "blacklisted");
   equal(mapRinkelCause("VOICEMAIL"), "voicemail", "voicemail");
   equal(mapRinkelCause("OUTSIDE_OPERATION_TIMES"), "outside_business_hours", "outside hours");
+  equal(mapRinkelCause("NEW_PROVIDER_CAUSE"), "unknown", "unknown cause");
 });
 
 Deno.test("validates all webhook event payloads", () => {
@@ -40,6 +41,8 @@ Deno.test("validates all webhook event payloads", () => {
   equal(parseRinkelWebhookPayload("outgoingCall", { id: "c2", datetime: "2026-07-30T10:00:00Z", from: "+46812345678", to: "+46701111111", userId: "u1" }).event, "outgoingCall", "outgoing");
   equal(parseRinkelWebhookPayload("callStart", { id: "c2", datetime: "2026-07-30T10:00:01Z", answeredBy: "person", choice: null, userId: "u1" }).event, "callStart", "start");
   equal(parseRinkelWebhookPayload("callEnd", { id: "c2", datetime: "2026-07-30T10:01:00Z", cause: "ANSWERED", callRecordingUrl: "https://api.rinkel.com/v1/call-recordings/rec_1/stream", voicemailUrl: null }).event, "callEnd", "end");
+  const unknownEnd = parseRinkelWebhookPayload("callEnd", { id: "c3", datetime: "2026-07-30T10:02:00Z", cause: "PROVIDER_ADDED_CAUSE", callRecordingUrl: null, voicemailUrl: null });
+  assert(unknownEnd.event === "callEnd" && !unknownEnd.knownCause, "unknown end cause must remain ingestible");
   equal(parseRinkelWebhookPayload("callInsights", { id: "c2", sentiment: "POSITIVE", topics: ["sales"], summary: "Good call" }).event, "callInsights", "insights");
 });
 

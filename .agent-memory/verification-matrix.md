@@ -1,21 +1,21 @@
 # Verification matrix
 
-| Område | Kontroll | Status 2026-07-30 |
+| Område | Kontroll | Status 2026-08-02 |
 |---|---|---|
-| Web TypeScript | `npm run typecheck` | PASS |
-| Edge Functions | `npm run typecheck:edge` | PASS |
 | Statiska invarianter | `node scripts/verify.mjs` | PASS |
-| Rinkel-enhetstest | `npm run test:rinkel` | PASS, 8/8 |
-| Kontrakt/import | `npm run test:contracts && npm run test:imports` | PASS |
-| Migrationer/RPC | `node scripts/verify-sql.mjs` | PASS: 38/170/277/297 |
-| Central Rinkel två tenants | SQL-runtime | PASS |
-| Produktionsbuild | `npm run build` | PASS |
-| Komplett lokal gate | `npm run verify` | PASS |
-| Node 22/npm 10.9.2 | samma gate | NOT RUN |
-| Live Supabase + genererade typer | staging | NOT RUN |
-| RLS/Storage med riktiga JWT | staging, två tenants | NOT RUN |
-| Rinkel dial + fem webhookar | live staging | NOT RUN |
-| Recording/transcript/Insights | live staging | NOT RUN |
-| Backup/load/SAST/DAST/pentest | externa gates | NOT RUN |
+| Kontraktsenhetstest | `node scripts/contract-delivery-unit-tests.mjs` | PASS |
+| Rinkel-enhetstest | fallback via faktisk TS-källa | PASS 8/8 |
+| Ändrade TS/TSX-filer | TypeScript `transpileModule` | PASS syntax |
+| Genererat schema | `node scripts/verify-generated-schema.mjs` | FAIL EXPECTED: stagingtyper ej regenererade |
+| Dependencyinstallation | `npm ci` | BLOCKED: registry/proxy |
+| Web TypeScript | `npm run typecheck` | NOT RUN efter dependencyfel |
+| Edge Functions | `npm run typecheck:edge` | NOT RUN: Deno/dependencies saknas |
+| SQL-migrationer/RPC | `node scripts/verify-sql.mjs` | NOT RUN: PGlite saknas |
+| Produktionsbuild | `npm run build` | NOT RUN efter dependencyfel |
+| Komplett gate | `npm run verify` | NOT RUN/PASS saknas |
+| Live Supabase + typer | separat staging | NOT RUN |
+| RLS/Storage riktiga JWT | två tenants | NOT RUN |
+| Rinkel dial + fem webhookar | riktig staging | NOT RUN |
+| CDR/recording/transcript/Insights | riktig staging | NOT RUN |
 
-`NOT RUN` får endast ersättas efter att det verkliga steget har körts.
+`NOT RUN` och `FAIL EXPECTED` får endast ersättas efter att det verkliga steget har körts.

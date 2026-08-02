@@ -49,3 +49,31 @@
 - Orsak: statusendpointen läste `tenant_integrations` med användarens Supabase-session, medan tabellens SELECT-policy endast tillåter tenantadmin. Ett RLS-tomt resultat behandlades som `not_configured`.
 - Fix: endpointen använder nu service role efter verifierad auth/tenant och alla frågor är explicit tenant- och anslutningsfiltrerade. UI skiljer dessutom ett serverfel från en verkligt saknad anslutning.
 - Status: `RESOLVED IN CODE`; live Supabase/Rinkel-verifiering återstår.
+
+## FAILURE-0008 — Nya Rinkel-cause-värden stoppade callEnd
+
+- Risk: strikt enumvalidering kunde avvisa framtida providerorsaker och förhindra terminal projektion.
+- Fix: begränsat men öppet providerformat, rå cause bevaras och okända värden mappas till `provider_outcome=unknown`.
+- Regression: `scripts/rinkel-unit-tests.mts` och `scripts/verify-sql.mjs`.
+- Status: `RESOLVED IN CODE`; SQL-runtime mot staging återstår.
+
+## FAILURE-0009 — Inkommande samtal saknade tenantlokal kundmatchning
+
+- Risk: samtalet skapades utan säker kund-/kontaktkoppling.
+- Fix: matchning efter tenant från aktiv nummerallokering; endast exakt en kund/kontakt kopplas automatiskt.
+- Regression: tvåtenant- och dublettfall i `scripts/verify-sql.mjs`.
+- Status: `RESOLVED IN CODE`; SQL-runtime mot staging återstår.
+
+## FAILURE-0010 — callEnd skapade ingen kanonisk recordingrad
+
+- Risk: UI kunde visa providerstatus men saknade åtkomstkontrollerad recordingreferens.
+- Fix: idempotent upsert av en aktiv recordingrad per tenant/call/provider med retentionpolicy.
+- Regression: `scripts/verify-sql.mjs`.
+- Status: `RESOLVED IN CODE`; riktig Rinkel-recording återstår.
+
+## FAILURE-0011 — Reconciliation markerade bara avvikelse
+
+- Risk: fastnade samtal reparerades inte från Rinkels slutliga CDR.
+- Fix: workerhämtning, strikt kandidatmatchning, konfliktkö och atomisk `reconcile_rinkel_call_from_cdr`.
+- Regression: statiska invarianter och SQL-runtimefall.
+- Status: `RESOLVED IN CODE`; provider/staging-verifiering återstår.

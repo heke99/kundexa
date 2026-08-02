@@ -1,22 +1,30 @@
 # Current state
 
-Datum: 2026-07-30
+Datum: 2026-08-02
 
 ## Kodstatus
 
-- 38 ordnade migrationer; den senaste är `202607300002_central_rinkel_platform.sql`.
-- 170 publika tabeller, 277 publika funktioner och 297 RLS-policies i PGlite-verifieringen.
-- Rinkel är en central plattformsintegration med exakt en logisk server-side `RINKEL_API_KEY`; inga tenantcredentials eller connectionbaserade webhookar är exekverbara.
-- Centrala användare och nummer allokeras historiserat till tenants. Grants och `rinkel_user_mappings_v2` begränsar team/säljare och standardnummer.
-- Utgående samtal reserveras atomiskt med serverhärledda providerresurser. `POST /dial` körs högst en gång och okänt utfall går till reconciliation.
-- Centrala webhookar routar inkommande samtal via nummerallokeringens giltighetstid och placerar tvetydigheter i konfliktkö.
-- Rinkel är enda voice-provider; 46elks används endast för SMS och SIP/WebRTC-flöden saknar exekveringsväg.
-- `npm run verify` passerar lokalt med Edge-kontroll, tester, 38 migrationer, SQL-runtime, tvåtenant-Rinkeltest, TypeScript och Next.js-build.
+- 40 ordnade migrationer; senaste är `202608020001_rinkel_lifecycle_reconciliation_hardening.sql`.
+- Rinkel är fortsatt exakt en central plattformsintegration med en server-side API-nyckel och centralt ägda/allokerade resurser.
+- Dial skickas exakt en gång. Timeout/osäkert utfall går till `unknown` och CDR/webhook-reparation, inte automatisk omringning.
+- Rinkels tekniska status och utfall är separerade från CRM-disposition.
+- Okända providerorsaker bevaras rått och avvisar inte hela webhooken.
+- Inkommande kundmatchning är tenantlokal och endast entydiga träffar kopplas automatiskt.
+- `callEnd` skapar recordingreferens och köar CDR/enrichment.
+- CDR-worker utför verklig idempotent reparation och skapar konflikt vid flera kandidater.
+- Genererade Supabase-typer är medvetet föråldrade tills den nya migrationen körts på staging och `types:generate` har körts.
 
-## Produktionsstatus
+## Lokal verifiering
 
-`NOT READY`. Lokal kodgate är grön men riktig central Rinkel-nyckel, live-Supabase/JWT/RLS, alla fem webhookar, riktiga samtal, inspelning/transkript/Insights, Node 22, juridik, backup/restore, belastning och extern säkerhetsgranskning är `NOT RUN`.
+- `node scripts/verify.mjs`: PASS.
+- `node scripts/contract-delivery-unit-tests.mjs`: PASS.
+- Rinkel fallback-unit: PASS 8/8.
+- Ändrade TS/TSX-filer: transpileringssyntax PASS.
+- `npm run types:verify`: FAIL EXPECTED — saknar den nya staginggenererade kolumnen/RPC:n.
+- Full `npm ci`, Deno, SQL-runtime, typecheck, test, build och komplett verify: NOT RUN/PASS saknas på grund av sandboxens dependency-/runtimebegränsningar.
 
-## Källstatus
+## Externa gates
 
-Leveransen kom som zip utan `.git`; branch/commit/remote är `UNVERIFIED`.
+- Ingen identifierbar Kundexa Supabase staging är ansluten i tillgänglig Supabase-miljö.
+- Riktig Rinkel API-nyckel, device, nummer, webhookar, dial, CDR, recording, transcript och Insights är NOT RUN.
+- Tvåtenant-RLS/Storage med riktiga JWT-sessioner är NOT RUN.

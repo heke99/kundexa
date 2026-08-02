@@ -785,13 +785,13 @@ try {
 if (!truncatedCommitBlocked) throw new Error('Truncated import was allowed to enter processing');
 
 await db.exec(`
-  update public.calls set status='completed',provider_status='callEnd',provider_state_updated_at='2026-08-01T10:00:00Z'
+  update public.calls set status='completed',provider_status='ended',provider_outcome='answered',recording_status='available_at_provider',provider_state_updated_at='2026-08-01T10:00:00Z'
   where id='${centralResult.callId}';
-  update public.calls set status='answered',provider_status='callStart',provider_state_updated_at='2026-08-01T10:05:00Z'
+  update public.calls set status='answered',provider_status='connected',provider_outcome=null,recording_status='unavailable',provider_state_updated_at='2026-08-01T10:05:00Z'
   where id='${centralResult.callId}';
 `);
-const monotonicCall = await db.query(`select status,provider_status from public.calls where id=$1`, [centralResult.callId]);
-if (monotonicCall.rows[0].status !== 'completed' || monotonicCall.rows[0].provider_status !== 'callEnd') {
+const monotonicCall = await db.query(`select status,provider_status,provider_outcome,recording_status from public.calls where id=$1`, [centralResult.callId]);
+if (monotonicCall.rows[0].status !== 'completed' || monotonicCall.rows[0].provider_status !== 'ended' || monotonicCall.rows[0].provider_outcome !== 'answered' || monotonicCall.rows[0].recording_status !== 'available_at_provider') {
   throw new Error(`Late Rinkel start regressed terminal projection: ${JSON.stringify(monotonicCall.rows[0])}`);
 }
 
@@ -820,8 +820,148 @@ await db.exec(`
 `);
 const correlatedReplay = await db.query(`select public.apply_rinkel_call_event('00000000-0000-0000-0000-000000000081') as result`);
 if (correlatedReplay.rows[0].result.status !== 'processed') throw new Error(`Buffered Rinkel event did not replay: ${JSON.stringify(correlatedReplay.rows[0])}`);
-const correlatedCall = await db.query(`select status from public.calls where id='00000000-0000-0000-0000-000000000082'`);
-if (correlatedCall.rows[0].status !== 'answered') throw new Error(`Replayed Rinkel event did not update the call: ${JSON.stringify(correlatedCall.rows[0])}`);
+const correlatedCall = await db.query(`select status,provider_status from public.calls where id='00000000-0000-0000-0000-000000000082'`);
+if (correlatedCall.rows[0].status !== 'answered' || correlatedCall.rows[0].provider_status !== 'connected') {
+  throw new Error(`Replayed Rinkel event did not update the call: ${JSON.stringify(correlatedCall.rows[0])}`);
+}
+
+// Provider causes are an open-ended external vocabulary. Unknown but well-formed
+// values must be retained raw, projected safely, and must not block recording or
+// CDR repair.
+await db.query(`
+  insert into public.platform_rinkel_webhook_events(
+    id,platform_integration_id,event_type,external_call_id,provider_event_id,payload_hash,content_type,payload,event_at
+  ) values(
+    '00000000-0000-0000-0000-000000000095',$1,'callEnd','late-correlated-call','verify-rinkel-unknown-end',
+    'verify-unknown-end-hash','application/json',
+    '{"cause":"PROVIDER_ADDED_CAUSE","callRecordingUrl":"https://api.rinkel.com/v1/call-recordings/rec_unknown/stream"}',
+    '2026-08-01T11:05:00Z'
+  )
+`, [platformIntegrationId]);
+const unknownCauseResult = await db.query(`select public.apply_rinkel_call_event('00000000-0000-0000-0000-000000000095') as result`);
+if (unknownCauseResult.rows[0].result.status !== 'processed') {
+  throw new Error(`Unknown Rinkel cause was not processed: ${JSON.stringify(unknownCauseResult.rows[0])}`);
+}
+const unknownCauseCall = await db.query(`
+  select status,provider_status,provider_outcome,provider_cause,recording_status
+  from public.calls where id='00000000-0000-0000-0000-000000000082'
+`);
+if (
+  unknownCauseCall.rows[0].status !== 'completed'
+  || unknownCauseCall.rows[0].provider_status !== 'ended'
+  || unknownCauseCall.rows[0].provider_outcome !== 'unknown'
+  || unknownCauseCall.rows[0].provider_cause !== 'PROVIDER_ADDED_CAUSE'
+  || unknownCauseCall.rows[0].recording_status !== 'available_at_provider'
+) throw new Error(`Unknown Rinkel cause projection failed: ${JSON.stringify(unknownCauseCall.rows[0])}`);
+const unknownRecording = await db.query(`
+  select provider_recording_id,status from public.call_recordings
+  where tenant_id='00000000-0000-0000-0000-000000000001'
+    and call_id='00000000-0000-0000-0000-000000000082' and provider='rinkel' and deleted_at is null
+`);
+if (unknownRecording.rows.length !== 1 || unknownRecording.rows[0].provider_recording_id !== 'rec_unknown' || unknownRecording.rows[0].status !== 'available_at_provider') {
+  throw new Error(`Rinkel callEnd recording projection failed: ${JSON.stringify(unknownRecording.rows)}`);
+}
+const callEndRepairJob = await db.query(`
+  select count(*)::int as count from public.platform_rinkel_jobs
+  where idempotency_key='rinkel.reconcile_call:call_end:00000000-0000-0000-0000-000000000082'
+`);
+if (Number(callEndRepairJob.rows[0].count) !== 1) throw new Error('Rinkel callEnd did not enqueue exactly one CDR repair job');
+
+// CDR is the final repair source. Reconciliation must atomically repair the
+// provider projection and the recording reference without trusting client state.
+await db.exec(`
+  insert into public.calls(
+    id,tenant_id,customer_id,provider,direction,from_number,to_number,status,provider_status,
+    provider_state_updated_at,callback_token_hash
+  ) values(
+    '00000000-0000-0000-0000-000000000096','00000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000021','rinkel','outbound','+46811111111','+46702222221',
+    'provider_outcome_unknown','unknown','2026-08-01T11:10:00Z','verify-cdr-repair-token'
+  );
+`);
+const cdrRepair = await db.query(`select public.reconcile_rinkel_call_from_cdr(
+  '00000000-0000-0000-0000-000000000096','cdr-repair-call',
+  '2026-08-01T11:10:00Z','2026-08-01T11:10:05Z','2026-08-01T11:12:05Z',120,
+  'ANSWERED','rec_cdr','{"source":"runtime-verifier"}'::jsonb
+) as result`);
+if (cdrRepair.rows[0].result.status !== 'reconciled') throw new Error(`CDR reconciliation failed: ${JSON.stringify(cdrRepair.rows[0])}`);
+const cdrCall = await db.query(`
+  select external_call_id,status,provider_status,provider_outcome,provider_cause,duration_seconds,recording_status
+  from public.calls where id='00000000-0000-0000-0000-000000000096'
+`);
+if (
+  cdrCall.rows[0].external_call_id !== 'cdr-repair-call'
+  || cdrCall.rows[0].status !== 'completed'
+  || cdrCall.rows[0].provider_status !== 'ended'
+  || cdrCall.rows[0].provider_outcome !== 'answered'
+  || cdrCall.rows[0].provider_cause !== 'ANSWERED'
+  || Number(cdrCall.rows[0].duration_seconds) !== 120
+  || cdrCall.rows[0].recording_status !== 'available_at_provider'
+) throw new Error(`CDR projection was incomplete: ${JSON.stringify(cdrCall.rows[0])}`);
+const cdrRecording = await db.query(`
+  select provider_recording_id,status from public.call_recordings
+  where tenant_id='00000000-0000-0000-0000-000000000001'
+    and call_id='00000000-0000-0000-0000-000000000096' and provider='rinkel' and deleted_at is null
+`);
+if (cdrRecording.rows.length !== 1 || cdrRecording.rows[0].provider_recording_id !== 'rec_cdr') {
+  throw new Error(`CDR recording repair failed: ${JSON.stringify(cdrRecording.rows)}`);
+}
+
+// The destination number determines the tenant for inbound calls. Matching may
+// inspect only that tenant and must remain unlinked when the tenant-local result
+// is ambiguous.
+await db.exec(`
+  insert into public.customers(id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by)
+  values
+    ('00000000-0000-0000-0000-000000000097','00000000-0000-0000-0000-000000000001','company','prospect','Cross-tenant same number','+46709999991',true,'legitimate_interest','00000000-0000-0000-0000-000000000002'),
+    ('00000000-0000-0000-0000-000000000098','00000000-0000-0000-0000-000000000051','company','prospect','Tenant B inbound match','+46709999991',true,'legitimate_interest','00000000-0000-0000-0000-000000000050');
+`);
+await db.query(`
+  insert into public.platform_rinkel_webhook_events(
+    id,platform_integration_id,event_type,external_call_id,provider_event_id,payload_hash,content_type,payload,event_at
+  ) values(
+    '00000000-0000-0000-0000-000000000099',$1,'incomingCall','inbound-tenant-b-unique','verify-rinkel-inbound-unique',
+    'verify-inbound-unique-hash','application/json','{"from":"+46709999991","to":"+46822222222"}',
+    '2026-08-01T11:20:00Z'
+  )
+`, [platformIntegrationId]);
+const inboundUnique = await db.query(`select public.correlate_rinkel_incoming_event(
+  '00000000-0000-0000-0000-000000000099','00000000-0000-0000-0000-000000000051',
+  '00000000-0000-0000-0000-000000000059','00000000-0000-0000-0000-000000000055',
+  '+46709999991','+46822222222'
+) as result`);
+if (inboundUnique.rows[0].result.customer_id !== '00000000-0000-0000-0000-000000000098') {
+  throw new Error(`Inbound call crossed tenant boundary or missed unique tenant match: ${JSON.stringify(inboundUnique.rows[0])}`);
+}
+const inboundUniqueCall = await db.query(`select tenant_id,customer_id,provider_status from public.calls where id=$1`, [inboundUnique.rows[0].result.call_id]);
+if (
+  inboundUniqueCall.rows[0].tenant_id !== '00000000-0000-0000-0000-000000000051'
+  || inboundUniqueCall.rows[0].customer_id !== '00000000-0000-0000-0000-000000000098'
+  || inboundUniqueCall.rows[0].provider_status !== 'initiated'
+) throw new Error(`Inbound tenant projection failed: ${JSON.stringify(inboundUniqueCall.rows[0])}`);
+
+await db.exec(`
+  insert into public.customers(id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by)
+  values('00000000-0000-0000-0000-000000000100','00000000-0000-0000-0000-000000000051','company','prospect','Tenant B ambiguous match','+46709999991',true,'legitimate_interest','00000000-0000-0000-0000-000000000050');
+`);
+await db.query(`
+  insert into public.platform_rinkel_webhook_events(
+    id,platform_integration_id,event_type,external_call_id,provider_event_id,payload_hash,content_type,payload,event_at
+  ) values(
+    '00000000-0000-0000-0000-000000000101',$1,'incomingCall','inbound-tenant-b-ambiguous','verify-rinkel-inbound-ambiguous',
+    'verify-inbound-ambiguous-hash','application/json','{"from":"+46709999991","to":"+46822222222"}',
+    '2026-08-01T11:21:00Z'
+  )
+`, [platformIntegrationId]);
+const inboundAmbiguous = await db.query(`select public.correlate_rinkel_incoming_event(
+  '00000000-0000-0000-0000-000000000101','00000000-0000-0000-0000-000000000051',
+  '00000000-0000-0000-0000-000000000059','00000000-0000-0000-0000-000000000055',
+  '+46709999991','+46822222222'
+) as result`);
+if (inboundAmbiguous.rows[0].result.customer_id !== null) {
+  throw new Error(`Ambiguous inbound call was guessed instead of left unmatched: ${JSON.stringify(inboundAmbiguous.rows[0])}`);
+}
+console.log('Executed Rinkel monotonic lifecycle, unknown cause, recording, CDR repair and tenant-safe inbound correlation runtime paths.');
 
 await db.exec(`
   insert into public.email_messages(

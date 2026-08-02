@@ -20,7 +20,7 @@ export default async function CallDetailPage({ params }: { params: Promise<{ id:
   ] = await Promise.all([
     supabase.from("calls").select("*,customers(display_name)").eq("id", id).single(),
     supabase.from("call_events").select("id,event_type,occurred_at,processing_status").eq("call_id", id).order("occurred_at"),
-    supabase.from("call_recordings").select("id,status,mime_type,duration_seconds,size_bytes,retention_delete_at,deleted_at").eq("call_id", id).maybeSingle(),
+    supabase.from("call_recordings").select("id,status,mime_type,duration_seconds,size_bytes,retention_delete_at,deleted_at").eq("call_id", id).is("deleted_at", null).order("created_at", { ascending: true }).limit(1).maybeSingle(),
     supabase.from("call_transcripts").select("status,raw_transcript,structured_transcript,generated_at,deleted_at").eq("call_id", id).eq("provider", "rinkel").maybeSingle(),
     supabase.from("call_insights").select("source,status,sentiment,topics,summary,generated_at").eq("call_id", id).order("generated_at", { ascending: false }),
   ]);
@@ -39,7 +39,10 @@ export default async function CallDetailPage({ params }: { params: Promise<{ id:
       <Card><CardHeader><h2><Phone size={17} /> Samtalsstatus</h2><Badge className={call.status === "completed" ? "badge-success" : "badge-info"}>{call.status}</Badge></CardHeader><CardContent>
         <p><strong>Från:</strong> {call.from_number}</p>
         <p><strong>Till:</strong> {call.to_number}</p>
-        <p><strong>Resultat:</strong> {call.disposition ?? "Ej registrerat"}</p>
+        <p><strong>Teknisk status:</strong> {call.provider_status ?? "Ej rapporterad"}</p>
+        <p><strong>Providerresultat:</strong> {call.provider_outcome ?? "Ej rapporterat"}</p>
+        {call.provider_cause ? <p><strong>Rinkel-orsak:</strong> {call.provider_cause}</p> : null}
+        <p><strong>CRM-disposition:</strong> {call.disposition ?? "Ej registrerad"}</p>
         <p><strong>Längd:</strong> {call.duration_seconds ?? 0} sekunder</p>
         {call.notes ? <p><strong>Anteckning:</strong><br />{call.notes}</p> : null}
       </CardContent></Card>

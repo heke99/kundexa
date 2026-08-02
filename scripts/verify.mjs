@@ -53,6 +53,7 @@ for (const [pattern, message] of [
   [/correlate_rinkel_incoming_event/i, "incoming Rinkel correlation must be transactional"],
   [/correlate_rinkel_outgoing_event/i, "outgoing Rinkel correlation must be transactional"],
   [/protect_rinkel_call_projection/i, "Rinkel call state must be monotonic"],
+  [/reconcile_rinkel_call_from_cdr/i, "Rinkel CDR reconciliation must repair canonical calls"],
   [/apply_resend_delivery_event/i, "Resend events require an immutable monotonic reducer"],
   [/finalize_signing_envelope/i, "multi-recipient signing requires atomic finalization"],
   [/sync_contract_recipient_from_acceptance/i, "legacy acceptance must update the canonical recipient state"],
@@ -249,6 +250,7 @@ const rinkelWebhook = await readFile(join(root, "src/app/api/webhooks/rinkel/[se
 const rinkelWebhookSecurity = await readFile(join(root, "src/lib/webhooks/rinkel.ts"), "utf8");
 assert.match(rinkelWebhookSecurity, /process\.env\.VERCEL === "1"/, "Rinkel IP extraction must trust Vercel's controlled forwarding header only on Vercel");
 assert.match(rinkelWebhookSecurity, /RINKEL_TRUST_X_REAL_IP/, "Non-Vercel x-real-ip trust must be explicit and disabled by default");
+assert.match(rinkelWebhookSecurity, /RINKEL_WEBHOOK_ALLOWED_IPS/, "Documented Rinkel source IPs must be configurable server-side");
 for (const pattern of [/verifyRinkelNetwork/, /authenticatePlatformRinkelWebhook/, /parseRinkelWebhookRequest/, /platform_rinkel_webhook_events/, /rinkel\.process_event/, /ignoreDuplicates: true/]) {
   assert.match(rinkelWebhook, pattern, `Rinkel webhook invariant missing: ${pattern}`);
 }
@@ -257,6 +259,7 @@ assert.match(rinkelCalls, /rinkel_reserve_platform_outbound_call/, "Rinkel calls
 assert.match(rinkelCalls, /createPlatformRinkelClient/, "Rinkel calls must use the environment-owned platform credential");
 assert.match(rinkelCalls, /client\.dial/, "Rinkel calls must use the canonical provider client");
 assert.doesNotMatch(rinkelCalls, /fetch\([^)]*api\.rinkel/, "Rinkel route must not bypass the canonical provider client");
+assert.match(rinkelCalls, /provider_status,provider_outcome,provider_cause/, "Call APIs must expose technical provider state separately from CRM disposition");
 const rinkelMigration = await readFile(join(root, "supabase/migrations/202607300002_central_rinkel_platform.sql"), "utf8");
 assert.match(rinkelMigration, /RINKEL_WEBHOOKS_NOT_READY/, "Automatic Rinkel calls need a database-enforced webhook health gate");
 assert.match(rinkelMigration, /revoke all on public\.platform_integrations,public\.platform_rinkel_users,public\.platform_rinkel_numbers/, "Raw central Rinkel provider data must not be table-readable by authenticated clients");
@@ -267,6 +270,19 @@ assert.match(rinkelMigration, /public\.can_access_call\(call_id\)/, "Call artifa
 const rinkelPlatformWorker = await readFile(join(root, "supabase/functions/rinkel-platform-worker/index.ts"), "utf8");
 assert.match(rinkelPlatformWorker, /RINKEL_INCOMING_ALLOCATION_CONFLICT/, "Ambiguous incoming calls must be quarantined");
 assert.match(rinkelPlatformWorker, /RINKEL_OUTGOING_CORRELATION_CONFLICT/, "Ambiguous outgoing calls must be quarantined");
+assert.match(rinkelPlatformWorker, /RINKEL_CDR_CORRELATION_CONFLICT/, "Ambiguous CDR repair candidates must be quarantined");
+assert.match(rinkelPlatformWorker, /getCallByCallId/, "Known Rinkel call IDs must be reconciled from CDR");
+assert.match(rinkelPlatformWorker, /listCallDetailRecords/, "Unknown dial outcomes require bounded CDR discovery");
+assert.match(rinkelPlatformWorker, /reconcile_rinkel_call_from_cdr/, "CDR repair must use the atomic database reducer");
+const rinkelHardeningMigration = await readFile(join(root, "supabase/migrations/202608020001_rinkel_lifecycle_reconciliation_hardening.sql"), "utf8");
+assert.match(rinkelHardeningMigration, /provider_outcome/, "Provider outcome must be separate from CRM disposition");
+assert.match(rinkelHardeningMigration, /call_recordings_one_active_provider_call_uidx/, "One active recording projection per provider call is required");
+assert.match(rinkelHardeningMigration, /inbound_match/, "Incoming calls need tenant-safe unique customer correlation");
+assert.match(rinkelHardeningMigration, /rinkel\.reconcile_call/, "callEnd and uncertain dials must enqueue CDR reconciliation");
+assert.match(rinkelHardeningMigration, /rinkel_incoming_event_payload_mismatch/, "Incoming webhook payload must be revalidated inside the transaction");
+assert.match(rinkelHardeningMigration, /rinkel_outgoing_event_payload_mismatch/, "Outgoing webhook payload must be revalidated inside the transaction");
+assert.match(rinkelHardeningMigration, /rinkel_external_call_id_conflict/, "Lifecycle reducers must reject duplicate provider call IDs");
+assert.match(rinkelHardeningMigration, /old\.recording_status in \('available_at_provider','copy_pending','stored_privately'\)/, "Late events must not regress an available recording");
 const rinkelActions = await readFile(join(root, "src/app/actions/rinkel.ts"), "utf8");
 assert.match(rinkelActions, /transcription:\s*false/, "Connection tests must not infer transcription from webhook access");
 assert.match(rinkelActions, /ai_insights:\s*false/, "Connection tests must not infer AI Insights from webhook access");
@@ -378,6 +394,7 @@ assert.match(productionRinkelWorker, /pending_correlation/, "Uncorrelated Rinkel
 assert.match(productionRinkelWorker, /correlate_rinkel_incoming_event/, "Incoming Rinkel correlation must use the atomic database RPC");
 assert.match(productionRinkelWorker, /correlate_rinkel_outgoing_event/, "Outgoing Rinkel correlation must use the atomic database RPC");
 assert.match(productionRinkelWorker, /apply_rinkel_call_event/, "Rinkel lifecycle projection must use the canonical reducer");
+assert.match(productionRinkelWorker, /processCallReconciliation/, "Rinkel reconciliation must perform provider repair instead of only flagging stale calls");
 assert.match(productionRinkelWorker, /select\("id"\)\.maybeSingle\(\)/, "Rinkel event processing must claim an event atomically");
 const resendWebhookProjection = await readFile(join(root, "src/app/api/webhooks/resend/[token]/route.ts"), "utf8");
 assert.match(resendWebhookProjection, /apply_resend_delivery_event/, "Resend webhook delivery state must use the monotonic reducer");

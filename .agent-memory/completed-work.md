@@ -49,3 +49,13 @@
 - Rättade dialerns statusendpoint så att säljare kan läsa säker, tenantbegränsad integrationsstatus utan att få credentials eller bred tabellåtkomst.
 - Lade explicit felhantering för databas-/migrationsfel i stället för att visa dem som ”Rinkel är inte anslutet”.
 - Rättade klientstatusen så att endast `configured === false` visas som en verkligt saknad Rinkel-anslutning.
+
+## 2026-08-02 Rinkel lifecycle/CDR-härdning
+
+- Separat kanonisk `provider_status`, `provider_outcome` och CRM-disposition.
+- Okända välformaterade Rinkel-cause-värden bevaras rått och mappas defensivt till `unknown`.
+- Inkommande kund-/kontaktmatchning sker enbart inom tenant som äger mottagande nummer och endast vid entydig träff.
+- `callEnd` skapar idempotent inspelningsreferens och köar CDR/enrichment.
+- `rinkel-platform-worker` hämtar och applicerar CDR; flera kandidater blir konflikt, aldrig gissning.
+- Framåtriktad migration: `202608020001_rinkel_lifecycle_reconciliation_hardening.sql`.
+- Statisk verifiering och kontraktsenhetstest: PASS. Rinkel fallback-enhetstest: PASS 8/8.

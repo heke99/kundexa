@@ -1,4 +1,19 @@
 import { z } from "zod";
+function isValidIpAddress(value: string) {
+  const parts = value.split(".");
+  if (parts.length === 4 && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)) return true;
+  return /^[0-9a-f:]+$/i.test(value) && value.includes(":") && value.length <= 45;
+}
+
+const ipAllowlistSchema = z.string().default("82.199.77.220,188.122.73.177").transform((value, context) => {
+  const addresses = [...new Set(value.split(",").map((entry) => entry.trim()).filter(Boolean))];
+  const invalid = addresses.find((entry) => !isValidIpAddress(entry));
+  if (invalid) {
+    context.addIssue({ code: "custom", message: `Ogiltig IP-adress i RINKEL_WEBHOOK_ALLOWED_IPS: ${invalid}` });
+    return z.NEVER;
+  }
+  return addresses;
+});
 
 const publicSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
@@ -28,6 +43,7 @@ const serverSchema = publicSchema.extend({
   RINKEL_API_BASE_URL: z.string().url().default("https://api.rinkel.com/v1"),
   RINKEL_WEBHOOK_PUBLIC_BASE_URL: z.string().url().default("https://app.kundexa.se"),
   RINKEL_WEBHOOK_SECRET: z.string().min(40).max(128).optional(),
+  RINKEL_WEBHOOK_ALLOWED_IPS: ipAllowlistSchema,
   RINKEL_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(15000),
   RINKEL_ENFORCE_WEBHOOK_IP_ALLOWLIST: z.enum(["true", "false"]).default("true").transform((value) => value === "true"),
   RINKEL_TRUST_X_REAL_IP: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
@@ -59,6 +75,7 @@ export function serverEnv() {
     RINKEL_API_BASE_URL: process.env.RINKEL_API_BASE_URL ?? "https://api.rinkel.com/v1",
     RINKEL_WEBHOOK_PUBLIC_BASE_URL: process.env.RINKEL_WEBHOOK_PUBLIC_BASE_URL ?? "https://app.kundexa.se",
     RINKEL_WEBHOOK_SECRET: process.env.RINKEL_WEBHOOK_SECRET,
+    RINKEL_WEBHOOK_ALLOWED_IPS: process.env.RINKEL_WEBHOOK_ALLOWED_IPS ?? "82.199.77.220,188.122.73.177",
     RINKEL_REQUEST_TIMEOUT_MS: process.env.RINKEL_REQUEST_TIMEOUT_MS ?? "15000",
     RINKEL_ENFORCE_WEBHOOK_IP_ALLOWLIST: process.env.RINKEL_ENFORCE_WEBHOOK_IP_ALLOWLIST ?? "true",
     RINKEL_TRUST_X_REAL_IP: process.env.RINKEL_TRUST_X_REAL_IP ?? "false",

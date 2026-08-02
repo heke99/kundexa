@@ -40,3 +40,13 @@
 - Ändrade statusrouten till autentiserad, explicit tenantfiltrerad service-role-läsning utan credentialexponering.
 - Ändrade dialerhooken så att 500-/migrationsfel inte maskeras som en frånvarande integration.
 - Paketinstallation/verifiering kunde inte köras i denna sandbox eftersom den interna npm-spegeln returnerade 404 för `pdf-lib@1.17.1`; detta är en verifieringsmiljöbegränsning, inte ett observerat projektfel.
+
+### Rinkel lifecycle/CDR-härdning 2026-08-02
+
+- Inspekterade masterprompt och hela zip-projektet; behöll den befintliga centrala Rinkel-modellen.
+- Identifierade fyra konkreta driftluckor: okända cause-värden, inkommande kundmatchning, recordingprojektion och faktisk CDR-reparation.
+- Lade framåtriktad migration, workerreparation, öppet defensivt schemasupport, provider outcome i API/UI, IP-env och regressionstester.
+- `node scripts/verify.mjs`: PASS för 40 migrationer och statiska invarianter.
+- Kontraktsenhetstest: PASS. Rinkel fallback-enhetstest via TypeScript-transpilering: PASS 8/8.
+- `types:verify`: avsiktligt FAIL tills migrationen körts och typer genererats från staging.
+- Full npm/Deno/SQL/build-gate blockerades lokalt av otillgängliga dependencies/Deno och avsaknad av länkad Kundexa staging; inga sådana steg rapporteras som godkända.

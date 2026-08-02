@@ -17,12 +17,14 @@ const requiredFunctions = [
   "apply_rinkel_call_event",
   "correlate_rinkel_incoming_event",
   "correlate_rinkel_outgoing_event",
+  "reconcile_rinkel_call_from_cdr",
   "apply_resend_delivery_event",
   "finalize_signing_envelope",
   "mark_acceptance_opened",
 ];
 const requiredColumns = [
   "provider_state_updated_at",
+  "provider_outcome",
   "validation_fingerprint",
   "execution_idempotency_key",
   "source_row_count",
@@ -50,4 +52,4 @@ if (missing.length) {
   process.exit(1);
 }
 
-console.log("Generated Supabase types include the production-hardening schema contract.");
+console.log("Generated Supabase types include the current production-hardening schema contract.");

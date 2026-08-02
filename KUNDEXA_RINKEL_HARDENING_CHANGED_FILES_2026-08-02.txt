@@ -1,0 +1,35 @@
+NYA FILER
+KUNDEXA_RINKEL_HARDENING_CHANGED_FILES_2026-08-02.txt
+KUNDEXA_RINKEL_HARDENING_DELIVERY_2026-08-02.md
+KUNDEXA_RINKEL_HARDENING_SYNC_2026-08-02.md
+KUNDEXA_RINKEL_HARDENING_VERIFY_LOG_2026-08-02.txt
+supabase/migrations/202608020001_rinkel_lifecycle_reconciliation_hardening.sql
+
+ÄNDRADE FILER
+.agent-memory/completed-work.md
+.agent-memory/current-state.md
+.agent-memory/known-failures.md
+.agent-memory/next-actions.md
+.agent-memory/open-blockers.md
+.agent-memory/session-log.md
+.agent-memory/verification-matrix.md
+.env.example
+KUNDEXA_CENTRAL_RINKEL_ENV.md
+RINKEL_DELIVERY.md
+docs/integrations/rinkel.md
+scripts/rinkel-unit-tests.mts
+scripts/verify-generated-schema.mjs
+scripts/verify-sql.mjs
+scripts/verify.mjs
+src/app/(dashboard)/app/calls/[id]/page.tsx
+src/app/api/v1/calls/route.ts
+src/lib/env.ts
+src/lib/integrations/rinkel/schemas.ts
+src/lib/integrations/rinkel/types.ts
+src/lib/supabase/runtime-database.types.ts
+src/lib/webhooks/rinkel.ts
+supabase/functions/_shared/rinkel.ts
+supabase/functions/rinkel-platform-worker/index.ts
+
+RADERADE FILER
+Inga.

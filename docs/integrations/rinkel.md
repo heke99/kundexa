@@ -75,6 +75,7 @@ RINKEL_API_KEY=
 RINKEL_API_BASE_URL=https://api.rinkel.com/v1
 RINKEL_WEBHOOK_PUBLIC_BASE_URL=https://app.example.com
 RINKEL_WEBHOOK_SECRET=
+RINKEL_WEBHOOK_ALLOWED_IPS=82.199.77.220,188.122.73.177
 RINKEL_REQUEST_TIMEOUT_MS=15000
 RINKEL_ENFORCE_WEBHOOK_IP_ALLOWLIST=true
 RINKEL_TRUST_X_REAL_IP=false
@@ -102,3 +103,24 @@ I Vercel läses käll-IP endast från `x-vercel-forwarded-for`. Utanför Vercel 
 
 Rinkels publicerade webhookguide dokumenterar HTTPS och käll-IP-allowlist men ingen payloadsignatur. Endpointen använder därför ett roterbart, högentropiskt path-secret, IP-allowlist, payloadhash, unik provider-eventnyckel och idempotent eventlagring. Om Rinkel senare publicerar HMAC/signatur ska rå body verifieras innan parsing och lagring.
 
+## Livscykel och CDR-härdning 2026-08-02
+
+Rinkels tekniska livscykel lagras separat från säljarens CRM-disposition:
+
+- `provider_status`: `requesting`, `requested`, `initiated`, `connected`, `ended`, `failed` eller `unknown`.
+- `provider_outcome`: `answered`, `no_answer`, `blocked`, `voicemail`, `answering_service`, `outside_business_hours`, `provider_error` eller `unknown`.
+- `disposition`: Kundexas affärsmässiga efterarbete och får inte skrivas över av providern.
+
+Okända, välformaterade Rinkel-orsaker accepteras, bevaras rått i `provider_cause` och projiceras defensivt till `provider_outcome=unknown`. Därmed blockerar ett nytt provider-värde inte webhookmottagningen.
+
+`callEnd` skapar eller uppdaterar den enda aktiva Rinkel-inspelningsreferensen för samtalet och köar både CDR-avstämning och tillåten enrichment. CDR-arbetaren hämtar den specifika posten när call-ID är känt. När call-ID saknas söker den i ett begränsat tidsfönster och kräver en entydig match på nummer, användare och tid; flera kandidater blir en konflikt och får aldrig väljas godtyckligt. Den atomiska RPC:n `reconcile_rinkel_call_from_cdr` reparerar status, tider, duration, rå cause, provider outcome, call-ID, attempt och inspelningsreferens.
+
+För inkommande samtal löses tenant endast från den aktiva centrala nummerallokeringen. Kund-/kontaktmatchning görs därefter endast inom denna tenant. Automatisk koppling sker bara när exakt en kund och, i förekommande fall, exakt en kontakt är entydig; dubletter lämnas omatchade för manuell hantering.
+
+Den framåtriktade migrationen är:
+
+```text
+supabase/migrations/202608020001_rinkel_lifecycle_reconciliation_hardening.sql
+```
+
+Efter migrationen måste Supabase-typerna genereras om. `npm run types:verify` ska avsiktligt vara rött tills stagingdatabasen innehåller `calls.provider_outcome` och `reconcile_rinkel_call_from_cdr`.

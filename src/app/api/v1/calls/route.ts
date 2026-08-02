@@ -43,7 +43,7 @@ export async function GET(request: Request) {
     const limit = Math.max(1, Math.min(100, Number(url.searchParams.get("limit") ?? 50)));
     const callId = url.searchParams.get("id");
     const supabase = await createClient();
-    const selection = "id,direction,status,end_cause,from_number,to_number,initiated_at,answered_at,ended_at,duration_seconds,disposition,recording_status,transcription_status,insights_status,created_at,customers(display_name)";
+    const selection = "id,direction,status,end_cause,provider_status,provider_outcome,provider_cause,from_number,to_number,initiated_at,answered_at,ended_at,duration_seconds,disposition,recording_status,transcription_status,insights_status,created_at,customers(display_name)";
     if (callId) {
       const parsedId = z.uuid().safeParse(callId);
       if (!parsedId.success) return NextResponse.json({ error: "invalid_call_id" }, { status: 422 });

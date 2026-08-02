@@ -60,16 +60,32 @@ export type RinkelWebhookPayload =
   | { event: "incomingCall"; id: string; datetime: string; to: string; from: string }
   | { event: "outgoingCall"; id: string; datetime: string; to: string; from: string; userId: string }
   | { event: "callStart"; id: string; datetime: string; answeredBy: string | null; choice: string | null; userId: string | null }
-  | { event: "callEnd"; id: string; datetime: string; cause: RinkelEndCause; callRecordingUrl: string | null; voicemailUrl: string | null }
+  | { event: "callEnd"; id: string; datetime: string; cause: RinkelEndCause; knownCause: boolean; callRecordingUrl: string | null; voicemailUrl: string | null }
   | { event: "callInsights"; id: string; sentiment: "POSITIVE" | "NEUTRAL" | "NEGATIVE"; topics: string[]; summary: string };
 
-export type RinkelEndCause =
+export type RinkelKnownEndCause =
   | "UNANSWERED"
   | "ANSWERED"
   | "BLACKLISTED"
   | "VOICEMAIL"
   | "CALLCENTER"
   | "OUTSIDE_OPERATION_TIMES";
+
+/**
+ * Rinkel can add new end causes without a coordinated Kundexa release. Keep
+ * the raw, bounded provider value so the webhook remains ingestible and can be
+ * reconciled later instead of returning 400 and losing the event.
+ */
+export type RinkelEndCause = string;
+
+export type RinkelProviderOutcome =
+  | "answered"
+  | "no_answer"
+  | "blocked"
+  | "voicemail"
+  | "answering_service"
+  | "outside_business_hours"
+  | "unknown";
 
 export type RinkelCallStatus =
   | "completed"
@@ -455,7 +471,7 @@ export function parseRinkelWebhookPayload(event: RinkelWebhookEvent, value: unkn
   }
   if (event === "callEnd") {
     const cause = string(item.cause, "cause");
-    if (!isRinkelEndCause(cause)) throw new RinkelError("RINKEL_SCHEMA_ERROR", "Rinkel callEnd-cause är okänd.");
+    if (!isRinkelEndCause(cause)) throw new RinkelError("RINKEL_SCHEMA_ERROR", "Rinkel callEnd-cause har ogiltigt format.");
     const recordingUrl = string(item.callRecordingUrl, "callRecordingUrl", true);
     if (recordingUrl) assertRinkelRecordingReference(recordingUrl);
     const voicemailUrl = string(item.voicemailUrl, "voicemailUrl", true);
@@ -464,6 +480,7 @@ export function parseRinkelWebhookPayload(event: RinkelWebhookEvent, value: unkn
       id,
       datetime: validDate(item.datetime, "datetime"),
       cause,
+      knownCause: isKnownRinkelEndCause(cause),
       callRecordingUrl: recordingUrl,
       voicemailUrl,
     };
@@ -484,6 +501,10 @@ export function parseRinkelWebhookPayload(event: RinkelWebhookEvent, value: unkn
 }
 
 export function isRinkelEndCause(value: unknown): value is RinkelEndCause {
+  return typeof value === "string" && /^[A-Z][A-Z0-9_]{1,63}$/.test(value);
+}
+
+export function isKnownRinkelEndCause(value: unknown): value is RinkelKnownEndCause {
   return typeof value === "string" && [
     "UNANSWERED",
     "ANSWERED",
@@ -494,12 +515,23 @@ export function isRinkelEndCause(value: unknown): value is RinkelEndCause {
   ].includes(value);
 }
 
-export function mapRinkelCause(cause: RinkelEndCause): RinkelCallStatus {
-  if (cause === "ANSWERED" || cause === "CALLCENTER") return "completed";
-  if (cause === "UNANSWERED") return "unanswered";
+export function mapRinkelCause(cause: RinkelEndCause): RinkelProviderOutcome {
+  if (cause === "ANSWERED") return "answered";
+  if (cause === "CALLCENTER") return "answering_service";
+  if (cause === "UNANSWERED") return "no_answer";
   if (cause === "BLACKLISTED") return "blocked";
   if (cause === "VOICEMAIL") return "voicemail";
-  return "outside_business_hours";
+  if (cause === "OUTSIDE_OPERATION_TIMES") return "outside_business_hours";
+  return "unknown";
+}
+
+export function mapRinkelCauseToCallStatus(cause: RinkelEndCause): RinkelCallStatus {
+  const outcome = mapRinkelCause(cause);
+  if (outcome === "no_answer") return "unanswered";
+  if (outcome === "blocked") return "blocked";
+  if (outcome === "voicemail") return "voicemail";
+  if (outcome === "outside_business_hours") return "outside_business_hours";
+  return "completed";
 }
 
 export function isTerminalCallStatus(status: string) {

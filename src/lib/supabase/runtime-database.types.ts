@@ -68,6 +68,7 @@ type TableOverrides = {
     invalidated_reason: string | null;
     provider: string;
     provider_cause: string | null;
+    provider_outcome: string | null;
     provider_connection_id: string | null;
     provider_device_id: string | null;
     provider_state_updated_at: string | null;
@@ -159,6 +160,7 @@ type MissingFunctionName =
   | "prepare_contract_delivery_api_v2"
   | "prepare_contract_delivery_v2"
   | "record_contract_acceptance_v2"
+  | "reconcile_rinkel_call_from_cdr"
   | "refresh_platform_list_counts"
   | "refresh_segment_materialization_for_tenant"
   | "register_external_manual_call"

@@ -137,3 +137,18 @@ CRON_SECRET=
 - Juridiskt beslut om inspelning/retention, backup/restore, belastningstest och extern penetrationstest.
 
 Livegates ska rapporteras som `NOT RUN` tills de faktiskt har körts; lokal kodverifiering ersätter dem inte.
+
+## Tilläggsleverans 2026-08-02 — livscykel, inkommande matchning och CDR-reparation
+
+Den framåtriktade migrationen `202608020001_rinkel_lifecycle_reconciliation_hardening.sql` kompletterar den centrala modellen utan att skapa en parallell telefoniväg. Den inför `calls.provider_outcome`, kanoniska providerstatusar, kompatibel hantering av nya Rinkel-cause-värden, tenantlokal och entydig inkommande kundmatchning, en aktiv inspelningsreferens per samtal/provider samt atomisk CDR-reparation via `reconcile_rinkel_call_from_cdr`.
+
+`rinkel-platform-worker` utför nu verklig CDR-avstämning. Känd provideridentitet hämtas direkt; saknad identitet får endast korreleras vid en entydig kandidat inom ett begränsat tidsfönster. Konflikter registreras i stället för att gissas. `callEnd` köar avstämning och enrichment idempotent.
+
+Ny servervariabel:
+
+```dotenv
+RINKEL_WEBHOOK_ALLOWED_IPS=82.199.77.220,188.122.73.177
+```
+
+Verifieringsstatus för just denna tilläggsleverans finns i `KUNDEXA_RINKEL_HARDENING_VERIFY_LOG_2026-08-02.txt`. Tidigare verifieringsresultat ovan är historiska och ska inte tolkas som att den nya migrationen redan har applicerats på staging.
+
