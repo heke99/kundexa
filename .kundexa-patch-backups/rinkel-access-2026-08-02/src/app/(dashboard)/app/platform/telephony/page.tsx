@@ -1,11 +1,11 @@
-import Link from "next/link";
+import { redirect } from "next/navigation";
 import { Phone, Plug, ShieldCheck } from "@/components/icons";
 import { ModuleOverview } from "@/components/module-overview";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Field, SelectField } from "@/components/ui/form-field";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getAppContext, isPlatformAdmin } from "@/lib/auth";
+import { getPlatformContext, isPlatformAdmin } from "@/lib/auth";
 import {
   allocatePlatformRinkelResource,
   configurePlatformRinkelWebhooks,
@@ -15,40 +15,25 @@ import {
   testPlatformRinkelConnection,
 } from "@/app/actions/rinkel";
 
-const features = ["Central katalog", "Tenantallokeringar", "Fem centrala webhookar", "Konfliktkö och reconciliation"];
-
-function AccessDenied({ platformRole }: { platformRole: string | null }) {
-  return <ModuleOverview
-    title="Central Rinkel-telefoni"
-    description="Den här sidan finns, men kräver en aktiv plattformsroll med administrativ behörighet."
-    icon={Phone}
-    features={features}
-  >
-    <Card>
-      <CardHeader><h2>Plattformsbehörighet krävs</h2><Badge className="badge-warning">Åtkomst nekad</Badge></CardHeader>
-      <CardContent>
-        <p>Din nuvarande plattformsroll är <strong>{platformRole ?? "inte tilldelad"}</strong>. Tenantrollen owner/admin ger inte automatiskt åtkomst till Kundexas centrala Rinkel-konto.</p>
-        <p className="muted" style={{ marginTop: 10 }}>En befintlig plattformsägare måste ge dig rollen platform_owner eller platform_admin. Om ingen plattformsägare finns ska den första ägaren skapas med projektets bootstrapkommando.</p>
-        <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
-          <Link href="/app" className="button button-secondary">Till dashboard</Link>
-          <Link href="/app/integrations" className="button button-ghost">Tenantens integrationer</Link>
-        </div>
-      </CardContent>
-    </Card>
-  </ModuleOverview>;
-}
-
 export default async function PlatformTelephonyPage({
   searchParams,
 }: {
   searchParams: Promise<{ error?: string; message?: string }>;
 }) {
   const params = await searchParams;
-  const context = await getAppContext();
-  if (!isPlatformAdmin(context.platformRole)) return <AccessDenied platformRole={context.platformRole} />;
-
+  const context = await getPlatformContext();
+  if (!isPlatformAdmin(context.platformRole)) redirect("/app/platform");
   const admin = createAdminClient();
-  const results = await Promise.all([
+  const [
+    { data: integration },
+    { data: users },
+    { data: numbers },
+    { data: userAllocations },
+    { data: numberAllocations },
+    { data: subscriptions },
+    { data: conflicts },
+    { data: tenants },
+  ] = await Promise.all([
     admin.from("platform_integrations").select(
       "id,status,webhook_status,last_connection_test_at,last_verified_at,last_successful_sync_at,last_reconciled_at,webhook_last_received_at,last_error_code,last_error_message,capabilities",
     ).eq("provider", "rinkel").is("disabled_at", null).limit(1).maybeSingle(),
@@ -64,35 +49,6 @@ export default async function PlatformTelephonyPage({
     admin.from("platform_rinkel_conflicts").select("id,conflict_type,provider_resource_type,provider_resource_key,claimed_tenant_ids,status,created_at").eq("status", "open").order("created_at", { ascending: false }),
     admin.from("tenants").select("id,name,status").in("status", ["trial", "active"]).order("name"),
   ]);
-
-  const queryErrors = results.flatMap((result) => result.error ? [`${result.error.code ?? "DB_ERROR"}: ${result.error.message}`] : []);
-  if (queryErrors.length) {
-    return <ModuleOverview
-      title="Central Rinkel-telefoni"
-      description="Routen fungerar, men den driftsatta databasen saknar eller blockerar delar av den centrala Rinkel-modellen."
-      icon={Phone}
-      features={features}
-    >
-      <Card>
-        <CardHeader><h2>Databassynk krävs</h2><Badge className="badge-warning">Inte redo</Badge></CardHeader>
-        <CardContent>
-          <p>Kör projektets väntande Supabase-migrationer och generera därefter om databastyperna. Sidan visar inte en tom konfiguration när schemat saknas.</p>
-          <pre style={{ marginTop: 12, whiteSpace: "pre-wrap" }}>{queryErrors.join("\n")}</pre>
-        </CardContent>
-      </Card>
-    </ModuleOverview>;
-  }
-
-  const [integrationResult, usersResult, numbersResult, userAllocationsResult, numberAllocationsResult, subscriptionsResult, conflictsResult, tenantsResult] = results;
-  const integration = integrationResult.data;
-  const users = usersResult.data;
-  const numbers = numbersResult.data;
-  const userAllocations = userAllocationsResult.data;
-  const numberAllocations = numberAllocationsResult.data;
-  const subscriptions = subscriptionsResult.data;
-  const conflicts = conflictsResult.data;
-  const tenants = tenantsResult.data;
-
   const tenantById = new Map((tenants ?? []).map((tenant) => [tenant.id, tenant.name]));
   const activeUserAllocation = new Map((userAllocations ?? []).filter((item) => item.status === "active" && !item.valid_to).map((item) => [item.rinkel_user_id, item]));
   const activeNumberAllocation = new Map((numberAllocations ?? []).filter((item) => item.status === "active" && !item.valid_to).map((item) => [item.rinkel_number_id, item]));
@@ -103,7 +59,7 @@ export default async function PlatformTelephonyPage({
     title="Central Rinkel-telefoni"
     description="En plattformsintegration, en serverhemlighet och historiserade resursallokeringar till isolerade tenants."
     icon={Phone}
-    features={features}
+    features={["Central katalog", "Tenantallokeringar", "Fem centrala webhookar", "Konfliktkö och reconciliation"]}
   >
     {params.error ? <p className="form-error">{params.error}</p> : null}
     {params.message ? <div className="notice">{params.message}</div> : null}

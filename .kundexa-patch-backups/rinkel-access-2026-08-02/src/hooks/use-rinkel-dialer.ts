@@ -18,48 +18,6 @@ type StatusResponse = {
   errorMessage?: string | null;
 };
 
-function telephonyStatusMessage(data: StatusResponse) {
-  if (data.manualReady) return "Telefoni redo";
-  if (data.errorMessage) return data.errorMessage;
-  switch (data.errorCode) {
-    case "RINKEL_PLATFORM_NOT_CONFIGURED":
-      return "Rinkel är inte konfigurerat eller verifierat av plattformsadministratören";
-    case "RINKEL_PLATFORM_TESTING":
-      return "Rinkel-anslutningen testas just nu";
-    case "RINKEL_AUTHENTICATION_ERROR":
-      return "Rinkel API-nyckeln nekades";
-    case "RINKEL_PLAN_UNSUPPORTED":
-      return "Rinkel-kontot saknar nödvändig integrationsåtkomst";
-    case "RINKEL_UNAVAILABLE":
-      return "Rinkel kunde inte nås vid den senaste kontrollen";
-    case "TELEPHONY_PLATFORM_DISABLED":
-      return "Central Rinkel-telefoni är pausad";
-    case "RINKEL_DIAL_CAPABILITY_MISSING":
-      return "Rinkel-anslutningen saknar verifierad uppringningsbehörighet";
-    case "TELEPHONY_DISABLED":
-      return "Telefoni är pausad för företaget";
-    case "RINKEL_TENANT_NUMBER_MISSING":
-      return "Inget telefonnummer har tilldelats företaget";
-    case "RINKEL_USER_MAPPING_MISSING":
-      return "Du saknar en telefonimappning";
-    case "RINKEL_DEVICE_MISSING":
-      return "Din Rinkel-enhet saknas";
-    case "RINKEL_NUMBER_ACCESS_DENIED":
-      return "Du saknar åtkomst till ett utgående nummer";
-    case "MANUAL_DIALER_DISABLED":
-      return "Manuell uppringning är avstängd för företaget";
-    default:
-      break;
-  }
-  if (!data.platformReady) return "Rinkel är inte redo. Öppna Rinkeltelefoni som plattformsadmin för exakt felstatus";
-  if (!data.tenantEnabled) return "Telefoni är pausad för företaget";
-  if (!data.tenantHasNumber) return "Inget telefonnummer har tilldelats företaget";
-  if (!data.userMapped) return "Du saknar en telefonimappning";
-  if (!data.userHasDevice) return "Din Rinkel-enhet saknas";
-  if (!data.userHasNumberAccess) return "Du saknar åtkomst till ett utgående nummer";
-  return "Telefoni är inte redo";
-}
-
 export function useRinkelDialer() {
   const [registered, setRegistered] = useState(false);
   const [automaticReady, setAutomaticReady] = useState(false);
@@ -74,7 +32,15 @@ export function useRinkelDialer() {
         if (!active) return;
         setRegistered(Boolean(response.ok && data.manualReady));
         setAutomaticReady(Boolean(response.ok && data.automaticReady));
-        setStatus(response.ok ? telephonyStatusMessage(data) : data.errorMessage ?? "Telefonistatus kunde inte hämtas");
+        if (!response.ok) setStatus(data.errorMessage ?? "Telefonistatus kunde inte hämtas");
+        else if (!data.platformReady) setStatus("Telefonileverantören är tillfälligt otillgänglig");
+        else if (!data.tenantEnabled) setStatus("Telefoni är pausad för företaget");
+        else if (!data.tenantHasNumber) setStatus("Inget telefonnummer har tilldelats företaget");
+        else if (!data.userMapped) setStatus("Du saknar en telefonimappning");
+        else if (!data.userHasDevice) setStatus("Din Rinkel-enhet saknas");
+        else if (!data.userHasNumberAccess) setStatus("Du saknar åtkomst till ett utgående nummer");
+        else if (!data.manualReady) setStatus(data.errorMessage ?? "Telefoni är inte redo");
+        else setStatus("Telefoni redo");
       })
       .catch(() => {
         if (active) {

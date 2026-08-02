@@ -632,24 +632,6 @@ const centralStatus = await db.query(`select public.telephony_status_for_current
 if (!centralStatus.rows[0].status.manualReady || !centralStatus.rows[0].status.userMapped) {
   throw new Error(`Central telephony status was not ready: ${JSON.stringify(centralStatus.rows[0])}`);
 }
-await db.exec(`
-  update public.platform_integrations
-  set status='unavailable',last_error_code='RINKEL_NETWORK_ERROR',last_error_message='Rinkel kunde inte nås.'
-  where provider='rinkel' and disabled_at is null;
-`);
-const unavailableCentralStatus = await db.query(`select public.telephony_status_for_current_user() as status`);
-if (
-  unavailableCentralStatus.rows[0].status.platformReady
-  || unavailableCentralStatus.rows[0].status.errorCode !== "RINKEL_UNAVAILABLE"
-  || unavailableCentralStatus.rows[0].status.errorMessage !== "Rinkel kunde inte nås."
-) {
-  throw new Error(`Central telephony diagnostics were not actionable: ${JSON.stringify(unavailableCentralStatus.rows[0])}`);
-}
-await db.exec(`
-  update public.platform_integrations
-  set status='connected',last_error_code=null,last_error_message=null
-  where provider='rinkel' and disabled_at is null;
-`);
 const centralReservation = await db.query(`
   select public.rinkel_reserve_platform_outbound_call(
     '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,

@@ -56,18 +56,6 @@ join auth.users u on u.id=pm.user_id;
 
 Efter detta hanteras ytterligare plattformsroller i `/app/platform`.
 
-### Rekommenderat bootstrapkommando
-
-Repositoryt innehåller även ett idempotent server-side-kommando som använder Supabase service role och aldrig exponerar nyckeln i klienten:
-
-```bash
-npm run platform:bootstrap-owner -- --email=DIN-EPOST@EXEMPEL.SE
-```
-
-Kommandot kräver `NEXT_PUBLIC_SUPABASE_URL` och `SUPABASE_SERVICE_ROLE_KEY` i shellmiljön eller `.env.local`. Användaren måste redan finnas i Supabase Auth. När kommandot är klart ska användaren logga ut och in igen. Därefter visas länken **Rinkeltelefoni** i sidomenyn och `/app/platform/telephony` kan öppnas.
-
-Om routen öppnas utan rätt plattformsroll visas nu ett tydligt åtkomstmeddelande i stället för en tyst omdirigering. Om Rinkel-tabellerna saknas visas ett tydligt migrationsfel i stället för en tom sida.
-
 ## Idempotent onboarding
 
 `create_tenant_with_owner` är serialiserad per användare och säker att köra igen efter dubbelklick, timeout eller nätverksretry. Ett andra anrop returnerar användarens redan aktiva tenant i stället för att skapa en ny.

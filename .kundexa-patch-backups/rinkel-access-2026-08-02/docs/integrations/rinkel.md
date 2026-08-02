@@ -89,7 +89,7 @@ Samma logiska API-nyckel ska finnas i Vercel och Supabase Edge Secrets när båd
 
 ## Administration
 
-Plattformssuperadmin använder `/app/platform/telephony` för anslutningstest, katalogsynk, central webhookkonfiguration, allokering/flytt/återkallning, konflikter och nödstopp. API-nyckelns värde kan aldrig matas in eller visas där. Sidan kräver en aktiv `platform_owner`- eller `platform_admin`-roll; tenantrollen `owner` räcker inte. Repositoryts kommando `npm run platform:bootstrap-owner -- --email=...` skapar den första plattformsägaren på ett auditerat sätt.
+Plattformssuperadmin använder `/app/platform/telephony` för anslutningstest, katalogsynk, central webhookkonfiguration, allokering/flytt/återkallning, konflikter och nödstopp. API-nyckelns värde kan aldrig matas in eller visas där.
 
 Tenant owner/admin använder `/app/integrations` för att se egna allokeringar, skapa säljar­mappning, standardnummer och policy. Säljarstatus kommer från `GET /api/v1/telephony/status` och skiljer plattformsfel från saknad tenantallokering, mapping, device eller nummeråtkomst.
 

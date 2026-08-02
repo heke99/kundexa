@@ -29,11 +29,6 @@ export async function GET() {
     return NextResponse.json({
       platformConfigured: null,
       platformReady: false,
-      tenantEnabled: false,
-      tenantHasNumber: false,
-      userMapped: false,
-      userHasDevice: false,
-      userHasNumberAccess: false,
       manualReady: false,
       automaticReady: false,
       webhookReady: false,

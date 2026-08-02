@@ -35,22 +35,6 @@ type Reservation = {
   idempotentReplay: boolean;
 };
 
-function reservationErrorMessage(code: string) {
-  const normalized = code.toUpperCase();
-  if (normalized.includes("RINKEL_PLATFORM_NOT_CONFIGURED")) return "Rinkel är inte konfigurerat eller verifierat av plattformsadministratören.";
-  if (normalized.includes("RINKEL_AUTHENTICATION")) return "Rinkel API-nyckeln nekades.";
-  if (normalized.includes("RINKEL_TENANT_NUMBER_MISSING") || normalized.includes("NUMBER_ALLOCATION")) return "Inget utgående Rinkel-nummer har tilldelats företaget.";
-  if (normalized.includes("RINKEL_USER_MAPPING") || normalized.includes("MAPPING")) return "Säljaren saknar en aktiv Rinkel-mappning.";
-  if (normalized.includes("RINKEL_DEVICE") || normalized.includes("DEVICE")) return "Säljarens Rinkel-användare saknar en aktiv enhet.";
-  if (normalized.includes("RINKEL_NUMBER_ACCESS") || normalized.includes("NUMBER_GRANT")) return "Säljaren saknar åtkomst till det utgående Rinkel-numret.";
-  if (normalized.includes("TELEPHONY_DISABLED")) return "Telefoni är pausad för företaget.";
-  if (normalized.includes("MANUAL_DIALER_DISABLED")) return "Manuell uppringning är avstängd för företaget.";
-  if (normalized.includes("ACTIVE_CALL")) return "Säljaren har redan ett aktivt samtal.";
-  if (normalized.includes("DO_NOT_CALL") || normalized.includes("NIX")) return "Numret får inte ringas enligt spärrreglerna.";
-  if (normalized.includes("OUTSIDE_")) return "Samtalet är inte tillåtet vid den här tiden.";
-  return code;
-}
-
 export async function GET(request: Request) {
   try {
     const context = await getAppContext();
@@ -104,9 +88,9 @@ export async function POST(request: Request) {
       p_purpose: parsed.purpose,
     });
     if (result.error || !result.data) {
-      const code = result.error?.message ?? "rinkel_call_reservation_failed";
-      const conflict = /active_call|not_allowed|do_not_call|nix|outside_|mapping|feature|claim|callback|number|device/i.test(code);
-      return NextResponse.json({ error: code, message: reservationErrorMessage(code) }, { status: conflict ? 409 : 400 });
+      const message = result.error?.message ?? "rinkel_call_reservation_failed";
+      const conflict = /active_call|not_allowed|do_not_call|nix|outside_|mapping|feature|claim|callback/i.test(message);
+      return NextResponse.json({ error: message }, { status: conflict ? 409 : 400 });
     }
     reserved = result.data as Reservation;
     if (reserved.idempotentReplay) {

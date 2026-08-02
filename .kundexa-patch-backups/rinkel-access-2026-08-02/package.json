@@ -17,7 +17,6 @@
     "test": "node scripts/verify.mjs && npm run test:rinkel && npm run test:contracts && npm run test:imports && node scripts/verify-sql.mjs",
     "test:watch": "node scripts/verify.mjs",
     "verify": "npm run types:verify && npm run typecheck:edge && npm run test && npm run build",
-    "platform:bootstrap-owner": "node scripts/bootstrap-platform-owner.mjs",
     "supabase:login": "npx supabase@2.109.1 login",
     "supabase:link": "npx supabase@2.109.1 link",
     "db:push": "npx supabase@2.109.1 db push",
