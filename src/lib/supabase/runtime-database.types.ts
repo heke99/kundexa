@@ -111,21 +111,71 @@ type TableOverrides = {
   call_transcripts: TableOrFallback<"call_transcripts">;
   contract_reminder_policies: TableOrFallback<"contract_reminder_policies">;
   contract_reminders: TableOrFallback<"contract_reminders">;
-  platform_integrations: TableOrFallback<"platform_integrations">;
+  platform_integrations: ExtendTable<"platform_integrations", {
+    is_canonical: boolean;
+    last_error_at: string | null;
+    last_error_operation: string | null;
+  }>;
   platform_list_allocations: TableOrFallback<"platform_list_allocations">;
   platform_list_entries: TableOrFallback<"platform_list_entries">;
   platform_lists: TableOrFallback<"platform_lists">;
-  platform_rinkel_capabilities: TableOrFallback<"platform_rinkel_capabilities">;
+  platform_rinkel_capabilities: ExtendTable<"platform_rinkel_capabilities", {
+    users_catalog: boolean;
+    numbers_catalog: boolean;
+    dial_endpoint_reachable: boolean;
+    dial_configured: boolean;
+    dial_test_succeeded: boolean;
+    dial_tested_at: string | null;
+    webhooks_registration: boolean;
+    core_webhooks_verified: boolean;
+    recording_detected: boolean;
+    transcription_supported: boolean;
+    insights_supported: boolean;
+    note_sync_supported: boolean;
+  }>;
   platform_rinkel_conflicts: TableOrFallback<"platform_rinkel_conflicts">;
-  platform_rinkel_jobs: TableOrFallback<"platform_rinkel_jobs">;
-  platform_rinkel_numbers: TableOrFallback<"platform_rinkel_numbers">;
+  platform_rinkel_devices: TableOrFallback<"platform_rinkel_devices">;
+  platform_rinkel_jobs: ExtendTable<"platform_rinkel_jobs", {
+    last_error_code: string | null;
+    last_error_message: string | null;
+    dead_lettered_at: string | null;
+    updated_at: string;
+  }>;
+  platform_rinkel_numbers: ExtendTable<"platform_rinkel_numbers", {
+    is_platform_default: boolean;
+  }>;
   platform_rinkel_users: TableOrFallback<"platform_rinkel_users">;
   platform_rinkel_webhook_events: TableOrFallback<"platform_rinkel_webhook_events">;
-  platform_rinkel_webhook_subscriptions: TableOrFallback<"platform_rinkel_webhook_subscriptions">;
-  rinkel_call_attempts_v2: TableOrFallback<"rinkel_call_attempts_v2">;
+  platform_rinkel_webhook_subscriptions: ExtendTable<"platform_rinkel_webhook_subscriptions", {
+    required: boolean;
+    target_url_redacted: string | null;
+    provider_active: boolean | null;
+    registered_at: string | null;
+    test_requested_at: string | null;
+    test_received_at: string | null;
+    last_processed_at: string | null;
+    last_http_status: number | null;
+    received_count: number;
+    processed_count: number;
+    failed_count: number;
+    last_error_code: string | null;
+    last_error_message: string | null;
+  }>;
+  platform_worker_heartbeats: TableOrFallback<"platform_worker_heartbeats">;
+  rinkel_user_mappings_v2: ExtendTable<"rinkel_user_mappings_v2", {
+    selected_device_id: string | null;
+  }>;
+  rinkel_call_attempts_v2: ExtendTable<"rinkel_call_attempts_v2", {
+    selected_device_id: string | null;
+    caller_id_source: string | null;
+    caller_id_allocation_id: string | null;
+  }>;
   rinkel_number_allocations: TableOrFallback<"rinkel_number_allocations">;
   rinkel_user_allocations: TableOrFallback<"rinkel_user_allocations">;
-  telephony_policies: TableOrFallback<"telephony_policies">;
+  customer_lists: ExtendTable<"customer_lists", { rinkel_number_allocation_id: string | null; }>;
+  campaigns: ExtendTable<"campaigns", { rinkel_number_allocation_id: string | null; }>;
+  teams: ExtendTable<"teams", { rinkel_number_allocation_id: string | null; }>;
+  telephony_policies: ExtendTable<"telephony_policies", { default_number_allocation_id: string | null; }>;
   tenant_invitations: TableOrFallback<"tenant_invitations">;
   email_delivery_events: TableOrFallback<"email_delivery_events">;
   signing_envelopes: TableOrFallback<"signing_envelopes">;
@@ -142,6 +192,7 @@ type MissingFunctionName =
   | "allocate_platform_rinkel_resource"
   | "apply_resend_delivery_event"
   | "cancel_contract_reminders"
+  | "claim_platform_rinkel_jobs"
   | "complete_dialer_work_v2"
   | "complete_manual_call_work_v2"
   | "correlate_rinkel_incoming_event"
@@ -152,7 +203,9 @@ type MissingFunctionName =
   | "create_platform_tenant"
   | "extend_contract_acceptance_expiry_api_v2"
   | "finalize_signing_envelope"
+  | "finish_platform_rinkel_job"
   | "get_contract_call_eligibility"
+  | "get_current_user_rinkel_numbers"
   | "get_tenant_rinkel_resources"
   | "list_current_user_tenants"
   | "mark_acceptance_opened"
@@ -160,6 +213,11 @@ type MissingFunctionName =
   | "prepare_contract_delivery_api_v2"
   | "prepare_contract_delivery_v2"
   | "record_contract_acceptance_v2"
+  | "record_platform_rinkel_webhook_failure"
+  | "record_platform_rinkel_webhook_processed"
+  | "record_platform_rinkel_webhook_receipt"
+  | "record_platform_worker_heartbeat"
+  | "requeue_platform_rinkel_job"
   | "reconcile_rinkel_call_from_cdr"
   | "refresh_platform_list_counts"
   | "refresh_segment_materialization_for_tenant"
@@ -167,14 +225,17 @@ type MissingFunctionName =
   | "register_tenant_invitation"
   | "remove_managed_team_member"
   | "replace_rinkel_user_mapping_v2"
+  | "replace_rinkel_user_mapping_v3"
   | "resolve_contract_eligible_calls"
   | "revoke_platform_list_allocation"
   | "revoke_platform_rinkel_resource"
   | "rinkel_finalize_platform_dial"
   | "rinkel_reserve_platform_outbound_call"
+  | "rinkel_reserve_platform_outbound_call_v2"
   | "schedule_manual_contract_reminder"
   | "schedule_manual_contract_reminder_api_v2"
   | "set_managed_team_member"
+  | "set_platform_rinkel_default_number"
   | "split_customer_list_to_team"
   | "switch_active_tenant"
   | "telephony_status_for_current_user"

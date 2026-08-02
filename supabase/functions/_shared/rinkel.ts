@@ -1,10 +1,14 @@
 export const RINKEL_DEFAULT_BASE_URL = "https://api.rinkel.com/v1";
-export const RINKEL_WEBHOOK_EVENTS = [
+export const RINKEL_CORE_WEBHOOK_EVENTS = [
   "incomingCall",
   "outgoingCall",
   "callStart",
   "callEnd",
-  "callInsights",
+] as const;
+export const RINKEL_OPTIONAL_WEBHOOK_EVENTS = ["callInsights"] as const;
+export const RINKEL_WEBHOOK_EVENTS = [
+  ...RINKEL_CORE_WEBHOOK_EVENTS,
+  ...RINKEL_OPTIONAL_WEBHOOK_EVENTS,
 ] as const;
 
 export type RinkelWebhookEvent = typeof RINKEL_WEBHOOK_EVENTS[number];
@@ -20,6 +24,7 @@ export type RinkelErrorCode =
   | "RINKEL_NETWORK_ERROR"
   | "RINKEL_UPSTREAM_ERROR"
   | "RINKEL_SCHEMA_ERROR"
+  | "RINKEL_INVALID_RESPONSE"
   | "RINKEL_UNKNOWN_ERROR";
 
 export class RinkelError extends Error {
@@ -37,9 +42,19 @@ export class RinkelError extends Error {
 
 type JsonObject = Record<string, unknown>;
 
+export type RinkelDevice = {
+  id: string;
+  displayName: string | null;
+  type: string | null;
+  status: string;
+  active: boolean;
+  raw: JsonObject;
+};
+
 export type RinkelUser = {
   id: string;
   deviceId: string | null;
+  devices: RinkelDevice[];
   email: string | null;
   fullName: string;
   active: boolean;
@@ -85,6 +100,7 @@ export type RinkelProviderOutcome =
   | "voicemail"
   | "answering_service"
   | "outside_business_hours"
+  | "provider_error"
   | "unknown";
 
 export type RinkelCallStatus =
@@ -296,17 +312,19 @@ export class RinkelClient {
     const raw = await this.request("/webhooks", { retrySafe: true });
     const data = responseData(raw);
     if (!Array.isArray(data)) throw new RinkelError("RINKEL_SCHEMA_ERROR", "Rinkels webhooklista är ogiltig.");
-    return data.map((entry) => {
+    return data.flatMap((entry) => {
       const item = object(entry);
-      const event = string(item.event, "event");
-      if (!isRinkelWebhookEvent(event)) throw new RinkelError("RINKEL_SCHEMA_ERROR", "Rinkel returnerade en okänd webhooktyp.");
-      return {
+      const event = string(item.event, "event", true);
+      // Rinkel can add webhook types independently of Kundexa releases. Ignore
+      // unknown catalog entries while retaining known core/optional entries.
+      if (!isRinkelWebhookEvent(event)) return [];
+      return [{
         url: string(item.url, "url")!,
         contentType: string(item.contentType, "contentType")!,
         event,
         active: boolean(item.active),
         description: string(item.description, "description", true),
-      };
+      }];
     });
   }
 
@@ -356,15 +374,66 @@ export class RinkelClient {
     }
   }
 
-  async listCallDetailRecords(query: { startDate: string; endDate: string }): Promise<JsonObject[]> {
-    const params = new URLSearchParams({ startDate: query.startDate, endDate: query.endDate, limit: "250" });
+  async listCallDetailRecordPage(query: {
+    startDate: string;
+    endDate: string;
+    cursor?: string | null;
+    page?: number;
+    limit?: number;
+  }): Promise<{ records: JsonObject[]; nextCursor: string | null; nextPage: number | null }> {
+    const limit = Math.max(1, Math.min(query.limit ?? 250, 250));
+    const params = new URLSearchParams({ startDate: query.startDate, endDate: query.endDate, limit: String(limit) });
+    if (query.cursor) params.set("cursor", query.cursor);
+    if (query.page && query.page > 0) params.set("page", String(query.page));
     const raw = await this.request(`/call-detail-records?${params.toString()}`, { retrySafe: true });
     const data = responseData(raw);
-    if (Array.isArray(data)) return data.map(object);
+    if (Array.isArray(data)) {
+      return { records: data.map(object), nextCursor: null, nextPage: data.length === limit ? (query.page ?? 1) + 1 : null };
+    }
     const container = object(data);
     const records = container.items ?? container.records ?? container.data;
     if (!Array.isArray(records)) throw new RinkelError("RINKEL_SCHEMA_ERROR", "Rinkels samtalslista är ogiltig.");
-    return records.map(object);
+    const paging = container.pagination && typeof container.pagination === "object" && !Array.isArray(container.pagination)
+      ? object(container.pagination)
+      : container.meta && typeof container.meta === "object" && !Array.isArray(container.meta)
+        ? object(container.meta)
+        : container;
+    const nextCursor = string(paging.nextCursor ?? paging.next_cursor ?? container.nextCursor ?? container.next_cursor, "nextCursor", true);
+    const explicitNextPage = paging.nextPage ?? paging.next_page ?? container.nextPage ?? container.next_page;
+    const nextPage = typeof explicitNextPage === "number" && Number.isInteger(explicitNextPage)
+      ? explicitNextPage
+      : nextCursor ? null : records.length === limit ? (query.page ?? 1) + 1 : null;
+    return { records: records.map(object), nextCursor, nextPage };
+  }
+
+  async listCallDetailRecords(query: { startDate: string; endDate: string }): Promise<JsonObject[]> {
+    const records: JsonObject[] = [];
+    let cursor: string | null = null;
+    let page: number | null = 1;
+    const seenCursors = new Set<string>();
+    for (let batch = 0; batch < 100; batch += 1) {
+      const result = await this.listCallDetailRecordPage({
+        startDate: query.startDate,
+        endDate: query.endDate,
+        cursor,
+        page: cursor ? undefined : page ?? undefined,
+      });
+      records.push(...result.records);
+      if (result.nextCursor) {
+        if (seenCursors.has(result.nextCursor)) throw new RinkelError("RINKEL_INVALID_RESPONSE", "Rinkels CDR-pagination upprepade samma cursor.");
+        seenCursors.add(result.nextCursor);
+        cursor = result.nextCursor;
+        page = null;
+        continue;
+      }
+      if (result.nextPage) {
+        page = result.nextPage;
+        cursor = null;
+        continue;
+      }
+      return records;
+    }
+    throw new RinkelError("RINKEL_INVALID_RESPONSE", "Rinkels CDR-pagination överskred säker batchgräns.");
   }
 
   async getTranscription(callId: string): Promise<{ available: boolean; value: unknown }> {
@@ -400,15 +469,46 @@ export class RinkelClient {
   }
 }
 
+function normalizeRinkelDevice(value: unknown, fallbackIndex: number): RinkelDevice {
+  if (typeof value === "string" && value.trim()) {
+    return { id: value.trim(), displayName: null, type: null, status: "unknown", active: true, raw: { id: value.trim() } };
+  }
+  const item = object(value);
+  const id = string(item.id ?? item.deviceId, `devices[${fallbackIndex}].id`)!;
+  const status = string(item.status, `devices[${fallbackIndex}].status`, true) ?? "unknown";
+  return {
+    id,
+    displayName: string(item.displayName ?? item.name ?? item.label, `devices[${fallbackIndex}].displayName`, true),
+    type: string(item.type ?? item.deviceType, `devices[${fallbackIndex}].type`, true),
+    status,
+    active: item.active === undefined ? !["inactive", "disabled", "removed"].includes(status.toLowerCase()) : boolean(item.active),
+    raw: item,
+  };
+}
+
 export function normalizeRinkelUser(value: unknown): RinkelUser {
   const item = object(value);
   const fullName = string(item.fullName, "fullName", true)
     ?? [string(item.firstName, "firstName", true), string(item.lastName, "lastName", true)].filter(Boolean).join(" ")
     ?? "";
   if (!fullName) throw new RinkelError("RINKEL_SCHEMA_ERROR", "Rinkel-användaren saknar namn.");
+  const legacyDeviceId = string(item.deviceId, "deviceId", true);
+  const rawDevices = Array.isArray(item.devices) ? item.devices : [];
+  const devices = rawDevices.map((device, index) => normalizeRinkelDevice(device, index));
+  if (legacyDeviceId && !devices.some((device) => device.id === legacyDeviceId)) {
+    devices.unshift({
+      id: legacyDeviceId,
+      displayName: "Standardenhet",
+      type: null,
+      status: "unknown",
+      active: true,
+      raw: { id: legacyDeviceId, source: "legacy_deviceId" },
+    });
+  }
   return {
     id: string(item.id, "id")!,
-    deviceId: string(item.deviceId, "deviceId", true),
+    deviceId: devices.find((device) => device.active)?.id ?? legacyDeviceId,
+    devices,
     email: string(item.email, "email", true),
     fullName,
     active: item.active === undefined ? true : boolean(item.active),

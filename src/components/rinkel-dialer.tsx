@@ -1,23 +1,27 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Phone, Radio } from "@/components/icons";
 import { useRinkelDialer } from "@/hooks/use-rinkel-dialer";
 import { useCallRealtime } from "@/hooks/use-call-realtime";
 
 type Customer = { id: string; display_name: string; phone_e164: string | null; do_not_call: boolean };
+type CallerIdOption = { allocationId: string; number: string; displayName: string | null };
 
 export function RinkelDialer({
   customers,
   initialCustomer,
   callbackActivityId,
+  callerIdOptions = [],
 }: {
   customers: Customer[];
   initialCustomer?: string;
   callbackActivityId?: string;
+  callerIdOptions?: CallerIdOption[];
 }) {
   const [selected, setSelected] = useState(initialCustomer ?? "");
   const [callId, setCallId] = useState<string | null>(null);
+  const [numberAllocationId, setNumberAllocationId] = useState("");
   const [afterCall, setAfterCall] = useState(false);
   const [disposition, setDisposition] = useState("");
   const [notes, setNotes] = useState("");
@@ -42,17 +46,23 @@ export function RinkelDialer({
         customerId: selected,
         targetPhone: customer.phone_e164,
         callbackActivityId: callbackActivityId ?? null,
+        numberAllocationId: numberAllocationId || null,
         clientRequestId: crypto.randomUUID(),
         idempotencyKey: requestKeyRef.current,
       });
       setCallId(id);
       requestKeyRef.current = null;
     } catch (caught) {
+      const outcomeUnknown = Boolean(caught && typeof caught === "object" && "outcomeUnknown" in caught
+        && (caught as { outcomeUnknown?: unknown }).outcomeUnknown === true);
+      // Definitiva fel får en ny nyckel vid nästa manuella försök. Vid ett osäkert
+      // nätverksutfall behålls samma nyckel och dialern blockeras mot dubbelringning.
+      if (!outcomeUnknown) requestKeyRef.current = null;
       setError(caught instanceof Error ? caught.message : "Samtalet kunde inte startas");
     }
   }
 
-  async function complete(event: React.FormEvent<HTMLFormElement>) {
+  async function complete(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const submitter = (event.nativeEvent as SubmitEvent).submitter;
     const createContractAfterSave = submitter instanceof HTMLButtonElement && submitter.value === "create_contract";
@@ -102,6 +112,15 @@ export function RinkelDialer({
         </option>)}
       </select>
     </label>
+    {callerIdOptions.length > 1 ? <label className="field dialer-customer-select">
+      <span>Utgående nummer</span>
+      <select value={numberAllocationId} onChange={(event) => setNumberAllocationId(event.target.value)}>
+        <option value="">Använd list-, kampanj-, team- eller tenantstandard</option>
+        {callerIdOptions.map((number) => <option key={number.allocationId} value={number.allocationId}>
+          {number.displayName ? `${number.displayName} · ` : ""}{number.number}
+        </option>)}
+      </select>
+    </label> : null}
     <button type="button" className="call-button" onClick={call}
       disabled={!rinkel.registered || !selected || afterCall || rinkel.calling}
       aria-label="Ring via Rinkel">

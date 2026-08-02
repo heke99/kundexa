@@ -42,12 +42,22 @@ Deno.serve(async (request) => {
     const { data: platformRinkel } = await supabase.from("platform_integrations").select("id")
       .eq("provider", "rinkel").is("disabled_at", null).in("status", ["connected", "degraded"]).limit(1).maybeSingle();
     if (platformRinkel) {
-      await supabase.from("platform_rinkel_jobs").upsert({
+      const { error: reconciliationQueueError } = await supabase.from("platform_rinkel_jobs").upsert({
         job_type: "rinkel.reconcile_platform",
         aggregate_id: platformRinkel.id,
         idempotency_key: `rinkel.reconcile_platform:${maintenanceBucket}`,
         payload: { platform_integration_id: platformRinkel.id },
       }, { onConflict: "idempotency_key", ignoreDuplicates: true });
+      if (reconciliationQueueError) return Response.json({ error: reconciliationQueueError.message }, { status: 500 });
+
+      const { error: platformRetentionQueueError } = await supabase.from("platform_rinkel_jobs").upsert({
+        job_type: "rinkel.retention_platform",
+        aggregate_id: platformRinkel.id,
+        idempotency_key: `rinkel.retention_platform:${retentionBucket}`,
+        payload: { platform_integration_id: platformRinkel.id },
+        available_at: new Date().toISOString(),
+      }, { onConflict: "idempotency_key", ignoreDuplicates: true });
+      if (platformRetentionQueueError) return Response.json({ error: platformRetentionQueueError.message }, { status: 500 });
     }
   }
   for (const tenant of tenants ?? []) {

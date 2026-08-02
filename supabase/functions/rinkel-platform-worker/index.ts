@@ -1,5 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.110.7";
-import { RinkelClient } from "../_shared/rinkel.ts";
+import { RinkelClient, RINKEL_CORE_WEBHOOK_EVENTS } from "../_shared/rinkel.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -14,6 +14,7 @@ type Job = {
   payload: Json;
   attempts: number;
   max_attempts: number;
+  created_at?: string;
 };
 type EventRow = {
   id: string;
@@ -167,16 +168,47 @@ function cdrMatchesAttempt(cdr: CdrProjection, call: CallRow, attempt: AttemptRo
   return !candidateTime || timestampDistance(candidateTime, reference) <= 20 * 60_000;
 }
 
-async function createConflict(event: EventRow, type: string, tenants: string[], details: Json) {
-  await supabase.from("platform_rinkel_conflicts").upsert({
-    conflict_type: type,
+async function persistOpenConflict(input: {
+  conflictType: string;
+  providerResourceKey: string;
+  claimedTenantIds: string[];
+  eventId?: string | null;
+  details: Json;
+}) {
+  const claimedTenantIds = [...new Set(input.claimedTenantIds)];
+  const { data: existing, error: readError } = await supabase.from("platform_rinkel_conflicts")
+    .select("id").eq("conflict_type", input.conflictType).eq("provider_resource_key", input.providerResourceKey)
+    .eq("status", "open").maybeSingle();
+  if (readError) throw new Error(readError.message);
+  if (existing) {
+    const { error } = await supabase.from("platform_rinkel_conflicts").update({
+      claimed_tenant_ids: claimedTenantIds,
+      event_id: input.eventId ?? null,
+      details: input.details,
+    }).eq("id", existing.id);
+    if (error) throw new Error(error.message);
+    return;
+  }
+  const { error } = await supabase.from("platform_rinkel_conflicts").insert({
+    conflict_type: input.conflictType,
     provider_resource_type: "call",
-    provider_resource_key: event.external_call_id,
-    claimed_tenant_ids: [...new Set(tenants)],
-    event_id: event.id,
-    details: { ...details, event_type: event.event_type },
+    provider_resource_key: input.providerResourceKey,
+    claimed_tenant_ids: claimedTenantIds,
+    event_id: input.eventId ?? null,
+    details: input.details,
     status: "open",
-  }, { onConflict: "conflict_type,provider_resource_key", ignoreDuplicates: true });
+  });
+  if (error && error.code !== "23505") throw new Error(error.message);
+}
+
+async function createConflict(event: EventRow, type: string, tenants: string[], details: Json) {
+  await persistOpenConflict({
+    conflictType: type,
+    providerResourceKey: event.external_call_id,
+    claimedTenantIds: tenants,
+    eventId: event.id,
+    details: { ...details, event_type: event.event_type },
+  });
   await supabase.from("platform_rinkel_webhook_events").update({
     status: "conflict",
     correlation_status: "conflict",
@@ -187,15 +219,12 @@ async function createConflict(event: EventRow, type: string, tenants: string[], 
 }
 
 async function createCallConflict(call: CallRow, type: string, details: Json) {
-  const { error } = await supabase.from("platform_rinkel_conflicts").upsert({
-    conflict_type: type,
-    provider_resource_type: "call",
-    provider_resource_key: call.external_call_id ?? call.id,
-    claimed_tenant_ids: [call.tenant_id],
+  await persistOpenConflict({
+    conflictType: type,
+    providerResourceKey: call.external_call_id ?? call.id,
+    claimedTenantIds: [call.tenant_id],
     details: { ...details, call_id: call.id },
-    status: "open",
-  }, { onConflict: "conflict_type,provider_resource_key", ignoreDuplicates: true });
-  if (error) throw new Error(error.message);
+  });
   const { error: callError } = await supabase.from("calls").update({
     status: "reconciliation_required",
     provider_status: "unknown",
@@ -284,6 +313,7 @@ async function resolveOutgoingAttempt(event: EventRow) {
   const at = new Date(event.event_at ?? event.received_at).getTime();
   const fromTime = new Date(at - 10 * 60_000).toISOString();
   const toTime = new Date(at + 10 * 60_000).toISOString();
+  const deviceId = text(event.payload.deviceId) ?? text(event.payload.device_id);
   let query = supabase.from("rinkel_call_attempts_v2")
     .select("id,tenant_id,call_id")
     .eq("external_rinkel_user_id", userId)
@@ -292,6 +322,7 @@ async function resolveOutgoingAttempt(event: EventRow) {
     .lte("requested_at", toTime)
     .in("status", ["requested", "dial_requested", "awaiting_provider_event", "provider_outcome_unknown"]);
   if (from && from !== "anonymous") query = query.eq("source_number_e164", from);
+  if (deviceId) query = query.eq("rinkel_device_id", deviceId);
   const { data: attempts, error: attemptsError } = await query;
   if (attemptsError) throw new Error(attemptsError.message);
   if ((attempts ?? []).length === 0) {
@@ -309,7 +340,7 @@ async function resolveOutgoingAttempt(event: EventRow) {
 
 async function processIncoming(event: EventRow) {
   const resolved = await resolveIncomingTenant(event);
-  if (!resolved) return;
+  if (!resolved) return false;
   const from = text(event.payload.from) ?? "anonymous";
   const to = text(event.payload.to)!;
   const { data, error } = await supabase.rpc("correlate_rinkel_incoming_event", {
@@ -324,11 +355,12 @@ async function processIncoming(event: EventRow) {
   const result = object(data) ?? {};
   if (result.status !== "processed") throw new Error("incoming_event_correlation_failed");
   await requeuePendingEvents(event.external_call_id);
+  return true;
 }
 
 async function processOutgoing(event: EventRow) {
   const attempt = await resolveOutgoingAttempt(event);
-  if (!attempt) return;
+  if (!attempt) return false;
   const { data, error } = await supabase.rpc("correlate_rinkel_outgoing_event", {
     p_event_id: event.id,
     p_attempt_id: attempt.id,
@@ -337,6 +369,7 @@ async function processOutgoing(event: EventRow) {
   const result = object(data) ?? {};
   if (result.status !== "processed") throw new Error("outgoing_event_correlation_failed");
   await requeuePendingEvents(event.external_call_id);
+  return true;
 }
 
 async function processLifecycle(event: EventRow) {
@@ -348,12 +381,23 @@ async function processLifecycle(event: EventRow) {
   if (callsError) throw new Error(callsError.message);
   if ((calls ?? []).length > 1) {
     await createConflict(event, "RINKEL_EXTERNAL_CALL_DUPLICATE", calls!.map((item) => item.tenant_id), {});
-    return;
+    return false;
   }
   const { data, error } = await supabase.rpc("apply_rinkel_call_event", { p_event_id: event.id });
   if (error) throw new Error(error.message);
   const result = object(data) ?? {};
-  if (result.status === "pending_correlation") return;
+  if (result.status === "pending_correlation") return false;
+  return result.status === "processed";
+}
+
+async function recordWebhookProcessingSuccess(event: EventRow) {
+  const processedAt = new Date().toISOString();
+  const { error } = await supabase.rpc("record_platform_rinkel_webhook_processed", {
+    p_platform_integration_id: event.platform_integration_id,
+    p_event_type: event.event_type,
+    p_processed_at: processedAt,
+  });
+  if (error) throw new Error(error.message);
 }
 
 async function processEvent(job: Job) {
@@ -370,9 +414,12 @@ async function processEvent(job: Job) {
   }).eq("id", event.id).in("status", ["received", "failed", "pending_correlation"]).select("id").maybeSingle();
   if (claimError) throw new Error(claimError.message);
   if (!claimed) return;
-  if (event.event_type === "incomingCall") await processIncoming(event);
-  else if (event.event_type === "outgoingCall") await processOutgoing(event);
-  else await processLifecycle(event);
+  const processed = event.event_type === "incomingCall"
+    ? await processIncoming(event)
+    : event.event_type === "outgoingCall"
+      ? await processOutgoing(event)
+      : await processLifecycle(event);
+  if (processed) await recordWebhookProcessingSuccess(event);
 }
 
 function createRinkelClient(requestId: string) {
@@ -525,16 +572,20 @@ async function processReconciliation() {
   }
   await enqueueReconciliationJobs((stale ?? []) as Array<{ id: string; call_id: string; tenant_id: string; external_call_id: string | null }>, "stale_attempt");
 
-  const recent = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
-  const { data: incomplete, error: incompleteError } = await supabase.from("calls")
-    .select("id,tenant_id,external_call_id")
+  const incompleteQuery = () => supabase.from("calls")
+    .select("id,tenant_id,external_call_id,created_at")
     .eq("provider", "rinkel")
     .not("external_call_id", "is", null)
-    .gte("created_at", recent)
-    .or("provider_status.eq.unknown,recording_status.eq.pending,transcription_status.eq.pending")
-    .limit(100);
-  if (incompleteError) throw new Error(incompleteError.message);
-  await enqueueReconciliationJobs((incomplete ?? []).map((call) => ({
+    .or("provider_status.eq.unknown,recording_status.eq.pending,transcription_status.in.(pending,pending_provider)");
+  const [{ data: oldestIncomplete, error: oldestError }, { data: newestIncomplete, error: newestError }] = await Promise.all([
+    incompleteQuery().order("created_at", { ascending: true }).limit(50),
+    incompleteQuery().order("created_at", { ascending: false }).limit(50),
+  ]);
+  if (oldestError) throw new Error(oldestError.message);
+  if (newestError) throw new Error(newestError.message);
+  const incompleteById = new Map<string, { id: string; tenant_id: string; external_call_id: string | null }>();
+  for (const call of [...(oldestIncomplete ?? []), ...(newestIncomplete ?? [])]) incompleteById.set(call.id, call);
+  await enqueueReconciliationJobs([...incompleteById.values()].map((call) => ({
     id: call.id,
     call_id: call.id,
     tenant_id: call.tenant_id,
@@ -542,7 +593,7 @@ async function processReconciliation() {
   })), "incomplete_projection");
 
   const { error: integrationError } = await supabase.from("platform_integrations").update({ last_reconciled_at: now })
-    .eq("provider", "rinkel").is("disabled_at", null);
+    .eq("provider", "rinkel").eq("is_canonical", true).is("disabled_at", null);
   if (integrationError) throw new Error(integrationError.message);
 }
 
@@ -556,7 +607,22 @@ async function processEnrichment(job: Job) {
   if (callError || !call) throw new Error(callError?.message ?? "call_not_found");
   if (call.transcription_status === "disabled" || call.transcription_status === "available") return;
   const transcript = await createRinkelClient(`enrichment:${job.id}`).getTranscription(externalCallId);
-  if (!transcript.available) throw new Error("transcription_pending");
+  if (!transcript.available) {
+    const checkedAt = new Date().toISOString();
+    const waitExpired = Boolean(job.created_at && Date.now() - Date.parse(job.created_at) >= 72 * 60 * 60_000);
+    const status = waitExpired ? "not_available" : "pending_provider";
+    const { error: pendingError } = await supabase.from("call_transcripts").upsert({
+      tenant_id: tenantId, call_id: callId, provider: "rinkel", status, last_checked_at: checkedAt,
+      next_retry_at: waitExpired ? null : new Date(Date.now() + 30 * 60_000).toISOString(),
+      retry_count: job.attempts,
+    }, { onConflict: "call_id,provider" });
+    if (pendingError) throw new Error(pendingError.message);
+    const { error: callPendingError } = await supabase.from("calls").update({ transcription_status: status })
+      .eq("tenant_id", tenantId).eq("id", callId);
+    if (callPendingError) throw new Error(callPendingError.message);
+    if (waitExpired) return;
+    throw new Error("transcription_pending");
+  }
   const rawTranscript = typeof transcript.value === "string" ? transcript.value : JSON.stringify(transcript.value);
   const { error: transcriptError } = await supabase.from("call_transcripts").upsert({
     tenant_id: tenantId,
@@ -574,14 +640,110 @@ async function processEnrichment(job: Job) {
   if (transcriptionStatusError) throw new Error(transcriptionStatusError.message);
 }
 
+async function processPlatformRetention() {
+  const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+  const { data: openConflicts, error: conflictError } = await supabase.from("platform_rinkel_conflicts")
+    .select("event_id").eq("status", "open").not("event_id", "is", null).limit(1000);
+  if (conflictError) throw new Error(conflictError.message);
+  const protectedEventIds = new Set((openConflicts ?? []).map((row) => row.event_id).filter(Boolean));
+
+  const { data: events, error: eventError } = await supabase.from("platform_rinkel_webhook_events")
+    .select("id").is("tenant_id", null).lt("received_at", cutoff)
+    .in("status", ["processed", "dead_letter", "conflict"]).limit(500);
+  if (eventError) throw new Error(eventError.message);
+  const eventIds = (events ?? []).map((row) => row.id).filter((id) => !protectedEventIds.has(id));
+  if (eventIds.length) {
+    const { error } = await supabase.from("platform_rinkel_webhook_events").update({
+      payload: {}, headers: {}, last_error: null,
+    }).in("id", eventIds);
+    if (error) throw new Error(error.message);
+  }
+
+  const { data: jobs, error: jobError } = await supabase.from("platform_rinkel_jobs")
+    .select("id,payload").in("status", ["completed", "dead_letter"]).lt("created_at", cutoff).limit(500);
+  if (jobError) throw new Error(jobError.message);
+  const jobIds = (jobs ?? []).filter((row) => {
+    const payload = object(row.payload) ?? {};
+    return !text(payload.tenant_id);
+  }).map((row) => row.id);
+  if (jobIds.length) {
+    const { error } = await supabase.from("platform_rinkel_jobs").update({
+      payload: {}, last_error: null, last_error_code: null, last_error_message: null,
+    }).in("id", jobIds);
+    if (error) throw new Error(error.message);
+  }
+
+  const { error: auditError } = await supabase.from("platform_audit_logs").insert({
+    actor_user_id: null,
+    action: "rinkel.platform_retention_executed",
+    entity_type: "telephony_retention",
+    entity_id: "rinkel-platform",
+    reason: "Scheduled platform-level raw payload retention",
+    metadata: { cutoff, tenant_null_events_scrubbed: eventIds.length, platform_jobs_scrubbed: jobIds.length },
+  });
+  if (auditError) throw new Error(auditError.message);
+}
+
 async function runJob(job: Job) {
-  if (job.job_type === "rinkel.process_event") return processEvent(job);
-  if (job.job_type === "rinkel.enrich_call") return processEnrichment(job);
+  if (job.job_type === "rinkel.process_event" || job.job_type === "rinkel.insights.process") return processEvent(job);
+  if (job.job_type === "rinkel.enrich_call" || job.job_type === "rinkel.transcription.fetch") return processEnrichment(job);
   if (job.job_type === "rinkel.reconcile_call" || job.job_type === "rinkel.reconcile_unknown_dial") {
     return processCallReconciliation(job);
   }
   if (job.job_type === "rinkel.reconcile_platform") return processReconciliation();
+  if (job.job_type === "rinkel.retention_platform") return processPlatformRetention();
   throw new Error(`unsupported_job:${job.job_type}`);
+}
+
+async function recordWebhookProcessingFailure(job: Job, errorCode: string, errorMessage: string, retryAt: string) {
+  if (job.job_type !== "rinkel.process_event") return;
+  const eventId = text(job.payload.event_id) ?? job.aggregate_id;
+  if (!eventId) return;
+  const { error } = await supabase.rpc("record_platform_rinkel_webhook_failure", {
+    p_event_id: eventId,
+    p_error_code: errorCode,
+    p_error_message: errorMessage,
+    p_retry_at: retryAt,
+  });
+  if (error) throw new Error(`webhook_failure_state_failed:${error.message}`);
+}
+
+function classifyJobError(error: unknown) {
+  const message = error instanceof Error ? error.message.slice(0, 500) : "unknown_error";
+  if (message === "transcription_pending") return { code: "TRANSCRIPTION_PENDING", message, retrySeconds: 30 * 60 };
+  if (message.includes("timeout")) return { code: "WORKER_TIMEOUT", message, retrySeconds: 5 * 60 };
+  if (message.includes("rate")) return { code: "RINKEL_RATE_LIMITED", message, retrySeconds: 15 * 60 };
+  if (message.startsWith("unsupported_job:")) return { code: "WORKER_UNSUPPORTED_JOB", message, retrySeconds: 60 * 60 };
+  return { code: "WORKER_JOB_FAILED", message, retrySeconds: null as number | null };
+}
+
+async function heartbeat(input: {
+  workerId: string;
+  status: "running" | "healthy" | "degraded" | "failed";
+  startedAt: string;
+  finishedAt: string | null;
+  fetched: number;
+  processed: number;
+  failed: number;
+  requeued: number;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+}) {
+  const { error } = await supabase.rpc("record_platform_worker_heartbeat", {
+    p_worker_key: "rinkel-platform-worker",
+    p_worker_id: input.workerId,
+    p_status: input.status,
+    p_started_at: input.startedAt,
+    p_finished_at: input.finishedAt,
+    p_fetched_count: input.fetched,
+    p_processed_count: input.processed,
+    p_failed_count: input.failed,
+    p_requeued_count: input.requeued,
+    p_error_code: input.errorCode ?? null,
+    p_error_message: input.errorMessage ?? null,
+    p_metadata: { runtime: "supabase-edge", claim: "for_update_skip_locked" },
+  });
+  if (error) throw new Error(`heartbeat_failed:${error.message}`);
 }
 
 Deno.serve(async (request) => {
@@ -592,50 +754,98 @@ Deno.serve(async (request) => {
   const body = await request.json().catch(() => ({})) as { limit?: number; workerId?: string };
   const limit = Math.max(1, Math.min(Number(body.limit ?? 25), 100));
   const workerId = String(body.workerId ?? `rinkel-platform-worker:${crypto.randomUUID()}`).slice(0, 200);
-  const { data: candidates, error } = await supabase.from("platform_rinkel_jobs").select("*")
-    .in("status", ["pending", "failed"]).lte("available_at", new Date().toISOString())
-    .order("created_at").limit(limit);
-  if (error) return Response.json({ error: error.message }, { status: 500 });
+  const startedAt = new Date().toISOString();
+  let processed = 0;
+  let failed = 0;
+  let requeued = 0;
   const results: Json[] = [];
-  for (const candidate of (candidates ?? []) as Job[]) {
-    const { data: claimed, error: claimError } = await supabase.from("platform_rinkel_jobs").update({
-      status: "processing",
-      locked_at: new Date().toISOString(),
-      locked_by: workerId,
-      attempts: candidate.attempts + 1,
-    }).eq("id", candidate.id).in("status", ["pending", "failed"]).select("*").maybeSingle();
-    if (claimError) {
-      results.push({ id: candidate.id, status: "claim_failed", error: claimError.message });
-      continue;
+
+  try {
+    await heartbeat({ workerId, status: "running", startedAt, finishedAt: null, fetched: 0, processed: 0, failed: 0, requeued: 0 });
+    const { data: claimed, error: claimError } = await supabase.rpc("claim_platform_rinkel_jobs", {
+      p_worker_id: workerId,
+      p_limit: limit,
+      p_lease_timeout: "00:05:00",
+    });
+    if (claimError) throw new Error(`job_claim_failed:${claimError.message}`);
+    const jobs = (claimed ?? []) as Job[];
+
+    for (const job of jobs) {
+      try {
+        await runJob(job);
+        const { data: finalStatus, error: finishError } = await supabase.rpc("finish_platform_rinkel_job", {
+          p_job_id: job.id,
+          p_worker_id: workerId,
+          p_succeeded: true,
+          p_error_code: null,
+          p_error_message: null,
+          p_retry_at: null,
+        });
+        if (finishError) throw new Error(`job_finish_failed:${finishError.message}`);
+        processed += 1;
+        results.push({ id: job.id, status: finalStatus ?? "completed" });
+      } catch (caught) {
+        const classified = classifyJobError(caught);
+        const genericBackoff = Math.min(3600, (2 ** Math.min(job.attempts, 10)) * 30);
+        const retrySeconds = classified.retrySeconds ?? genericBackoff;
+        const retryAt = new Date(Date.now() + retrySeconds * 1000).toISOString();
+        let failureStateError: string | null = null;
+        try {
+          await recordWebhookProcessingFailure(job, classified.code, classified.message, retryAt);
+        } catch (failureStateCaught) {
+          failureStateError = failureStateCaught instanceof Error ? failureStateCaught.message : "webhook_failure_state_failed";
+        }
+        const { data: finalStatus, error: finishError } = await supabase.rpc("finish_platform_rinkel_job", {
+          p_job_id: job.id,
+          p_worker_id: workerId,
+          p_succeeded: false,
+          p_error_code: classified.code,
+          p_error_message: classified.message,
+          p_retry_at: retryAt,
+        });
+        failed += 1;
+        if (finalStatus === "failed") requeued += 1;
+        results.push({
+          id: job.id,
+          status: finalStatus ?? "finish_failed",
+          errorCode: classified.code,
+          error: [classified.message, failureStateError, finishError ? `job_state_update_failed:${finishError.message}` : null].filter(Boolean).join("; "),
+          retryAt: finalStatus === "failed" ? retryAt : null,
+        });
+      }
     }
-    if (!claimed) continue;
+
+    const finishedAt = new Date().toISOString();
+    await heartbeat({
+      workerId,
+      status: failed > 0 ? "degraded" : "healthy",
+      startedAt,
+      finishedAt,
+      fetched: jobs.length,
+      processed,
+      failed,
+      requeued,
+    });
+    return Response.json({ workerId, fetched: jobs.length, processed, failed, requeued, results });
+  } catch (caught) {
+    const classified = classifyJobError(caught);
+    const finishedAt = new Date().toISOString();
     try {
-      await runJob(claimed as Job);
-      const { error: completionError } = await supabase.from("platform_rinkel_jobs").update({
-        status: "completed",
-        completed_at: new Date().toISOString(),
-        locked_at: null,
-        locked_by: null,
-        last_error: null,
-      }).eq("id", candidate.id);
-      if (completionError) throw new Error(completionError.message);
-      results.push({ id: candidate.id, status: "completed" });
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message.slice(0, 500) : "unknown_error";
-      const terminal = candidate.attempts + 1 >= candidate.max_attempts;
-      const { error: failureUpdateError } = await supabase.from("platform_rinkel_jobs").update({
-        status: terminal ? "dead_letter" : "failed",
-        available_at: new Date(Date.now() + Math.min(3600, (2 ** Math.min(candidate.attempts, 10)) * 30) * 1000).toISOString(),
-        locked_at: null,
-        locked_by: null,
-        last_error: message,
-      }).eq("id", candidate.id);
-      results.push({
-        id: candidate.id,
-        status: terminal ? "dead_letter" : "failed",
-        error: failureUpdateError ? `${message}; job_state_update_failed:${failureUpdateError.message}` : message,
+      await heartbeat({
+        workerId,
+        status: "failed",
+        startedAt,
+        finishedAt,
+        fetched: results.length,
+        processed,
+        failed: failed + 1,
+        requeued,
+        errorCode: classified.code,
+        errorMessage: classified.message,
       });
+    } catch {
+      // Preserve the primary worker error in the HTTP response.
     }
+    return Response.json({ error: classified.code, message: classified.message, workerId, results }, { status: 500 });
   }
-  return Response.json({ workerId, results });
 });

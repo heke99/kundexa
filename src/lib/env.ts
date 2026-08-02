@@ -5,6 +5,21 @@ function isValidIpAddress(value: string) {
   return /^[0-9a-f:]+$/i.test(value) && value.includes(":") && value.length <= 45;
 }
 
+
+function isUnsafePublicHostname(hostname: string) {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/%[0-9a-z_.-]+$/i, "");
+  if (["localhost", "0.0.0.0", "::", "::1"].includes(normalized)) return true;
+  if (normalized.endsWith(".local") || normalized.endsWith(".internal") || normalized.endsWith(".localhost")) return true;
+  if (/^(0|10|127)\./.test(normalized) || /^192\.168\./.test(normalized) || /^169\.254\./.test(normalized)) return true;
+  const private172 = /^172\.(\d{1,3})\./.exec(normalized);
+  if (private172 && Number(private172[1]) >= 16 && Number(private172[1]) <= 31) return true;
+  const sharedCarrier = /^100\.(\d{1,3})\./.exec(normalized);
+  if (sharedCarrier && Number(sharedCarrier[1]) >= 64 && Number(sharedCarrier[1]) <= 127) return true;
+  if (/^(fc|fd)[0-9a-f]{2}:/i.test(normalized) || /^fe[89ab][0-9a-f]:/i.test(normalized)) return true;
+  if (/^::ffff:(127\.|10\.|192\.168\.|169\.254\.)/i.test(normalized)) return true;
+  return false;
+}
+
 const ipAllowlistSchema = z.string().default("82.199.77.220,188.122.73.177").transform((value, context) => {
   const addresses = [...new Set(value.split(",").map((entry) => entry.trim()).filter(Boolean))];
   const invalid = addresses.find((entry) => !isValidIpAddress(entry));
@@ -54,6 +69,25 @@ const serverSchema = publicSchema.extend({
   }
   if (env.RESEND_API_KEY && !env.DEFAULT_EMAIL_FROM_NAME) {
     context.addIssue({ code: "custom", path: ["DEFAULT_EMAIL_FROM_NAME"], message: "Plattformshanterad Resend kräver ett avsändarnamn." });
+  }
+  const deployment = process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? "development";
+  if (["production", "preview", "staging"].includes(deployment)) {
+    const webhookUrl = new URL(env.RINKEL_WEBHOOK_PUBLIC_BASE_URL);
+    if (webhookUrl.protocol !== "https:" || isUnsafePublicHostname(webhookUrl.hostname)) {
+      context.addIssue({
+        code: "custom",
+        path: ["RINKEL_WEBHOOK_PUBLIC_BASE_URL"],
+        message: "RINKEL_WEBHOOK_PUBLIC_BASE_URL måste vara en publik HTTPS-adress i staging/production.",
+      });
+    }
+    const apiUrl = new URL(env.RINKEL_API_BASE_URL);
+    if (apiUrl.protocol !== "https:" || isUnsafePublicHostname(apiUrl.hostname)) {
+      context.addIssue({
+        code: "custom",
+        path: ["RINKEL_API_BASE_URL"],
+        message: "RINKEL_API_BASE_URL måste vara en publik HTTPS-adress i staging/production.",
+      });
+    }
   }
 });
 

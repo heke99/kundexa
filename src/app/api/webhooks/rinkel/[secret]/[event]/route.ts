@@ -30,9 +30,8 @@ export async function POST(
   const { data: integration, error: integrationError } = await admin.from("platform_integrations")
     .select("id")
     .eq("provider", "rinkel")
-    .is("disabled_at", null)
-    .limit(1)
-    .maybeSingle();
+    .eq("is_canonical", true)
+    .single();
   if (integrationError || !integration) return new NextResponse(null, { status: 503 });
 
   const externalCallId = parsed.payload.id;
@@ -75,16 +74,40 @@ export async function POST(
     payload: { event_id: eventId },
   }, { onConflict: "idempotency_key", ignoreDuplicates: true });
   if (queueError) return new NextResponse(null, { status: 503 });
-  await Promise.all([
-    admin.from("platform_integrations").update({
-      webhook_status: "active",
-      webhook_last_received_at: new Date().toISOString(),
-    }).eq("id", integration.id),
-    admin.from("platform_rinkel_webhook_subscriptions").update({
-      status: "active",
-      last_received_at: new Date().toISOString(),
-      last_error: null,
-    }).eq("platform_integration_id", integration.id).eq("event_type", parsed.event),
-  ]);
-  return NextResponse.json({ accepted: true }, { status: 200 });
+  const receivedAt = new Date().toISOString();
+  const { data: subscription } = await admin.from("platform_rinkel_webhook_subscriptions")
+    .select("status,test_requested_at")
+    .eq("platform_integration_id", integration.id)
+    .eq("event_type", parsed.event)
+    .maybeSingle();
+  const testRequestedAt = subscription?.test_requested_at ? Date.parse(subscription.test_requested_at) : Number.NaN;
+  const receiptAt = Date.parse(receivedAt);
+  const isTestReceipt = Boolean(
+    subscription?.status === "test_pending"
+      && Number.isFinite(testRequestedAt)
+      && receiptAt >= testRequestedAt
+      && receiptAt - testRequestedAt <= 10 * 60_000,
+  );
+  const { error: receiptError } = await admin.rpc("record_platform_rinkel_webhook_receipt", {
+    p_platform_integration_id: integration.id,
+    p_event_type: parsed.event,
+    p_received_at: receivedAt,
+    p_http_status: 200,
+    p_is_test_receipt: isTestReceipt,
+  });
+  if (receiptError) return new NextResponse(null, { status: 503 });
+  const { error: auditError } = await admin.from("platform_audit_logs").insert({
+    action: event ? "rinkel.webhook_received" : "rinkel.webhook_duplicate",
+    entity_type: "platform_rinkel_webhook_event",
+    entity_id: eventId,
+    metadata: {
+      event_type: parsed.event,
+      provider_event_id: providerEventId,
+      test_receipt: isTestReceipt,
+    },
+  });
+  if (auditError) {
+    console.error("rinkel_webhook_audit_failed", { eventId, eventType: parsed.event, code: auditError.code });
+  }
+  return NextResponse.json({ accepted: true, duplicate: !event }, { status: 200 });
 }

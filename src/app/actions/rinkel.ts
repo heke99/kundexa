@@ -10,14 +10,19 @@ import { serverEnv } from "@/lib/env";
 import { toJson } from "@/lib/supabase/json";
 import { createPlatformRinkelClient } from "@/lib/integrations/rinkel/client";
 import { safeRinkelError } from "@/lib/integrations/rinkel/errors";
-import { RINKEL_WEBHOOK_EVENTS } from "@/lib/integrations/rinkel/schemas";
+import {
+  RINKEL_CORE_WEBHOOK_EVENTS,
+  RINKEL_OPTIONAL_WEBHOOK_EVENTS,
+} from "@/lib/integrations/rinkel/schemas";
 import type { RinkelNumber } from "@/lib/integrations/rinkel/types";
 
 type PlatformIntegration = {
   id: string;
   status: string;
+  webhook_status?: string;
   capabilities: Record<string, unknown> | null;
   configuration: Record<string, unknown> | null;
+  last_error_operation: string | null;
 };
 
 function value(form: FormData, key: string) {
@@ -42,14 +47,49 @@ async function platformAdminContext() {
   return context;
 }
 
+type SafePlatformError = { code: string; message: string; retryable: boolean; outcomeUnknown: boolean };
+
+function safePlatformError(error: unknown): SafePlatformError {
+  const provider = safeRinkelError(error);
+  if (provider.code !== "RINKEL_UNKNOWN_ERROR") return provider;
+  if (error && typeof error === "object") {
+    const candidate = error as { code?: unknown; message?: unknown };
+    const databaseCode = typeof candidate.code === "string" ? candidate.code : "";
+    const rawMessage = typeof candidate.message === "string" ? candidate.message : "";
+    if (databaseCode === "42501" || databaseCode === "PGRST301") {
+      return { code: "DATABASE_PERMISSION_ERROR", message: "Databasen nekade åtgärden.", retryable: false, outcomeUnknown: false };
+    }
+    if (["42P01", "42703", "PGRST204"].includes(databaseCode)) {
+      return { code: "DATABASE_SCHEMA_MISMATCH", message: "Databasschemat är inte synkroniserat med applikationen.", retryable: false, outcomeUnknown: false };
+    }
+    if (databaseCode.startsWith("23")) {
+      return { code: "DATABASE_CONSTRAINT_ERROR", message: "Databasen stoppade en konfliktande ändring.", retryable: false, outcomeUnknown: false };
+    }
+    if (databaseCode) {
+      return { code: "DATABASE_UNAVAILABLE", message: "Databasåtgärden kunde inte slutföras.", retryable: true, outcomeUnknown: false };
+    }
+    const internalCode = /^([A-Z][A-Z0-9_]{3,100})/.exec(rawMessage)?.[1] ?? null;
+    if (internalCode) {
+      const messages: Record<string, string> = {
+        RINKEL_WEBHOOK_REGISTRATION_MISMATCH: "Rinkels registrerade webhook stämmer inte med Kundexas publika HTTPS-adress.",
+        RINKEL_WORKER_HTTP_401: "Rinkel-workern nekade scheduler-anropet. Kontrollera CRON_SECRET i Vercel och Supabase.",
+        RINKEL_WORKER_HTTP_403: "Rinkel-workern saknar behörighet för scheduler-anropet.",
+        RINKEL_PLATFORM_QUERY_FAILED: "Den centrala Rinkel-integrationen kunde inte läsas.",
+        RINKEL_PLATFORM_NOT_CONFIGURED: "Den centrala Rinkel-integrationen är inte konfigurerad.",
+      };
+      return { code: internalCode, message: messages[internalCode] ?? "Rinkel-åtgärden kunde inte slutföras.", retryable: false, outcomeUnknown: false };
+    }
+  }
+  return provider;
+}
+
 async function loadPlatformIntegration(): Promise<PlatformIntegration> {
   const admin = createAdminClient();
   const { data, error } = await admin.from("platform_integrations")
-    .select("id,status,capabilities,configuration")
+    .select("id,status,capabilities,configuration,last_error_operation")
     .eq("provider", "rinkel")
-    .is("disabled_at", null)
-    .limit(1)
-    .maybeSingle();
+    .eq("is_canonical", true)
+    .single();
   if (error) throw new Error("RINKEL_PLATFORM_QUERY_FAILED");
   if (!data) throw new Error("RINKEL_PLATFORM_NOT_CONFIGURED");
   return data as PlatformIntegration;
@@ -63,7 +103,7 @@ async function platformAudit(
   metadata: Record<string, unknown>,
   tenantId?: string | null,
 ) {
-  await createAdminClient().from("platform_audit_logs").insert({
+  const { error } = await createAdminClient().from("platform_audit_logs").insert({
     actor_user_id: actorId,
     action,
     entity_type: entityType,
@@ -71,6 +111,7 @@ async function platformAudit(
     tenant_id: tenantId ?? null,
     metadata: toJson(metadata),
   });
+  if (error) throw new Error("DATABASE_AUDIT_LOG_FAILED");
 }
 
 export async function testPlatformRinkelConnection() {
@@ -85,55 +126,108 @@ export async function testPlatformRinkelConnection() {
       last_connection_test_at: testedAt,
       last_error_code: "RINKEL_PLATFORM_NOT_CONFIGURED",
       last_error_message: "RINKEL_API_KEY saknas i servermiljön.",
+      last_error_at: testedAt,
+      last_error_operation: "connection_test",
     }).eq("id", integration.id);
     go("/app/platform/telephony", "error", "RINKEL_API_KEY saknas i servermiljön.");
   }
   await admin.from("platform_integrations").update({
     status: "testing",
     last_connection_test_at: testedAt,
-    last_error_code: null,
-    last_error_message: null,
   }).eq("id", integration.id);
   try {
+    const { data: persistedCapabilities, error: capabilityReadError } = await admin
+      .from("platform_rinkel_capabilities")
+      .select("dial_test_succeeded,dial_tested_at,core_webhooks_verified,webhooks,transcription_supported,insights_supported,note_sync_supported")
+      .eq("platform_integration_id", integration.id)
+      .maybeSingle();
+    if (capabilityReadError) throw capabilityReadError;
     const client = createPlatformRinkelClient(crypto.randomUUID());
     const [users, numbers] = await Promise.all([client.listUsers(), client.listNumbers()]);
-    let webhookAccess = true;
+    let webhookRegistration = false;
+    let webhookErrorCode: string | null = null;
     try {
       await client.listWebhooks();
-    } catch {
-      webhookAccess = false;
+      webhookRegistration = true;
+    } catch (error) {
+      const safe = safePlatformError(error);
+      webhookErrorCode = safe.code;
     }
+    const dialConfigured = users.some((user) => user.active && user.devices.some((device) => device.active))
+      && numbers.some((number) => number.active);
+    const recordingDetected = numbers.some((number) => number.recordingEnabled);
+    const previous = integration.capabilities ?? {};
     const capabilities = {
+      ...previous,
       api_access: true,
-      dial: true,
-      webhooks: webhookAccess,
-      recordings: numbers.some((number) => number.recordingEnabled),
-      transcription: false,
-      ai_insights: false,
+      users_catalog: true,
+      numbers_catalog: true,
+      dial: false,
+      dial_endpoint_reachable: false,
+      dial_configured: dialConfigured,
+      dial_test_succeeded: Boolean(persistedCapabilities?.dial_test_succeeded ?? previous.dial_test_succeeded),
+      webhooks: Boolean(persistedCapabilities?.webhooks),
+      webhooks_registration: webhookRegistration,
+      core_webhooks_verified: Boolean(persistedCapabilities?.core_webhooks_verified),
+      recordings: recordingDetected,
+      recording_detected: recordingDetected,
+      transcription: Boolean(persistedCapabilities?.transcription_supported ?? previous.transcription_supported),
+      ai_insights: Boolean(persistedCapabilities?.insights_supported ?? previous.insights_supported),
     };
+    const clearsConnectionError = !integration.last_error_operation || integration.last_error_operation === "connection_test";
     await admin.from("platform_integrations").update({
-      status: webhookAccess ? "connected" : "degraded",
+      status: "connected",
       last_verified_at: testedAt,
       last_connection_test_at: testedAt,
       capabilities,
-      last_error_code: webhookAccess ? null : "RINKEL_PLAN_UNSUPPORTED",
-      last_error_message: webhookAccess ? null : "Webhookåtkomst kunde inte verifieras.",
+      ...(clearsConnectionError ? {
+        last_error_code: null,
+        last_error_message: null,
+        last_error_at: null,
+        last_error_operation: null,
+      } : {}),
     }).eq("id", integration.id);
     await admin.from("platform_rinkel_capabilities").upsert({
       platform_integration_id: integration.id,
-      ...capabilities,
+      api_access: true,
+      dial: false,
+      webhooks: Boolean(persistedCapabilities?.webhooks),
+      recordings: recordingDetected,
+      transcription: Boolean(persistedCapabilities?.transcription_supported ?? previous.transcription_supported),
+      ai_insights: Boolean(persistedCapabilities?.insights_supported ?? previous.insights_supported),
+      users_catalog: true,
+      numbers_catalog: true,
+      dial_endpoint_reachable: false,
+      dial_configured: dialConfigured,
+      dial_test_succeeded: Boolean(persistedCapabilities?.dial_test_succeeded ?? previous.dial_test_succeeded),
+      dial_tested_at: persistedCapabilities?.dial_tested_at ?? null,
+      webhooks_registration: webhookRegistration,
+      core_webhooks_verified: Boolean(persistedCapabilities?.core_webhooks_verified),
+      recording_detected: recordingDetected,
+      transcription_supported: Boolean(persistedCapabilities?.transcription_supported),
+      insights_supported: Boolean(persistedCapabilities?.insights_supported),
+      note_sync_supported: Boolean(persistedCapabilities?.note_sync_supported),
       detected_at: testedAt,
-      details: { user_count: users.length, number_count: numbers.length },
+      details: {
+        user_count: users.length,
+        device_count: users.reduce((sum, user) => sum + user.devices.length, 0),
+        number_count: numbers.length,
+        webhook_catalog_error_code: webhookErrorCode,
+        dial_verification: "not_executed_by_connection_test",
+      },
     }, { onConflict: "platform_integration_id" });
     await platformAudit(context.userId, "rinkel.connection_test_succeeded", "platform_integration", integration.id, {
       user_count: users.length,
+      device_count: users.reduce((sum, user) => sum + user.devices.length, 0),
       number_count: numbers.length,
-      webhook_access: webhookAccess,
+      webhook_registration_access: webhookRegistration,
+      dial_configured: dialConfigured,
+      dial_test_executed: false,
     });
     revalidatePath("/app/platform/telephony");
-    go("/app/platform/telephony", "message", "Den centrala Rinkel-anslutningen fungerar.");
+    go("/app/platform/telephony", "message", "Rinkel API och kataloger är verifierade. Ett verkligt testsamtal är fortfarande ej verifierat.");
   } catch (error) {
-    const safe = safeRinkelError(error);
+    const safe = safePlatformError(error);
     const status = safe.code === "RINKEL_AUTHENTICATION_ERROR"
       ? "authentication_failed"
       : safe.code === "RINKEL_PLAN_UNSUPPORTED" ? "plan_unsupported" : "unavailable";
@@ -143,6 +237,8 @@ export async function testPlatformRinkelConnection() {
       last_connection_test_at: testedAt,
       last_error_code: safe.code,
       last_error_message: safe.message,
+      last_error_at: testedAt,
+      last_error_operation: "connection_test",
     }).eq("id", integration.id);
     await platformAudit(context.userId, "rinkel.connection_test_failed", "platform_integration", integration.id, {
       error_code: safe.code,
@@ -169,8 +265,9 @@ export async function syncPlatformRinkelDirectory() {
       admin.from("platform_rinkel_users").select("id,external_user_id").eq("platform_integration_id", integration.id),
       admin.from("platform_rinkel_numbers").select("id,external_number_id").eq("platform_integration_id", integration.id),
     ]);
+    let deviceCount = 0;
     for (const user of users) {
-      const { error } = await admin.from("platform_rinkel_users").upsert({
+      const { data: storedUser, error } = await admin.from("platform_rinkel_users").upsert({
         platform_integration_id: integration.id,
         external_user_id: user.id,
         external_device_id: user.deviceId,
@@ -179,8 +276,37 @@ export async function syncPlatformRinkelDirectory() {
         active: user.active,
         raw_provider_data: toJson(user.raw),
         last_synced_at: syncedAt,
-      }, { onConflict: "platform_integration_id,external_user_id" });
+      }, { onConflict: "platform_integration_id,external_user_id" }).select("id").single();
       if (error) throw error;
+      const liveDeviceIds = new Set(user.devices.map((device) => device.id));
+      for (const device of user.devices) {
+        deviceCount += 1;
+        const { error: deviceError } = await admin.from("platform_rinkel_devices").upsert({
+          platform_integration_id: integration.id,
+          platform_rinkel_user_id: storedUser.id,
+          provider_device_id: device.id,
+          display_name: device.displayName,
+          device_type: device.type,
+          provider_status: device.status,
+          active: user.active && device.active,
+          last_seen_at: syncedAt,
+          last_synced_at: syncedAt,
+          raw_payload: toJson(device.raw),
+        }, { onConflict: "platform_rinkel_user_id,provider_device_id" });
+        if (deviceError) throw deviceError;
+      }
+      const { data: storedDevices, error: storedDevicesError } = await admin.from("platform_rinkel_devices")
+        .select("id,provider_device_id").eq("platform_rinkel_user_id", storedUser.id);
+      if (storedDevicesError) throw storedDevicesError;
+      const staleDeviceIds = (storedDevices ?? []).filter((device) => !liveDeviceIds.has(device.provider_device_id)).map((device) => device.id);
+      if (staleDeviceIds.length) {
+        const { error: staleDeviceError } = await admin.from("platform_rinkel_devices").update({
+          active: false,
+          provider_status: "removed",
+          last_synced_at: syncedAt,
+        }).in("id", staleDeviceIds);
+        if (staleDeviceError) throw staleDeviceError;
+      }
     }
     for (const numberValue of numbers) {
       const number = await ensureTenantPhoneNumber(numberValue);
@@ -202,28 +328,45 @@ export async function syncPlatformRinkelDirectory() {
     const liveNumbers = new Set(numbers.map((item) => item.id));
     const staleUsers = (existingUsers ?? []).filter((item) => !liveUsers.has(item.external_user_id)).map((item) => item.id);
     const staleNumbers = (existingNumbers ?? []).filter((item) => !liveNumbers.has(item.external_number_id)).map((item) => item.id);
-    if (staleUsers.length) await admin.from("platform_rinkel_users").update({ active: false, last_synced_at: syncedAt }).in("id", staleUsers);
-    if (staleNumbers.length) await admin.from("platform_rinkel_numbers").update({ active: false, provider_status: "removed", last_synced_at: syncedAt }).in("id", staleNumbers);
+    if (staleUsers.length) {
+      const { error: staleUserError } = await admin.from("platform_rinkel_users")
+        .update({ active: false, last_synced_at: syncedAt }).in("id", staleUsers);
+      if (staleUserError) throw staleUserError;
+    }
+    if (staleNumbers.length) {
+      const { error: staleNumberError } = await admin.from("platform_rinkel_numbers")
+        .update({ active: false, provider_status: "removed", last_synced_at: syncedAt }).in("id", staleNumbers);
+      if (staleNumberError) throw staleNumberError;
+    }
+    const clearsDirectoryError = !integration.last_error_operation || integration.last_error_operation === "directory_sync";
     await admin.from("platform_integrations").update({
-      status: integration.status === "degraded" ? "degraded" : "connected",
+      status: ["connected", "degraded"].includes(integration.status) ? integration.status : "testing",
       last_successful_sync_at: syncedAt,
-      last_error_code: null,
-      last_error_message: null,
+      ...(clearsDirectoryError ? {
+        last_error_code: null,
+        last_error_message: null,
+        last_error_at: null,
+        last_error_operation: null,
+      } : {}),
     }).eq("id", integration.id);
     await platformAudit(context.userId, "rinkel.directory_synced", "platform_integration", integration.id, {
       users: users.length,
+      devices: deviceCount,
       numbers: numbers.length,
       deactivated_users: staleUsers.length,
       deactivated_numbers: staleNumbers.length,
     });
     revalidatePath("/app/platform/telephony");
-    go("/app/platform/telephony", "message", `Katalogen synkroniserades: ${users.length} användare och ${numbers.length} nummer.`);
+    revalidatePath("/app/integrations");
+    go("/app/platform/telephony", "message", `Katalogen synkroniserades: ${users.length} användare, ${deviceCount} enheter och ${numbers.length} nummer.`);
   } catch (error) {
-    const safe = safeRinkelError(error);
+    const safe = safePlatformError(error);
     await admin.from("platform_integrations").update({
       last_failed_sync_at: syncedAt,
       last_error_code: safe.code,
       last_error_message: safe.message,
+      last_error_at: syncedAt,
+      last_error_operation: "directory_sync",
     }).eq("id", integration.id);
     go("/app/platform/telephony", "error", safe.message);
   }
@@ -234,58 +377,123 @@ export async function configurePlatformRinkelWebhooks() {
   const env = serverEnv();
   const admin = createAdminClient();
   const integration = await loadPlatformIntegration();
-  if (!env.RINKEL_WEBHOOK_SECRET) {
-    go("/app/platform/telephony", "error", "RINKEL_WEBHOOK_SECRET saknas i servermiljön.");
-  }
+  if (!env.RINKEL_WEBHOOK_SECRET) go("/app/platform/telephony", "error", "RINKEL_WEBHOOK_SECRET saknas i servermiljön.");
   const base = env.RINKEL_WEBHOOK_PUBLIC_BASE_URL.replace(/\/+$/, "");
-  const verifiedAt = new Date().toISOString();
+  const configuredAt = new Date().toISOString();
+  const allEvents = [...RINKEL_CORE_WEBHOOK_EVENTS, ...RINKEL_OPTIONAL_WEBHOOK_EVENTS];
   try {
     const client = createPlatformRinkelClient(crypto.randomUUID());
     const existing = await client.listWebhooks();
-    for (const event of RINKEL_WEBHOOK_EVENTS) {
+    await admin.from("platform_integrations").update({ webhook_status: "registering" }).eq("id", integration.id);
+    const optionalFailures: string[] = [];
+    let testRequestedCount = 0;
+    for (const event of allEvents) {
+      const required = RINKEL_CORE_WEBHOOK_EVENTS.includes(event as (typeof RINKEL_CORE_WEBHOOK_EVENTS)[number]);
       const url = `${base}/api/webhooks/rinkel/${env.RINKEL_WEBHOOK_SECRET}/${event}`;
-      const current = existing.find((item) => item.event === event);
-      if (!current) {
-        await client.subscribeWebhook(event, {
-          url,
-          contentType: "application/json",
-          active: true,
-          description: "Kundexa central Rinkel webhook",
-        });
-      } else if (current.url !== url || !current.active || current.contentType !== "application/json") {
-        await client.updateWebhook(event, {
-          url,
-          contentType: "application/json",
-          active: true,
-          description: "Kundexa central Rinkel webhook",
-        });
-      }
       await admin.from("platform_rinkel_webhook_subscriptions").upsert({
         platform_integration_id: integration.id,
         event_type: event,
         target_url_hash: sha256(url),
-        status: "active",
-        last_verified_at: verifiedAt,
+        target_url_redacted: `${base}/api/webhooks/rinkel/[REDACTED]/${event}`,
+        required,
+        status: "registering",
         last_error: null,
+        last_error_code: null,
+        last_error_message: null,
       }, { onConflict: "platform_integration_id,event_type" });
+      try {
+        const current = existing.find((item) => item.event === event);
+        if (!current) {
+          await client.subscribeWebhook(event, { url, contentType: "application/json", active: true, description: "Kundexa central Rinkel webhook" });
+        } else if (current.url !== url || !current.active || current.contentType !== "application/json") {
+          await client.updateWebhook(event, { url, contentType: "application/json", active: true, description: "Kundexa central Rinkel webhook" });
+        }
+        const verifiedCatalog = (await client.listWebhooks()).find((item) => item.event === event);
+        if (!verifiedCatalog || verifiedCatalog.url !== url || !verifiedCatalog.active || verifiedCatalog.contentType !== "application/json") {
+          throw new Error("RINKEL_WEBHOOK_REGISTRATION_MISMATCH");
+        }
+        await admin.from("platform_rinkel_webhook_subscriptions").update({
+          status: "registered",
+          provider_active: true,
+          registered_at: configuredAt,
+          last_verified_at: null,
+        }).eq("platform_integration_id", integration.id).eq("event_type", event);
+        try {
+          await client.testWebhook(event);
+          testRequestedCount += 1;
+          await admin.from("platform_rinkel_webhook_subscriptions").update({
+            status: "test_pending",
+            test_requested_at: new Date().toISOString(),
+          }).eq("platform_integration_id", integration.id).eq("event_type", event);
+        } catch (testError) {
+          const safe = safePlatformError(testError);
+          await admin.from("platform_rinkel_webhook_subscriptions").update({
+            status: "registered",
+            last_error: safe.message,
+            last_error_code: safe.code,
+            last_error_message: "Webhooken är registrerad men provider-testet kunde inte köras. Verifiering inväntar verklig leverans.",
+          }).eq("platform_integration_id", integration.id).eq("event_type", event);
+        }
+      } catch (eventError) {
+        const safe = safePlatformError(eventError);
+        if (!required && ["RINKEL_PLAN_UNSUPPORTED", "RINKEL_FORBIDDEN", "RINKEL_NUMBER_NOT_FOUND"].includes(safe.code)) {
+          optionalFailures.push(event);
+          await admin.from("platform_rinkel_webhook_subscriptions").update({
+            status: "unsupported",
+            provider_active: false,
+            last_error: safe.message,
+            last_error_code: safe.code,
+            last_error_message: safe.message,
+          }).eq("platform_integration_id", integration.id).eq("event_type", event);
+          continue;
+        }
+        throw eventError;
+      }
     }
     await admin.from("platform_integrations").update({
-      webhook_status: "active",
-      last_verified_at: verifiedAt,
-      capabilities: { ...(integration.capabilities ?? {}), webhooks: true },
+      webhook_status: testRequestedCount > 0 ? "test_pending" : "registered",
+      capabilities: {
+        ...(integration.capabilities ?? {}),
+        webhooks: false,
+        webhooks_registration: true,
+        core_webhooks_verified: false,
+        insights_supported: !optionalFailures.includes("callInsights"),
+      },
+      ...(!integration.last_error_operation || integration.last_error_operation === "webhook_registration" ? {
+        last_error_code: null,
+        last_error_message: null,
+        last_error_at: null,
+        last_error_operation: null,
+      } : {}),
     }).eq("id", integration.id);
+    await admin.from("platform_rinkel_capabilities").upsert({
+      platform_integration_id: integration.id,
+      webhooks: false,
+      webhooks_registration: true,
+      core_webhooks_verified: false,
+      insights_supported: !optionalFailures.includes("callInsights"),
+      detected_at: configuredAt,
+    }, { onConflict: "platform_integration_id" });
     await platformAudit(context.userId, "rinkel.webhooks_configured", "platform_integration", integration.id, {
-      events: RINKEL_WEBHOOK_EVENTS,
+      core_events: RINKEL_CORE_WEBHOOK_EVENTS,
+      optional_events: RINKEL_OPTIONAL_WEBHOOK_EVENTS,
+      optional_unsupported: optionalFailures,
+      verification_state: testRequestedCount > 0 ? "test_pending" : "registered",
+      provider_tests_requested: testRequestedCount,
     });
     revalidatePath("/app/platform/telephony");
-    go("/app/platform/telephony", "message", "Alla fem centrala Rinkel-webhookar är registrerade.");
+    go("/app/platform/telephony", "message", testRequestedCount > 0
+      ? "Fyra kärnwebhookar är registrerade. De blir verifierade först när Kundexa har mottagit och behandlat testeventen."
+      : "Fyra kärnwebhookar är registrerade. Provider-testet var inte tillgängligt; verifiering inväntar verklig leverans och workerbehandling.");
   } catch (error) {
-    const safe = safeRinkelError(error);
+    const safe = safePlatformError(error);
     await admin.from("platform_integrations").update({
-      webhook_status: safe.code === "RINKEL_PLAN_UNSUPPORTED" ? "disabled" : "error",
+      webhook_status: "failed",
       status: "degraded",
       last_error_code: safe.code,
       last_error_message: safe.message,
+      last_error_at: configuredAt,
+      last_error_operation: "webhook_registration",
     }).eq("id", integration.id);
     go("/app/platform/telephony", "error", safe.message);
   }
@@ -299,12 +507,15 @@ export async function setPlatformRinkelPaused(form: FormData) {
   const nextStatus = paused
     ? "disabled"
     : serverEnv().RINKEL_API_KEY
-      ? "connected"
+      ? "testing"
       : "not_configured";
   const { error } = await admin.from("platform_integrations").update({
     status: nextStatus,
+    disabled_at: paused ? new Date().toISOString() : null,
     last_error_code: paused ? "TELEPHONY_DISABLED" : null,
     last_error_message: paused ? "Central telefoni har pausats av plattformsadmin." : null,
+    last_error_at: paused ? new Date().toISOString() : null,
+    last_error_operation: paused ? "platform_pause" : null,
   }).eq("id", integration.id);
   if (error) go("/app/platform/telephony", "error", "Central telefonistatus kunde inte ändras.");
   await platformAudit(
@@ -316,7 +527,7 @@ export async function setPlatformRinkelPaused(form: FormData) {
   );
   revalidatePath("/app/platform/telephony");
   revalidatePath("/app/integrations");
-  go("/app/platform/telephony", "message", paused ? "Central telefoni är pausad." : "Central telefoni är återaktiverad.");
+  go("/app/platform/telephony", "message", paused ? "Central telefoni är pausad." : "Central telefoni är återaktiverad och måste verifieras innan status blir ansluten.");
 }
 
 export async function allocatePlatformRinkelResource(form: FormData) {
@@ -334,7 +545,7 @@ export async function allocatePlatformRinkelResource(form: FormData) {
     p_tenant_id: tenantId,
     p_reason: value(form, "reason") || "Tilldelad i plattformsadministrationen",
   });
-  if (error) go("/app/platform/telephony", "error", error.message);
+  if (error) go("/app/platform/telephony", "error", safePlatformError(error).message);
   await platformAudit(context.userId, "rinkel.resource_allocation_requested", `rinkel_${type}`, resourceId, {}, tenantId);
   revalidatePath("/app/platform/telephony");
   go("/app/platform/telephony", "message", "Rinkel-resursen är tilldelad.");
@@ -350,7 +561,7 @@ export async function revokePlatformRinkelResource(form: FormData) {
     p_allocation_id: allocationId,
     p_reason: value(form, "reason") || "Återkallad i plattformsadministrationen",
   });
-  if (error) go("/app/platform/telephony", "error", error.message);
+  if (error) go("/app/platform/telephony", "error", safePlatformError(error).message);
   revalidatePath("/app/platform/telephony");
   go("/app/platform/telephony", "message", "Tilldelningen är återkallad.");
 }
@@ -358,24 +569,216 @@ export async function revokePlatformRinkelResource(form: FormData) {
 export async function saveRinkelUserMapping(form: FormData) {
   await tenantAdminContext();
   const supabase = await createClient();
-  const { error } = await supabase.rpc("replace_rinkel_user_mapping_v2", {
+  const { error } = await supabase.rpc("replace_rinkel_user_mapping_v3", {
     p_kundexa_user_id: value(form, "kundexa_user_id"),
     p_rinkel_user_allocation_id: value(form, "rinkel_user_allocation_id"),
     p_default_number_allocation_id: value(form, "default_number_allocation_id"),
+    p_selected_device_id: value(form, "selected_device_id"),
   });
-  if (error) go("/app/integrations", "error", error.message);
+  if (error) go("/app/integrations", "error", safePlatformError(error).message);
   revalidatePath("/app/integrations");
   go("/app/integrations", "message", "Telefonimappningen är sparad.");
 }
 
+
+export async function saveRinkelCallerIdDefault(form: FormData) {
+  const context = await tenantAdminContext();
+  if (!isAdmin(context.role)) go("/app/integrations", "error", "Endast tenantägare eller tenantadmin får ändra caller-ID-standarder.");
+  const scopeTarget = value(form, "scope_target");
+  const numberAllocationId = value(form, "number_allocation_id") || null;
+  const [scope, scopeId = ""] = scopeTarget.split(":", 2);
+  if (!['tenant', 'team', 'list', 'campaign'].includes(scope)) go("/app/integrations", "error", "Ogiltig caller-ID-scope.");
+  if (scope !== "tenant" && !scopeId) go("/app/integrations", "error", "Mål för caller-ID saknas.");
+  const admin = createAdminClient();
+  if (numberAllocationId) {
+    const { data: allocation, error: allocationError } = await admin.from("rinkel_number_allocations")
+      .select("id,rinkel_number_id")
+      .eq("tenant_id", context.tenantId).eq("id", numberAllocationId)
+      .eq("status", "active").is("valid_to", null).maybeSingle();
+    if (allocationError || !allocation) go("/app/integrations", "error", "Nummerallokeringen är inte aktiv för detta företag.");
+    const { data: number } = await admin.from("platform_rinkel_numbers").select("id").eq("id", allocation.rinkel_number_id).eq("active", true).maybeSingle();
+    if (!number) go("/app/integrations", "error", "Rinkel-numret är inaktivt eller saknas.");
+  }
+  let mutationError: unknown = null;
+  let updatedTarget = true;
+  if (scope === "tenant") {
+    const result = await admin.from("telephony_policies").upsert({
+      tenant_id: context.tenantId,
+      default_number_allocation_id: numberAllocationId,
+    }, { onConflict: "tenant_id" });
+    mutationError = result.error;
+  } else if (scope === "team") {
+    const result = await admin.from("teams").update({ rinkel_number_allocation_id: numberAllocationId })
+      .eq("tenant_id", context.tenantId).eq("id", scopeId).select("id").maybeSingle();
+    mutationError = result.error;
+    updatedTarget = Boolean(result.data);
+  } else if (scope === "list") {
+    const result = await admin.from("customer_lists").update({ rinkel_number_allocation_id: numberAllocationId })
+      .eq("tenant_id", context.tenantId).eq("id", scopeId).select("id").maybeSingle();
+    mutationError = result.error;
+    updatedTarget = Boolean(result.data);
+  } else {
+    const result = await admin.from("campaigns").update({ rinkel_number_allocation_id: numberAllocationId })
+      .eq("tenant_id", context.tenantId).eq("id", scopeId).select("id").maybeSingle();
+    mutationError = result.error;
+    updatedTarget = Boolean(result.data);
+  }
+  if (mutationError) go("/app/integrations", "error", safePlatformError(mutationError).message);
+  if (!updatedTarget) go("/app/integrations", "error", "Det valda målet finns inte i detta företag.");
+  const { error: callerAuditError } = await admin.from("audit_logs").insert({
+    tenant_id: context.tenantId, actor_user_id: context.userId, action: "telephony.caller_id_default_updated",
+    entity_type: `rinkel_caller_id_${scope}`, entity_id: scope === "tenant" ? context.tenantId : scopeId,
+    after_data: { scope, number_allocation_id: numberAllocationId },
+  });
+  if (callerAuditError) go("/app/integrations", "error", "Caller-ID ändrades men auditloggen kunde inte skrivas. Kontakta plattformsadministratör.");
+  revalidatePath("/app/integrations");
+  go("/app/integrations", "message", numberAllocationId ? "Caller-ID-standarden är sparad." : "Caller-ID-standarden är rensad.");
+}
+
+export async function setPlatformDefaultRinkelNumber(form: FormData) {
+  const context = await platformAdminContext();
+  const numberId = value(form, "number_id");
+  if (!numberId) go("/app/platform/telephony", "error", "Rinkel-nummer saknas.");
+  const admin = createAdminClient();
+  const { error } = await admin.rpc("set_platform_rinkel_default_number", { p_number_id: numberId });
+  if (error) go("/app/platform/telephony", "error", safePlatformError(error).message);
+  await platformAudit(context.userId, "rinkel.platform_default_number_updated", "platform_rinkel_number", numberId, {});
+  revalidatePath("/app/platform/telephony");
+  go("/app/platform/telephony", "message", "Plattformens sista caller-ID-reserv är uppdaterad.");
+}
+
+async function invokeRinkelPlatformWorker(source: string) {
+  const env = serverEnv();
+  if (!env.CRON_SECRET) throw new Error("CRON_SECRET saknas i servermiljön.");
+  const response = await fetch(`${env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/rinkel-platform-worker`, {
+    method: "POST",
+    headers: {
+      "x-cron-secret": env.CRON_SECRET,
+      "content-type": "application/json",
+      authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+    },
+    body: JSON.stringify({ source, limit: 50, workerId: `${source}:${crypto.randomUUID()}` }),
+    cache: "no-store",
+  });
+  const body = await response.text();
+  if (!response.ok) throw new Error(`RINKEL_WORKER_HTTP_${response.status}: ${body.slice(0, 300)}`);
+  try {
+    return JSON.parse(body) as Record<string, unknown>;
+  } catch {
+    return { response: body.slice(0, 300) };
+  }
+}
+
+export async function runPlatformRinkelWorker() {
+  const context = await platformAdminContext();
+  try {
+    const result = await invokeRinkelPlatformWorker("platform_admin");
+    await platformAudit(context.userId, "rinkel.worker_run_requested", "platform_worker", "rinkel-platform-worker", result);
+    revalidatePath("/app/platform/telephony");
+    go("/app/platform/telephony", "message", `Workern kördes: ${Number(result.processed ?? 0)} behandlade, ${Number(result.failed ?? 0)} misslyckade, ${Number(result.requeued ?? 0)} återköade.`);
+  } catch (error) {
+    const safe = safePlatformError(error);
+    go("/app/platform/telephony", "error", safe.code === "RINKEL_UNKNOWN_ERROR" ? "Rinkel-workern kunde inte köras." : safe.message);
+  }
+}
+
+export async function runPlatformRinkelReconciliation() {
+  const context = await platformAdminContext();
+  const admin = createAdminClient();
+  const bucket = new Date().toISOString().slice(0, 16);
+  const { error } = await admin.from("platform_rinkel_jobs").upsert({
+    job_type: "rinkel.reconcile_platform",
+    aggregate_id: null,
+    idempotency_key: `rinkel.reconcile_platform:manual:${bucket}`,
+    payload: { source: "platform_admin", requested_by: context.userId },
+    status: "pending",
+    available_at: new Date().toISOString(),
+  }, { onConflict: "idempotency_key", ignoreDuplicates: true });
+  if (error) go("/app/platform/telephony", "error", safePlatformError(error).message);
+  await platformAudit(context.userId, "rinkel.reconciliation_requested", "platform_worker", "rinkel-platform-worker", { bucket });
+  try {
+    const result = await invokeRinkelPlatformWorker("platform_admin_reconciliation");
+    revalidatePath("/app/platform/telephony");
+    go("/app/platform/telephony", "message", `CDR-avstämning köades och workern kördes: ${Number(result.processed ?? 0)} jobb behandlade.`);
+  } catch {
+    revalidatePath("/app/platform/telephony");
+    go("/app/platform/telephony", "message", "CDR-avstämningen köades. Den schemalagda workern behandlar jobbet vid nästa körning.");
+  }
+}
+
+export async function reprocessPlatformRinkelEvent(form: FormData) {
+  const context = await platformAdminContext();
+  const conflictId = value(form, "conflict_id");
+  if (!conflictId) go("/app/platform/telephony", "error", "Konflikt-ID saknas.");
+  const admin = createAdminClient();
+  const { data: conflict, error: conflictError } = await admin.from("platform_rinkel_conflicts")
+    .select("id,event_id,status").eq("id", conflictId).eq("status", "open").maybeSingle();
+  if (conflictError) go("/app/platform/telephony", "error", safePlatformError(conflictError).message);
+  if (!conflict?.event_id) go("/app/platform/telephony", "error", "Konflikten saknar ett återbehandlingsbart webhookevent.");
+
+  const requestedAt = new Date().toISOString();
+  const { error: eventError } = await admin.from("platform_rinkel_webhook_events").update({
+    status: "received",
+    correlation_status: "pending",
+    next_retry_at: requestedAt,
+    processed_at: null,
+    last_error: null,
+  }).eq("id", conflict.event_id);
+  if (eventError) go("/app/platform/telephony", "error", safePlatformError(eventError).message);
+
+  const { error: closeConflictError } = await admin.from("platform_rinkel_conflicts").update({
+    status: "ignored",
+    resolved_by: context.userId,
+    resolved_at: requestedAt,
+  }).eq("id", conflict.id).eq("status", "open");
+  if (closeConflictError) go("/app/platform/telephony", "error", safePlatformError(closeConflictError).message);
+
+  const { error: jobError } = await admin.from("platform_rinkel_jobs").upsert({
+    job_type: "rinkel.process_event",
+    aggregate_id: conflict.event_id,
+    idempotency_key: `rinkel.process_event:manual:${conflict.event_id}:${requestedAt}`,
+    payload: { event_id: conflict.event_id, source: "platform_admin", requested_by: context.userId },
+    status: "pending",
+    available_at: requestedAt,
+  }, { onConflict: "idempotency_key", ignoreDuplicates: true });
+  if (jobError) go("/app/platform/telephony", "error", safePlatformError(jobError).message);
+
+  await platformAudit(context.userId, "rinkel.webhook_reprocessing_requested", "platform_rinkel_webhook_event", conflict.event_id, {
+    conflict_id: conflict.id,
+  });
+  revalidatePath("/app/platform/telephony");
+  go("/app/platform/telephony", "message", "Webhookeventet har återköats för ny korrelation.");
+}
+
+export async function requeuePlatformRinkelJob(form: FormData) {
+  const context = await platformAdminContext();
+  const jobId = value(form, "job_id");
+  if (!jobId) go("/app/platform/telephony", "error", "Jobb-ID saknas.");
+  const supabase = await createClient();
+  const reason = value(form, "reason") || "Manuellt återköat av plattformsadmin";
+  const { error } = await supabase.rpc("requeue_platform_rinkel_job", { p_job_id: jobId, p_reason: reason });
+  if (error) go("/app/platform/telephony", "error", safePlatformError(error).message);
+  await platformAudit(context.userId, "rinkel.job_requeue_requested", "platform_rinkel_job", jobId, { reason });
+  revalidatePath("/app/platform/telephony");
+  go("/app/platform/telephony", "message", "Jobbet har återköats.");
+}
+
 export async function saveTelephonyPolicy(form: FormData) {
   const context = await tenantAdminContext();
-  const storageMode = value(form, "recording_storage_mode") === "kundexa_private_copy"
-    ? "kundexa_private_copy"
-    : "provider_only";
+  const storageMode = "provider_only";
   const retentionDays = Math.max(1, Math.min(3650, Number(value(form, "recording_retention_days") || 90)));
   const rawRetentionDays = Math.max(1, Math.min(365, Number(value(form, "raw_event_retention_days") || 30)));
   const admin = createAdminClient();
+  const integration = await loadPlatformIntegration();
+  const { data: capabilities, error: capabilityError } = await admin.from("platform_rinkel_capabilities")
+    .select("transcription_supported,insights_supported,note_sync_supported")
+    .eq("platform_integration_id", integration.id)
+    .maybeSingle();
+  if (capabilityError) go("/app/integrations", "error", safePlatformError(capabilityError).message);
+  const transcriptionEnabled = Boolean(capabilities?.transcription_supported && form.get("transcription_enabled") === "on");
+  const insightsEnabled = Boolean(capabilities?.insights_supported && form.get("ai_analysis_enabled") === "on");
+  const noteSyncEnabled = Boolean(capabilities?.note_sync_supported && form.get("sync_notes_to_rinkel") === "on");
   const { error } = await admin.from("telephony_policies").upsert({
     tenant_id: context.tenantId,
     telephony_enabled: form.get("telephony_enabled") === "on",
@@ -388,16 +791,17 @@ export async function saveTelephonyPolicy(form: FormData) {
     allow_seller_playback: form.get("allow_seller_playback") === "on",
     allow_team_leader_playback: form.get("allow_team_leader_playback") === "on",
     allow_tenant_admin_playback: form.get("allow_tenant_admin_playback") === "on",
-    transcription_enabled: form.get("transcription_enabled") === "on",
-    ai_analysis_enabled: form.get("ai_analysis_enabled") === "on",
+    transcription_enabled: transcriptionEnabled,
+    ai_analysis_enabled: insightsEnabled,
     disposition_required: form.get("disposition_required") === "on",
     timezone: value(form, "timezone") || context.tenantTimezone,
     allowed_start_time: value(form, "allowed_start_time") || "09:00",
     allowed_end_time: value(form, "allowed_end_time") || "18:00",
     delete_provider_recording_on_retention: form.get("delete_provider_recording_on_retention") === "on",
+    sync_notes_to_rinkel: noteSyncEnabled,
   }, { onConflict: "tenant_id" });
-  if (error) go("/app/integrations", "error", error.message);
-  await admin.from("audit_logs").insert({
+  if (error) go("/app/integrations", "error", safePlatformError(error).message);
+  const { error: policyAuditError } = await admin.from("audit_logs").insert({
     tenant_id: context.tenantId,
     actor_user_id: context.userId,
     action: "telephony.policy_updated",
@@ -411,6 +815,7 @@ export async function saveTelephonyPolicy(form: FormData) {
       retention_days: retentionDays,
     },
   });
+  if (policyAuditError) go("/app/integrations", "error", "Telefonipolicyn sparades men auditloggen kunde inte skrivas. Kontakta plattformsadministratör.");
   revalidatePath("/app/integrations");
   go("/app/integrations", "message", "Telefonipolicyn är sparad.");
 }

@@ -2,73 +2,132 @@
 
 ## Kanonisk arkitektur
 
-Kundexa använder en central Rinkel API-nyckel och en aktiv `platform_integrations`-rad utan `tenant_id`. Tenants ansluter inte egna Rinkel-konton. Plattformssuperadmin synkroniserar användare, enheter och nummer centralt och allokerar dem till tenants. Tenantadmin mappar endast redan allokerade resurser till egna team och säljare.
+Kundexa använder en central Rinkel API-nyckel och exakt en kanonisk, aktiv `platform_integrations`-rad utan `tenant_id`. Tenants ansluter inte egna Rinkel-konton. Plattformen synkroniserar Rinkel-användare, deras enheter och utgående nummer centralt och historiserar därefter allokeringarna till tenant och team.
 
 ```text
-RINKEL_API_KEY i servermiljön
+RINKEL_API_KEY i server-/Edge-miljön
 → central Rinkel-klient
-→ centralt providerinventarium
-→ historiserad tenantallokering
-→ tenantgrant och säljar­mappning
-→ kanoniskt Kundexa-samtal
+→ centralt användar-, device- och nummerinventarium
+→ historiserad tenantallokering och nummergrant
+→ säljarens mapping och valda aktiva device
+→ atomisk samtalsreservation
+→ exakt ett POST /dial
+→ webhook för realtid
+→ beständig worker
+→ CDR som slutlig avstämnings- och reparationskälla
 ```
 
-Det finns ingen exekverbar fallback till tenantcredentials, 46elks voice, SIP eller WebRTC.
+API-nyckeln får aldrig ha prefixet `NEXT_PUBLIC_`, lagras i databasen eller visas i UI. 46elks används endast för befintlig SMS-trafik; voice/click-to-call går genom den centrala Rinkel-lösningen.
 
-## Datamodell och åtkomst
+## Kapabiliteter och status
 
-`platform_rinkel_users` och `platform_rinkel_numbers` saknar tenant-ID och är endast service-role-/plattformsadminläsbara. `rinkel_user_allocations` och `rinkel_number_allocations` historiserar tenantägarskapet. `rinkel_number_grants` ger tenant-, team- eller användaråtkomst. `rinkel_user_mappings_v2` kopplar en aktiv tenantmedlem till en allokerad Rinkel-användare, ett serverhärlett `deviceId` och ett tillåtet standardnummer.
+Anslutningsstatus skiljer på vad som faktiskt har verifierats:
 
-Tenantklienter läser säkra DTO:er via tenantfiltrerade RPC:er. Rå providerdata, centrala IDs, andra tenants resurser, API-nyckeln och webhooksecret returneras aldrig.
+- API-åtkomst.
+- användarkatalog.
+- nummerkatalog.
+- komplett dialkonfiguration.
+- nåbar dialendpoint, när den uttryckligen har verifierats.
+- verkligt testsamtal, vilket endast får markeras efter ett faktiskt staginganrop.
+- webhookregistrering.
+- fyra verifierade kärnwebhookar.
+- inspelning, transkribering, Insights och note-sync som separata kapabiliteter.
 
-## Utgående samtal
+Lyckad operation rensar endast det relevanta aktuella integrationsfelet. Historiska fel bevaras i audit/jobbevidens. En återaktivering sätter status till `testing`; `RINKEL_API_KEY` ensam ger aldrig `connected`.
 
-`POST /api/v1/calls` accepterar endast affärsunderlag som kund, listpost, destination och idempotens. Servern härleder tenant, medlemskap, policy, mapping, device, nummerallokering och grant i den atomiska RPC:n `rinkel_reserve_platform_outbound_call`.
+## Användare, devices och nummer
 
-Efter reservation gör servern exakt ett `POST /dial` med:
+`platform_rinkel_users`, `platform_rinkel_devices` och `platform_rinkel_numbers` är centrala resurser. `rinkel_user_allocations` och `rinkel_number_allocations` historiserar tenantägarskap. `rinkel_number_grants` bestämmer faktisk åtkomst. `rinkel_user_mappings_v2.selected_device_id` pekar på den aktiva, synkroniserade device som säljaren ska använda.
+
+En säljare kan inte ringa när vald device har försvunnit eller blivit inaktiv. Tenantklienter läser endast tenantfiltrerade DTO:er via RPC och ser aldrig andra tenants resurser eller rå providerpayload.
+
+## Caller-ID-resolver
+
+Servern väljer Rinkels interna `numberId` i denna ordning:
+
+1. explicit nummerallokering för samtalet,
+2. ringlistans standard,
+3. kampanjens standard,
+4. teamets standard,
+5. tenantens standard,
+6. plattformens reservstandard,
+7. säljarens äldre standard som bakåtkompatibel sista reserv.
+
+Varje kandidat måste vara aktiv, tillhöra rätt tenant/allokering, vara grantad till användaren och ha ett aktivt Rinkel-nummer. Ett explicit men otillåtet val ger fel; det får inte tyst falla vidare till ett annat nummer. Samtalet sparar resolverns källa och allokerings-ID för audit.
+
+## Utgående samtal och idempotens
+
+`POST /api/v1/calls` härleder tenant, medlemskap, policy, device och caller-ID server-side. Därefter skickas exakt ett provideranrop:
 
 ```json
 {
   "deviceId": "SERVER_DERIVED_DEVICE",
   "to": "+46700000000",
-  "numberId": "SERVER_DERIVED_NUMBER",
+  "numberId": "SERVER_DERIVED_NUMBER_ID",
   "anonymous": false
 }
 ```
 
-HTTP 204 betyder accepterad start. Dial-anrop retryas aldrig automatiskt. Timeout eller nätverksavbrott blir `provider_outcome_unknown`, köar reconciliation och blockerar omedelbar automatisk omringning.
+`POST /dial` retryas aldrig automatiskt. Timeout, nätverksavbrott eller ett borttappat svar efter skickat anrop behandlas som osäkert utfall: samma samtalsförsök ligger kvar i `provider_outcome_unknown`/`reconciliation_required`, klienten behåller idempotenskontexten och ett nytt samtal blockeras tills webhook eller CDR har avstämt. Ett definitivt avslag kan däremot följas av ett nytt manuellt försök med ny nyckel.
 
-Manuell dialer kräver frisk central dial capability, aktiv tenantpolicy, mapping, device och nummergrant. Automatisk dialer kräver dessutom färska centrala webhookar och fungerande reconciliation. Kontrollen sker även databasside.
+En idempotent replay returnerar den verkliga attempt-/providerstatusen. Ett tidigare `failed`, `ended` eller avslutat försök visas aldrig som att Rinkel ringer igen.
 
-## Central webhook
+## Webhookar
 
-Alla fem event använder:
-
-```text
-POST https://app.example.com/api/webhooks/rinkel/{secret}/{event}
-```
-
-Event:
+Obligatoriska kärnevent:
 
 - `incomingCall`
 - `outgoingCall`
 - `callStart`
 - `callEnd`
+
+Valfritt event:
+
 - `callInsights`
 
-Endpointen validerar event, JSON/form-urlencoded, storlek, konstanttidsjämförd routehemlighet och dokumenterad proxy/IP-kedja när allowlist är aktiv. Den lagrar payload och säkra headers idempotent, köar workerjobb atomiskt och svarar 200 utan tung bearbetning.
+Insights får vara `unsupported` utan att kärntelefonin degraderas. Webhookens statuslivscykel är `not_configured`, `registering`, `registered`, `test_pending`, `verified`, `degraded`, `failed`, `unsupported` eller `disabled`.
 
-Inkommande samtal routas från `to`-nummer till central nummerpost och den allokering som gällde vid händelsetiden. Saknad eller tvetydig allokering skapar en central konflikt och får aldrig gissas till en tenant. Utgående events korreleras med device, provideranvändare, nummerpar och ett begränsat attemptfönster; flera kandidater blir också konflikt.
+Registrering räcker inte för `verified`. Kundexa läser tillbaka exakt event/HTTPS-URL/aktiv status, begär providertest när det stöds och markerar eventet verifierat först när testleveransen faktiskt har mottagits och processats.
 
-## Inspelning, transkript och Insights
+Endpointen:
 
-Providerreferenser sparas server-side. Klienten får aldrig en permanent provider-URL. Uppspelning verifierar kanonisk samtalsåtkomst och tenantens policy och skriver accesslogg. `provider_only` använder en kortlivad stream; `kundexa_private_copy` använder privat Supabase Storage med tenantprefix, checksumma, storlek och MIME-typ.
+```text
+POST https://app.example.com/api/webhooks/rinkel/{secret}/{event}
+```
 
-Transkript och Insights aktiveras endast när både central capability och tenantpolicy tillåter det. Status skiljer mellan `disabled`, `pending`, `processing`, `available`, `not_available`, `failed` och `deleted`. Tenant- och samtalsbehörighet gäller även dessa data.
+validerar metod, event, route-secret, content type, body-storlek, JSON/form-data, schema och konfigurerbar IP-allowlist. Den lagrar eventet idempotent innan tung bearbetning, svarar snabbt och låter aldrig payloaden bestämma tenant. Tenant härleds från central nummerallokering, användarmapping, pending attempt eller befintligt provider-call-ID. Tvetydighet blir konflikt och får aldrig gissas.
 
-## Drift
+## Worker, retry och dead letter
 
-Servervariabler:
+`rinkel-platform-worker` körs varje minut via Vercel Cron och anropar Supabase Edge Function server-to-server med `CRON_SECRET`. Jobb claimas atomiskt med `FOR UPDATE SKIP LOCKED`. En fem minuter gammal lease återställs; kontrollerad backoff, maxförsök och dead letter hanteras i databasen. Behörig plattformsadmin kan köra worker, köa CDR-avstämning, återköa failed/dead-letter-jobb och manuellt återbehandla okopplade eller tvetydiga webhookevent. Heartbeat visar senaste start/lyckade körning, hämtade, behandlade, misslyckade och återköade jobb.
+
+Auto-dialer kräver verifierat API, komplett dialkonfiguration, fyra verifierade kärnwebhookar, frisk worker, aktiverad tenantpolicy, mapping, aktiv device och nummeråtkomst. `last_received_at` är endast en övervakningssignal; en ny installation blockeras inte för att den saknar 24 timmars historisk trafik.
+
+## Eventordning och korrelation
+
+Systemet tolererar dubbletter, sena event och `callStart`/`callEnd` före `outgoingCall`. Terminala providerstatusar får inte backas till äldre status. Utgående korrelation använder provider-user, device, destination, caller-ID, pending attempt och ett kort tidsfönster. Flera kandidater blir `conflict`; inga kandidater blir `pending_correlation` och retryas senare.
+
+Providerstatus, provider outcome och CRM-disposition är separata fält. Okända cause-värden bevaras rått och projiceras till `unknown`; de får inte krascha workern eller skriva över säljarens disposition.
+
+## CDR-avstämning
+
+Webhook ger realtid; CDR är reparationskälla. Klienten hanterar cursor- eller sidpagination med säker batchgräns och upptäcker upprepad cursor. Reconciliation reparerar provider-call-ID, tider, duration, cause/outcome, status och inspelningsreferens. Vid flera CDR-kandidater skapas en manuell konflikt.
+
+Varje plattformskörning tar både de äldsta och de nyaste ofullständiga samtalen. Därmed svälter inte äldre poster bakom ny trafik, samtidigt som nya osäkra dialförsök repareras snabbt.
+
+## Inspelning, transkribering och Insights
+
+Frontend anropar aldrig Rinkel direkt. Uppspelning verifierar tenant, roll, samtalsåtkomst, retention och legal hold innan en kortlivad providerstream används, och åtkomsten auditloggas.
+
+Privat Kundexa-kopia exponeras inte i tenant-UI förrän den provideroberoende nedladdnings-, hash-, privat Storage-, retention- och legal-hold-kedjan är verifierad för Rinkel. Policyn tvingas därför till `provider_only`; det finns ingen kosmetisk inställning som lovar en saknad backend.
+
+Transkribering använder jobtypen `rinkel.transcription.fetch`. HTTP 204 behandlas som `pending_provider`, retryas med längre intervall och blir först efter maximalt väntfönster `not_available`. Insights kommer via det valfria eventet och bearbetas separat som `rinkel.insights.process`. AI-resultat lagras separat från säljarens CRM-anteckning och markeras som overifierad AI-output. Note-sync visas inte förrän providerstödet har verifierats.
+
+## Retention och legal hold
+
+Tenantretention omfattar Rinkel-inspelningar, transkript, Insights, råa webhookpayloads och jobbpayload/fel. Aktiv legal hold skyddar berörda samtal. Providerinspelning raderas endast när tenantpolicyn uttryckligen tillåter det. Tenantlösa plattformsevent och plattformsjobb rensas separat av `rinkel.retention_platform` efter ett konservativt 30-dagarsfönster. Öppna korrelationskonflikter skyddas tills de är lösta eller manuellt ignorerade och ska inte blandas med tenantdata.
+
+## Miljövariabler
 
 ```env
 RINKEL_API_KEY=
@@ -83,44 +142,30 @@ RINKEL_RECONCILIATION_ENABLED=true
 CRON_SECRET=
 ```
 
-Samma logiska API-nyckel ska finnas i Vercel och Supabase Edge Secrets när båda gör direkta provideranrop. Den får aldrig ha prefixet `NEXT_PUBLIC_`, lagras i databasen eller visas i plattforms-/tenant-UI.
+I staging/production måste webhookbasen vara publik HTTPS och får inte vara localhost, loopback eller privat IP. Samma API-nyckel och `CRON_SECRET` ska finnas i de servermiljöer som gör provider-/workeranrop, men aldrig i klientbundle.
 
-`rinkel-platform-worker` behandlar centrala event och reconciliation. `maintenance-worker` schemalägger central reconciliation och tenantretention. Jobb är idempotenta, låsta, retrybara per säker jobtyp och kan dead-letteras. Legacy tenant-Rinkel-jobb dead-letteras utan provideranrop.
+## Migration och verifiering
 
-## Administration
+Den framåtriktade produktionskompletteringen är:
 
-Plattformssuperadmin använder `/app/platform/telephony` för anslutningstest, katalogsynk, central webhookkonfiguration, allokering/flytt/återkallning, konflikter och nödstopp. API-nyckelns värde kan aldrig matas in eller visas där. Sidan kräver en aktiv `platform_owner`- eller `platform_admin`-roll; tenantrollen `owner` räcker inte. Repositoryts kommando `npm run platform:bootstrap-owner -- --email=...` skapar den första plattformsägaren på ett auditerat sätt.
+```text
+supabase/migrations/202608020003_rinkel_production_completion.sql
+```
 
-Tenant owner/admin använder `/app/integrations` för att se egna allokeringar, skapa säljar­mappning, standardnummer och policy. Säljarstatus kommer från `GET /api/v1/telephony/status` och skiljer plattformsfel från saknad tenantallokering, mapping, device eller nummeråtkomst.
+Efter migration:
+
+```bash
+npm run db:push
+SUPABASE_PROJECT_REF=PROJECT_REF npm run types:generate
+npm run types:verify
+npm run typecheck:edge
+npm run test
+npm run build
+npm run verify
+```
+
+Genererade Supabase-typer får inte handredigeras. `types:verify` förblir rött tills den länkade stagingdatabasen har alla väntande migrationer och typerna har genererats därifrån.
 
 ## Liveverifiering
 
-Kör i separat staging: central anslutning, verklig katalogsynk, riktig device och dial, alla fem event, obesvarat samtal, webhookretry/inaktivering, reconciliation, inspelning, transkript och Insights. Dessa punkter är `NOT RUN` tills riktiga credentials och samtal används.
-
-## Betrodd proxy och webhookskydd
-
-I Vercel läses käll-IP endast från `x-vercel-forwarded-for`. Utanför Vercel ignoreras `x-real-ip` om inte infrastrukturen uttryckligen är en betrodd reverse proxy och `RINKEL_TRUST_X_REAL_IP=true` har satts. Standardvärdet är `false` för att en direkt klient inte ska kunna injicera ett tillåtet IP-värde.
-
-Rinkels publicerade webhookguide dokumenterar HTTPS och käll-IP-allowlist men ingen payloadsignatur. Endpointen använder därför ett roterbart, högentropiskt path-secret, IP-allowlist, payloadhash, unik provider-eventnyckel och idempotent eventlagring. Om Rinkel senare publicerar HMAC/signatur ska rå body verifieras innan parsing och lagring.
-
-## Livscykel och CDR-härdning 2026-08-02
-
-Rinkels tekniska livscykel lagras separat från säljarens CRM-disposition:
-
-- `provider_status`: `requesting`, `requested`, `initiated`, `connected`, `ended`, `failed` eller `unknown`.
-- `provider_outcome`: `answered`, `no_answer`, `blocked`, `voicemail`, `answering_service`, `outside_business_hours`, `provider_error` eller `unknown`.
-- `disposition`: Kundexas affärsmässiga efterarbete och får inte skrivas över av providern.
-
-Okända, välformaterade Rinkel-orsaker accepteras, bevaras rått i `provider_cause` och projiceras defensivt till `provider_outcome=unknown`. Därmed blockerar ett nytt provider-värde inte webhookmottagningen.
-
-`callEnd` skapar eller uppdaterar den enda aktiva Rinkel-inspelningsreferensen för samtalet och köar både CDR-avstämning och tillåten enrichment. CDR-arbetaren hämtar den specifika posten när call-ID är känt. När call-ID saknas söker den i ett begränsat tidsfönster och kräver en entydig match på nummer, användare och tid; flera kandidater blir en konflikt och får aldrig väljas godtyckligt. Den atomiska RPC:n `reconcile_rinkel_call_from_cdr` reparerar status, tider, duration, rå cause, provider outcome, call-ID, attempt och inspelningsreferens.
-
-För inkommande samtal löses tenant endast från den aktiva centrala nummerallokeringen. Kund-/kontaktmatchning görs därefter endast inom denna tenant. Automatisk koppling sker bara när exakt en kund och, i förekommande fall, exakt en kontakt är entydig; dubletter lämnas omatchade för manuell hantering.
-
-Den framåtriktade migrationen är:
-
-```text
-supabase/migrations/202608020001_rinkel_lifecycle_reconciliation_hardening.sql
-```
-
-Efter migrationen måste Supabase-typerna genereras om. `npm run types:verify` ska avsiktligt vara rött tills stagingdatabasen innehåller `calls.provider_outcome` och `reconcile_rinkel_call_from_cdr`.
+Markera aldrig verklig Rinkel-funktion som verifierad utifrån mockar. Följ `docs/RINKEL_STAGING_PROTOCOL.md` för API, katalog, devices, webhooktest, worker heartbeat, riktigt utgående samtal, caller-ID, eventkedja, CDR, inspelning, transkribering, Insights och tvåtenanttest.

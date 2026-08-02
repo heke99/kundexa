@@ -1,0 +1,312 @@
+===== 00_node_version.log =====
+COMMAND: node --version
+STARTED_AT: 2026-08-02T20:32:13Z
+v22.16.0
+EXIT_CODE: 0
+FINISHED_AT: 2026-08-02T20:32:13Z
+
+===== 01_npm_version.log =====
+COMMAND: npm --version
+STARTED_AT: 2026-08-02T20:32:13Z
+10.9.2
+EXIT_CODE: 0
+FINISHED_AT: 2026-08-02T20:32:13Z
+
+===== 02_npm_ci.log =====
+COMMAND: npm ci --no-audit --no-fund
+STARTED_AT: 2026-08-02T20:32:13Z
+npm error code E404
+npm error 404 Not Found - GET https://packages.applied-caas-gateway1.internal.api.openai.org/artifactory/api/npm/npm-public/pdf-lib/-/pdf-lib-1.17.1.tgz
+npm error 404
+npm error 404  'pdf-lib@https://packages.applied-caas-gateway1.internal.api.openai.org/artifactory/api/npm/npm-public/pdf-lib/-/pdf-lib-1.17.1.tgz' is not in this registry.
+npm error 404
+npm error 404 Note that you can also install from a
+npm error 404 tarball, folder, http url, or git url.
+npm error A complete log of this run can be found in: /home/oai/.npm/_logs/2026-08-02T20_32_13_151Z-debug-0.log
+EXIT_CODE: 1
+FINISHED_AT: 2026-08-02T20:32:13Z
+
+===== 03_lint.log =====
+COMMAND: npm run lint
+STARTED_AT: 2026-08-02T20:32:13Z
+
+> kundexa@0.1.0 lint
+> npm run typecheck
+
+
+> kundexa@0.1.0 typecheck
+> npm run typegen && tsc --noEmit --pretty false --incremental false
+
+
+> kundexa@0.1.0 typegen
+> rm -rf .next/types .next/dev/types && next typegen
+
+sh: 1: next: not found
+EXIT_CODE: 127
+FINISHED_AT: 2026-08-02T20:32:14Z
+
+===== 04_typecheck.log =====
+COMMAND: npm run typecheck
+STARTED_AT: 2026-08-02T20:32:14Z
+
+> kundexa@0.1.0 typecheck
+> npm run typegen && tsc --noEmit --pretty false --incremental false
+
+
+> kundexa@0.1.0 typegen
+> rm -rf .next/types .next/dev/types && next typegen
+
+sh: 1: next: not found
+EXIT_CODE: 127
+FINISHED_AT: 2026-08-02T20:32:14Z
+
+===== 05_typecheck_edge.log =====
+COMMAND: npm run typecheck:edge
+STARTED_AT: 2026-08-02T20:32:14Z
+
+> kundexa@0.1.0 typecheck:edge
+> deno check supabase/functions/_shared/crypto.ts supabase/functions/_shared/providers.ts supabase/functions/_shared/rinkel.ts supabase/functions/data-worker/index.ts supabase/functions/ingestion-worker/index.ts supabase/functions/maintenance-worker/index.ts supabase/functions/compliance-worker/index.ts supabase/functions/process-outbox/index.ts supabase/functions/rinkel-platform-worker/index.ts supabase/functions/automation-runner/index.ts supabase/functions/parsehub-worker/index.ts
+
+sh: 1: deno: not found
+EXIT_CODE: 127
+FINISHED_AT: 2026-08-02T20:32:14Z
+
+===== 06_test.log =====
+COMMAND: npm run test
+STARTED_AT: 2026-08-02T20:32:14Z
+
+> kundexa@0.1.0 test
+> node scripts/verify.mjs && npm run test:rinkel && npm run test:contracts && npm run test:imports && node scripts/verify-sql.mjs
+
+node:internal/modules/run_main:123
+    triggerUncaughtException(
+    ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'typescript' imported from /mnt/data/kundexa_work/kundexa-main/scripts/verify.mjs
+Did you mean to import "typescript/lib/typescript.js"?
+    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:256:9)
+    at packageResolve (node:internal/modules/esm/resolve:768:81)
+    at moduleResolve (node:internal/modules/esm/resolve:854:18)
+    at defaultResolve (node:internal/modules/esm/resolve:984:11)
+    at ModuleLoader.defaultResolve (node:internal/modules/esm/loader:780:12)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:704:25)
+    at ModuleLoader.resolve (node:internal/modules/esm/loader:687:38)
+    at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:305:38)
+    at ModuleJob._link (node:internal/modules/esm/module_job:137:49) {
+  code: 'ERR_MODULE_NOT_FOUND'
+}
+
+Node.js v22.16.0
+EXIT_CODE: 1
+FINISHED_AT: 2026-08-02T20:32:14Z
+
+===== 07_build.log =====
+COMMAND: npm run build
+STARTED_AT: 2026-08-02T20:32:14Z
+
+> kundexa@0.1.0 build
+> npm run typecheck && npm run build:next
+
+
+> kundexa@0.1.0 typecheck
+> npm run typegen && tsc --noEmit --pretty false --incremental false
+
+
+> kundexa@0.1.0 typegen
+> rm -rf .next/types .next/dev/types && next typegen
+
+sh: 1: next: not found
+EXIT_CODE: 127
+FINISHED_AT: 2026-08-02T20:32:14Z
+
+===== 08_verify.log =====
+COMMAND: npm run verify
+STARTED_AT: 2026-08-02T20:32:14Z
+
+> kundexa@0.1.0 verify
+> npm run types:verify && npm run typecheck:edge && npm run test && npm run build
+
+
+> kundexa@0.1.0 types:verify
+> node scripts/verify-generated-schema.mjs
+
+Generated Supabase types are stale after the latest migrations.
+Missing: function:reconcile_rinkel_call_from_cdr, column:provider_outcome
+Run npm run db:push and npm run types:generate against the linked staging project, then rerun npm run types:verify.
+EXIT_CODE: 1
+FINISHED_AT: 2026-08-02T20:32:15Z
+
+===== 09_db_push.log =====
+COMMAND: npm run db:push
+STARTED_AT: 2026-08-02T20:32:15Z
+
+> kundexa@0.1.0 db:push
+> npx supabase@2.109.1 db push
+
+npm error code E404
+npm error 404 Not Found - GET https://packages.applied-caas-gateway1.internal.api.openai.org/artifactory/api/npm/npm-public/supabase
+npm error 404
+npm error 404  'supabase@2.109.1' is not in this registry.
+npm error 404
+npm error 404 Note that you can also install from a
+npm error 404 tarball, folder, http url, or git url.
+npm error A complete log of this run can be found in: /home/oai/.npm/_logs/2026-08-02T20_32_15_181Z-debug-0.log
+EXIT_CODE: 1
+FINISHED_AT: 2026-08-02T20:32:15Z
+
+===== 10_types_generate.log =====
+COMMAND: npm run types:generate
+STARTED_AT: 2026-08-02T20:32:15Z
+
+> kundexa@0.1.0 types:generate
+> node scripts/generate-supabase-types.mjs
+
+Supabase project reference saknas. Kör 'npx supabase@2.109.1 link --project-ref DIN_PROJECT_REF' eller sätt SUPABASE_PROJECT_REF.
+EXIT_CODE: 1
+FINISHED_AT: 2026-08-02T20:32:15Z
+
+===== 11_types_verify.log =====
+COMMAND: npm run types:verify
+STARTED_AT: 2026-08-02T20:32:15Z
+
+> kundexa@0.1.0 types:verify
+> node scripts/verify-generated-schema.mjs
+
+Generated Supabase types are stale after the latest migrations.
+Missing: function:reconcile_rinkel_call_from_cdr, column:provider_outcome
+Run npm run db:push and npm run types:generate against the linked staging project, then rerun npm run types:verify.
+EXIT_CODE: 1
+FINISHED_AT: 2026-08-02T20:32:15Z
+
+===== 12_supabase_version.log =====
+COMMAND: npx supabase@2.109.1 --version
+STARTED_AT: 2026-08-02T20:32:15Z
+npm error code E404
+npm error 404 Not Found - GET https://packages.applied-caas-gateway1.internal.api.openai.org/artifactory/api/npm/npm-public/supabase
+npm error 404
+npm error 404  'supabase@2.109.1' is not in this registry.
+npm error 404
+npm error 404 Note that you can also install from a
+npm error 404 tarball, folder, http url, or git url.
+npm error A complete log of this run can be found in: /home/oai/.npm/_logs/2026-08-02T20_32_15_809Z-debug-0.log
+EXIT_CODE: 1
+FINISHED_AT: 2026-08-02T20:32:16Z
+
+===== 13_migration_list.log =====
+COMMAND: npx supabase@2.109.1 migration list
+STARTED_AT: 2026-08-02T20:32:16Z
+npm error code E404
+npm error 404 Not Found - GET https://packages.applied-caas-gateway1.internal.api.openai.org/artifactory/api/npm/npm-public/supabase
+npm error 404
+npm error 404  'supabase@2.109.1' is not in this registry.
+npm error 404
+npm error 404 Note that you can also install from a
+npm error 404 tarball, folder, http url, or git url.
+npm error A complete log of this run can be found in: /home/oai/.npm/_logs/2026-08-02T20_32_16_195Z-debug-0.log
+EXIT_CODE: 1
+FINISHED_AT: 2026-08-02T20:32:16Z
+
+===== 14_db_advisors.log =====
+COMMAND: npx supabase@2.109.1 db lint --linked
+STARTED_AT: 2026-08-02T20:32:16Z
+npm error code E404
+npm error 404 Not Found - GET https://packages.applied-caas-gateway1.internal.api.openai.org/artifactory/api/npm/npm-public/supabase
+npm error 404
+npm error 404  'supabase@2.109.1' is not in this registry.
+npm error 404
+npm error 404 Note that you can also install from a
+npm error 404 tarball, folder, http url, or git url.
+npm error A complete log of this run can be found in: /home/oai/.npm/_logs/2026-08-02T20_32_16_565Z-debug-0.log
+EXIT_CODE: 1
+FINISHED_AT: 2026-08-02T20:32:16Z
+
+===== 15_schema_script.log =====
+COMMAND: node scripts/verify-generated-schema.mjs
+STARTED_AT: 2026-08-02T20:32:16Z
+Generated Supabase types are stale after the latest migrations.
+Missing: function:reconcile_rinkel_call_from_cdr, column:provider_outcome
+Run npm run db:push and npm run types:generate against the linked staging project, then rerun npm run types:verify.
+EXIT_CODE: 1
+FINISHED_AT: 2026-08-02T20:32:16Z
+
+===== 16_verify_script.log =====
+COMMAND: node scripts/verify.mjs
+STARTED_AT: 2026-08-02T20:32:16Z
+node:internal/modules/run_main:123
+    triggerUncaughtException(
+    ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'typescript' imported from /mnt/data/kundexa_work/kundexa-main/scripts/verify.mjs
+Did you mean to import "typescript/lib/typescript.js"?
+    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:256:9)
+    at packageResolve (node:internal/modules/esm/resolve:768:81)
+    at moduleResolve (node:internal/modules/esm/resolve:854:18)
+    at defaultResolve (node:internal/modules/esm/resolve:984:11)
+    at ModuleLoader.defaultResolve (node:internal/modules/esm/loader:780:12)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:704:25)
+    at ModuleLoader.resolve (node:internal/modules/esm/loader:687:38)
+    at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:305:38)
+    at ModuleJob._link (node:internal/modules/esm/module_job:137:49) {
+  code: 'ERR_MODULE_NOT_FOUND'
+}
+
+Node.js v22.16.0
+EXIT_CODE: 1
+FINISHED_AT: 2026-08-02T20:32:16Z
+
+===== 17_sql_verify.log =====
+COMMAND: node scripts/verify-sql.mjs
+STARTED_AT: 2026-08-02T20:32:16Z
+node:internal/modules/package_json_reader:256
+  throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+        ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@electric-sql/pglite' imported from /mnt/data/kundexa_work/kundexa-main/scripts/verify-sql.mjs
+    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:256:9)
+    at packageResolve (node:internal/modules/esm/resolve:768:81)
+    at moduleResolve (node:internal/modules/esm/resolve:854:18)
+    at defaultResolve (node:internal/modules/esm/resolve:984:11)
+    at ModuleLoader.defaultResolve (node:internal/modules/esm/loader:780:12)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:704:25)
+    at ModuleLoader.resolve (node:internal/modules/esm/loader:687:38)
+    at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:305:38)
+    at ModuleJob._link (node:internal/modules/esm/module_job:137:49) {
+  code: 'ERR_MODULE_NOT_FOUND'
+}
+
+Node.js v22.16.0
+EXIT_CODE: 1
+FINISHED_AT: 2026-08-02T20:32:16Z
+
+===== 18_rinkel_unit_node.log =====
+PASS 8 Rinkel unit checks
+
+===== 19_static_source_checks.log =====
+PASS JSON package/vercel parse 
+PASS No historical migration modified 
+PASS Migration transaction wrapper 
+PASS Migration dollar quotes balanced count=40
+PASS Migration parentheses balanced delta=0
+PASS Migration marker FOR UPDATE SKIP LOCKED 
+PASS Migration marker platform_worker_heartbeats 
+PASS Migration marker platform_rinkel_devices 
+PASS Migration marker rinkel_reserve_platform_outbound_call_v2 
+PASS Migration marker resolve_rinkel_caller_id 
+PASS Migration marker core_webhooks_verified 
+PASS Migration marker dead_lettered_at 
+PASS Migration marker MANUAL_DIALER_DISABLED 
+PASS No TODO/FIXME in changed files 
+PASS No obvious OpenAI-style secret in changed files 
+PASS No environment files included 
+PASS Changed app TypeScript has no parser diagnostics 
+PASS Changed Edge TypeScript has no parser diagnostics 
+CHANGED_FILE_COUNT 24
+RESULT PASS
+EXIT_CODE:0
+
+===== 20_static_typescript_parse.log =====
+APP_TS1XXX=0
+EDGE_TS1XXX=0
+APP_DIAGNOSTICS=101
+EDGE_DIAGNOSTICS=29
+NOTE=Full semantic checking unavailable because npm ci failed and project dependencies/Deno are absent.

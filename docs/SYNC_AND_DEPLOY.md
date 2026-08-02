@@ -1,52 +1,60 @@
 # Synk och deployment
 
-## Synka patchen till projektet
+## Synka ändrings-ZIP till befintligt projekt
 
-Kör exakt:
+ZIP-filen har projektroten som arkivrot och ska extraheras till en temporär katalog innan `rsync`.
 
 ```bash
-cd ~/Downloads
-
-rm -rf kundexa-prospecting-lists-dialer-2026-07-19-patch
-
-unzip -o kundexa-prospecting-lists-dialer-2026-07-19-patch.zip
-
-mkdir -p /Users/hekmath/Desktop/Projects/kundexa
+cd /Users/hekmath/Downloads
+rm -rf kundexa-rinkel-production-hardening-changes
+mkdir -p kundexa-rinkel-production-hardening-changes
+unzip -o kundexa-rinkel-production-hardening-changes.zip -d kundexa-rinkel-production-hardening-changes
 
 rsync -av --checksum --itemize-changes \
-  kundexa-prospecting-lists-dialer-2026-07-19-patch/payload/ \
+  /Users/hekmath/Downloads/kundexa-rinkel-production-hardening-changes/ \
   /Users/hekmath/Desktop/Projects/kundexa/
 ```
 
-Patchen innehåller inte `node_modules`, `.next`, `.git`, `.env.local` eller hemligheter.
+Ändringsarkivet innehåller inte `node_modules`, `.next`, `.git`, `.env*` eller hemligheter.
 
-Alternativt:
-
-```bash
-cd ~/Downloads/kundexa-prospecting-lists-dialer-2026-07-19-patch
-./sync-to-project.sh /Users/hekmath/Desktop/Projects/kundexa
-```
-
-## Installera och verifiera
+## Installera
 
 ```bash
 cd /Users/hekmath/Desktop/Projects/kundexa
-node --version   # ska vara 22+
+node --version   # Node 22+
 npm ci
-npm run verify
-npm audit
 ```
 
-## Koppla och migrera Supabase
+## Koppla Supabase och migrera staging
 
 ```bash
 npm run supabase:login
 npm run supabase:link -- --project-ref PROJECT_REF
+npx supabase@2.109.1 migration list
 npm run db:push
 SUPABASE_PROJECT_REF=PROJECT_REF npm run types:generate
+npm run types:verify
 ```
 
-Ändra aldrig en migration som redan körts i produktion. Skapa alltid en ny tidsstämplad migration.
+Genererade typer ska komma från den migrerade stagingdatabasen. Handredigera inte `src/lib/supabase/database.types.ts`.
+
+## Sätt Edge Secrets
+
+```bash
+npx supabase@2.109.1 secrets set --project-ref PROJECT_REF \
+  RINKEL_API_KEY='REDACTED' \
+  RINKEL_API_BASE_URL='https://api.rinkel.com/v1' \
+  RINKEL_WEBHOOK_PUBLIC_BASE_URL='https://STAGING_DOMAIN' \
+  RINKEL_WEBHOOK_SECRET='REDACTED_HIGH_ENTROPY_SECRET' \
+  RINKEL_WEBHOOK_ALLOWED_IPS='82.199.77.220,188.122.73.177' \
+  RINKEL_REQUEST_TIMEOUT_MS='15000' \
+  RINKEL_ENFORCE_WEBHOOK_IP_ALLOWLIST='true' \
+  RINKEL_TRUST_X_REAL_IP='false' \
+  RINKEL_RECONCILIATION_ENABLED='true' \
+  CRON_SECRET='REDACTED'
+```
+
+Sätt motsvarande servervariabler i Vercel. Inga Rinkel-/service-role-hemligheter får vara `NEXT_PUBLIC_*`.
 
 ## Deploya Edge Functions
 
@@ -54,30 +62,48 @@ SUPABASE_PROJECT_REF=PROJECT_REF npm run types:generate
 npm run functions:deploy -- --project-ref PROJECT_REF
 ```
 
-Kommandot deployar alla sju workers. `maintenance-worker` innehåller nu även automatisk synk av dynamiska ringlistor efter segmentsnapshot.
+Kontrollera särskilt att `rinkel-platform-worker`, `maintenance-worker` och `process-outbox` deployas.
 
 ## Scheduler
 
-Skicka `POST` med `x-cron-secret` till:
+`vercel.json` kör `/api/cron/rinkel-platform-worker` varje minut. Vercel skickar `Authorization: Bearer $CRON_SECRET`; route-handlern anropar därefter Edge Function server-to-server med samma hemlighet.
+
+Befintlig scheduler ska även fortsätta anropa:
 
 ```text
 /functions/v1/process-outbox
-/functions/v1/automation-runner
-/functions/v1/data-worker
-/functions/v1/ingestion-worker
 /functions/v1/maintenance-worker
-/functions/v1/compliance-worker
-/functions/v1/parsehub-worker
 ```
 
-Lägg aldrig cron-hemligheten i klientkod.
-
-## Webbdeployment
+## Verifiera
 
 ```bash
-npm ci
+npm run lint
+npm run typecheck
+npm run typecheck:edge
+npm run test
+npm run build
 npm run verify
-npm run start
+
+npx supabase@2.109.1 migration list
+npx supabase@2.109.1 db lint --linked
 ```
 
-`npm run build` kör först kanonisk TypeScript-kontroll och därefter det officiella kommandot `next build --webpack`. Webpack används för reproducerbar lokal CI- och Vercel-build när Turbopack kan vara instabil i rena miljöer.
+Kör därefter det manuella liveprotokollet i `docs/RINKEL_STAGING_PROTOCOL.md`. Ett riktigt testsamtal får inte markeras verifierat förrän Rinkel-device, destination, webhookkedja och CDR faktiskt har observerats.
+
+## Git och Vercel
+
+```bash
+git status --short
+git add \
+  docs \
+  scripts \
+  src \
+  supabase \
+  vercel.json
+git commit -m "Harden central Rinkel dialer lifecycle"
+git push origin HEAD
+
+npx vercel@latest deploy --prebuilt   # endast om projektets vanliga CI-flöde använder prebuilt
+# annars: push till den Vercel-kopplade branchen och låt Vercel bygga normalt
+```

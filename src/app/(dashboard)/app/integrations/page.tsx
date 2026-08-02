@@ -8,15 +8,37 @@ import { Field, SelectField } from "@/components/ui/form-field";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
 import {
+  saveRinkelCallerIdDefault,
   saveRinkelUserMapping,
   saveTelephonyPolicy,
 } from "@/app/actions/rinkel";
 
 type Config = Record<string, unknown>;
 type TenantRinkelResources = {
-  users: Array<{ allocationId: string; userId: string; displayName: string; email: string | null; hasDevice: boolean; active: boolean }>;
+  users: Array<{
+    allocationId: string;
+    userId: string;
+    displayName: string;
+    email: string | null;
+    hasDevice: boolean;
+    active: boolean;
+    devices: Array<{ id: string; providerDeviceId: string; displayName: string | null; deviceType: string | null; status: string; active: boolean; lastSyncedAt: string }>;
+  }>;
   numbers: Array<{ allocationId: string; numberId: string; number: string; displayName: string | null; recordingEnabled: boolean; active: boolean }>;
-  mappings: Array<{ id: string; kundexaUserId: string; userAllocationId: string; numberAllocationId: string; active: boolean }>;
+  mappings: Array<{ id: string; kundexaUserId: string; userAllocationId: string; numberAllocationId: string; selectedDeviceId: string | null; active: boolean }>;
+  callerIdDefaults: {
+    tenantDefaultAllocationId: string | null;
+    teams: Array<{ id: string; name: string; numberAllocationId: string | null }>;
+    lists: Array<{ id: string; name: string; numberAllocationId: string | null }>;
+    campaigns: Array<{ id: string; name: string; numberAllocationId: string | null }>;
+  };
+  capabilities: {
+    recordingDetected?: boolean;
+    transcriptionSupported?: boolean;
+    insightsSupported?: boolean;
+    noteSyncSupported?: boolean;
+    privateRecordingCopySupported?: boolean;
+  };
 };
 
 export default async function IntegrationsPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string; webhookToken?: string; resendWebhook?: string }> }) {
@@ -39,7 +61,13 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
     supabase.rpc("get_tenant_rinkel_resources"),
     supabase.from("telephony_policies").select("*").maybeSingle(),
   ]);
-  const rinkelResources = (rinkelResourceData ?? { users: [], numbers: [], mappings: [] }) as TenantRinkelResources;
+  const rinkelResources = (rinkelResourceData ?? {
+    users: [], numbers: [], mappings: [],
+    callerIdDefaults: { tenantDefaultAllocationId: null, teams: [], lists: [], campaigns: [] },
+    capabilities: {},
+  }) as TenantRinkelResources;
+  const callerIdDefaults = rinkelResources.callerIdDefaults ?? { tenantDefaultAllocationId: null, teams: [], lists: [], campaigns: [] };
+  const numberLabel = (allocationId: string | null) => rinkelResources.numbers.find((number) => number.allocationId === allocationId)?.number ?? "inte vald";
   const resend = integrations?.find((integration) => integration.provider === "resend") ?? null;
   const resendConfig = (resend?.configuration ?? {}) as Config;
   const featureMap = new Map((features ?? []).map((feature) => [feature.feature_key, feature.enabled]));
@@ -66,7 +94,8 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
       <Card><CardHeader><h2>Rinkel-säljarmappning</h2><Badge>{rinkelResources.mappings.filter((mapping) => mapping.active).length}</Badge></CardHeader><CardContent>
         <form action={saveRinkelUserMapping} className="form-stack">
           <SelectField label="Kundexa-användare" name="kundexa_user_id" required><option value="">Välj användare</option>{members?.map((member) => { const profile = Array.isArray(member.profiles) ? member.profiles[0] : member.profiles; return <option key={member.user_id} value={member.user_id}>{profile?.full_name ?? member.user_id} · {member.role}</option>; })}</SelectField>
-          <SelectField label="Tilldelad Rinkel-användare" name="rinkel_user_allocation_id" required><option value="">Välj Rinkel-användare</option>{rinkelResources.users.map((user) => <option key={user.allocationId} value={user.allocationId} disabled={!user.active || !user.hasDevice}>{user.displayName} · {user.hasDevice ? "enhet klar" : "enhet saknas"}{user.active ? "" : " · inaktiv"}</option>)}</SelectField>
+          <SelectField label="Tilldelad Rinkel-användare" name="rinkel_user_allocation_id" required><option value="">Välj Rinkel-användare</option>{rinkelResources.users.map((user) => <option key={user.allocationId} value={user.allocationId} disabled={!user.active || !user.hasDevice}>{user.displayName} · {user.hasDevice ? `${user.devices.filter((device) => device.active).length} aktiva enheter` : "enhet saknas"}{user.active ? "" : " · inaktiv"}</option>)}</SelectField>
+          <SelectField label="Aktiv Rinkel-enhet" name="selected_device_id" required><option value="">Välj enhet som hör till användaren</option>{rinkelResources.users.map((user) => <optgroup key={user.allocationId} label={user.displayName}>{user.devices.map((device) => <option key={device.id} value={device.id} disabled={!device.active}>{device.displayName ?? device.providerDeviceId} · {device.status}{device.active ? "" : " · inaktiv"}</option>)}</optgroup>)}</SelectField>
           <SelectField label="Tilldelat standardnummer" name="default_number_allocation_id" required><option value="">Välj Rinkel-nummer</option>{rinkelResources.numbers.map((number) => <option key={number.allocationId} value={number.allocationId} disabled={!number.active}>{number.displayName ? `${number.displayName} · ` : ""}{number.number}{number.active ? "" : " · inaktivt"}</option>)}</SelectField>
           <button className="button button-primary">Spara mappning</button>
         </form>
@@ -75,8 +104,26 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
           const profile = member && (Array.isArray(member.profiles) ? member.profiles[0] : member.profiles);
           const user = rinkelResources.users.find((item) => item.allocationId === mapping.userAllocationId);
           const number = rinkelResources.numbers.find((item) => item.allocationId === mapping.numberAllocationId);
-          return <div className="activity-line" key={mapping.id}><span className="activity-dot"><Phone size={13} /></span><div><strong>{profile?.full_name ?? mapping.kundexaUserId}</strong><p>{user?.displayName ?? "Rinkel-användare saknas"} · {number?.number ?? "nummer saknas"}</p></div><Badge className="badge-success">Aktiv</Badge></div>;
+          const device = user?.devices.find((item) => item.id === mapping.selectedDeviceId);
+          return <div className="activity-line" key={mapping.id}><span className="activity-dot"><Phone size={13} /></span><div><strong>{profile?.full_name ?? mapping.kundexaUserId}</strong><p>{user?.displayName ?? "Rinkel-användare saknas"} · {device?.displayName ?? device?.providerDeviceId ?? "enhet saknas"} · {number?.number ?? "nummer saknas"}</p></div><Badge className="badge-success">Aktiv</Badge></div>;
         })}</div>
+      </CardContent></Card>
+
+      <Card><CardHeader><h2>Caller-ID-standarder</h2><Badge>Prioriterad resolver</Badge></CardHeader><CardContent>
+        <p className="muted">Prioritet: explicit samtalsval → lista → kampanj → team → tenant → plattform → säljarens bakåtkompatibla standard.</p>
+        <form action={saveRinkelCallerIdDefault} className="form-stack" style={{ marginTop: 12 }}>
+          <SelectField label="Scope" name="scope_target" required>
+            <option value="tenant">Tenantstandard · {numberLabel(callerIdDefaults.tenantDefaultAllocationId)}</option>
+            <optgroup label="Team">{callerIdDefaults.teams.map((team) => <option key={team.id} value={`team:${team.id}`}>{team.name} · {numberLabel(team.numberAllocationId)}</option>)}</optgroup>
+            <optgroup label="Ringlistor">{callerIdDefaults.lists.map((list) => <option key={list.id} value={`list:${list.id}`}>{list.name} · {numberLabel(list.numberAllocationId)}</option>)}</optgroup>
+            <optgroup label="Kampanjer">{callerIdDefaults.campaigns.map((campaign) => <option key={campaign.id} value={`campaign:${campaign.id}`}>{campaign.name} · {numberLabel(campaign.numberAllocationId)}</option>)}</optgroup>
+          </SelectField>
+          <SelectField label="Utgående Rinkel-nummer" name="number_allocation_id">
+            <option value="">Rensa scope-standard</option>
+            {rinkelResources.numbers.map((number) => <option key={number.allocationId} value={number.allocationId} disabled={!number.active}>{number.displayName ? `${number.displayName} · ` : ""}{number.number}</option>)}
+          </SelectField>
+          <button className="button button-secondary">Spara caller-ID-standard</button>
+        </form>
       </CardContent></Card>
 
       <Card><CardHeader><h2>Telefonipolicy</h2><Badge>{telephonyPolicy?.recording_enabled ? "Inspelning aktiv" : "Inspelning av"}</Badge></CardHeader><CardContent>
@@ -85,13 +132,14 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
           <label><input type="checkbox" name="manual_dialer_enabled" defaultChecked={telephonyPolicy?.manual_dialer_enabled ?? true} /> Manuell dialer aktiv</label>
           <label><input type="checkbox" name="automatic_dialer_enabled" defaultChecked={telephonyPolicy?.automatic_dialer_enabled ?? false} /> Automatisk dialer aktiv när webhookhälsan är frisk</label>
           <label><input type="checkbox" name="recording_enabled" defaultChecked={telephonyPolicy?.recording_enabled ?? false} /> Inspelning ska vara aktiv enligt tenantpolicy</label>
-          <SelectField label="Lagringsläge" name="recording_storage_mode" defaultValue={telephonyPolicy?.recording_storage_mode ?? "provider_only"}><option value="provider_only">Endast hos Rinkel</option><option value="kundexa_private_copy">Privat kopia i Kundexa</option></SelectField>
+          <SelectField label="Lagringsläge" name="recording_storage_mode" defaultValue="provider_only"><option value="provider_only">Endast hos Rinkel</option></SelectField>
+          <div className="notice">Privat Kundexa-kopia exponeras inte förrän den provideroberoende arkiveringskedjan är verifierad. UI:t sparar därför inte en kosmetisk inställning.</div>
           <div className="grid grid-2"><Field label="Retention, dagar" name="recording_retention_days" type="number" min={1} max={3650} defaultValue={telephonyPolicy?.recording_retention_days ?? 90} /><Field label="Råevent, dagar" name="raw_event_retention_days" type="number" min={1} max={365} defaultValue={telephonyPolicy?.raw_event_retention_days ?? 30} /></div>
           <div className="grid grid-2"><Field label="Tillåtet från" name="allowed_start_time" type="time" defaultValue={String(telephonyPolicy?.allowed_start_time ?? "09:00").slice(0, 5)} /><Field label="Tillåtet till" name="allowed_end_time" type="time" defaultValue={String(telephonyPolicy?.allowed_end_time ?? "18:00").slice(0, 5)} /></div>
           <Field label="Tidszon" name="timezone" defaultValue={telephonyPolicy?.timezone ?? "Europe/Stockholm"} />
-          <label><input type="checkbox" name="transcription_enabled" defaultChecked={telephonyPolicy?.transcription_enabled ?? false} /> Hämta transkribering</label>
-          <label><input type="checkbox" name="ai_analysis_enabled" defaultChecked={telephonyPolicy?.ai_analysis_enabled ?? false} /> Tillåt Kundexa AI-förslag</label>
-          <label><input type="checkbox" name="sync_notes_to_rinkel" defaultChecked={telephonyPolicy?.sync_notes_to_rinkel ?? false} /> Synkronisera anteckningar till Rinkel</label>
+          <label><input type="checkbox" name="transcription_enabled" disabled={!rinkelResources.capabilities.transcriptionSupported} defaultChecked={Boolean(rinkelResources.capabilities.transcriptionSupported && telephonyPolicy?.transcription_enabled)} /> Hämta transkribering {rinkelResources.capabilities.transcriptionSupported ? "" : "(ej verifierat stöd)"}</label>
+          <label><input type="checkbox" name="ai_analysis_enabled" disabled={!rinkelResources.capabilities.insightsSupported} defaultChecked={Boolean(rinkelResources.capabilities.insightsSupported && telephonyPolicy?.ai_analysis_enabled)} /> Tillåt AI Insights {rinkelResources.capabilities.insightsSupported ? "" : "(ej verifierat stöd)"}</label>
+          <div className="notice">Anteckningssynk till Rinkel visas inte eftersom note-API-kapabiliteten ännu inte är verifierad. Kundexas CRM-anteckning är fortsatt primär.</div>
           <label><input type="checkbox" name="disposition_required" defaultChecked={telephonyPolicy?.disposition_required ?? true} /> Kräv samtalsresultat före nästa prospekt</label>
           <label><input type="checkbox" name="allow_seller_playback" defaultChecked={telephonyPolicy?.allow_seller_playback ?? false} /> Säljare får lyssna på egna inspelningar</label>
           <label><input type="checkbox" name="allow_team_leader_playback" defaultChecked={telephonyPolicy?.allow_team_leader_playback ?? false} /> Teamledare får lyssna på teamets inspelningar</label>

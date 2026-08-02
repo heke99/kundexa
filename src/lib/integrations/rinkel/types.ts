@@ -1,6 +1,7 @@
 export type {
   RinkelCallStatus,
   RinkelClientOptions,
+  RinkelDevice,
   RinkelEndCause,
   RinkelErrorCode,
   RinkelKnownEndCause,

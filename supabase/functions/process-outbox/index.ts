@@ -683,17 +683,64 @@ function getPlatformRinkelClient() {
   });
 }
 
+function chunkValues<T>(values: T[], size = 100) {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += size) chunks.push(values.slice(index, index + size));
+  return chunks;
+}
+
+function findExternalCallId(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const object = payload as Record<string, unknown>;
+  for (const key of ["externalCallId", "external_call_id", "callId", "call_id", "id"]) {
+    if (typeof object[key] === "string" && object[key]) return String(object[key]);
+  }
+  for (const key of ["call", "data", "payload", "resource"]) {
+    const nested = findExternalCallId(object[key]);
+    if (nested) return nested;
+  }
+  return null;
+}
+
 async function processRinkelRetention(job: Job) {
   const now = new Date().toISOString();
   const { data: policy, error: policyError } = await supabase.from("telephony_policies").select("*")
     .eq("tenant_id", job.tenant_id).maybeSingle();
   if (policyError) throw policyError;
   if (!policy) return;
+
+  const { data: holds, error: holdError } = await supabase.from("legal_holds")
+    .select("customer_id,scope")
+    .eq("tenant_id", job.tenant_id).eq("active", true)
+    .lte("starts_at", now).or(`ends_at.is.null,ends_at.gt.${now}`);
+  if (holdError) throw holdError;
+  const activeHolds = (holds ?? []).filter((hold) => Boolean(hold.customer_id));
+  const heldCustomers = [...new Set(activeHolds.map((hold) => hold.customer_id as string))];
+  const heldCalls = heldCustomers.length
+    ? await supabase.from("calls").select("id,customer_id,external_call_id").eq("tenant_id", job.tenant_id).in("customer_id", heldCustomers)
+    : { data: [], error: null };
+  if (heldCalls.error) throw heldCalls.error;
+  const holdApplies = (customerId: string | null, domain: string) => activeHolds.some((hold) => {
+    if (hold.customer_id !== customerId) return false;
+    const scopes = Array.isArray(hold.scope) ? hold.scope.map((value) => String(value).toLowerCase()) : ["all"];
+    return scopes.includes("all") || scopes.includes("calls") || scopes.includes(domain);
+  });
+  const recordingHeld = new Set((heldCalls.data ?? []).filter((call) => holdApplies(call.customer_id, "recordings")).map((call) => call.id));
+  const transcriptHeld = new Set((heldCalls.data ?? []).filter((call) => holdApplies(call.customer_id, "transcripts") || holdApplies(call.customer_id, "transcription")).map((call) => call.id));
+  const insightsHeld = new Set((heldCalls.data ?? []).filter((call) => holdApplies(call.customer_id, "insights") || holdApplies(call.customer_id, "ai")).map((call) => call.id));
+  const rawHeldExternalIds = [...new Set((heldCalls.data ?? [])
+    .filter((call) => call.external_call_id && (
+      holdApplies(call.customer_id, "raw_events") || holdApplies(call.customer_id, "webhooks") || holdApplies(call.customer_id, "events")
+    ))
+    .map((call) => call.external_call_id as string))];
+
   const { data: recordings, error: recordingError } = await supabase.from("call_recordings").select("*")
     .eq("tenant_id", job.tenant_id).eq("provider", "rinkel")
     .lte("retention_delete_at", now).is("deleted_at", null).limit(250);
   if (recordingError) throw recordingError;
+  let recordingsPurged = 0;
   for (const recording of recordings ?? []) {
+    if (recordingHeld.has(recording.call_id)) continue;
     if (recording.storage_path) {
       const { error: storageError } = await supabase.storage.from("call-recordings").remove([recording.storage_path]);
       if (storageError) throw storageError;
@@ -702,25 +749,106 @@ async function processRinkelRetention(job: Job) {
       const client = getPlatformRinkelClient();
       await client.deleteCallRecording(recording.provider_recording_id);
     }
-    await supabase.from("call_recordings").update({
+    const { error: recordingUpdateError } = await supabase.from("call_recordings").update({
       status: "purged",
       storage_path: null,
       provider_reference: null,
       deleted_at: now,
     }).eq("tenant_id", job.tenant_id).eq("id", recording.id);
-    await supabase.from("calls").update({ recording_status: "deleted" })
+    if (recordingUpdateError) throw recordingUpdateError;
+    const { error: callUpdateError } = await supabase.from("calls").update({ recording_status: "deleted" })
       .eq("tenant_id", job.tenant_id).eq("id", recording.call_id);
+    if (callUpdateError) throw callUpdateError;
+    recordingsPurged += 1;
   }
-  await supabase.from("call_transcripts").update({
-    status: "deleted", raw_transcript: null, structured_transcript: null, provider_payload: {}, deleted_at: now,
-  }).eq("tenant_id", job.tenant_id).lte("retention_delete_at", now).is("deleted_at", null);
-  await supabase.from("call_insights").update({
-    status: "deleted", sentiment: null, topics: [], summary: null, analysis: {}, deleted_at: now,
-  }).eq("tenant_id", job.tenant_id).lte("retention_delete_at", now).is("deleted_at", null);
+
+  const { data: transcriptCandidates, error: transcriptCandidateError } = await supabase.from("call_transcripts")
+    .select("id,call_id").eq("tenant_id", job.tenant_id).lte("retention_delete_at", now).is("deleted_at", null).limit(500);
+  if (transcriptCandidateError) throw transcriptCandidateError;
+  const transcriptIds = (transcriptCandidates ?? []).filter((row) => !transcriptHeld.has(row.call_id)).map((row) => row.id);
+  for (const ids of chunkValues(transcriptIds)) {
+    const { error } = await supabase.from("call_transcripts").update({
+      status: "deleted", raw_transcript: null, structured_transcript: null, provider_payload: {}, deleted_at: now,
+    }).eq("tenant_id", job.tenant_id).in("id", ids);
+    if (error) throw error;
+  }
+
+  const { data: insightCandidates, error: insightCandidateError } = await supabase.from("call_insights")
+    .select("id,call_id").eq("tenant_id", job.tenant_id).lte("retention_delete_at", now).is("deleted_at", null).limit(500);
+  if (insightCandidateError) throw insightCandidateError;
+  const insightIds = (insightCandidates ?? []).filter((row) => !insightsHeld.has(row.call_id)).map((row) => row.id);
+  for (const ids of chunkValues(insightIds)) {
+    const { error } = await supabase.from("call_insights").update({
+      status: "deleted", sentiment: null, topics: [], summary: null, analysis: {}, deleted_at: now,
+    }).eq("tenant_id", job.tenant_id).in("id", ids);
+    if (error) throw error;
+  }
+
   const rawCutoff = new Date(Date.now() - Number(policy.raw_event_retention_days ?? 30) * 86400000).toISOString();
-  await supabase.from("provider_webhook_events").update({ payload: {}, headers: {} })
-    .eq("tenant_id", job.tenant_id).eq("provider", "rinkel").lt("received_at", rawCutoff)
-    .in("status", ["processed", "dead_letter", "conflict"]);
+  const heldExternalIdSet = new Set(rawHeldExternalIds);
+  const { data: legacyEvents, error: legacyEventReadError } = await supabase.from("provider_webhook_events")
+    .select("id,payload").eq("tenant_id", job.tenant_id).eq("provider", "rinkel").lt("received_at", rawCutoff)
+    .in("status", ["processed", "dead_letter", "conflict"]).limit(500);
+  if (legacyEventReadError) throw legacyEventReadError;
+  const legacyEventIds = (legacyEvents ?? [])
+    .filter((event) => {
+      const externalCallId = findExternalCallId(event.payload);
+      return !externalCallId || !heldExternalIdSet.has(externalCallId);
+    })
+    .map((event) => event.id);
+  for (const ids of chunkValues(legacyEventIds)) {
+    const { error } = await supabase.from("provider_webhook_events").update({ payload: {}, headers: {} })
+      .eq("tenant_id", job.tenant_id).in("id", ids);
+    if (error) throw error;
+  }
+
+  const { data: platformEvents, error: platformEventReadError } = await supabase.from("platform_rinkel_webhook_events")
+    .select("id,external_call_id").eq("tenant_id", job.tenant_id).lt("received_at", rawCutoff)
+    .in("status", ["processed", "dead_letter", "conflict"]).limit(500);
+  if (platformEventReadError) throw platformEventReadError;
+  const platformEventIds = (platformEvents ?? [])
+    .filter((event) => !event.external_call_id || !heldExternalIdSet.has(event.external_call_id))
+    .map((event) => event.id);
+  for (const ids of chunkValues(platformEventIds)) {
+    const { error } = await supabase.from("platform_rinkel_webhook_events").update({ payload: {} })
+      .eq("tenant_id", job.tenant_id).in("id", ids);
+    if (error) throw error;
+  }
+
+  const { data: oldJobs, error: oldJobsError } = await supabase.from("platform_rinkel_jobs")
+    .select("id,payload").contains("payload", { tenant_id: job.tenant_id })
+    .in("status", ["completed", "dead_letter"]).lt("created_at", rawCutoff).limit(500);
+  if (oldJobsError) throw oldJobsError;
+  const scrubJobIds = (oldJobs ?? []).filter((candidate) => {
+    const payload = candidate.payload && typeof candidate.payload === "object" && !Array.isArray(candidate.payload)
+      ? candidate.payload as Record<string, unknown> : {};
+    const callId = typeof payload.call_id === "string" ? payload.call_id : null;
+    return !callId || (!recordingHeld.has(callId) && !transcriptHeld.has(callId) && !insightsHeld.has(callId));
+  }).map((candidate) => candidate.id);
+  if (scrubJobIds.length) {
+    const { error: scrubError } = await supabase.from("platform_rinkel_jobs").update({
+      payload: {}, last_error: null, last_error_code: null, last_error_message: null,
+    }).in("id", scrubJobIds);
+    if (scrubError) throw scrubError;
+  }
+
+  await supabase.from("audit_logs").insert({
+    tenant_id: job.tenant_id,
+    actor_user_id: null,
+    action: "rinkel.retention_executed",
+    entity_type: "telephony_retention",
+    entity_id: job.tenant_id,
+    after_data: {
+      recordings_purged: recordingsPurged,
+      legal_hold_calls: new Set([...recordingHeld, ...transcriptHeld, ...insightsHeld]).size,
+      transcripts_purged: transcriptIds.length,
+      insights_purged: insightIds.length,
+      legacy_events_scrubbed: legacyEventIds.length,
+      platform_events_scrubbed: platformEventIds.length,
+      platform_jobs_scrubbed: scrubJobIds.length,
+      raw_cutoff: rawCutoff,
+    },
+  });
 }
 
 async function processJob(job: Job) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 
 type StatusResponse = {
   manualReady?: boolean;
@@ -12,6 +12,11 @@ type StatusResponse = {
   userMapped?: boolean;
   userHasDevice?: boolean;
   userHasNumberAccess?: boolean;
+  apiVerified?: boolean;
+  coreWebhooksVerified?: boolean;
+  workerHealthy?: boolean;
+  userHasActiveDevice?: boolean;
+  blockers?: Array<{ code: string; message: string }>;
   webhookReady?: boolean;
   status?: string;
   errorCode?: string | null;
@@ -20,6 +25,7 @@ type StatusResponse = {
 
 function telephonyStatusMessage(data: StatusResponse) {
   if (data.manualReady) return "Telefoni redo";
+  if (data.blockers?.[0]?.message) return data.blockers[0].message;
   if (data.errorMessage) return data.errorMessage;
   switch (data.errorCode) {
     case "RINKEL_PLATFORM_NOT_CONFIGURED":
@@ -96,12 +102,39 @@ export function useRinkelDialer() {
       clientRequestId: payload.clientRequestId ?? crypto.randomUUID(),
       idempotencyKey: payload.idempotencyKey ?? `rinkel.call:${crypto.randomUUID()}`,
     };
-    const response = await fetch("/api/v1/calls", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const data = await response.json() as { callId?: string; error?: string; message?: string; status?: string };
+    let response: Response;
+    try {
+      response = await fetch("/api/v1/calls", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch {
+      setCalling(true);
+      setStatus("Svaret från samtalsstarten saknas – inväntar webhook eller CDR-avstämning");
+      const uncertain = new Error("Samtalsstartens utfall är oklart. Starta inte ett nytt samtal.") as Error & { outcomeUnknown: boolean };
+      uncertain.outcomeUnknown = true;
+      throw uncertain;
+    }
+    let data: {
+      callId?: string;
+      error?: string;
+      message?: string;
+      status?: string;
+      attemptStatus?: string;
+      providerStatus?: string;
+      callActive?: boolean;
+      idempotentReplay?: boolean;
+    };
+    try {
+      data = await response.json() as typeof data;
+    } catch {
+      setCalling(true);
+      setStatus("Samtalsstartens svar kunde inte tolkas – inväntar säker avstämning");
+      const uncertain = new Error("Samtalsstartens utfall är oklart. Starta inte ett nytt samtal.") as Error & { outcomeUnknown: boolean };
+      uncertain.outcomeUnknown = true;
+      throw uncertain;
+    }
     if (!response.ok && response.status !== 202) {
       setCalling(false);
       setStatus(data.message ?? data.error ?? "Samtalet kunde inte startas");
@@ -111,9 +144,18 @@ export function useRinkelDialer() {
       setCalling(false);
       throw new Error("call_id_missing");
     }
-    setStatus(data.status === "provider_outcome_unknown"
-      ? "Providerresultatet är oklart – inväntar avstämning"
-      : "Rinkel ringer din valda enhet");
+    const uncertain = data.status === "provider_outcome_unknown"
+      || data.attemptStatus === "provider_outcome_unknown"
+      || data.attemptStatus === "reconciliation_required";
+    if (data.idempotentReplay && data.callActive === false) {
+      setCalling(false);
+      setStatus(data.message ?? "Det tidigare samtalsförsöket är avslutat");
+      throw new Error(data.message ?? "call_attempt_not_active");
+    }
+    setCalling(true);
+    setStatus(uncertain
+      ? "Providerresultatet är oklart – inväntar webhook eller CDR-avstämning"
+      : data.message ?? "Rinkel ringer din valda enhet");
     return data.callId;
   }, []);
 

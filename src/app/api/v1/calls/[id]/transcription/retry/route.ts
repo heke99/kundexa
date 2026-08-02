@@ -26,14 +26,14 @@ export async function POST(
     next_retry_at: new Date().toISOString(),
   }).eq("tenant_id", app.tenantId).eq("call_id", callId).eq("provider", "rinkel");
   const { error } = await admin.from("platform_rinkel_jobs").upsert({
-    job_type: "rinkel.enrich_call",
+    job_type: "rinkel.transcription.fetch",
     aggregate_id: callId,
     payload: {
       call_id: callId,
       tenant_id: app.tenantId,
       external_call_id: call.external_call_id,
     },
-    idempotency_key: `rinkel.enrich_call.retry:${callId}:${new Date().toISOString().slice(0, 13)}`,
+    idempotency_key: `rinkel.transcription.fetch.retry:${callId}:${new Date().toISOString().slice(0, 13)}`,
   }, { onConflict: "idempotency_key", ignoreDuplicates: true });
   if (error) return NextResponse.json({ error: "transcription_retry_queue_failed" }, { status: 500 });
   await admin.from("audit_logs").insert({
