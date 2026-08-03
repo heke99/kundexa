@@ -97,7 +97,7 @@ export function RinkelDialer({
 
   return <div>
     <div className="dialer-status">
-      <strong>Rinkel click-to-call</strong>
+      <strong>Click-to-call</strong>
       <span className={`badge ${rinkel.registered ? "badge-success" : "badge-warning"}`}>
         <Radio size={12} /> {rinkel.status}
       </span>
@@ -123,11 +123,11 @@ export function RinkelDialer({
     </label> : null}
     <button type="button" className="call-button" onClick={call}
       disabled={!rinkel.registered || !selected || afterCall || rinkel.calling}
-      aria-label="Ring via Rinkel">
+      aria-label="Ring via telefoni">
       <Phone size={25} />
     </button>
-    {rinkel.calling ? <p className="notice">Samtalet hanteras på din Rinkel-enhet. Kundexa uppdateras av Rinkels webhookar.</p> : null}
-    {callState.recovering ? <p className="notice">Rinkels slutstatus är ännu inte säkerställd. Kundexa fortsätter automatisk avstämning—starta inte ett nytt samtal.</p> : null}
+    {rinkel.calling ? <p className="notice">Samtalet hanteras på din telefonienhet. Kundexa uppdaterar status automatiskt.</p> : null}
+    {callState.recovering ? <p className="notice">Samtalets slutstatus är ännu inte säkerställd. Kundexa fortsätter automatisk avstämning—starta inte ett nytt samtal.</p> : null}
     {callId && callState.connectionState === "degraded" ? <p className="notice">Realtime är tillfälligt frånkopplat. Samtalsstatus hämtas via säker fallback.</p> : null}
     {error ? <p className="form-error">{error}</p> : null}
     {afterCall && callId ? <form className="manual-after-call" onSubmit={complete}>

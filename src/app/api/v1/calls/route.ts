@@ -40,6 +40,13 @@ type Reservation = {
   idempotentReplay: boolean;
 };
 
+function publicTelephonyMessage(message: string) {
+  return message
+    .replace(/rinkel/gi, "telefonitjänsten")
+    .replace(/provider/gi, "telefonitjänsten")
+    .replace(/leverantör/gi, "telefonitjänst");
+}
+
 function reservationFailure(rawMessage: string, databaseCode?: string | null) {
   const normalized = rawMessage.toUpperCase();
   if (["42P01", "42703", "PGRST204"].includes(databaseCode ?? "")) {
@@ -49,19 +56,19 @@ function reservationFailure(rawMessage: string, databaseCode?: string | null) {
     return { code: "DATABASE_PERMISSION_ERROR", message: "Databasen nekade samtalsåtgärden.", status: 403 };
   }
   if (normalized.includes("RINKEL_PLATFORM_NOT_CONFIGURED") || normalized.includes("RINKEL_API_NOT_VERIFIED")) {
-    return { code: "RINKEL_API_NOT_VERIFIED", message: "Rinkel är inte konfigurerat och verifierat av plattformsadministratören.", status: 409 };
+    return { code: "RINKEL_API_NOT_VERIFIED", message: "Telefoni är inte konfigurerad och verifierad av plattformsadministratören.", status: 409 };
   }
   if (normalized.includes("DIAL_CONFIGURATION_INCOMPLETE")) {
-    return { code: "DIAL_CONFIGURATION_INCOMPLETE", message: "Rinkels användar-, enhets- eller nummerkonfiguration är inte komplett.", status: 409 };
+    return { code: "DIAL_CONFIGURATION_INCOMPLETE", message: "Användar-, enhets- eller nummerkonfigurationen för telefoni är inte komplett.", status: 409 };
   }
   if (normalized.includes("NUMBER_ALLOCATION") || normalized.includes("DIAL_PERMISSION_DENIED") || normalized.includes("NUMBER_GRANT")) {
-    return { code: normalized.includes("DIAL_PERMISSION_DENIED") ? "DIAL_PERMISSION_DENIED" : "NUMBER_ALLOCATION_MISSING", message: "Du saknar åtkomst till ett aktivt utgående Rinkel-nummer.", status: 409 };
+    return { code: normalized.includes("DIAL_PERMISSION_DENIED") ? "DIAL_PERMISSION_DENIED" : "NUMBER_ALLOCATION_MISSING", message: "Du saknar åtkomst till ett aktivt utgående telefonnummer.", status: 409 };
   }
   if (normalized.includes("USER_MAPPING") || normalized.includes("MAPPING")) {
-    return { code: "USER_MAPPING_MISSING", message: "Säljaren saknar en aktiv Rinkel-mappning.", status: 409 };
+    return { code: "USER_MAPPING_MISSING", message: "Säljaren saknar en aktiv telefonimappning.", status: 409 };
   }
   if (normalized.includes("DEVICE")) {
-    return { code: "DEVICE_MISSING", message: "Säljarens Rinkel-användare saknar en aktiv vald enhet.", status: 409 };
+    return { code: "DEVICE_MISSING", message: "Säljaren saknar en aktiv vald telefonienhet.", status: 409 };
   }
   if (normalized.includes("TELEPHONY_DISABLED")) return { code: "TELEPHONY_DISABLED", message: "Telefoni är pausad för företaget.", status: 409 };
   if (normalized.includes("MANUAL_DIALER_DISABLED")) return { code: "MANUAL_DIALER_DISABLED", message: "Manuell uppringning är avstängd för företaget.", status: 409 };
@@ -194,7 +201,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       callId: reserved.callId,
       status: "dial_requested",
-      message: "Samtalet initieras på din Rinkel-enhet.",
+      message: "Samtalet initieras på din telefonienhet.",
       correlationId,
     }, { status: 202 });
   } catch (error) {
@@ -220,8 +227,8 @@ export async function POST(request: Request) {
     return NextResponse.json({
       error: safe.code,
       message: outcomeUnknown
-        ? "Rinkels svar är oklart. Försök inte igen; Kundexa inväntar webhook eller avstämning."
-        : safe.message,
+        ? "Samtalsstartens utfall är oklart. Försök inte igen; Kundexa inväntar säker avstämning."
+        : publicTelephonyMessage(safe.message),
       callId: reserved?.callId ?? null,
       status: outcomeUnknown ? "provider_outcome_unknown" : "failed",
       correlationId,

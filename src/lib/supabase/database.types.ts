@@ -1036,6 +1036,7 @@ export type Database = {
           provider: string
           provider_call_id: string | null
           provider_cause: string | null
+          provider_outcome: string | null
           provider_connection_id: string | null
           provider_device_id: string | null
           provider_state_updated_at: string | null
@@ -1092,6 +1093,7 @@ export type Database = {
           provider?: string
           provider_call_id?: string | null
           provider_cause?: string | null
+          provider_outcome?: string | null
           provider_connection_id?: string | null
           provider_device_id?: string | null
           provider_state_updated_at?: string | null
@@ -1148,6 +1150,7 @@ export type Database = {
           provider?: string
           provider_call_id?: string | null
           provider_cause?: string | null
+          provider_outcome?: string | null
           provider_connection_id?: string | null
           provider_device_id?: string | null
           provider_state_updated_at?: string | null
@@ -12795,6 +12798,10 @@ export type Database = {
         }
         Returns: string
       }
+      assign_platform_rinkel_number_to_teams: {
+        Args: { p_number_id: string; p_reason?: string; p_team_ids: string[] }
+        Returns: Json
+      }
       anonymize_customer_record: {
         Args: {
           p_actor?: string
@@ -14307,6 +14314,24 @@ export type Database = {
       reserve_usage_for_tenant: {
         Args: { p_amount?: number; p_metric: string; p_tenant_id: string }
         Returns: undefined
+      }
+      reconcile_rinkel_call_from_cdr: {
+        Args: {
+          p_answered_at?: string
+          p_call_id: string
+          p_cause?: string
+          p_duration_seconds?: number
+          p_ended_at?: string
+          p_external_call_id: string
+          p_provider_payload?: Json
+          p_recording_id?: string
+          p_started_at?: string
+        }
+        Returns: Json
+      }
+      revoke_platform_rinkel_number_team_grant: {
+        Args: { p_grant_id: string; p_reason?: string }
+        Returns: Json
       }
       resolve_contract_eligible_calls: {
         Args: { p_customer_id: string }

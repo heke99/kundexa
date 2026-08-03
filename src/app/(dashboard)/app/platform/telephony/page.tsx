@@ -8,11 +8,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getAppContext, isPlatformAdmin } from "@/lib/auth";
 import {
   allocatePlatformRinkelResource,
+  assignPlatformPhoneNumberToTeams,
   configurePlatformRinkelWebhooks,
   reprocessPlatformRinkelEvent,
   requeuePlatformRinkelJob,
   runPlatformRinkelReconciliation,
   runPlatformRinkelWorker,
+  revokePlatformPhoneNumberTeamGrant,
   revokePlatformRinkelResource,
   setPlatformDefaultRinkelNumber,
   setPlatformRinkelPaused,
@@ -22,6 +24,8 @@ import {
 
 type UserAllocationRow = { id: string; rinkel_user_id: string; tenant_id: string; status: string; valid_to: string | null };
 type NumberAllocationRow = { id: string; rinkel_number_id: string; tenant_id: string; status: string; valid_to: string | null };
+type NumberGrantRow = { id: string; tenant_id: string; number_allocation_id: string; team_id: string | null; access_level: string; is_default: boolean; active: boolean };
+type TeamRow = { id: string; tenant_id: string; name: string; status: string };
 
 const coreEvents = new Set(["incomingCall", "outgoingCall", "callStart", "callEnd"]);
 const features = ["Central katalog", "Tenantallokeringar", "Fyra kärnwebhookar", "Beständig worker och CDR-reparation"];
@@ -84,6 +88,8 @@ export default async function PlatformTelephonyPage({
     admin.from("platform_rinkel_numbers").select("id,external_number_id,phone_number_e164,display_name,provider_status,active,recording_enabled,is_platform_default,last_synced_at").eq("platform_integration_id", integration.id).order("phone_number_e164"),
     admin.from("rinkel_user_allocations").select("id,rinkel_user_id,tenant_id,status,valid_from,valid_to").order("created_at", { ascending: false }),
     admin.from("rinkel_number_allocations").select("id,rinkel_number_id,tenant_id,status,valid_from,valid_to").order("created_at", { ascending: false }),
+    admin.from("rinkel_number_grants").select("id,tenant_id,number_allocation_id,team_id,access_level,is_default,active").eq("active", true).eq("access_level", "dial").not("team_id", "is", null),
+    admin.from("teams").select("id,tenant_id,name,status").eq("status", "active").order("name"),
     admin.from("platform_rinkel_webhook_subscriptions").select("event_type,required,status,provider_active,target_url_redacted,registered_at,test_requested_at,test_received_at,last_verified_at,last_received_at,last_processed_at,last_http_status,received_count,processed_count,failed_count,last_error_code,last_error_message").eq("platform_integration_id", integration.id).order("event_type"),
     admin.from("platform_rinkel_conflicts").select("id,event_id,conflict_type,provider_resource_type,provider_resource_key,claimed_tenant_ids,status,created_at").eq("status", "open").order("created_at", { ascending: false }),
     admin.from("tenants").select("id,name,status").in("status", ["trial", "active"]).order("name"),
@@ -101,7 +107,7 @@ export default async function PlatformTelephonyPage({
     </ModuleOverview>;
   }
 
-  const [capabilityResult, usersResult, devicesResult, numbersResult, userAllocationsResult, numberAllocationsResult, subscriptionsResult, conflictsResult, tenantsResult, heartbeatResult, jobsResult] = results;
+  const [capabilityResult, usersResult, devicesResult, numbersResult, userAllocationsResult, numberAllocationsResult, numberGrantsResult, teamsResult, subscriptionsResult, conflictsResult, tenantsResult, heartbeatResult, jobsResult] = results;
   const capability = capabilityResult.data;
   const users = usersResult.data ?? [];
   const devices = devicesResult.data ?? [];
@@ -110,6 +116,8 @@ export default async function PlatformTelephonyPage({
   const canonicalNumberIds = new Set(numbers.map((number) => number.id));
   const userAllocations = ((userAllocationsResult.data ?? []) as UserAllocationRow[]).filter((item) => canonicalUserIds.has(item.rinkel_user_id));
   const numberAllocations = ((numberAllocationsResult.data ?? []) as NumberAllocationRow[]).filter((item) => canonicalNumberIds.has(item.rinkel_number_id));
+  const numberGrants = (numberGrantsResult.data ?? []) as NumberGrantRow[];
+  const teams = (teamsResult.data ?? []) as TeamRow[];
   const subscriptions = subscriptionsResult.data ?? [];
   const conflicts = conflictsResult.data ?? [];
   const tenants = tenantsResult.data ?? [];
@@ -117,8 +125,17 @@ export default async function PlatformTelephonyPage({
   const jobs = jobsResult.data ?? [];
 
   const tenantById = new Map(tenants.map((tenant) => [tenant.id, tenant.name]));
+  const teamById = new Map(teams.map((team) => [team.id, team]));
   const activeUserAllocation = new Map(userAllocations.filter((item) => item.status === "active" && !item.valid_to).map((item) => [item.rinkel_user_id, item]));
-  const activeNumberAllocation = new Map(numberAllocations.filter((item) => item.status === "active" && !item.valid_to).map((item) => [item.rinkel_number_id, item]));
+  const allocationById = new Map(numberAllocations.filter((item) => item.status === "active" && !item.valid_to).map((item) => [item.id, item]));
+  const teamGrantsByNumber = new Map<string, NumberGrantRow[]>();
+  for (const grant of numberGrants) {
+    const allocation = allocationById.get(grant.number_allocation_id);
+    if (!allocation || !grant.team_id) continue;
+    teamGrantsByNumber.set(allocation.rinkel_number_id, [...(teamGrantsByNumber.get(allocation.rinkel_number_id) ?? []), grant]);
+  }
+  const teamsByTenant = new Map<string, TeamRow[]>();
+  for (const team of teams) teamsByTenant.set(team.tenant_id, [...(teamsByTenant.get(team.tenant_id) ?? []), team]);
   const devicesByUser = new Map<string, typeof devices>();
   for (const device of devices) devicesByUser.set(device.platform_rinkel_user_id, [...(devicesByUser.get(device.platform_rinkel_user_id) ?? []), device]);
   const coreVerified = subscriptions.filter((item) => coreEvents.has(item.event_type) && item.status === "verified").length;
@@ -131,6 +148,23 @@ export default async function PlatformTelephonyPage({
   const staleLockCutoff = Date.now() - 5 * 60_000;
   const staleLocks = jobs.filter((job) => job.status === "processing" && job.locked_at && Date.parse(job.locked_at) < staleLockCutoff).length;
   const apiKeyConfigured = Boolean(process.env.RINKEL_API_KEY);
+  const connectionStatusLabel = integration.status === "connected"
+    ? "API ansluten"
+    : integration.status === "testing"
+      ? "Verifiering pågår"
+      : integration.status === "disabled"
+        ? "Pausad"
+        : integration.status;
+  const fullyReady = Boolean(
+    capability?.api_access
+    && capability?.users_catalog
+    && capability?.numbers_catalog
+    && capability?.dial_configured
+    && capability?.dial_endpoint_reachable
+    && capability?.dial_test_succeeded
+    && coreVerified === 4
+    && workerHealthy,
+  );
 
   return <ModuleOverview
     title="Central Rinkel-telefoni"
@@ -143,12 +177,12 @@ export default async function PlatformTelephonyPage({
 
     <div className="grid grid-3">
       <Card><CardContent><strong>{apiKeyConfigured ? "Konfigurerad" : "Saknas"}</strong><p className="muted">RINKEL_API_KEY (visas aldrig)</p></CardContent></Card>
-      <Card><CardContent><strong>{integration?.status ?? "not_configured"}</strong><p className="muted">central anslutning</p></CardContent></Card>
+      <Card><CardContent><strong>{connectionStatusLabel}</strong><p className="muted">central API-anslutning</p></CardContent></Card>
       <Card><CardContent><strong>{coreVerified}/4</strong><p className="muted">verifierade kärnwebhookar</p></CardContent></Card>
     </div>
 
     <Card>
-      <CardHeader><h2><Plug size={17} /> Drift och verifierade capabilities</h2><Badge className={integration?.status === "connected" ? "badge-success" : "badge-warning"}>{integration?.status ?? "saknas"}</Badge></CardHeader>
+      <CardHeader><h2><Plug size={17} /> Drift och verifierade capabilities</h2><Badge className={fullyReady ? "badge-success" : "badge-warning"}>{fullyReady ? "Driftklar" : connectionStatusLabel}</Badge></CardHeader>
       <CardContent>
         <div className="notice">
           API: {capability?.api_access ? "verifierat" : "ej verifierat"} · Användarkatalog: {capability?.users_catalog ? "verifierad" : "ej verifierad"} · Nummer­katalog: {capability?.numbers_catalog ? "verifierad" : "ej verifierad"}<br />
@@ -193,19 +227,44 @@ export default async function PlatformTelephonyPage({
         const userDevices = devicesByUser.get(user.id) ?? [];
         return <div className="activity-line" key={user.id}><span className="activity-dot"><ShieldCheck size={14} /></span><div style={{ flex: 1 }}><strong>{user.display_name}</strong><p>{userDevices.filter((device) => device.active).length} aktiva enheter · {allocation ? tenantById.get(allocation.tenant_id) ?? allocation.tenant_id : "ledig"}</p>{userDevices.map((device) => <p className="muted" key={device.id}>{device.display_name ?? device.provider_device_id} · {device.provider_status} · synk {time(device.last_synced_at)}</p>)}</div><Badge className={user.active ? "badge-success" : "badge-warning"}>{user.active ? "aktiv" : "inaktiv"}</Badge>{allocation ? <form action={revokePlatformRinkelResource}><input type="hidden" name="resource_type" value="user" /><input type="hidden" name="allocation_id" value={allocation.id} /><input type="hidden" name="reason" value="Återkallad av plattformsadmin" /><button className="button button-ghost button-sm">Återkalla</button></form> : null}</div>;
       })}</CardContent></Card>
-      <Card><CardHeader><h2>Rinkel-nummer</h2><Badge>{numbers.length}</Badge></CardHeader><CardContent>{numbers.map((number) => {
-        const allocation = activeNumberAllocation.get(number.id);
-        return <div className="activity-line" key={number.id}><span className="activity-dot"><Phone size={14} /></span><div style={{ flex: 1 }}><strong>{number.phone_number_e164}</strong><p>{number.display_name ?? "Utan etikett"} · {allocation ? tenantById.get(allocation.tenant_id) ?? allocation.tenant_id : "ledigt"}{number.is_platform_default ? " · plattformsstandard" : ""}</p></div><Badge className={number.active ? "badge-success" : "badge-warning"}>{number.provider_status}</Badge>{number.active && !number.is_platform_default ? <form action={setPlatformDefaultRinkelNumber}><input type="hidden" name="number_id" value={number.id} /><button className="button button-ghost button-sm">Sätt reservstandard</button></form> : null}{allocation ? <form action={revokePlatformRinkelResource}><input type="hidden" name="resource_type" value="number" /><input type="hidden" name="allocation_id" value={allocation.id} /><input type="hidden" name="reason" value="Återkallad av plattformsadmin" /><button className="button button-ghost button-sm">Återkalla</button></form> : null}</div>;
+      <Card><CardHeader><h2>Telefonnummer och teamåtkomst</h2><Badge>{numbers.length}</Badge></CardHeader><CardContent>{numbers.map((number) => {
+        const grants = teamGrantsByNumber.get(number.id) ?? [];
+        const companyCount = new Set(grants.map((grant) => grant.tenant_id)).size;
+        return <div className="number-assignment-row" key={number.id}>
+          <div className="activity-line">
+            <span className="activity-dot"><Phone size={14} /></span>
+            <div style={{ flex: 1 }}><strong>{number.phone_number_e164}</strong><p>{number.display_name ?? "Utan etikett"} · {grants.length} team i {companyCount} bolag{number.is_platform_default ? " · plattformsstandard" : ""}</p></div>
+            <Badge className={number.active ? "badge-success" : "badge-warning"}>{number.provider_status}</Badge>
+            {number.active && !number.is_platform_default ? <form action={setPlatformDefaultRinkelNumber}><input type="hidden" name="number_id" value={number.id} /><button className="button button-ghost button-sm">Sätt reservstandard</button></form> : null}
+          </div>
+          {grants.length ? <div className="team-assignment-grid">{grants.map((grant) => {
+            const team = grant.team_id ? teamById.get(grant.team_id) : null;
+            return <div className="team-assignment-option" key={grant.id}><div><strong>{team?.name ?? "Okänt team"}</strong><p className="muted">{tenantById.get(grant.tenant_id) ?? grant.tenant_id}{grant.is_default ? " · standard" : ""}</p></div><form action={revokePlatformPhoneNumberTeamGrant}><input type="hidden" name="grant_id" value={grant.id} /><input type="hidden" name="reason" value="Borttagen av plattformsadmin" /><button className="button button-ghost button-sm">Ta bort</button></form></div>;
+          })}</div> : <p className="muted">Numret är inte tilldelat till något team.</p>}
+        </div>;
       })}</CardContent></Card>
     </div>
 
-    <Card><CardHeader><h2>Allokera eller flytta resurs</h2></CardHeader><CardContent><form action={allocatePlatformRinkelResource} className="form-stack">
-      <SelectField label="Resurstyp" name="resource_type" required><option value="number">Telefonnummer</option><option value="user">Rinkel-användare</option></SelectField>
-      <SelectField label="Resurs" name="resource_id" required><option value="">Välj resurs</option><optgroup label="Nummer">{numbers.filter((number) => number.active).map((number) => <option key={number.id} value={number.id}>{number.phone_number_e164}</option>)}</optgroup><optgroup label="Användare">{users.filter((user) => user.active).map((user) => <option key={user.id} value={user.id}>{user.display_name}</option>)}</optgroup></SelectField>
-      <SelectField label="Tenant" name="tenant_id" required><option value="">Välj tenant</option>{tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.name}</option>)}</SelectField>
-      <Field label="Anledning" name="reason" required />
-      <button className="button button-primary">Allokera transaktionellt</button>
-    </form></CardContent></Card>
+    <div className="split-layout">
+      <Card><CardHeader><h2>Tilldela nummer till team</h2><Badge>Flera val möjliga</Badge></CardHeader><CardContent><form action={assignPlatformPhoneNumberToTeams} className="form-stack">
+        <SelectField label="Telefonnummer" name="number_id" required><option value="">Välj nummer</option>{numbers.filter((number) => number.active).map((number) => <option key={number.id} value={number.id}>{number.phone_number_e164} · {number.display_name ?? "Utan etikett"}</option>)}</SelectField>
+        <fieldset className="team-assignment-grid"><legend>Team som ska få använda numret</legend>{tenants.map((tenant) => {
+          const tenantTeams = teamsByTenant.get(tenant.id) ?? [];
+          if (!tenantTeams.length) return null;
+          return <div className="team-assignment-group" key={tenant.id}><strong>{tenant.name}</strong>{tenantTeams.map((team) => <label className="team-assignment-option" key={team.id}><input type="checkbox" name="team_ids" value={team.id} /><span>{team.name}</span></label>)}</div>;
+        })}</fieldset>
+        <p className="muted">Du kan välja team från flera bolag samtidigt. Alla aktiva medlemmar i valda team får använda numret.</p>
+        <Field label="Anledning" name="reason" required />
+        <button className="button button-primary">Tilldela till valda team</button>
+      </form></CardContent></Card>
+      <Card><CardHeader><h2>Tilldela telefoni-användare</h2></CardHeader><CardContent><form action={allocatePlatformRinkelResource} className="form-stack">
+        <input type="hidden" name="resource_type" value="user" />
+        <SelectField label="Telefoni-användare" name="resource_id" required><option value="">Välj användare</option>{users.filter((user) => user.active).map((user) => <option key={user.id} value={user.id}>{user.display_name}</option>)}</SelectField>
+        <SelectField label="Bolag" name="tenant_id" required><option value="">Välj bolag</option>{tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.name}</option>)}</SelectField>
+        <Field label="Anledning" name="reason" required />
+        <button className="button button-primary">Tilldela användare</button>
+      </form></CardContent></Card>
+    </div>
 
     <div className="split-layout">
       <Card><CardHeader><h2>Webhookar</h2><Badge>{coreVerified}/4 kärnevent</Badge></CardHeader><CardContent>{subscriptions.map((subscription) => <div className="activity-line" key={subscription.event_type}><span className="activity-dot"><Plug size={14} /></span><div style={{ flex: 1 }}><strong>{subscription.event_type}</strong><p>{subscription.required ? "Obligatorisk" : "Valfri"} · provider {subscription.provider_active ? "aktiv" : "ej aktiv"} · HTTP {subscription.last_http_status ?? "–"}</p><p className="muted">Registrerad {time(subscription.registered_at)} · test begärt {time(subscription.test_requested_at)} · mottaget {time(subscription.test_received_at)} · processat {time(subscription.last_processed_at)} · events {subscription.received_count}/{subscription.processed_count}/{subscription.failed_count} mottagna/processade/fel</p>{subscription.last_error_code ? <p className="form-error">{subscription.last_error_code}: {subscription.last_error_message}</p> : null}</div><Badge className={subscription.status === "verified" ? "badge-success" : subscription.status === "unsupported" ? "" : "badge-warning"}>{subscription.status}</Badge></div>)}</CardContent></Card>

@@ -23,33 +23,40 @@ type StatusResponse = {
   errorMessage?: string | null;
 };
 
+function publicTelephonyMessage(message: string) {
+  return message
+    .replace(/rinkel/gi, "telefonitjänsten")
+    .replace(/provider/gi, "telefonitjänsten")
+    .replace(/leverantör/gi, "telefonitjänst");
+}
+
 function telephonyStatusMessage(data: StatusResponse) {
   if (data.manualReady) return "Telefoni redo";
-  if (data.blockers?.[0]?.message) return data.blockers[0].message;
-  if (data.errorMessage) return data.errorMessage;
+  if (data.blockers?.[0]?.message) return publicTelephonyMessage(data.blockers[0].message);
+  if (data.errorMessage) return publicTelephonyMessage(data.errorMessage);
   switch (data.errorCode) {
     case "RINKEL_PLATFORM_NOT_CONFIGURED":
-      return "Rinkel är inte konfigurerat eller verifierat av plattformsadministratören";
+      return "Telefoni är inte konfigurerad eller verifierad av plattformsadministratören";
     case "RINKEL_PLATFORM_TESTING":
-      return "Rinkel-anslutningen testas just nu";
+      return "Telefonianslutningen testas just nu";
     case "RINKEL_AUTHENTICATION_ERROR":
-      return "Rinkel API-nyckeln nekades";
+      return "Telefonitjänstens anslutning nekades";
     case "RINKEL_PLAN_UNSUPPORTED":
-      return "Rinkel-kontot saknar nödvändig integrationsåtkomst";
+      return "Telefonikontot saknar nödvändig integrationsåtkomst";
     case "RINKEL_UNAVAILABLE":
-      return "Rinkel kunde inte nås vid den senaste kontrollen";
+      return "Telefonitjänsten kunde inte nås vid den senaste kontrollen";
     case "TELEPHONY_PLATFORM_DISABLED":
-      return "Central Rinkel-telefoni är pausad";
+      return "Central telefoni är pausad";
     case "RINKEL_DIAL_CAPABILITY_MISSING":
-      return "Rinkel-anslutningen saknar verifierad uppringningsbehörighet";
+      return "Telefonianslutningen saknar verifierad uppringningsbehörighet";
     case "TELEPHONY_DISABLED":
       return "Telefoni är pausad för företaget";
     case "RINKEL_TENANT_NUMBER_MISSING":
-      return "Inget telefonnummer har tilldelats företaget";
+      return "Inget telefonnummer har tilldelats företaget eller ditt team";
     case "RINKEL_USER_MAPPING_MISSING":
       return "Du saknar en telefonimappning";
     case "RINKEL_DEVICE_MISSING":
-      return "Din Rinkel-enhet saknas";
+      return "Din telefonienhet saknas";
     case "RINKEL_NUMBER_ACCESS_DENIED":
       return "Du saknar åtkomst till ett utgående nummer";
     case "MANUAL_DIALER_DISABLED":
@@ -57,11 +64,11 @@ function telephonyStatusMessage(data: StatusResponse) {
     default:
       break;
   }
-  if (!data.platformReady) return "Rinkel är inte redo. Öppna Rinkeltelefoni som plattformsadmin för exakt felstatus";
+  if (!data.platformReady) return "Telefoni är inte redo. Kontakta administratören";
   if (!data.tenantEnabled) return "Telefoni är pausad för företaget";
-  if (!data.tenantHasNumber) return "Inget telefonnummer har tilldelats företaget";
+  if (!data.tenantHasNumber) return "Inget telefonnummer har tilldelats företaget eller ditt team";
   if (!data.userMapped) return "Du saknar en telefonimappning";
-  if (!data.userHasDevice) return "Din Rinkel-enhet saknas";
+  if (!data.userHasDevice) return "Din telefonienhet saknas";
   if (!data.userHasNumberAccess) return "Du saknar åtkomst till ett utgående nummer";
   return "Telefoni är inte redo";
 }
@@ -80,7 +87,7 @@ export function useRinkelDialer() {
         if (!active) return;
         setRegistered(Boolean(response.ok && data.manualReady));
         setAutomaticReady(Boolean(response.ok && data.automaticReady));
-        setStatus(response.ok ? telephonyStatusMessage(data) : data.errorMessage ?? "Telefonistatus kunde inte hämtas");
+        setStatus(response.ok ? telephonyStatusMessage(data) : publicTelephonyMessage(data.errorMessage ?? "Telefonistatus kunde inte hämtas"));
       })
       .catch(() => {
         if (active) {
@@ -96,7 +103,7 @@ export function useRinkelDialer() {
 
   const startCall = useCallback(async (payload: Record<string, unknown>) => {
     setCalling(true);
-    setStatus("Initierar samtalet på din Rinkel-enhet…");
+    setStatus("Initierar samtalet på din telefonienhet…");
     const body = {
       ...payload,
       clientRequestId: payload.clientRequestId ?? crypto.randomUUID(),
@@ -137,7 +144,7 @@ export function useRinkelDialer() {
     }
     if (!response.ok && response.status !== 202) {
       setCalling(false);
-      setStatus(data.message ?? data.error ?? "Samtalet kunde inte startas");
+      setStatus(publicTelephonyMessage(data.message ?? data.error ?? "Samtalet kunde inte startas"));
       throw new Error(data.message ?? data.error ?? "call_start_failed");
     }
     if (!data.callId) {
@@ -154,8 +161,8 @@ export function useRinkelDialer() {
     }
     setCalling(true);
     setStatus(uncertain
-      ? "Providerresultatet är oklart – inväntar webhook eller CDR-avstämning"
-      : data.message ?? "Rinkel ringer din valda enhet");
+      ? "Samtalsresultatet är oklart – inväntar säker avstämning"
+      : publicTelephonyMessage(data.message ?? "Telefonitjänsten ringer din valda enhet"));
     return data.callId;
   }, []);
 

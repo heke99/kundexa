@@ -99,7 +99,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
 
   async function begin() {
     if (mode === "automatic" && !voice.automaticReady) {
-      setError("Automatisk uppringning är pausad tills alla Rinkel-webhookar är aktiva.");
+      setError("Automatisk uppringning är pausad tills alla nödvändiga telefonihändelser är aktiva.");
       setPhase("error");
       return;
     }
@@ -114,7 +114,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
 
   async function dial(target = claim, explicitTarget?: PhoneOption | null) {
     if (mode === "automatic" && !voice.automaticReady) {
-      setError("Automatisk uppringning är pausad eftersom Rinkel-webhookarna inte är friska.");
+      setError("Automatisk uppringning är pausad eftersom telefonihändelserna inte är friska.");
       setPhase("paused");
       return;
     }
@@ -206,8 +206,8 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
         <div className="dialer-call-controls">
           {phase === "ready" ? <button className="call-button" type="button" onClick={() => dial()} disabled={!voice.registered}><Phone size={25} /></button> : null}
           {phase === "dialing" ? <Badge className="badge-info">Kopplar samtalet…</Badge> : null}
-          {phase === "calling" ? <div className="notice">Samtalet hanteras på din Rinkel-enhet. Kundexa inväntar callEnd innan efterarbetet öppnas.</div> : null}
-          {callState.recovering ? <div className="notice">Rinkels slutstatus är osäker och avstäms automatiskt. Ring inte nästa prospekt ännu.</div> : null}
+          {phase === "calling" ? <div className="notice">Samtalet hanteras på din telefonienhet. Kundexa inväntar slutstatus innan efterarbetet öppnas.</div> : null}
+          {callState.recovering ? <div className="notice">Samtalets slutstatus är osäker och avstäms automatiskt. Ring inte nästa prospekt ännu.</div> : null}
           {callId && callState.connectionState === "degraded" ? <div className="notice">Realtime är frånkopplat. Kundexa använder statuspolling tills anslutningen är återställd.</div> : null}
           {phase === "ready" && claim.allowSkip ? <button className="button button-ghost button-sm" type="button" onClick={() => pause("skip")}>Hoppa över</button> : null}
         </div>

@@ -32,7 +32,7 @@ export default async function CallDetailPage({ params }: { params: Promise<{ id:
   return <>
     <PageHeader
       title={customer?.display_name ?? `${call.from_number} → ${call.to_number}`}
-      description={`Rinkel-samtal ${formatDate(call.created_at)} · ${call.direction}`}
+      description={`Telefonsamtal ${formatDate(call.created_at)} · ${call.direction}`}
       action={<Link className="button button-secondary" href="/app/calls">Till samtalslistan</Link>}
     />
     <div className="grid grid-2">
@@ -40,8 +40,8 @@ export default async function CallDetailPage({ params }: { params: Promise<{ id:
         <p><strong>Från:</strong> {call.from_number}</p>
         <p><strong>Till:</strong> {call.to_number}</p>
         <p><strong>Teknisk status:</strong> {call.provider_status ?? "Ej rapporterad"}</p>
-        <p><strong>Providerresultat:</strong> {call.provider_outcome ?? "Ej rapporterat"}</p>
-        {call.provider_cause ? <p><strong>Rinkel-orsak:</strong> {call.provider_cause}</p> : null}
+        <p><strong>Telefoniresultat:</strong> {call.provider_outcome ?? "Ej rapporterat"}</p>
+        {call.provider_cause ? <p><strong>Teknisk orsak:</strong> {call.provider_cause}</p> : null}
         <p><strong>CRM-disposition:</strong> {call.disposition ?? "Ej registrerad"}</p>
         <p><strong>Längd:</strong> {call.duration_seconds ?? 0} sekunder</p>
         {call.notes ? <p><strong>Anteckning:</strong><br />{call.notes}</p> : null}
@@ -59,10 +59,10 @@ export default async function CallDetailPage({ params }: { params: Promise<{ id:
       </CardContent></Card>
 
       <Card><CardHeader><h2>AI Insights</h2><Badge>{insights?.[0]?.status ?? call.insights_status}</Badge></CardHeader><CardContent>
-        {insights?.length ? insights.map((item) => <div key={item.source} className="activity-line"><div><strong>{item.source} · {item.sentiment ?? "utan sentiment"}</strong><p>{item.summary ?? "Ingen sammanfattning"}</p><p className="muted">{item.topics?.join(", ")}</p></div></div>) : <p>Inga insights tillgängliga ännu.</p>}
+        {insights?.length ? insights.map((item) => <div key={item.source} className="activity-line"><div><strong>{item.source === "rinkel" ? "Telefoni" : item.source} · {item.sentiment ?? "utan sentiment"}</strong><p>{item.summary ?? "Ingen sammanfattning"}</p><p className="muted">{item.topics?.join(", ")}</p></div></div>) : <p>Inga insights tillgängliga ännu.</p>}
       </CardContent></Card>
     </div>
-    <Card style={{ marginTop: 16 }}><CardHeader><h2>Providerhändelser</h2><Badge>{events?.length ?? 0}</Badge></CardHeader><CardContent>
+    <Card style={{ marginTop: 16 }}><CardHeader><h2>Telefonihändelser</h2><Badge>{events?.length ?? 0}</Badge></CardHeader><CardContent>
       {events?.map((event) => <div className="activity-line" key={event.id}><span className="activity-dot" /><div><strong>{event.event_type}</strong><p>{formatDate(event.occurred_at)} · {event.processing_status ?? "mottagen"}</p></div></div>)}
     </CardContent></Card>
   </>;

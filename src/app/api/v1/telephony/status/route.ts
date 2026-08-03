@@ -2,6 +2,18 @@ import { NextResponse } from "next/server";
 import { getAppContext } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 
+type TelephonyStatusPayload = Record<string, unknown> & {
+  errorMessage?: string | null;
+  blockers?: Array<Record<string, unknown> & { message?: string | null }>;
+};
+
+function publicTelephonyMessage(message: string) {
+  return message
+    .replace(/rinkel/gi, "telefonitjänsten")
+    .replace(/provider/gi, "telefonitjänsten")
+    .replace(/leverantör/gi, "telefonitjänst");
+}
+
 export async function GET() {
   try {
     await getAppContext();
@@ -24,7 +36,15 @@ export async function GET() {
         errorMessage: "Telefonistatus kunde inte läsas.",
       }, { status: 500 });
     }
-    return NextResponse.json(data);
+    const payload = data as TelephonyStatusPayload;
+    return NextResponse.json({
+      ...payload,
+      errorMessage: payload.errorMessage ? publicTelephonyMessage(payload.errorMessage) : payload.errorMessage,
+      blockers: payload.blockers?.map((blocker) => ({
+        ...blocker,
+        message: blocker.message ? publicTelephonyMessage(blocker.message) : blocker.message,
+      })),
+    });
   } catch {
     return NextResponse.json({
       platformConfigured: null,
