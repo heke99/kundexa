@@ -152,9 +152,12 @@ function stringArray(value: unknown, field: string): string[] {
 }
 
 function responseData(value: unknown): unknown {
+  // Rinkel endpoints have historically returned both a direct payload and a
+  // { data: ... } envelope. Accept both shapes, then validate the endpoint-
+  // specific payload strictly in the caller.
+  if (Array.isArray(value)) return value;
   const root = object(value);
-  if (!("data" in root)) throw new RinkelError("RINKEL_SCHEMA_ERROR", "Rinkel-svaret saknar data.");
-  return root.data;
+  return "data" in root ? root.data : root;
 }
 
 function validDate(value: unknown, field: string): string {
@@ -488,11 +491,11 @@ function normalizeRinkelDevice(value: unknown, fallbackIndex: number): RinkelDev
 
 export function normalizeRinkelUser(value: unknown): RinkelUser {
   const item = object(value);
-  const fullName = string(item.fullName, "fullName", true)
+  const fullName = string(item.fullName ?? item.name ?? item.displayName, "fullName", true)
     ?? [string(item.firstName, "firstName", true), string(item.lastName, "lastName", true)].filter(Boolean).join(" ")
     ?? "";
   if (!fullName) throw new RinkelError("RINKEL_SCHEMA_ERROR", "Rinkel-användaren saknar namn.");
-  const legacyDeviceId = string(item.deviceId, "deviceId", true);
+  const legacyDeviceId = string(item.deviceId ?? item.defaultDeviceId, "deviceId", true);
   const rawDevices = Array.isArray(item.devices) ? item.devices : [];
   const devices = rawDevices.map((device, index) => normalizeRinkelDevice(device, index));
   if (legacyDeviceId && !devices.some((device) => device.id === legacyDeviceId)) {
@@ -506,7 +509,7 @@ export function normalizeRinkelUser(value: unknown): RinkelUser {
     });
   }
   return {
-    id: string(item.id, "id")!,
+    id: string(item.id ?? item.userId, "id")!,
     deviceId: devices.find((device) => device.active)?.id ?? legacyDeviceId,
     devices,
     email: string(item.email, "email", true),
@@ -518,16 +521,21 @@ export function normalizeRinkelUser(value: unknown): RinkelUser {
 
 export function normalizeRinkelNumber(value: unknown): RinkelNumber {
   const item = object(value);
-  const number = string(item.number, "number")!;
+  const number = string(item.number ?? item.phoneNumber ?? item.phone_number, "number")!;
   if (!/^\+[1-9]\d{7,14}$/.test(number)) throw new RinkelError("RINKEL_SCHEMA_ERROR", "Rinkel-numret är inte E.164.");
-  const status = string(item.status, "status")!;
+  const status = string(item.status, "status", true) ?? "unknown";
+  const normalizedStatus = status.toLowerCase();
+  const inactiveStatuses = ["inactive", "disabled", "cancelled", "canceled", "removed", "archived"];
+  const active = typeof item.active === "boolean"
+    ? item.active
+    : !inactiveStatuses.includes(normalizedStatus);
   const recording = item.recording && typeof item.recording === "object" ? object(item.recording) : null;
   return {
-    id: string(item.id, "id")!,
+    id: string(item.id ?? item.numberId, "id")!,
     number,
-    label: string(item.label, "label", true),
+    label: string(item.label ?? item.name ?? item.displayName, "label", true),
     status,
-    active: status === "ACTIVE",
+    active,
     recordingEnabled: recording ? boolean(recording.enabled) : boolean(item.recordingEnabled),
     raw: item,
   };

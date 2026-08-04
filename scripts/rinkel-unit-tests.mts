@@ -117,3 +117,60 @@ Deno.test("treats transcription 204 as pending", async () => {
   const result = await client.getTranscription("call-1");
   assert(!result.available && result.value === null, "204 must remain pending");
 });
+
+Deno.test("accepts direct directory payloads and normalizes active number variants", async () => {
+  let call = 0;
+  const client = new RinkelClient({
+    apiKey: "test-key",
+    fetchImpl: (() => {
+      call += 1;
+      if (call === 1) {
+        return Promise.resolve(Response.json([
+          { id: "u-direct", name: "Direct User", deviceId: "device-direct", active: true },
+        ]));
+      }
+      return Promise.resolve(Response.json([
+        { numberId: "n-direct", phoneNumber: "+46812345678", displayName: "Sales", status: "active" },
+      ]));
+    }) as typeof fetch,
+  });
+  const users = await client.listUsers();
+  const numbers = await client.listNumbers();
+  equal(users[0].id, "u-direct", "direct user payload");
+  equal(numbers[0].id, "n-direct", "direct number payload");
+  assert(numbers[0].active, "lowercase active status must be active");
+});
+
+Deno.test("sends the documented dial request once and accepts 204", async () => {
+  let capturedUrl = "";
+  let capturedMethod = "";
+  let capturedHeader = "";
+  let capturedBodyJson = "{}";
+  let calls = 0;
+  const client = new RinkelClient({
+    apiKey: "test-key",
+    fetchImpl: ((input, init) => {
+      calls += 1;
+      capturedUrl = String(input);
+      capturedMethod = String(init?.method ?? "GET");
+      capturedHeader = new Headers(init?.headers).get("x-rinkel-api-key") ?? "";
+      capturedBodyJson = String(init?.body ?? "{}");
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }) as typeof fetch,
+  });
+  await client.dial({ deviceId: "device-1", numberId: "number-1", to: "+46701111111" });
+  equal(calls, 1, "dial request count");
+  assert(capturedUrl.endsWith("/v1/dial"), "dial endpoint");
+  equal(capturedMethod, "POST", "dial method");
+  equal(capturedHeader, "test-key", "dial auth header");
+  const capturedBody = JSON.parse(capturedBodyJson) as {
+    deviceId?: unknown;
+    numberId?: unknown;
+    to?: unknown;
+    anonymous?: unknown;
+  };
+  equal(capturedBody.deviceId, "device-1", "dial deviceId");
+  equal(capturedBody.numberId, "number-1", "dial numberId");
+  equal(capturedBody.to, "+46701111111", "dial destination");
+  equal(capturedBody.anonymous, false, "dial anonymous flag");
+});

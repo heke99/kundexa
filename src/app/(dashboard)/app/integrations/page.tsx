@@ -4,12 +4,12 @@ import { addPhoneNumber, generateResendWebhookAddress, save46ElksIntegration, sa
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
+import { RinkelUserMappingForm } from "@/components/rinkel-user-mapping-form";
 import { Field, SelectField } from "@/components/ui/form-field";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
 import {
   saveRinkelCallerIdDefault,
-  saveRinkelUserMapping,
   saveTelephonyPolicy,
 } from "@/app/actions/rinkel";
 
@@ -95,13 +95,14 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
       </CardContent></Card>
 
       <Card><CardHeader><h2>Säljarmappning för telefoni</h2><Badge>{rinkelResources.mappings.filter((mapping) => mapping.active).length}</Badge></CardHeader><CardContent>
-        <form action={saveRinkelUserMapping} className="form-stack">
-          <SelectField label="Kundexa-användare" name="kundexa_user_id" required><option value="">Välj användare</option>{members?.map((member) => { const profile = Array.isArray(member.profiles) ? member.profiles[0] : member.profiles; return <option key={member.user_id} value={member.user_id}>{profile?.full_name ?? member.user_id} · {member.role}</option>; })}</SelectField>
-          <SelectField label="Tilldelad telefoni-användare" name="rinkel_user_allocation_id" required><option value="">Välj telefoni-användare</option>{rinkelResources.users.map((user) => <option key={user.allocationId} value={user.allocationId} disabled={!user.active || !user.hasDevice}>{user.displayName} · {user.hasDevice ? `${user.devices.filter((device) => device.active).length} aktiva enheter` : "enhet saknas"}{user.active ? "" : " · inaktiv"}</option>)}</SelectField>
-          <SelectField label="Aktiv telefonienhet" name="selected_device_id" required><option value="">Välj enhet som hör till användaren</option>{rinkelResources.users.map((user) => <optgroup key={user.allocationId} label={user.displayName}>{user.devices.map((device) => <option key={device.id} value={device.id} disabled={!device.active}>{device.displayName ?? "Telefonienhet"} · {device.status}{device.active ? "" : " · inaktiv"}</option>)}</optgroup>)}</SelectField>
-          <SelectField label="Tilldelat standardnummer" name="default_number_allocation_id" required><option value="">Välj telefonnummer</option>{rinkelResources.numbers.map((number) => <option key={number.allocationId} value={number.allocationId} disabled={!number.active}>{number.displayName ? `${number.displayName} · ` : ""}{number.number}{number.active ? "" : " · inaktivt"}</option>)}</SelectField>
-          <button className="button button-primary">Spara mappning</button>
-        </form>
+        <RinkelUserMappingForm
+          members={(members ?? []).map((member) => {
+            const profile = Array.isArray(member.profiles) ? member.profiles[0] : member.profiles;
+            return { userId: member.user_id, label: `${profile?.full_name ?? member.user_id} · ${member.role}` };
+          })}
+          users={rinkelResources.users}
+          numbers={rinkelResources.numbers}
+        />
         <div style={{ marginTop: 14 }}>{rinkelResources.mappings.filter((mapping) => mapping.active).map((mapping) => {
           const member = members?.find((item) => item.user_id === mapping.kundexaUserId);
           const profile = member && (Array.isArray(member.profiles) ? member.profiles[0] : member.profiles);
@@ -113,7 +114,7 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
       </CardContent></Card>
 
       <Card><CardHeader><h2>Caller-ID-standarder</h2><Badge>Prioriterad resolver</Badge></CardHeader><CardContent>
-        <p className="muted">Prioritet: explicit samtalsval → lista → kampanj → team → tenant → plattform → säljarens bakåtkompatibla standard.</p>
+        <p className="muted">Prioritet: explicit samtalsval → lista → kampanj → kundteam → säljarstandard → säljarteam → tenant → plattform.</p>
         <form action={saveRinkelCallerIdDefault} className="form-stack" style={{ marginTop: 12 }}>
           <SelectField label="Scope" name="scope_target" required>
             <option value="tenant">Tenantstandard · {numberLabel(callerIdDefaults.tenantDefaultAllocationId)}</option>

@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { assertPermission } from "@/lib/permissions";
 import { createPlatformRinkelClient } from "@/lib/integrations/rinkel/client";
 import { safeRinkelError } from "@/lib/integrations/rinkel/errors";
+import { apiJson, getCorrelationId } from "@/lib/api-correlation";
 
 const callDirectionSchema = z.enum(["inbound", "outbound"]);
 
@@ -88,6 +89,32 @@ function reservationFailure(rawMessage: string, databaseCode?: string | null) {
   return { code: "CALL_RESERVATION_FAILED", message: "Samtalet kunde inte reserveras säkert.", status: 400 };
 }
 
+function internalDialFailure(error: unknown) {
+  const code = error instanceof Error ? error.message : "";
+  switch (code) {
+    case "rinkel_reservation_contract_invalid":
+      return {
+        code: "DIAL_RESERVATION_CONTRACT_INVALID",
+        message: "Samtalsreservationen saknade en giltig enhet, ett utgående nummer eller ett måltelefonnummer.",
+        status: 500,
+      };
+    case "DATABASE_CALL_ATTEMPT_UPDATE_FAILED":
+      return {
+        code: "DATABASE_CALL_ATTEMPT_UPDATE_FAILED",
+        message: "Samtalsförsöket kunde inte förberedas i databasen.",
+        status: 503,
+      };
+    case "rinkel_dial_finalize_failed":
+      return {
+        code: "DIAL_FINALIZATION_FAILED",
+        message: "Samtalet skickades men den lokala statusen kunde inte bekräftas.",
+        status: 202,
+      };
+    default:
+      return null;
+  }
+}
+
 export async function GET(request: Request) {
   try {
     const context = await getAppContext();
@@ -123,7 +150,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const correlationId = crypto.randomUUID();
+  const correlationId = getCorrelationId(request);
   let reserved: Reservation | null = null;
   let dialSubmitted = false;
   try {
@@ -150,7 +177,7 @@ export async function POST(request: Request) {
         databaseCode: result.error?.code ?? null,
         failureCode: failure.code,
       });
-      return NextResponse.json({ error: failure.code, message: failure.message, correlationId }, { status: failure.status });
+      return apiJson(correlationId, { error: failure.code, message: failure.message, correlationId }, { status: failure.status });
     }
     reserved = result.data as Reservation;
     if (reserved.idempotentReplay) {
@@ -160,7 +187,7 @@ export async function POST(request: Request) {
         "requested", "dial_requested", "awaiting_provider_event", "matched",
         "provider_outcome_unknown", "reconciliation_required",
       ].includes(reserved.attemptStatus ?? reserved.status);
-      return NextResponse.json({
+      return apiJson(correlationId, {
         callId: reserved.callId,
         status: reserved.status,
         attemptStatus: reserved.attemptStatus ?? reserved.status,
@@ -198,7 +225,7 @@ export async function POST(request: Request) {
       p_error_message: null,
     });
     if (finalizeError) throw new Error("rinkel_dial_finalize_failed");
-    return NextResponse.json({
+    return apiJson(correlationId, {
       callId: reserved.callId,
       status: "dial_requested",
       message: "Samtalet initieras på din telefonienhet.",
@@ -206,25 +233,44 @@ export async function POST(request: Request) {
     }, { status: 202 });
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return NextResponse.json({ error: "validation_error", details: error.issues }, { status: 422 });
+      return apiJson(correlationId, { error: "validation_error", details: error.issues, correlationId }, { status: 422 });
     }
-    const safe = safeRinkelError(error);
-    const outcomeUnknown = safe.outcomeUnknown || dialSubmitted;
+    const internal = internalDialFailure(error);
+    const providerFailure = internal ? null : safeRinkelError(error);
+    const safe = internal ?? providerFailure!;
+    const outcomeUnknown = dialSubmitted
+      || providerFailure?.outcomeUnknown === true
+      || internal?.status === 202;
     if (reserved) {
       const admin = createAdminClient();
-      await admin.rpc("rinkel_finalize_platform_dial", {
+      const { error: finalizeFailure } = await admin.rpc("rinkel_finalize_platform_dial", {
         p_call_id: reserved.callId,
         p_attempt_id: reserved.attemptId,
         p_outcome: outcomeUnknown ? "unknown" : "failed",
         p_error_code: safe.code,
         p_error_message: safe.message,
       });
+      if (finalizeFailure) {
+        console.error("dial_failure_finalization_failed", {
+          correlationId,
+          callId: reserved.callId,
+          errorCode: finalizeFailure.code ?? null,
+        });
+      }
     }
     const status = outcomeUnknown ? 202
-      : safe.code === "RINKEL_AUTHENTICATION_ERROR" || safe.code === "RINKEL_FORBIDDEN" ? 502
-        : safe.code === "RINKEL_RATE_LIMITED" ? 429
-          : 409;
-    return NextResponse.json({
+      : internal ? internal.status
+        : safe.code === "RINKEL_AUTHENTICATION_ERROR" || safe.code === "RINKEL_FORBIDDEN" ? 502
+          : safe.code === "RINKEL_RATE_LIMITED" ? 429
+            : safe.code === "RINKEL_UPSTREAM_ERROR" || safe.code === "RINKEL_NETWORK_ERROR" || safe.code === "RINKEL_TIMEOUT" ? 503
+              : 409;
+    console.error("dial_start_failed", {
+      correlationId,
+      callId: reserved?.callId ?? null,
+      errorCode: safe.code,
+      outcomeUnknown,
+    });
+    return apiJson(correlationId, {
       error: safe.code,
       message: outcomeUnknown
         ? "Samtalsstartens utfall är oklart. Försök inte igen; Kundexa inväntar säker avstämning."

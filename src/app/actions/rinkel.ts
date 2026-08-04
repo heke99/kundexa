@@ -69,6 +69,12 @@ function safePlatformError(error: unknown): SafePlatformError {
         ACTIVE_TEAM_NUMBER_GRANT_NOT_FOUND: "Teamets nummeråtkomst finns inte längre.",
         PHONE_NUMBER_INACTIVE: "Telefonnumret är inaktivt eller saknas i katalogen.",
         TENANT_NOT_ACTIVE: "Ett valt bolag är inte aktivt.",
+        DEVICE_MISSING: "Den valda telefonienheten är inaktiv eller hör inte till den valda telefoni-användaren.",
+        NUMBER_ALLOCATION_MISSING: "Det valda telefonnumret är inaktivt eller inte tilldelat företaget.",
+        AUTHENTICATION_REQUIRED: "Du behöver logga in igen innan telefonimappningen kan sparas.",
+        RINKEL_MAPPING_MEMBER_NOT_ACTIVE: "Säljaren är inte en aktiv medlem i företaget.",
+        RINKEL_MAPPING_PERMISSION_REQUIRED: "Du saknar behörighet att ändra telefonimappningen.",
+        RINKEL_MAPPING_TEAM_PERMISSION_REQUIRED: "Teamledaren får bara mappa säljare i team som hen hanterar.",
       };
       return { code: internalCode, message: messages[internalCode] ?? "Telefoniåtgärden kunde inte slutföras.", retryable: false, outcomeUnknown: false };
     }
@@ -94,6 +100,7 @@ async function loadPlatformIntegration(): Promise<PlatformIntegration> {
     .select("id,status,capabilities,configuration,last_error_operation")
     .eq("provider", "rinkel")
     .eq("is_canonical", true)
+    .is("disabled_at", null)
     .single();
   if (error) throw new Error("RINKEL_PLATFORM_QUERY_FAILED");
   if (!data) throw new Error("RINKEL_PLATFORM_NOT_CONFIGURED");
@@ -346,9 +353,25 @@ export async function syncPlatformRinkelDirectory() {
         .update({ active: false, provider_status: "removed", last_synced_at: syncedAt }).in("id", staleNumbers);
       if (staleNumberError) throw staleNumberError;
     }
+    const activeUserCount = users.filter((user) => user.active).length;
+    const activeDeviceCount = users.reduce(
+      (sum, user) => sum + (user.active ? user.devices.filter((device) => device.active).length : 0),
+      0,
+    );
+    const activeNumberCount = numbers.filter((number) => number.active).length;
+    const dialConfigured = activeUserCount > 0 && activeDeviceCount > 0 && activeNumberCount > 0;
+    const capabilities = {
+      ...(integration.capabilities ?? {}),
+      api_access: true,
+      users_catalog: true,
+      numbers_catalog: true,
+      dial_configured: dialConfigured,
+    };
     const clearsDirectoryError = !integration.last_error_operation || integration.last_error_operation === "directory_sync";
-    await admin.from("platform_integrations").update({
-      status: ["connected", "degraded"].includes(integration.status) ? integration.status : "testing",
+    const { error: integrationUpdateError } = await admin.from("platform_integrations").update({
+      status: "connected",
+      capabilities,
+      last_verified_at: syncedAt,
       last_successful_sync_at: syncedAt,
       ...(clearsDirectoryError ? {
         last_error_code: null,
@@ -357,12 +380,35 @@ export async function syncPlatformRinkelDirectory() {
         last_error_operation: null,
       } : {}),
     }).eq("id", integration.id);
+    if (integrationUpdateError) throw integrationUpdateError;
+    const { error: capabilityError } = await admin.from("platform_rinkel_capabilities").upsert({
+      platform_integration_id: integration.id,
+      api_access: true,
+      users_catalog: true,
+      numbers_catalog: true,
+      dial_configured: dialConfigured,
+      detected_at: syncedAt,
+      details: {
+        users: users.length,
+        active_users: activeUserCount,
+        devices: deviceCount,
+        active_devices: activeDeviceCount,
+        numbers: numbers.length,
+        active_numbers: activeNumberCount,
+        source: "directory_sync",
+      },
+    }, { onConflict: "platform_integration_id" });
+    if (capabilityError) throw capabilityError;
     await platformAudit(context.userId, "rinkel.directory_synced", "platform_integration", integration.id, {
       users: users.length,
       devices: deviceCount,
       numbers: numbers.length,
       deactivated_users: staleUsers.length,
       deactivated_numbers: staleNumbers.length,
+      active_users: activeUserCount,
+      active_devices: activeDeviceCount,
+      active_numbers: activeNumberCount,
+      dial_configured: dialConfigured,
     });
     revalidatePath("/app/platform/telephony");
     revalidatePath("/app/integrations");

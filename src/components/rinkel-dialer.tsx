@@ -6,7 +6,13 @@ import { useRinkelDialer } from "@/hooks/use-rinkel-dialer";
 import { useCallRealtime } from "@/hooks/use-call-realtime";
 
 type Customer = { id: string; display_name: string; phone_e164: string | null; do_not_call: boolean };
-type CallerIdOption = { allocationId: string; number: string; displayName: string | null };
+type CallerIdOption = {
+  allocationId: string;
+  number: string;
+  displayName: string | null;
+  isDefault?: boolean;
+  accessSource?: "user" | "team" | "tenant";
+};
 
 export function RinkelDialer({
   customers,
@@ -21,7 +27,8 @@ export function RinkelDialer({
 }) {
   const [selected, setSelected] = useState(initialCustomer ?? "");
   const [callId, setCallId] = useState<string | null>(null);
-  const [numberAllocationId, setNumberAllocationId] = useState("");
+  const initialCallerId = callerIdOptions.find((option) => option.isDefault) ?? callerIdOptions[0];
+  const [numberAllocationId, setNumberAllocationId] = useState(initialCallerId?.allocationId ?? "");
   const [afterCall, setAfterCall] = useState(false);
   const [disposition, setDisposition] = useState("");
   const [notes, setNotes] = useState("");
@@ -37,6 +44,10 @@ export function RinkelDialer({
 
   async function call() {
     if (!selected || rinkel.calling) return;
+    if (!numberAllocationId) {
+      setError("Du saknar ett tilldelat utgående telefonnummer.");
+      return;
+    }
     const customer = customers.find((item) => item.id === selected);
     if (!customer?.phone_e164) return;
     requestKeyRef.current ??= `rinkel.call:${crypto.randomUUID()}`;
@@ -46,7 +57,7 @@ export function RinkelDialer({
         customerId: selected,
         targetPhone: customer.phone_e164,
         callbackActivityId: callbackActivityId ?? null,
-        numberAllocationId: numberAllocationId || null,
+        numberAllocationId,
         clientRequestId: crypto.randomUUID(),
         idempotencyKey: requestKeyRef.current,
       });
@@ -112,17 +123,21 @@ export function RinkelDialer({
         </option>)}
       </select>
     </label>
-    {callerIdOptions.length > 1 ? <label className="field dialer-customer-select">
+    {callerIdOptions.length > 0 ? <label className="field dialer-customer-select">
       <span>Utgående nummer</span>
-      <select value={numberAllocationId} onChange={(event) => setNumberAllocationId(event.target.value)}>
-        <option value="">Använd list-, kampanj-, team- eller tenantstandard</option>
+      <select
+        value={numberAllocationId}
+        onChange={(event) => setNumberAllocationId(event.target.value)}
+        disabled={callerIdOptions.length === 1}
+      >
         {callerIdOptions.map((number) => <option key={number.allocationId} value={number.allocationId}>
           {number.displayName ? `${number.displayName} · ` : ""}{number.number}
+          {number.isDefault ? " · Standard" : ""}
         </option>)}
       </select>
-    </label> : null}
+    </label> : <p className="form-error">Du saknar ett tilldelat utgående telefonnummer.</p>}
     <button type="button" className="call-button" onClick={call}
-      disabled={!rinkel.registered || !selected || afterCall || rinkel.calling}
+      disabled={!rinkel.registered || !selected || !numberAllocationId || afterCall || rinkel.calling}
       aria-label="Ring via telefoni">
       <Phone size={25} />
     </button>

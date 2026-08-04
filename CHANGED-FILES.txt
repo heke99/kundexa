@@ -1,0 +1,14 @@
+.env.example
+KUNDEXA_TELEPHONY_CALL_CONSISTENCY_FIX_2026-08-04.md
+scripts/rinkel-unit-tests.mts
+scripts/verify-sql.mjs
+scripts/verify.mjs
+src/app/(dashboard)/app/dialer/page.tsx
+src/app/(dashboard)/app/integrations/page.tsx
+src/app/actions/rinkel.ts
+src/app/api/v1/calls/route.ts
+src/components/rinkel-dialer.tsx
+src/components/rinkel-user-mapping-form.tsx
+src/hooks/use-rinkel-dialer.ts
+supabase/functions/_shared/rinkel.ts
+supabase/migrations/202608040001_rinkel_dial_selection_consistency.sql

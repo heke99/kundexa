@@ -12,6 +12,7 @@ type StatusResponse = {
   userMapped?: boolean;
   userHasDevice?: boolean;
   userHasNumberAccess?: boolean;
+  callerIdResolvable?: boolean;
   apiVerified?: boolean;
   coreWebhooksVerified?: boolean;
   workerHealthy?: boolean;
@@ -59,6 +60,8 @@ function telephonyStatusMessage(data: StatusResponse) {
       return "Din telefonienhet saknas";
     case "RINKEL_NUMBER_ACCESS_DENIED":
       return "Du saknar åtkomst till ett utgående nummer";
+    case "CALLER_ID_UNRESOLVABLE":
+      return "Ditt tilldelade utgående nummer kunde inte väljas";
     case "MANUAL_DIALER_DISABLED":
       return "Manuell uppringning är avstängd för företaget";
     default:
@@ -70,6 +73,7 @@ function telephonyStatusMessage(data: StatusResponse) {
   if (!data.userMapped) return "Du saknar en telefonimappning";
   if (!data.userHasDevice) return "Din telefonienhet saknas";
   if (!data.userHasNumberAccess) return "Du saknar åtkomst till ett utgående nummer";
+  if (data.callerIdResolvable === false) return "Ditt tilldelade utgående nummer kunde inte väljas";
   return "Telefoni är inte redo";
 }
 
@@ -132,6 +136,7 @@ export function useRinkelDialer() {
       providerStatus?: string;
       callActive?: boolean;
       idempotentReplay?: boolean;
+      correlationId?: string;
     };
     try {
       data = await response.json() as typeof data;
@@ -144,8 +149,10 @@ export function useRinkelDialer() {
     }
     if (!response.ok && response.status !== 202) {
       setCalling(false);
-      setStatus(publicTelephonyMessage(data.message ?? data.error ?? "Samtalet kunde inte startas"));
-      throw new Error(data.message ?? data.error ?? "call_start_failed");
+      const reference = data.correlationId ? ` Referens: ${data.correlationId}.` : "";
+      const message = `${publicTelephonyMessage(data.message ?? data.error ?? "Samtalet kunde inte startas")}${reference}`;
+      setStatus(message);
+      throw new Error(message);
     }
     if (!data.callId) {
       setCalling(false);

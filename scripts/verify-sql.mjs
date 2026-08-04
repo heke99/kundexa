@@ -557,21 +557,34 @@ console.log("Executed Rinkel tenant mapping, automatic webhook health gate, atom
 // allocations, tenant-filtered projections and central dial reservation.
 await db.exec(`
   select set_config('request.jwt.claim.role','service_role',false);
-  update public.platform_integrations set status='connected',webhook_status='active',
-    webhook_last_received_at=now(),capabilities='{"api_access":true,"dial":true,"webhooks":true}'::jsonb
+  update public.platform_integrations set status='connected',webhook_status='verified',
+    webhook_last_received_at=now(),capabilities='{"api_access":true,"dial":true,"webhooks":true,"users_catalog":true,"numbers_catalog":true,"dial_configured":true}'::jsonb
     where provider='rinkel' and disabled_at is null;
+  update public.platform_rinkel_capabilities set
+    api_access=true,users_catalog=true,numbers_catalog=true,dial_configured=true,
+    core_webhooks_verified=true,webhooks=true
+    where platform_integration_id in(
+      select id from public.platform_integrations where provider='rinkel' and disabled_at is null
+    );
   update public.telephony_policies set telephony_enabled=true,manual_dialer_enabled=true,
     automatic_dialer_enabled=true,allowed_days='{1,2,3,4,5,6,7}',
     allowed_start_time='00:00',allowed_end_time='23:59:59'
     where tenant_id='00000000-0000-0000-0000-000000000001';
-  insert into auth.users(id,email) values('00000000-0000-0000-0000-000000000050','seller-b@example.test');
+  insert into auth.users(id,email) values
+    ('00000000-0000-0000-0000-000000000050','seller-b@example.test'),
+    ('00000000-0000-0000-0000-000000000074','admin-b@example.test');
   insert into public.tenants(id,slug,name,legal_name)
     values('00000000-0000-0000-0000-000000000051','rinkel-tenant-b','Rinkel Tenant B','Rinkel Tenant B AB');
   insert into public.tenant_memberships(tenant_id,user_id,role,status,joined_at)
-    values('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000050','sales','active',now());
+    values
+    ('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000050','sales','active',now()),
+    ('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000074','admin','active',now());
   update public.profiles
     set active_tenant_id='00000000-0000-0000-0000-000000000051'
-    where id='00000000-0000-0000-0000-000000000050';
+    where id in(
+      '00000000-0000-0000-0000-000000000050',
+      '00000000-0000-0000-0000-000000000074'
+    );
   update public.telephony_policies set telephony_enabled=true,manual_dialer_enabled=true,
     allowed_days='{1,2,3,4,5,6,7}',allowed_start_time='00:00',allowed_end_time='23:59:59'
     where tenant_id='00000000-0000-0000-0000-000000000051';
@@ -591,6 +604,14 @@ await db.exec(`
     id,platform_integration_id,external_number_id,phone_number_e164,display_name
   ) select '00000000-0000-0000-0000-000000000055',id,'platform-number-b','+46822222222','Platform Number B'
     from public.platform_integrations where provider='rinkel' and disabled_at is null;
+  insert into public.platform_rinkel_devices(
+    id,platform_integration_id,platform_rinkel_user_id,provider_device_id,display_name,provider_status,active
+  ) select '00000000-0000-0000-0000-000000000072',platform_integration_id,id,'device-a','Device A','active',true
+    from public.platform_rinkel_users where id='00000000-0000-0000-0000-000000000052';
+  insert into public.platform_rinkel_devices(
+    id,platform_integration_id,platform_rinkel_user_id,provider_device_id,display_name,provider_status,active
+  ) select '00000000-0000-0000-0000-000000000073',platform_integration_id,id,'device-b','Device B','active',true
+    from public.platform_rinkel_users where id='00000000-0000-0000-0000-000000000053';
   insert into public.rinkel_user_allocations(id,rinkel_user_id,tenant_id)
     values
     ('00000000-0000-0000-0000-000000000056','00000000-0000-0000-0000-000000000052','00000000-0000-0000-0000-000000000001'),
@@ -604,19 +625,70 @@ await db.exec(`
     ('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000058'),
     ('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000059');
   insert into public.rinkel_user_mappings_v2(
-    tenant_id,kundexa_user_id,rinkel_user_allocation_id,default_number_allocation_id
+    tenant_id,kundexa_user_id,rinkel_user_allocation_id,default_number_allocation_id,selected_device_id
   ) values
-    ('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000056','00000000-0000-0000-0000-000000000058'),
-    ('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000050','00000000-0000-0000-0000-000000000057','00000000-0000-0000-0000-000000000059');
+    ('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000056','00000000-0000-0000-0000-000000000058','00000000-0000-0000-0000-000000000072');
+  insert into public.rinkel_number_allocations(id,rinkel_number_id,tenant_id)
+    values('00000000-0000-0000-0000-000000000061','00000000-0000-0000-0000-000000000054','00000000-0000-0000-0000-000000000051');
+  insert into public.rinkel_number_grants(tenant_id,number_allocation_id,access_level,active)
+    values('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000061','dial',true);
 `);
-let duplicatePlatformAllocationBlocked = false;
-try {
-  await db.exec(`insert into public.rinkel_number_allocations(rinkel_number_id,tenant_id)
-    values('00000000-0000-0000-0000-000000000054','00000000-0000-0000-0000-000000000051')`);
-} catch {
-  duplicatePlatformAllocationBlocked = true;
+await db.exec(`
+  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000074',false);
+  select set_config('request.jwt.claim.role','authenticated',false);
+`);
+const mappingResult = await db.query(`select public.replace_rinkel_user_mapping_v3(
+  '00000000-0000-0000-0000-000000000050',
+  '00000000-0000-0000-0000-000000000057',
+  '00000000-0000-0000-0000-000000000059',
+  '00000000-0000-0000-0000-000000000073'
+) as mapping_id`);
+if (!mappingResult.rows[0].mapping_id) {
+  throw new Error(`Atomic seller mapping did not return an id: ${JSON.stringify(mappingResult.rows)}`);
 }
-if (!duplicatePlatformAllocationBlocked) throw new Error("Central Rinkel number was actively allocated to two tenants");
+const directSellerGrant = await db.query(`select count(*)::int as count
+  from public.rinkel_number_grants
+  where tenant_id='00000000-0000-0000-0000-000000000051'
+    and number_allocation_id='00000000-0000-0000-0000-000000000059'
+    and user_id='00000000-0000-0000-0000-000000000050'
+    and team_id is null
+    and access_level='dial'
+    and active
+    and is_default`);
+if (Number(directSellerGrant.rows[0].count) !== 1) {
+  throw new Error(`Seller mapping did not create exactly one active default dial grant: ${JSON.stringify(directSellerGrant.rows)}`);
+}
+let rejectedWrongDevice = false;
+try {
+  await db.query(`select public.replace_rinkel_user_mapping_v3(
+    '00000000-0000-0000-0000-000000000050',
+    '00000000-0000-0000-0000-000000000057',
+    '00000000-0000-0000-0000-000000000059',
+    '00000000-0000-0000-0000-000000000072'
+  )`);
+} catch (error) {
+  rejectedWrongDevice = String(error).includes('DEVICE_MISSING');
+}
+if (!rejectedWrongDevice) {
+  throw new Error('Mapping accepted a device belonging to another telephony user.');
+}
+const mappingAfterRejectedDevice = await db.query(`select count(*)::int as count
+  from public.rinkel_user_mappings_v2
+  where tenant_id='00000000-0000-0000-0000-000000000051'
+    and kundexa_user_id='00000000-0000-0000-0000-000000000050'
+    and selected_device_id='00000000-0000-0000-0000-000000000073'
+    and active`);
+if (Number(mappingAfterRejectedDevice.rows[0].count) !== 1) {
+  throw new Error(`Rejected device attempt damaged the valid mapping: ${JSON.stringify(mappingAfterRejectedDevice.rows)}`);
+}
+
+const sharedPlatformAllocation = await db.query(`select count(*)::int as count
+  from public.rinkel_number_allocations
+  where rinkel_number_id='00000000-0000-0000-0000-000000000054'
+    and status='active' and valid_to is null`);
+if (Number(sharedPlatformAllocation.rows[0].count) !== 2) {
+  throw new Error(`Central Rinkel number was not shareable across tenants: ${JSON.stringify(sharedPlatformAllocation.rows)}`);
+}
 await db.exec(`
   select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
   select set_config('request.jwt.claim.role','authenticated',false);
@@ -628,6 +700,16 @@ if (
   || tenantAResources.rows[0].resources.users[0].displayName !== "Platform User A"
   || tenantAResources.rows[0].resources.numbers[0].number !== "+46811111111"
 ) throw new Error(`Tenant A central Rinkel projection leaked or omitted resources: ${JSON.stringify(tenantAResources.rows[0])}`);
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000050',false)`);
+const tenantBCallerIds = await db.query(`select public.get_current_user_rinkel_numbers() as numbers`);
+if (
+  tenantBCallerIds.rows[0].numbers.length !== 2
+  || !tenantBCallerIds.rows[0].numbers.some((item) => item.number === "+46811111111")
+  || !tenantBCallerIds.rows[0].numbers.some((item) => item.number === "+46822222222")
+) {
+  throw new Error(`Shared caller ID was not visible in tenant B: ${JSON.stringify(tenantBCallerIds.rows[0])}`);
+}
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
 const centralStatus = await db.query(`select public.telephony_status_for_current_user() as status`);
 if (!centralStatus.rows[0].status.manualReady || !centralStatus.rows[0].status.userMapped) {
   throw new Error(`Central telephony status was not ready: ${JSON.stringify(centralStatus.rows[0])}`);
@@ -641,7 +723,7 @@ const unavailableCentralStatus = await db.query(`select public.telephony_status_
 if (
   unavailableCentralStatus.rows[0].status.platformReady
   || unavailableCentralStatus.rows[0].status.errorCode !== "RINKEL_UNAVAILABLE"
-  || unavailableCentralStatus.rows[0].status.errorMessage !== "Rinkel kunde inte nås."
+  || unavailableCentralStatus.rows[0].status.errorMessage !== "Telefonitjänsten kunde inte nås vid den senaste kontrollen."
 ) {
   throw new Error(`Central telephony diagnostics were not actionable: ${JSON.stringify(unavailableCentralStatus.rows[0])}`);
 }
@@ -681,15 +763,13 @@ await db.exec(`
   update public.rinkel_call_attempts_v2 set status='completed' where id='${centralResult.attemptId}';
   update public.rinkel_number_allocations set status='revoked',valid_to=now()
     where id='00000000-0000-0000-0000-000000000058';
-  insert into public.rinkel_number_allocations(id,rinkel_number_id,tenant_id)
-    values('00000000-0000-0000-0000-000000000061','00000000-0000-0000-0000-000000000054','00000000-0000-0000-0000-000000000051');
 `);
 const historicalTenant = await db.query(`select tenant_id,metadata->>'number_allocation_id' allocation_id from public.calls where id=$1`, [centralResult.callId]);
 if (
   historicalTenant.rows[0].tenant_id !== "00000000-0000-0000-0000-000000000001"
   || historicalTenant.rows[0].allocation_id !== "00000000-0000-0000-0000-000000000058"
 ) throw new Error(`Historical Rinkel call moved with number allocation: ${JSON.stringify(historicalTenant.rows[0])}`);
-console.log("Executed central Rinkel catalog, two-tenant isolation, exclusive allocation, atomic reservation, idempotent replay, provider finalization and immutable call history runtime paths.");
+console.log("Executed central Rinkel catalog, two-tenant isolation, shared cross-tenant allocation, atomic reservation, idempotent replay, provider finalization and immutable call history runtime paths.");
 
 // Performance/scraper operations runtime path: aggregated RPCs, atomic ingestion
 // quota reservation, admin run controls, dead-letter re-drive and duplicate-run guards.
