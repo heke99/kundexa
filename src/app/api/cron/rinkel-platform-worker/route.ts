@@ -1,33 +1,41 @@
 import { serverEnv } from "@/lib/env";
+import {
+  invokeRinkelPlatformWorker,
+  RinkelWorkerInvocationError,
+} from "@/lib/workers/rinkel-platform-worker";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function GET(request: Request) {
   const env = serverEnv();
-  if (!env.CRON_SECRET) return Response.json({ error: "cron_secret_not_configured" }, { status: 503 });
+  if (!env.CRON_SECRET) {
+    return Response.json({ error: "cron_secret_not_configured" }, { status: 503 });
+  }
   if (request.headers.get("authorization") !== `Bearer ${env.CRON_SECRET}`) {
     return Response.json({ error: "forbidden" }, { status: 403 });
   }
 
-  const response = await fetch(`${env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/rinkel-platform-worker`, {
-    method: "POST",
-    headers: {
-      "x-cron-secret": env.CRON_SECRET,
-      "content-type": "application/json",
-      authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-      apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-    },
-    body: JSON.stringify({
-      source: "vercel_cron",
-      limit: 50,
-      workerId: `vercel-cron:${crypto.randomUUID()}`,
-    }),
-    cache: "no-store",
-  });
-  const body = await response.text();
-  return new Response(body, {
-    status: response.status,
-    headers: { "content-type": response.headers.get("content-type") ?? "application/json" },
-  });
+  try {
+    const result = await invokeRinkelPlatformWorker("vercel_cron", 50);
+    return Response.json(result, { status: 200 });
+  } catch (error) {
+    if (error instanceof RinkelWorkerInvocationError) {
+      // Never return the upstream 404 directly. The Next.js route exists; a
+      // 404 from Supabase means the Edge Function itself is not deployed.
+      return Response.json({
+        error: error.code.toLowerCase(),
+        worker: "rinkel-platform-worker",
+        upstreamStatus: error.upstreamStatus,
+        message: error.code === "RINKEL_WORKER_NOT_DEPLOYED"
+          ? "Telefoniworkerns Edge Function saknas i Supabase-projektet."
+          : "Telefoniworkern kunde inte köras.",
+      }, { status: 502 });
+    }
+    return Response.json({
+      error: "rinkel_worker_invocation_failed",
+      worker: "rinkel-platform-worker",
+    }, { status: 502 });
+  }
 }

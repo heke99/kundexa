@@ -267,6 +267,12 @@ assert.match(rinkelMigration, /get_tenant_rinkel_resources/, "Tenants require an
 assert.doesNotMatch(rinkelMigration, /call_attempts_operator_write/, "Authenticated clients must not mutate provider call attempts directly");
 assert.doesNotMatch(rinkelMigration, /call_transcripts_tenant_select/, "Transcript access must follow canonical call access, not tenant-wide visibility");
 assert.match(rinkelMigration, /public\.can_access_call\(call_id\)/, "Call artifacts must inherit canonical call access");
+const rinkelCronRoute = await readFile(join(root, "src/app/api/cron/rinkel-platform-worker/route.ts"), "utf8");
+assert.match(rinkelCronRoute, /RINKEL_WORKER_NOT_DEPLOYED/, "The Vercel cron bridge must distinguish a missing Supabase Edge Function from a missing Next route");
+assert.match(rinkelCronRoute, /status:\s*502/, "Upstream worker failures must be exposed as gateway failures instead of misleading route 404s");
+const rinkelWorkerInvoker = await readFile(join(root, "src/lib/workers/rinkel-platform-worker.ts"), "utf8");
+assert.match(rinkelWorkerInvoker, /\/functions\/v1\/rinkel-platform-worker/, "All server-side worker invocations must use the deployed Supabase Edge Function");
+assert.match(rinkelWorkerInvoker, /RINKEL_WORKER_NOT_DEPLOYED/, "A missing worker deployment needs a stable diagnostic code");
 const rinkelPlatformWorker = await readFile(join(root, "supabase/functions/rinkel-platform-worker/index.ts"), "utf8");
 assert.match(rinkelPlatformWorker, /RINKEL_INCOMING_ALLOCATION_CONFLICT/, "Ambiguous incoming calls must be quarantined");
 assert.match(rinkelPlatformWorker, /RINKEL_OUTGOING_CORRELATION_CONFLICT/, "Ambiguous outgoing calls must be quarantined");
@@ -306,6 +312,8 @@ assert.doesNotMatch(rinkelActions, /credentials_ciphertext|decryptJson|encryptJs
 assert.match(rinkelActions, /replace_rinkel_user_mapping_v2/, "Rinkel seller mapping replacement must be transactional");
 assert.match(rinkelActions, /platform_rinkel_capabilities/, "A successful Rinkel directory sync must refresh canonical readiness capabilities");
 assert.match(rinkelActions, /dial_configured:\s*dialConfigured/, "Directory sync must derive dial readiness from active users, devices and numbers");
+assert.match(rinkelActions, /ready_member_count/, "Number-to-team assignment must report how many sellers are actually ring-ready");
+assert.match(rinkelActions, /invokeRinkelPlatformWorker/, "Admin and cron worker runs must share one canonical invocation helper");
 const rinkelDialSelectionMigration = await readFile(join(root, "supabase/migrations/202608040001_rinkel_dial_selection_consistency.sql"), "utf8");
 assert.match(rinkelDialSelectionMigration, /seller_team_grant/, "Shared team numbers must be resolvable for the seller's own team memberships");
 assert.match(rinkelDialSelectionMigration, /access_level in \('dial','manage'\)/, "Inbound-only number grants must never authorize outbound calls");
@@ -315,6 +323,11 @@ assert.match(rinkelDialSelectionMigration, /rinkel_number_grants_active_user_acc
 assert.match(rinkelDialSelectionMigration, /direct_number_grant_id/, "Saving a seller mapping must atomically grant access to its default number");
 assert.match(rinkelDialSelectionMigration, /The selected active user\/device plus the caller-ID resolver are the runtime/, "Manual dial reservation must use the same runtime contract as readiness");
 assert.match(rinkelDialSelectionMigration, /if v_mapping\.external_device_id is null or v_caller\.provider_number_id is null/, "Dial reservation must validate the concrete provider device and number before creating a call");
+const rinkelTeamActivationMigration = await readFile(join(root, "supabase/migrations/202608040002_rinkel_worker_and_team_activation_consistency.sql"), "utf8");
+assert.match(rinkelTeamActivationMigration, /rinkel_user_allocations_one_active_tenant_uidx/, "A provider user must be reusable in separate tenant contexts without being moved away from another company");
+assert.match(rinkelTeamActivationMigration, /left join auth\.users/, "Team assignment must use an exact authenticated email match for deterministic seller activation");
+assert.match(rinkelTeamActivationMigration, /v_auto_mapped_count/, "Team assignment must report sellers mapped automatically");
+assert.match(rinkelTeamActivationMigration, /v_ambiguous_member_count/, "Ambiguous users or devices must be reported instead of guessed");
 const rinkelMappingForm = await readFile(join(root, "src/components/rinkel-user-mapping-form.tsx"), "utf8");
 assert.match(rinkelMappingForm, /activeDevices/, "The mapping UI must only show devices belonging to the selected telephony user");
 assert.match(rinkelMappingForm, /setSelectedDeviceId\(""\)/, "Changing the telephony user must clear any stale device selection");

@@ -7,6 +7,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { sha256 } from "@/lib/crypto";
 import { serverEnv } from "@/lib/env";
+import { invokeRinkelPlatformWorker } from "@/lib/workers/rinkel-platform-worker";
 import { toJson } from "@/lib/supabase/json";
 import { createPlatformRinkelClient } from "@/lib/integrations/rinkel/client";
 import { safeRinkelError } from "@/lib/integrations/rinkel/errors";
@@ -56,10 +57,16 @@ function safePlatformError(error: unknown): SafePlatformError {
     const candidate = error as { code?: unknown; message?: unknown };
     const databaseCode = typeof candidate.code === "string" ? candidate.code : "";
     const rawMessage = typeof candidate.message === "string" ? candidate.message : "";
-    const internalCode = /^([A-Z][A-Z0-9_]{3,100})/.exec(rawMessage)?.[1] ?? null;
+    const explicitInternalCode = /^[A-Z][A-Z0-9_]{3,100}$/.test(databaseCode) ? databaseCode : null;
+    const internalCode = explicitInternalCode ?? /^([A-Z][A-Z0-9_]{3,100})/.exec(rawMessage)?.[1] ?? null;
     if (internalCode) {
       const messages: Record<string, string> = {
         RINKEL_WEBHOOK_REGISTRATION_MISMATCH: "Den registrerade webhooken stämmer inte med Kundexas publika HTTPS-adress.",
+        RINKEL_WORKER_CRON_SECRET_MISSING: "CRON_SECRET saknas i Vercels servermiljö.",
+        RINKEL_WORKER_NOT_DEPLOYED: "Telefoniworkern är inte deployad i Supabase-projektet.",
+        RINKEL_WORKER_SECRET_REJECTED: "Telefoniworkern nekade scheduler-anropet. Kontrollera att samma CRON_SECRET finns i Vercel och Supabase.",
+        RINKEL_WORKER_FORBIDDEN: "Telefoniworkern saknar behörighet för scheduler-anropet.",
+        RINKEL_WORKER_UNREACHABLE: "Telefoniworkerns Edge Function kunde inte nås.",
         RINKEL_WORKER_HTTP_401: "Telefoniworkern nekade scheduler-anropet. Kontrollera CRON_SECRET i Vercel och Supabase.",
         RINKEL_WORKER_HTTP_403: "Telefoniworkern saknar behörighet för scheduler-anropet.",
         RINKEL_PLATFORM_QUERY_FAILED: "Den centrala telefoni-integrationen kunde inte läsas.",
@@ -616,16 +623,29 @@ export async function assignPlatformPhoneNumberToTeams(form: FormData) {
   if (!teamIds.length) go("/app/platform/telephony", "error", "Välj minst ett aktivt team.");
 
   const supabase = await createClient();
-  const { error } = await supabase.rpc("assign_platform_rinkel_number_to_teams", {
+  const { data, error } = await supabase.rpc("assign_platform_rinkel_number_to_teams", {
     p_number_id: numberId,
     p_team_ids: teamIds,
     p_reason: value(form, "reason") || "Tilldelad till team i plattformsadministrationen",
   });
   if (error) go("/app/platform/telephony", "error", safePlatformError(error).message);
 
+  const result = (data ?? {}) as Record<string, unknown>;
+  const members = Number(result.member_count ?? 0);
+  const ready = Number(result.ready_member_count ?? 0);
+  const autoMapped = Number(result.auto_mapped_member_count ?? 0);
+  const unresolved = Math.max(0, members - ready);
+  const readiness = members
+    ? ` ${ready}/${members} teammedlemmar är ringklara${autoMapped ? `, varav ${autoMapped} mappades automatiskt` : ""}.`
+    : " Teamen saknar aktiva medlemmar.";
+  const unresolvedMessage = unresolved
+    ? ` ${unresolved} medlem behöver en entydig telefoni-användare och aktiv enhet.`
+    : "";
+
   revalidatePath("/app/platform/telephony");
   revalidatePath("/app/integrations");
-  go("/app/platform/telephony", "message", `Telefonnumret är tilldelat till ${teamIds.length} team. Alla aktiva medlemmar i teamen kan använda numret.`);
+  revalidatePath("/app/dialer");
+  go("/app/platform/telephony", "message", `Telefonnumret är tilldelat till ${teamIds.length} team.${readiness}${unresolvedMessage}`);
 }
 
 export async function revokePlatformPhoneNumberTeamGrant(form: FormData) {
@@ -741,29 +761,6 @@ export async function setPlatformDefaultRinkelNumber(form: FormData) {
   await platformAudit(context.userId, "rinkel.platform_default_number_updated", "platform_rinkel_number", numberId, {});
   revalidatePath("/app/platform/telephony");
   go("/app/platform/telephony", "message", "Plattformens sista caller-ID-reserv är uppdaterad.");
-}
-
-async function invokeRinkelPlatformWorker(source: string) {
-  const env = serverEnv();
-  if (!env.CRON_SECRET) throw new Error("CRON_SECRET saknas i servermiljön.");
-  const response = await fetch(`${env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/rinkel-platform-worker`, {
-    method: "POST",
-    headers: {
-      "x-cron-secret": env.CRON_SECRET,
-      "content-type": "application/json",
-      authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-      apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-    },
-    body: JSON.stringify({ source, limit: 50, workerId: `${source}:${crypto.randomUUID()}` }),
-    cache: "no-store",
-  });
-  const body = await response.text();
-  if (!response.ok) throw new Error(`RINKEL_WORKER_HTTP_${response.status}: ${body.slice(0, 300)}`);
-  try {
-    return JSON.parse(body) as Record<string, unknown>;
-  } catch {
-    return { response: body.slice(0, 300) };
-  }
 }
 
 export async function runPlatformRinkelWorker() {
