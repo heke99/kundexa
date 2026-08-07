@@ -50,3 +50,25 @@
 - Kontraktsenhetstest: PASS. Rinkel fallback-enhetstest via TypeScript-transpilering: PASS 8/8.
 - `types:verify`: avsiktligt FAIL tills migrationen körts och typer genererats från staging.
 - Full npm/Deno/SQL/build-gate blockerades lokalt av otillgängliga dependencies/Deno och avsaknad av länkad Kundexa staging; inga sådana steg rapporteras som godkända.
+
+## 2026-08-07 — Genomgång av flöden, konsistens och byggkedja
+
+Utgångsläge: `npm ci` var blockerad i tidigare miljöer, så `typecheck`, `test`, `build` och
+SQL-runtime hade aldrig körts. Det visade sig vara orsaken till att flera verkliga defekter
+låg kvar oupptäckta.
+
+Gjort:
+
+- Installerade dependencies och körde hela kedjan. Tre verkliga fel föll ut ur SQL-runtime.
+- FAILURE-0012: `process_import_run` bröt mot sin egen hardening-trigger; ParseHubs
+  automatiska commit var trasig i produktion. Ny migration `202608070001`.
+- Två fixturfel: Rinkel-capabilities uppdaterades med `UPDATE` mot en rad som inte finns förrän
+  connection-testet skapar den, och monotonicitetsfixturen hade absoluta datum som ruttnat till
+  det förflutna och därför testade fel kodväg.
+- FAILURE-0013 till FAILURE-0016: obegränsad tillväxt i `rate_limit_counters`, saknade
+  `updated_at`-index, obegränsad klientpolling/refresh, och PostgREST-grammatik i söktermen.
+- Ny driftkontroll av genererade typer, negativt testad med en canary-migration.
+- Nytt testpaket `npm run test:api`.
+
+Resultat: `npm run verify` PASS i sin helhet. Allt som kräver riktig Supabase-staging eller
+riktig Rinkel-provider är fortfarande `NOT RUN` — se `open-blockers.md`.
