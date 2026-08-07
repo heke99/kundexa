@@ -560,12 +560,14 @@ await db.exec(`
   update public.platform_integrations set status='connected',webhook_status='verified',
     webhook_last_received_at=now(),capabilities='{"api_access":true,"dial":true,"webhooks":true,"users_catalog":true,"numbers_catalog":true,"dial_configured":true}'::jsonb
     where provider='rinkel' and disabled_at is null;
-  update public.platform_rinkel_capabilities set
+  insert into public.platform_rinkel_capabilities(
+    platform_integration_id,api_access,users_catalog,numbers_catalog,dial_configured,
+    core_webhooks_verified,webhooks
+  ) select id,true,true,true,true,true,true
+    from public.platform_integrations where provider='rinkel' and disabled_at is null
+  on conflict(platform_integration_id) do update set
     api_access=true,users_catalog=true,numbers_catalog=true,dial_configured=true,
-    core_webhooks_verified=true,webhooks=true
-    where platform_integration_id in(
-      select id from public.platform_integrations where provider='rinkel' and disabled_at is null
-    );
+    core_webhooks_verified=true,webhooks=true;
   update public.telephony_policies set telephony_enabled=true,manual_dialer_enabled=true,
     automatic_dialer_enabled=true,allowed_days='{1,2,3,4,5,6,7}',
     allowed_start_time='00:00',allowed_end_time='23:59:59'
@@ -883,9 +885,14 @@ try {
 if (!truncatedCommitBlocked) throw new Error('Truncated import was allowed to enter processing');
 
 await db.exec(`
-  update public.calls set status='completed',provider_status='ended',provider_outcome='answered',recording_status='available_at_provider',provider_state_updated_at='2026-08-01T10:00:00Z'
+  -- Timestamps are relative to now() because this call was already finalized with a
+  -- now()-stamped provider_state_updated_at earlier in this run. Absolute literals here
+  -- silently rot into the past and turn this into a stale-event test instead of the
+  -- out-of-order test it is meant to be.
+  update public.calls set status='completed',provider_status='ended',provider_outcome='answered',recording_status='available_at_provider',provider_state_updated_at=now()+interval '1 minute'
   where id='${centralResult.callId}';
-  update public.calls set status='answered',provider_status='connected',provider_outcome=null,recording_status='unavailable',provider_state_updated_at='2026-08-01T10:05:00Z'
+  -- Late callStart: newer arrival, lower lifecycle rank. Must not regress the terminal projection.
+  update public.calls set status='answered',provider_status='connected',provider_outcome=null,recording_status='unavailable',provider_state_updated_at=now()+interval '2 minutes'
   where id='${centralResult.callId}';
 `);
 const monotonicCall = await db.query(`select status,provider_status,provider_outcome,recording_status from public.calls where id=$1`, [centralResult.callId]);
