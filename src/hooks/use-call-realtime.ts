@@ -19,17 +19,30 @@ const recoveryStatuses = new Set(["provider_outcome_unknown", "reconciliation_re
 
 type ConnectionState = "idle" | "connecting" | "subscribed" | "degraded";
 
+// Polling exists as a safety net for realtime, not as the primary transport. While the
+// channel is subscribed it only needs to catch an update the socket silently dropped, so it
+// runs rarely; it tightens to a real poll interval only once realtime is degraded.
+// The session API budget is 120 requests/minute per user (see lib/api-auth), and a dialer
+// sits open for a whole shift — polling every 2.5s regardless of channel health spent a
+// fifth of that budget on requests whose answer had already arrived over the socket.
+const HEALTHY_POLL_MS = 30_000;
+const DEGRADED_POLL_MS = 2_500;
+
 export function useCallRealtime(callId: string | null, onTerminal: (status: string) => void) {
   const handler = useRef(onTerminal);
   const terminalHandled = useRef<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("idle");
+  // Mirrors connectionState so the poll scheduler, which runs outside React's render
+  // cycle, can read the current channel health without being re-created on every change.
+  const connectionRef = useRef<ConnectionState>("idle");
   handler.current = onTerminal;
 
   useEffect(() => {
     terminalHandled.current = null;
     setStatus(null);
     if (!callId) {
+      connectionRef.current = "idle";
       setConnectionState("idle");
       return;
     }
@@ -40,6 +53,15 @@ export function useCallRealtime(callId: string | null, onTerminal: (status: stri
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     const supabase = createClient();
     let channel: ReturnType<typeof supabase.channel> | null = null;
+
+    // Health changes must retune the poll cadence immediately, otherwise a pending timer
+    // keeps the old interval for one more tick — which on a drop means up to 30s of silence.
+    function updateConnectionState(next: ConnectionState) {
+      const changed = connectionRef.current !== next;
+      connectionRef.current = next;
+      setConnectionState(next);
+      if (changed && active && terminalHandled.current !== activeCallId) schedulePoll();
+    }
 
     function applyStatus(nextStatus: string) {
       if (!active || !nextStatus) return;
@@ -60,11 +82,15 @@ export function useCallRealtime(callId: string | null, onTerminal: (status: stri
         const payload = await response.json() as { data?: { status?: string } | null };
         applyStatus(String(payload.data?.status ?? ""));
       } catch {
-        if (active) setConnectionState((current) => current === "subscribed" ? current : "degraded");
+        if (active && connectionRef.current !== "subscribed") updateConnectionState("degraded");
       }
     }
 
-    function schedulePoll(delay = 2_500) {
+    function pollDelay() {
+      return connectionRef.current === "subscribed" ? HEALTHY_POLL_MS : DEGRADED_POLL_MS;
+    }
+
+    function schedulePoll(delay = pollDelay()) {
       if (pollTimer) clearTimeout(pollTimer);
       pollTimer = setTimeout(async () => {
         await fetchCurrentStatus();
@@ -83,7 +109,7 @@ export function useCallRealtime(callId: string | null, onTerminal: (status: stri
     function connectRealtime() {
       if (!active || terminalHandled.current === activeCallId) return;
       if (channel) void supabase.removeChannel(channel);
-      setConnectionState("connecting");
+      updateConnectionState("connecting");
       channel = supabase.channel(`call:${activeCallId}`).on("postgres_changes", {
         event: "UPDATE",
         schema: "public",
@@ -96,10 +122,10 @@ export function useCallRealtime(callId: string | null, onTerminal: (status: stri
         if (channelStatus === "SUBSCRIBED") {
           if (reconnectTimer) clearTimeout(reconnectTimer);
           reconnectTimer = null;
-          setConnectionState("subscribed");
+          updateConnectionState("subscribed");
           void fetchCurrentStatus();
         } else if (["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(channelStatus)) {
-          setConnectionState("degraded");
+          updateConnectionState("degraded");
           void fetchCurrentStatus();
           scheduleReconnect();
         }
