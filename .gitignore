@@ -8,3 +8,5 @@ coverage/
 .DS_Store
 supabase/.branches/
 supabase/.temp/
+.tmp-import-tests/
+.tmp-api-tests/

@@ -11,7 +11,7 @@ type SegmentJob = { id: string; tenant_id: string; segment_id: string };
 Deno.serve(async (request) => {
   if (request.method !== "POST") return new Response("method_not_allowed", { status: 405 });
   if (!cronSecret || request.headers.get("x-cron-secret") !== cronSecret) return new Response("unauthorized", { status: 401 });
-  const body = await request.json().catch(() => ({})) as { segmentLimit?: number; retentionLimit?: number; geographyLimit?: number; allocationLimit?: number; workerId?: string };
+  const body = await request.json().catch(() => ({})) as { segmentLimit?: number; retentionLimit?: number; geographyLimit?: number; allocationLimit?: number; rateLimitPruneLimit?: number; workerId?: string };
   const workerId = String(body.workerId ?? `maintenance-worker:${crypto.randomUUID()}`).slice(0, 200);
   await supabase.rpc("queue_due_segment_refreshes", { p_limit: Math.max(1, Math.min(Number(body.segmentLimit ?? 100), 500)) });
   const { data: claimed, error: claimError } = await supabase.rpc("claim_segment_refresh_jobs", { p_worker: workerId, p_limit: Math.max(1, Math.min(Number(body.segmentLimit ?? 10), 50)) });
@@ -32,6 +32,14 @@ Deno.serve(async (request) => {
 
   const { data: expiredAllocations, error: allocationError } = await supabase.rpc("release_expired_platform_allocations", { p_limit: Math.max(1, Math.min(Number(body.allocationLimit ?? 100), 1000)) });
   if (allocationError) return Response.json({ error: allocationError.message }, { status: 500 });
+
+  // Rate-limit counters are only read for the current window, so prune expired ones here.
+  // The table is written by every authenticated request; without this it grows unbounded.
+  const { data: prunedRateLimits, error: rateLimitPruneError } = await supabase.rpc("prune_rate_limit_counters", {
+    p_older_than: "01:00:00",
+    p_limit: Math.max(1, Math.min(Number(body.rateLimitPruneLimit ?? 10000), 100000)),
+  });
+  if (rateLimitPruneError) return Response.json({ error: rateLimitPruneError.message }, { status: 500 });
 
   const { data: tenants, error: tenantError } = await supabase.from("tenants").select("id").eq("status", "active").limit(500);
   if (tenantError) return Response.json({ error: tenantError.message }, { status: 500 });
@@ -73,5 +81,5 @@ Deno.serve(async (request) => {
     const { data, error } = await supabase.rpc("run_retention_maintenance", { p_tenant_id: tenant.id, p_limit: Math.max(1, Math.min(Number(body.retentionLimit ?? 1000), 10000)) });
     retentionResults.push(error ? { tenantId: tenant.id, error: error.message } : data);
   }
-  return Response.json({ workerId, geographyNormalized: Number(geographyNormalized ?? 0), expiredAllocations, segmentResults, dynamicLists, retentionResults });
+  return Response.json({ workerId, geographyNormalized: Number(geographyNormalized ?? 0), expiredAllocations, prunedRateLimits: Number(prunedRateLimits ?? 0), segmentResults, dynamicLists, retentionResults });
 });

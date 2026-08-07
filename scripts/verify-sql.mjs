@@ -157,6 +157,37 @@ const segment = await db.query(`select public.refresh_segment_materialization('0
 if (Number(segment.rows[0].result.memberCount) !== 1) throw new Error(`Segment materialization failed: ${JSON.stringify(segment.rows[0])}`);
 const retention = await db.query(`select public.run_retention_maintenance('00000000-0000-0000-0000-000000000001',100) as result`);
 if (!retention.rows[0].result.runId) throw new Error("Retention maintenance did not produce a run");
+
+// Rate limiting gates every authenticated API request, and its counter table is pruned by
+// the maintenance worker. Both halves are asserted here: the limit must be enforced exactly
+// at the boundary, and pruning must drop only windows outside the retention interval.
+const rateLimitTenant = "00000000-0000-0000-0000-000000000001";
+const rateLimitDecisions = [];
+for (let attempt = 0; attempt < 3; attempt += 1) {
+  const consumed = await db.query(
+    `select public.consume_rate_limit($1,'verify-bucket',2,60) as allowed`,
+    [rateLimitTenant],
+  );
+  rateLimitDecisions.push(consumed.rows[0].allowed);
+}
+if (JSON.stringify(rateLimitDecisions) !== JSON.stringify([true, true, false])) {
+  throw new Error(`Rate limit did not enforce its boundary exactly: ${JSON.stringify(rateLimitDecisions)}`);
+}
+await db.exec(`
+  insert into public.rate_limit_counters(tenant_id,bucket_key,window_started_at,request_count)
+  values('${rateLimitTenant}','verify-stale-bucket',now()-interval '2 hours',5);
+`);
+const pruned = await db.query(`select public.prune_rate_limit_counters(interval '1 hour',1000) as deleted`);
+if (Number(pruned.rows[0].deleted) !== 1) {
+  throw new Error(`Rate limit pruning did not delete exactly the stale window: ${JSON.stringify(pruned.rows[0])}`);
+}
+const survivingCounters = await db.query(
+  `select count(*)::int as count from public.rate_limit_counters where tenant_id=$1 and bucket_key='verify-bucket'`,
+  [rateLimitTenant],
+);
+if (Number(survivingCounters.rows[0].count) !== 1) {
+  throw new Error(`Rate limit pruning removed the live window: ${JSON.stringify(survivingCounters.rows[0])}`);
+}
 await db.exec(`
   update public.profiles set active_tenant_id='00000000-0000-0000-0000-000000000001' where id='00000000-0000-0000-0000-000000000002';
   select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
