@@ -2,9 +2,24 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import type { RuntimeDatabase } from "@/lib/supabase/runtime-database.types";
 
-function securityHeaders(response: NextResponse, contentSecurityPolicy: string) {
+// Surfaces that serve tenant-scoped personal data. Everything under them must be
+// unstorable by browsers and shared proxies: without an explicit directive a response
+// carries no caching instruction at all, which leaves it up to intermediary heuristics.
+// `/api/openapi.json` (a static contract document) and `/api/public` (token-scoped, and
+// already sending its own no-store) are deliberately excluded so their own cache policy
+// stays authoritative.
+function isTenantScopedPath(pathname: string) {
+  if (pathname.startsWith("/api/openapi.json") || pathname.startsWith("/api/public")) return false;
+  return pathname.startsWith("/app") || pathname.startsWith("/api") || pathname.startsWith("/onboarding");
+}
+
+function securityHeaders(response: NextResponse, contentSecurityPolicy: string, tenantScoped: boolean) {
   response.headers.set("Content-Security-Policy", contentSecurityPolicy);
   response.headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
+  if (tenantScoped) {
+    response.headers.set("Cache-Control", "private, no-store, max-age=0, must-revalidate");
+    response.headers.set("Vary", "Cookie, Authorization");
+  }
   return response;
 }
 
@@ -29,11 +44,12 @@ export async function updateSession(request: NextRequest) {
     "frame-ancestors 'none'",
     ...(process.env.NODE_ENV === "production" ? ["upgrade-insecure-requests"] : []),
   ].join("; ");
+  const tenantScoped = isTenantScopedPath(request.nextUrl.pathname);
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-nonce", nonce);
   requestHeaders.set("Content-Security-Policy", contentSecurityPolicy);
 
-  let response = securityHeaders(NextResponse.next({ request: { headers: requestHeaders } }), contentSecurityPolicy);
+  let response = securityHeaders(NextResponse.next({ request: { headers: requestHeaders } }), contentSecurityPolicy, tenantScoped);
   if (!url || !key) return response;
 
   const supabase = createServerClient<RuntimeDatabase>(url, key, {
@@ -41,7 +57,7 @@ export async function updateSession(request: NextRequest) {
       getAll: () => request.cookies.getAll(),
       setAll(cookiesToSet) {
         cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-        response = securityHeaders(NextResponse.next({ request: { headers: requestHeaders } }), contentSecurityPolicy);
+        response = securityHeaders(NextResponse.next({ request: { headers: requestHeaders } }), contentSecurityPolicy, tenantScoped);
         cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
       },
     },
@@ -55,12 +71,12 @@ export async function updateSession(request: NextRequest) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/login";
     redirectUrl.searchParams.set("next", request.nextUrl.pathname);
-    return securityHeaders(NextResponse.redirect(redirectUrl), contentSecurityPolicy);
+    return securityHeaders(NextResponse.redirect(redirectUrl), contentSecurityPolicy, tenantScoped);
   }
   if (data.user && isAuth) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/app";
-    return securityHeaders(NextResponse.redirect(redirectUrl), contentSecurityPolicy);
+    return securityHeaders(NextResponse.redirect(redirectUrl), contentSecurityPolicy, tenantScoped);
   }
   return response;
 }

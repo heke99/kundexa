@@ -77,3 +77,60 @@
 - Fix: workerhämtning, strikt kandidatmatchning, konfliktkö och atomisk `reconcile_rinkel_call_from_cdr`.
 - Regression: statiska invarianter och SQL-runtimefall.
 - Status: `RESOLVED IN CODE`; provider/staging-verifiering återstår.
+
+## FAILURE-0012 — `process_import_run` bröt mot sin egen hardening-trigger
+
+- Risk: `202608010001` kräver `execution_idempotency_key` när en import går till `processing`,
+  men RPC:n satte aldrig nyckeln. Varje anropare som inte förbokade en nyckel utanför RPC:n
+  avbröt med `execution_idempotency_key_required`. Serveraktionen förbokar; ParseHubs
+  automatiska commit (`process_parsehub_import_run`) gör det inte, så automatisk import var
+  helt trasig i produktion.
+- Fix: `202608070001` sätter nyckeln inne i RPC:n, i samma transaktion som statusbytet,
+  härledd från `validation_fingerprint` med `run:<id>` som fallback. Invarianten gäller nu
+  för alla anropare i stället för att bero på att varje anropare minns att förboka.
+- Regression: `scripts/verify-sql.mjs` (fixturen anropar RPC:n utan förbokad nyckel, precis
+  som ParseHub-vägen gör).
+- Status: `RESOLVED IN CODE`; SQL-runtime PASS lokalt, staging återstår.
+
+## FAILURE-0013 — `rate_limit_counters` städades aldrig
+
+- Risk: `consume_rate_limit` skriver en rad per (tenant, bucket, 60s-fönster) vid *varje*
+  autentiserad request och ingenting tog bort dem. Tabellen som grindar hela API:t växte
+  obegränsat och drog med sig den upsert som varje request väntar på.
+- Fix: `202608070002` lägger till `prune_rate_limit_counters` (begränsad radmängd,
+  `for update skip locked`) plus index på `window_started_at`; maintenance-workern anropar den.
+- Regression: `scripts/verify-sql.mjs` verifierar både gränsen (true/true/false vid limit 2)
+  och att pruning tar bort exakt det gamla fönstret och behåller det levande.
+- Status: `RESOLVED IN CODE`.
+
+## FAILURE-0014 — Recency-listningar saknade index
+
+- Risk: `/api/v1/customers`, listvyns kundväljare, avtalstavlan och compliancetavlan sorterar
+  på `updated_at desc` medan samtliga täckande index låg på `created_at desc`. Postgres kunde
+  inte använda något av dem för sorteringen, så varje sådan vy blev tenantscan + extern sort.
+- Fix: `202608070003` lägger till `updated_at desc`-index som speglar varje frågas predikat.
+- Status: `RESOLVED IN CODE`; verklig planmätning mot produktionsvolym `NOT RUN`.
+
+## FAILURE-0015 — Klientens fallback-polling och workspace-refresh var obegränsade
+
+- Risk: `useCallRealtime` pollade var 2,5 s även när realtime-kanalen var frisk, dvs 24 av
+  sessionens 120 requests/minut per öppen dialer. `RealtimeRefresh` körde full
+  `router.refresh()` 350 ms efter *varje* ändring på `calls`, `activities`,
+  `customer_list_members`, `customer_lists` och `sales_orders`, för varje användare på varje
+  sida — vid aktiv uppringning en kontinuerlig omrenderingsstorm.
+- Fix: polling backar till 30 s när kanalen är `subscribed` och stramas till 2,5 s först vid
+  degradering; refresh fick ett golv på 3 s mellan körningar, pausas helt i dolda flikar och
+  körs en gång när fliken blir synlig igen.
+- Status: `RESOLVED IN CODE`; belastningsmätning mot verklig tenant `NOT RUN`.
+
+## FAILURE-0016 — Sökterm interpolerades in i PostgREST-grammatik
+
+- Risk: `/api/v1/customers?q=` byggde ett `or=(...)`-uttryck och tog bara bort `%` och `,`.
+  PostgREST tolkar värdet som grammatik *efter* URL-avkodning, så `)` och `.` överlevde in i
+  en position där de läses som grammatik. Tenantisolering hänger inte på detta (tenantfiltret
+  är en egen parameter och RLS gäller under), men det är otillförlitlig indata i en frågesyntax.
+- Fix: `src/lib/postgrest-filter.ts` saneras centralt (reserverade tecken + wildcards + längd)
+  och returnerar `null` när ingenting sökbart återstår, i stället för ett matcha-allt-mönster.
+- Regression: `npm run test:api`.
+- Status: `RESOLVED IN CODE`.
+

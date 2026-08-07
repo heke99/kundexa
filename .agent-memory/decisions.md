@@ -43,3 +43,31 @@ Dialerns statusendpoint autentiserar användaren med `getAppContext` och använd
 ## ADR-0011 — Rinkel är en central plattformsintegration
 
 Rinkel har exakt en logisk `RINKEL_API_KEY` i servermiljön och en aktiv `platform_integrations`-rad utan `tenant_id`. Centrala användare och nummer allokeras historiserat till tenants och filtreras genom serververifierade RPC:er. Tenantcredentials, connection-ID-baserade webhookar och fallback till den gamla modellen är permanent avvecklade.
+
+## 2026-08-07 — Idempotensnyckeln för import sätts i RPC:n, inte hos anroparen
+
+Alternativen var att låta varje anropare förboka `execution_idempotency_key` innan
+`process_import_run`, eller att låta RPC:n själv garantera invarianten. Vi valde RPC:n:
+triggern från `202608010001` är en databasinvariant, och en invariant som kräver att varje
+anropare minns ett förberedande steg är inte en invariant. ParseHub-vägen visade precis den
+felmoden. Serveraktionens förbokning behålls eftersom den ger ett vänligt
+"redan verkställd"-meddelande i stället för ett rått unique-violation.
+
+Funktionskroppen patchas textuellt från `pg_get_functiondef` i stället för att skrivas om,
+av samma skäl som `202608010001` gjorde det: annars tappas tidigare levererade ändringar i
+samma funktion.
+
+## 2026-08-07 — Driftkontroll mot faktiskt schema ersätter inte namnlistan, den kompletterar den
+
+`types:verify` kontrollerar att en handunderhållen lista av namn finns. Den fångar inte en
+tabell eller kolumn som lagts till och aldrig regenererats. Eftersom `verify-sql.mjs` redan
+har hela det migrerade schemat i minnet är jämförelsen mot `database.types.ts` nästan gratis
+där. Båda behålls: namnlistan uttrycker avsikt ("dessa kontrakt måste finnas"), driftkontrollen
+uttrycker fakta ("typerna motsvarar schemat").
+
+## 2026-08-07 — Cache-policy sätts i proxyn, inte per route
+
+Autentiserade ytor svarade utan `Cache-Control` överhuvudtaget. Att sätta headern i varje
+route hade krävt ändring i ~60 filer och hade gått sönder vid nästa nya route. Proxyn ser
+alla requests, så policyn sätts där för `/app`, `/api` och `/onboarding`, med uttryckliga
+undantag för `/api/openapi.json` och `/api/public` som har egen medveten policy.

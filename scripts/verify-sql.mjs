@@ -157,6 +157,37 @@ const segment = await db.query(`select public.refresh_segment_materialization('0
 if (Number(segment.rows[0].result.memberCount) !== 1) throw new Error(`Segment materialization failed: ${JSON.stringify(segment.rows[0])}`);
 const retention = await db.query(`select public.run_retention_maintenance('00000000-0000-0000-0000-000000000001',100) as result`);
 if (!retention.rows[0].result.runId) throw new Error("Retention maintenance did not produce a run");
+
+// Rate limiting gates every authenticated API request, and its counter table is pruned by
+// the maintenance worker. Both halves are asserted here: the limit must be enforced exactly
+// at the boundary, and pruning must drop only windows outside the retention interval.
+const rateLimitTenant = "00000000-0000-0000-0000-000000000001";
+const rateLimitDecisions = [];
+for (let attempt = 0; attempt < 3; attempt += 1) {
+  const consumed = await db.query(
+    `select public.consume_rate_limit($1,'verify-bucket',2,60) as allowed`,
+    [rateLimitTenant],
+  );
+  rateLimitDecisions.push(consumed.rows[0].allowed);
+}
+if (JSON.stringify(rateLimitDecisions) !== JSON.stringify([true, true, false])) {
+  throw new Error(`Rate limit did not enforce its boundary exactly: ${JSON.stringify(rateLimitDecisions)}`);
+}
+await db.exec(`
+  insert into public.rate_limit_counters(tenant_id,bucket_key,window_started_at,request_count)
+  values('${rateLimitTenant}','verify-stale-bucket',now()-interval '2 hours',5);
+`);
+const pruned = await db.query(`select public.prune_rate_limit_counters(interval '1 hour',1000) as deleted`);
+if (Number(pruned.rows[0].deleted) !== 1) {
+  throw new Error(`Rate limit pruning did not delete exactly the stale window: ${JSON.stringify(pruned.rows[0])}`);
+}
+const survivingCounters = await db.query(
+  `select count(*)::int as count from public.rate_limit_counters where tenant_id=$1 and bucket_key='verify-bucket'`,
+  [rateLimitTenant],
+);
+if (Number(survivingCounters.rows[0].count) !== 1) {
+  throw new Error(`Rate limit pruning removed the live window: ${JSON.stringify(survivingCounters.rows[0])}`);
+}
 await db.exec(`
   update public.profiles set active_tenant_id='00000000-0000-0000-0000-000000000001' where id='00000000-0000-0000-0000-000000000002';
   select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
@@ -560,12 +591,14 @@ await db.exec(`
   update public.platform_integrations set status='connected',webhook_status='verified',
     webhook_last_received_at=now(),capabilities='{"api_access":true,"dial":true,"webhooks":true,"users_catalog":true,"numbers_catalog":true,"dial_configured":true}'::jsonb
     where provider='rinkel' and disabled_at is null;
-  update public.platform_rinkel_capabilities set
+  insert into public.platform_rinkel_capabilities(
+    platform_integration_id,api_access,users_catalog,numbers_catalog,dial_configured,
+    core_webhooks_verified,webhooks
+  ) select id,true,true,true,true,true,true
+    from public.platform_integrations where provider='rinkel' and disabled_at is null
+  on conflict(platform_integration_id) do update set
     api_access=true,users_catalog=true,numbers_catalog=true,dial_configured=true,
-    core_webhooks_verified=true,webhooks=true
-    where platform_integration_id in(
-      select id from public.platform_integrations where provider='rinkel' and disabled_at is null
-    );
+    core_webhooks_verified=true,webhooks=true;
   update public.telephony_policies set telephony_enabled=true,manual_dialer_enabled=true,
     automatic_dialer_enabled=true,allowed_days='{1,2,3,4,5,6,7}',
     allowed_start_time='00:00',allowed_end_time='23:59:59'
@@ -883,9 +916,14 @@ try {
 if (!truncatedCommitBlocked) throw new Error('Truncated import was allowed to enter processing');
 
 await db.exec(`
-  update public.calls set status='completed',provider_status='ended',provider_outcome='answered',recording_status='available_at_provider',provider_state_updated_at='2026-08-01T10:00:00Z'
+  -- Timestamps are relative to now() because this call was already finalized with a
+  -- now()-stamped provider_state_updated_at earlier in this run. Absolute literals here
+  -- silently rot into the past and turn this into a stale-event test instead of the
+  -- out-of-order test it is meant to be.
+  update public.calls set status='completed',provider_status='ended',provider_outcome='answered',recording_status='available_at_provider',provider_state_updated_at=now()+interval '1 minute'
   where id='${centralResult.callId}';
-  update public.calls set status='answered',provider_status='connected',provider_outcome=null,recording_status='unavailable',provider_state_updated_at='2026-08-01T10:05:00Z'
+  -- Late callStart: newer arrival, lower lifecycle rank. Must not regress the terminal projection.
+  update public.calls set status='answered',provider_status='connected',provider_outcome=null,recording_status='unavailable',provider_state_updated_at=now()+interval '2 minutes'
   where id='${centralResult.callId}';
 `);
 const monotonicCall = await db.query(`select status,provider_status,provider_outcome,recording_status from public.calls where id=$1`, [centralResult.callId]);
@@ -1205,4 +1243,63 @@ if (postSign.contract_status !== 'signed' || postSign.customer_lifecycle !== 'cu
   throw new Error(`Post-sign exactly-once state invalid: ${JSON.stringify(postSign)}`);
 }
 console.log("Executed production hardening runtime paths: import truncation, Rinkel buffering/monotonicity, Resend reducer and exactly-once signing finalization.");
+
+// Generated-type drift. `types:verify` only asserts that a hand-maintained list of names is
+// present, so a table or column added by a migration and never regenerated into
+// database.types.ts passes it unnoticed and only surfaces as a runtime error. The migrated
+// schema is already in hand here, so compare it directly against the checked-in types.
+const schemaColumns = await db.query(`
+  select c.relname as table_name, a.attname as column_name
+  from pg_class c
+  join pg_namespace n on n.oid=c.relnamespace
+  join pg_attribute a on a.attrelid=c.oid and a.attnum>0 and not a.attisdropped
+  where n.nspname='public' and c.relkind in ('r','v','m')
+`);
+const schemaTables = new Map();
+for (const row of schemaColumns.rows) {
+  if (!schemaTables.has(row.table_name)) schemaTables.set(row.table_name, new Set());
+  schemaTables.get(row.table_name).add(row.column_name);
+}
+
+// PostGIS ships these in a real Supabase project but PGlite has no PostGIS, so they are
+// legitimately present in the generated types and absent here.
+const postgisProvided = new Set(["spatial_ref_sys", "geography_columns", "geometry_columns"]);
+
+const generatedTypes = await readFile(join(root, "src/lib/supabase/database.types.ts"), "utf8");
+const typedTables = new Map();
+const tableBlock = /^      (\w+): \{\n        Row: \{\n([\s\S]*?)\n        \}/gm;
+for (let match = tableBlock.exec(generatedTypes); match; match = tableBlock.exec(generatedTypes)) {
+  const columns = new Set();
+  for (const line of match[2].split("\n")) {
+    const column = line.match(/^\s{10}(\w+)\??:/);
+    if (column) columns.add(column[1]);
+  }
+  typedTables.set(match[1], columns);
+}
+if (typedTables.size < 100) {
+  throw new Error(`Could not parse database.types.ts (only ${typedTables.size} tables parsed)`);
+}
+
+const untypedTables = [...schemaTables.keys()].filter((table) => !typedTables.has(table)).sort();
+if (untypedTables.length > 0) {
+  throw new Error(`Migrations define tables missing from database.types.ts (run npm run types:generate): ${untypedTables.join(", ")}`);
+}
+const phantomTables = [...typedTables.keys()].filter((table) => !schemaTables.has(table) && !postgisProvided.has(table)).sort();
+if (phantomTables.length > 0) {
+  throw new Error(`database.types.ts declares tables no migration creates: ${phantomTables.join(", ")}`);
+}
+const columnDrift = [];
+for (const [table, columns] of schemaTables) {
+  const typed = typedTables.get(table);
+  const untyped = [...columns].filter((column) => !typed.has(column));
+  const phantom = [...typed].filter((column) => !columns.has(column));
+  if (untyped.length > 0 || phantom.length > 0) {
+    columnDrift.push(`${table} (missing from types: ${untyped.join(", ") || "none"}; not in schema: ${phantom.join(", ") || "none"})`);
+  }
+}
+if (columnDrift.length > 0) {
+  throw new Error(`Generated types drifted from the migrated schema (run npm run types:generate): ${columnDrift.join(" | ")}`);
+}
+console.log(`Verified generated types match the migrated schema: ${schemaTables.size} tables, zero column drift.`);
+
 await db.close();

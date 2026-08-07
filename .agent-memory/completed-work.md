@@ -59,3 +59,20 @@
 - `rinkel-platform-worker` hämtar och applicerar CDR; flera kandidater blir konflikt, aldrig gissning.
 - Framåtriktad migration: `202608020001_rinkel_lifecycle_reconciliation_hardening.sql`.
 - Statisk verifiering och kontraktsenhetstest: PASS. Rinkel fallback-enhetstest: PASS 8/8.
+
+## 2026-08-07 — Konsistensgenomgång och verifierad byggkedja
+
+- `202608070001_import_execution_key_atomicity.sql`: `process_import_run` sätter själv
+  `execution_idempotency_key` (FAILURE-0012).
+- `202608070002_rate_limit_counter_retention.sql`: `prune_rate_limit_counters` + index,
+  anropad från maintenance-workern (FAILURE-0013).
+- `202608070003_recency_listing_indexes.sql`: `updated_at desc`-index för kunder, avtal och
+  kampanjkandidater (FAILURE-0014).
+- `src/lib/postgrest-filter.ts` + `npm run test:api`: sanering av söktermer (FAILURE-0016).
+- `src/lib/supabase/proxy.ts`: `private, no-store` och `Vary` på autentiserade ytor.
+- `src/hooks/use-call-realtime.ts` och `src/components/app-shell/realtime-refresh.tsx`:
+  begränsad polling och refresh (FAILURE-0015).
+- `scripts/verify-sql.mjs`: rate limit-täckning, driftkontroll av genererade typer, och två
+  fixturer som testade fel kodväg.
+- `npm run verify` PASS i sin helhet för första gången.
+
