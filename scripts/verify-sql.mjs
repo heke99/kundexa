@@ -1243,4 +1243,63 @@ if (postSign.contract_status !== 'signed' || postSign.customer_lifecycle !== 'cu
   throw new Error(`Post-sign exactly-once state invalid: ${JSON.stringify(postSign)}`);
 }
 console.log("Executed production hardening runtime paths: import truncation, Rinkel buffering/monotonicity, Resend reducer and exactly-once signing finalization.");
+
+// Generated-type drift. `types:verify` only asserts that a hand-maintained list of names is
+// present, so a table or column added by a migration and never regenerated into
+// database.types.ts passes it unnoticed and only surfaces as a runtime error. The migrated
+// schema is already in hand here, so compare it directly against the checked-in types.
+const schemaColumns = await db.query(`
+  select c.relname as table_name, a.attname as column_name
+  from pg_class c
+  join pg_namespace n on n.oid=c.relnamespace
+  join pg_attribute a on a.attrelid=c.oid and a.attnum>0 and not a.attisdropped
+  where n.nspname='public' and c.relkind in ('r','v','m')
+`);
+const schemaTables = new Map();
+for (const row of schemaColumns.rows) {
+  if (!schemaTables.has(row.table_name)) schemaTables.set(row.table_name, new Set());
+  schemaTables.get(row.table_name).add(row.column_name);
+}
+
+// PostGIS ships these in a real Supabase project but PGlite has no PostGIS, so they are
+// legitimately present in the generated types and absent here.
+const postgisProvided = new Set(["spatial_ref_sys", "geography_columns", "geometry_columns"]);
+
+const generatedTypes = await readFile(join(root, "src/lib/supabase/database.types.ts"), "utf8");
+const typedTables = new Map();
+const tableBlock = /^      (\w+): \{\n        Row: \{\n([\s\S]*?)\n        \}/gm;
+for (let match = tableBlock.exec(generatedTypes); match; match = tableBlock.exec(generatedTypes)) {
+  const columns = new Set();
+  for (const line of match[2].split("\n")) {
+    const column = line.match(/^\s{10}(\w+)\??:/);
+    if (column) columns.add(column[1]);
+  }
+  typedTables.set(match[1], columns);
+}
+if (typedTables.size < 100) {
+  throw new Error(`Could not parse database.types.ts (only ${typedTables.size} tables parsed)`);
+}
+
+const untypedTables = [...schemaTables.keys()].filter((table) => !typedTables.has(table)).sort();
+if (untypedTables.length > 0) {
+  throw new Error(`Migrations define tables missing from database.types.ts (run npm run types:generate): ${untypedTables.join(", ")}`);
+}
+const phantomTables = [...typedTables.keys()].filter((table) => !schemaTables.has(table) && !postgisProvided.has(table)).sort();
+if (phantomTables.length > 0) {
+  throw new Error(`database.types.ts declares tables no migration creates: ${phantomTables.join(", ")}`);
+}
+const columnDrift = [];
+for (const [table, columns] of schemaTables) {
+  const typed = typedTables.get(table);
+  const untyped = [...columns].filter((column) => !typed.has(column));
+  const phantom = [...typed].filter((column) => !columns.has(column));
+  if (untyped.length > 0 || phantom.length > 0) {
+    columnDrift.push(`${table} (missing from types: ${untyped.join(", ") || "none"}; not in schema: ${phantom.join(", ") || "none"})`);
+  }
+}
+if (columnDrift.length > 0) {
+  throw new Error(`Generated types drifted from the migrated schema (run npm run types:generate): ${columnDrift.join(" | ")}`);
+}
+console.log(`Verified generated types match the migrated schema: ${schemaTables.size} tables, zero column drift.`);
+
 await db.close();
