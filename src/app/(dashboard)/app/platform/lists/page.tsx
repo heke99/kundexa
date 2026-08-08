@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Import, ListFilter, ShieldCheck } from "@/components/icons";
-import { getPlatformContext, isPlatformAdmin } from "@/lib/auth";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { canReadPlatformAdministration, getPlatformContext, isPlatformAdmin } from "@/lib/auth";
+import { createClient } from "@/lib/supabase/server";
 import { allocatePlatformList, revokePlatformAllocation } from "@/app/actions/platform-lists";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -14,8 +14,8 @@ import { formatDate } from "@/lib/utils";
 export default async function PlatformListsPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string }> }) {
   const params = await searchParams;
   const context = await getPlatformContext();
-  if (!context.platformRole) redirect("/app");
-  const admin = createAdminClient();
+  if (!canReadPlatformAdministration(context.platformRole)) redirect("/app");
+  const admin = await createClient();
   const [{ data: lists }, { data: tenants }, { data: allocations }] = await Promise.all([
     admin.from("platform_lists").select("id,name,description,source_provider,status,exclusivity_mode,total_entries,available_entries,allocated_entries,consumed_entries,created_at").order("created_at", { ascending: false }),
     admin.from("tenants").select("id,name,legal_name,status").in("status", ["trial", "active"]).order("name"),

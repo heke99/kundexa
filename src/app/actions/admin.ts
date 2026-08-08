@@ -889,8 +889,8 @@ export async function executeDataSubjectRestriction(form: FormData) {
   if (!request?.customer_id || !request.identity_verified_at || !["restriction", "objection"].includes(request.request_type)) redirect("/app/compliance?error=Begäran är inte verifierad eller saknar kund");
   const reason = request.request_type === "objection" ? "Invändning mot direktmarknadsföring" : "Behandlingsbegränsning";
   const { data: customer } = await admin.from("customers").select("phone_e164,email").eq("tenant_id", context.tenantId).eq("id", request.customer_id).single();
-  await admin.from("customers").update({ marketing_allowed: false, do_not_call: true, do_not_sms: true, do_not_email: true, lifecycle: "blocked", blocked_reason: reason }).eq("tenant_id", context.tenantId).eq("id", request.customer_id);
-  await admin.from("compliance_blocks").insert({ tenant_id: context.tenantId, customer_id: request.customer_id, phone_e164: customer?.phone_e164, email: customer?.email, channels: ["call", "sms", "email"], reason, source: "data_subject_request", active: true, created_by: context.userId });
+  const { error: blockError } = await admin.from("compliance_blocks").insert({ tenant_id: context.tenantId, customer_id: request.customer_id, phone_e164: customer?.phone_e164, email: customer?.email, channels: ["call", "sms", "email"], reason, source: `data_subject_request:${requestId}`, active: true, created_by: context.userId });
+  if (blockError) redirect(`/app/compliance?error=${encodeURIComponent(blockError.message)}`);
   await admin.from("data_subject_requests").update({ status: "completed", completed_at: new Date().toISOString(), handled_by: context.userId, processing_notes: reason }).eq("tenant_id", context.tenantId).eq("id", requestId);
   await admin.from("data_subject_request_events").insert({ tenant_id: context.tenantId, request_id: requestId, event_type: request.request_type === "objection" ? "objection_applied" : "restriction_applied", actor_user_id: context.userId, details: { reason } });
   revalidatePath("/app/compliance");

@@ -76,3 +76,25 @@
   fixturer som testade fel kodväg.
 - `npm run verify` PASS i sin helhet för första gången.
 
+
+## 2026-08-08 — cross-surface consistency remediation
+
+- Stängde platform-support service-role read bypass med capability-check och RLS-baserade reads.
+- Ersatte Auth-listningens 20k-tak med paginerad lookup/direkt lookup för relevanta IDs.
+- Gjorde Rinkel runtime key till explicit readiness-invariant före dial reservation.
+- Gjorde customer API-idempotency concurrency-safe med atomisk reservation.
+- Gjorde product + initial price transaktionellt fail-closed.
+- Gjorde compliance-block projection och befintlig-data-backfill canonical/atomisk.
+- Flyttade Resend delivery projections till den befintliga atomiska RPC-signaturen och reparerade replay.
+- Synkade contract expiry timezone och seller identity mellan email/SMS/API.
+- Lade database readiness endpoint.
+- Lade 46elks SMS submit-reconciliation och lokal message-id-korrelation för delivery callback.
+- Lade dedikerade remediation-regressionstester i standard `npm test`-kedjan.
+
+## 2026-08-08 — DB lint runtime hardening
+
+- Added forward-only `202608080002_database_lint_runtime_hardening.sql`.
+- Fixed hosted pgcrypto resolution for affected SECURITY DEFINER functions.
+- Fixed freshness enum typing in `fail_enrichment_job`.
+- Fixed bigint/uuid mismatch in `apply_import_row_normalization`.
+- Added regression assertions for all three invariants.

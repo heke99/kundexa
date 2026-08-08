@@ -7,6 +7,7 @@ type StatusResponse = {
   automaticReady?: boolean;
   platformConfigured?: boolean | null;
   platformReady?: boolean;
+  runtimeConfigured?: boolean;
   tenantEnabled?: boolean;
   tenantHasNumber?: boolean;
   userMapped?: boolean;
@@ -36,6 +37,8 @@ function telephonyStatusMessage(data: StatusResponse) {
   if (data.blockers?.[0]?.message) return publicTelephonyMessage(data.blockers[0].message);
   if (data.errorMessage) return publicTelephonyMessage(data.errorMessage);
   switch (data.errorCode) {
+    case "RINKEL_RUNTIME_API_KEY_MISSING":
+      return "Telefonitjänstens serverkonfiguration saknas. Kontakta plattformsadministratören";
     case "RINKEL_PLATFORM_NOT_CONFIGURED":
       return "Telefoni är inte konfigurerad eller verifierad av plattformsadministratören";
     case "RINKEL_PLATFORM_TESTING":

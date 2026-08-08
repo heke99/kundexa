@@ -20,3 +20,23 @@ infrastruktur.
    transcript och Insights.
 9. Kör tvåtenant-RLS/recording access med riktiga JWT-sessioner.
 10. Godkänn juridik, retention, backup/restore, last och extern säkerhet före produktion.
+
+## 2026-08-08 — deployordning för remediation
+
+1. Applicera forward-only migration `202608080001_cross_surface_consistency_remediation.sql` på staging.
+2. Kör `npm ci`, `npm run types:verify` och därefter hela `npm run verify` på Node 22 med Deno installerat.
+3. Kör tvåtenant JWT/RLS-proven särskilt för `/app/platform` och `/app/platform/lists` med
+   owner/admin/support/auditor.
+4. Sätt/verifiera `RINKEL_API_KEY` i webbruntime och worker-runtime, synka katalogen och kontrollera
+   `GET /api/v1/telephony/status` tills `runtimeConfigured=true` och inga blockers återstår.
+5. Genomför ett verkligt utgående Rinkel-samtal och verifiera call attempt -> webhook -> CDR -> recording.
+6. Genomför Resend bounce/complaint replay och 46elks SMS delivery/reconciliation på staging.
+7. Välj och implementera konkret BankID/e-sign-provider om högre assurance än simple acceptance krävs.
+
+## 2026-08-08 — immediate database follow-up
+
+1. Sync `202608080002_database_lint_runtime_hardening.sql` into the repo and dry-run `db push`.
+2. Confirm dry-run lists only `202608080002`, then push it.
+3. Run `npm run types:generate && npm run verify`.
+4. Run hosted DB lint again and confirm no Kundexa-owned function errors remain.
+5. Treat PostGIS extension-owned diagnostics separately from the application lint gate.

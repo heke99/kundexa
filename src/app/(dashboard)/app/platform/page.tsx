@@ -5,10 +5,11 @@ import { ModuleOverview } from "@/components/module-overview";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Field } from "@/components/ui/form-field";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { getPlatformContext, isPlatformAdmin, isPlatformOwner } from "@/lib/auth";
+import { createClient } from "@/lib/supabase/server";
+import { canReadPlatformAdministration, getPlatformContext, isPlatformAdmin, isPlatformOwner } from "@/lib/auth";
 import { updatePlatformMembership, updateTenantPlatformStatus } from "@/app/actions/platform";
 import { createPlatformTenantAndInviteOwner } from "@/app/actions/platform-lists";
+import { authUserEmailsById } from "@/lib/supabase/auth-admin-users";
 
 const roleLabels: Record<string, string> = {
   platform_owner: "Plattformsägare", platform_admin: "Plattformsadmin",
@@ -18,17 +19,19 @@ const roleLabels: Record<string, string> = {
 export default async function PlatformPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string }> }) {
   const params = await searchParams;
   const context = await getPlatformContext();
-  if (!isPlatformAdmin(context.platformRole) && context.platformRole !== "platform_support" && context.platformRole !== "platform_auditor") redirect("/app");
-  const admin = createAdminClient();
-  const [{ data: tenants }, { data: memberships }, { data: platformMemberships }, { data: audits }, { data: platformLists }, authResult] = await Promise.all([
+  if (!canReadPlatformAdministration(context.platformRole)) redirect("/app");
+  const admin = await createClient();
+  const [{ data: tenants }, { data: memberships }, { data: platformMemberships }, { data: audits }, { data: platformLists }] = await Promise.all([
     admin.from("tenants").select("id,name,legal_name,organization_number,status,created_at").order("created_at", { ascending: false }),
     admin.from("tenant_memberships").select("tenant_id,status"),
     admin.from("platform_memberships").select("user_id,role,status,created_at,updated_at").order("created_at"),
     admin.from("platform_audit_logs").select("id,action,entity_type,entity_id,tenant_id,reason,created_at,actor_user_id").order("created_at", { ascending: false }).limit(50),
     admin.from("platform_lists").select("id,status,total_entries,available_entries"),
-    admin.auth.admin.listUsers({ page: 1, perPage: 1000 }),
   ]);
-  const emailByUser = new Map(authResult.data.users.map((user) => [user.id, user.email ?? user.id]));
+  const emailByUser = await authUserEmailsById([
+    ...(platformMemberships ?? []).map((member) => member.user_id),
+    ...(audits ?? []).map((audit) => audit.actor_user_id ?? ""),
+  ]);
   const memberCountByTenant = new Map<string, number>();
   for (const membership of memberships ?? []) if (membership.status === "active") memberCountByTenant.set(membership.tenant_id, (memberCountByTenant.get(membership.tenant_id) ?? 0) + 1);
   const listEntries = (platformLists ?? []).reduce((sum, list) => sum + Number(list.total_entries), 0);

@@ -85,6 +85,32 @@ async function post46Elks(path: string, credentials: ElksCredentials, values: Re
   return JSON.parse(text) as Record<string, unknown>;
 }
 
+
+async function reconcileSubmitted46ElksSms(sms: Record<string, unknown>, credentials: ElksCredentials) {
+  const url = new URL("https://api.46elks.com/a1/sms");
+  url.searchParams.set("to", String(sms.to_number ?? ""));
+  url.searchParams.set("limit", "100");
+  const response = await fetch(url, {
+    headers: { Authorization: `Basic ${btoa(`${credentials.username}:${credentials.password}`)}` },
+  });
+  if (!response.ok) throw new Error(`sms_reconciliation_${response.status}`);
+  const payload = await response.json() as { data?: Array<Record<string, unknown>> };
+  const localCreated = new Date(String(sms.created_at ?? 0)).getTime();
+  const candidates = (payload.data ?? []).filter((candidate) => {
+    if (String(candidate.direction ?? "") !== "outgoing") return false;
+    if (String(candidate.to ?? "") !== String(sms.to_number ?? "")) return false;
+    if (String(candidate.from ?? "") !== String(sms.from_number ?? "")) return false;
+    if (String(candidate.message ?? "") !== String(sms.body ?? "")) return false;
+    const providerCreated = new Date(String(candidate.created ?? 0)).getTime();
+    return Number.isFinite(providerCreated) && Number.isFinite(localCreated) && Math.abs(providerCreated - localCreated) <= 30 * 60 * 1000;
+  }).sort((left, right) => {
+    const leftDelta = Math.abs(new Date(String(left.created ?? 0)).getTime() - localCreated);
+    const rightDelta = Math.abs(new Date(String(right.created ?? 0)).getTime() - localCreated);
+    return leftDelta - rightDelta;
+  });
+  return candidates[0] ?? null;
+}
+
 async function processSms(job: Job) {
   const { data: sms, error } = await supabase.from("sms_messages").select("*")
     .eq("tenant_id", job.tenant_id).eq("id", job.aggregate_id).single();
@@ -97,17 +123,41 @@ async function processSms(job: Job) {
   if (!outboundSms?.enabled) throw new Error("permanent_sms_outbound_feature_disabled");
   if (sms.contract_id && !contractSms?.enabled) throw new Error("permanent_sms_contract_delivery_feature_disabled");
 
+  const credentials = await get46ElksCredentials(job.tenant_id);
+  if (sms.status === "submitting") {
+    const reconciled = await reconcileSubmitted46ElksSms(sms as Record<string, unknown>, credentials);
+    if (reconciled?.id) {
+      const reconciledStatus = String(reconciled.status ?? "created");
+      const sentAt = String(reconciled.created ?? sms.sent_at ?? new Date().toISOString());
+      const { error: reconcileError } = await supabase.from("sms_messages").update({
+        provider_message_id: String(reconciled.id),
+        status: ["created", "sent", "delivered", "failed"].includes(reconciledStatus) ? reconciledStatus : "created",
+        sent_at: sentAt,
+        delivered_at: reconciledStatus === "delivered" ? String(reconciled.delivered ?? new Date().toISOString()) : sms.delivered_at,
+        parts: reconciled.parts == null ? sms.parts : Number(reconciled.parts),
+        cost: reconciled.cost == null ? sms.cost : Number(reconciled.cost),
+      }).eq("tenant_id", job.tenant_id).eq("id", sms.id);
+      if (reconcileError) throw reconcileError;
+      await supabase.from("contract_deliveries").update({ status: reconciledStatus === "delivered" ? "delivered" : "sent", provider_status: `reconciled_${reconciledStatus}`, sent_at: sentAt }).eq("tenant_id", job.tenant_id).eq("sms_message_id", sms.id);
+      await supabase.from("contract_reminders").update({ status: "sent", sent_at: sentAt }).eq("tenant_id", job.tenant_id).eq("sms_message_id", sms.id).in("status", ["queued", "scheduled"]);
+      return;
+    }
+    const submittingAgeMs = Date.now() - new Date(sms.updated_at).getTime();
+    if (!Number.isFinite(submittingAgeMs) || submittingAgeMs < 15 * 60 * 1000) throw new Error("sms_submission_reconciliation_pending");
+    const { error: resetError } = await supabase.from("sms_messages").update({ status: "queued", error_message: "No provider submission found during reconciliation; retrying safely." }).eq("tenant_id", job.tenant_id).eq("id", sms.id).eq("status", "submitting");
+    if (resetError) throw resetError;
+  }
   const { data: number } = await supabase.from("phone_numbers").select("webhook_token_ciphertext")
     .eq("tenant_id", job.tenant_id).eq("number_e164", sms.from_number).single();
   if (!number?.webhook_token_ciphertext) throw new Error("sms_number_token_missing");
   const token = await decryptJson<{ token: string }>(number.webhook_token_ciphertext, encryptionKey);
 
   await supabase.from("sms_messages").update({ status: "submitting" }).eq("id", sms.id);
-  const result = await post46Elks("sms", await get46ElksCredentials(job.tenant_id), {
+  const result = await post46Elks("sms", credentials, {
     from: sms.from_number,
     to: sms.to_number,
     message: sms.body,
-    whendelivered: `${appUrl}/api/webhooks/46elks/sms/delivery?token=${encodeURIComponent(token.token)}`,
+    whendelivered: `${appUrl}/api/webhooks/46elks/sms/delivery?token=${encodeURIComponent(token.token)}&message_id=${encodeURIComponent(sms.id)}&from_number=${encodeURIComponent(sms.from_number)}`,
   });
   const sentAt = new Date().toISOString();
   await supabase.from("sms_messages").update({

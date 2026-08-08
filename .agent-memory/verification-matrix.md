@@ -26,3 +26,28 @@
 Not: hela den lokala kedjan kördes denna gång eftersom `npm ci` fungerade. PGlite kör
 migrationerna på riktigt, så SQL-runtime är verklig körning, inte statisk analys. Allt som
 kräver en riktig Supabase-staging eller riktig Rinkel-provider är fortfarande `NOT RUN`.
+
+## 2026-08-08 remediation
+
+| Kontroll | Resultat | Kommentar |
+|---|---|---|
+| `node scripts/remediation-regression-tests.mjs` | PASS | Nya konsistens/RBAC/idempotency/readiness invariants |
+| `node scripts/verify-generated-schema.mjs` | PASS | Ingen ny public Supabase type-drift introducerad |
+| `node scripts/contract-delivery-unit-tests.mjs` | PASS | Snapshot/PDF/reminder/Resend/email-template regressions |
+| Changed TS/TSX `transpileModule` syntax check | PASS | 22 ändrade TS/TSX-filer |
+| Stale-pattern checks | PASS | Pagination cap, product rollback och server-local expiry-mönster borta |
+| `npm ci` | BLOCKED ENVIRONMENT | Intern npm-mirror: `pdf-lib@1.17.1` 404 |
+| `npm run verify` | BLOCKED ENVIRONMENT | `types:verify` PASS, därefter stoppar `typecheck:edge` på `deno: not found`; inte rapporterad som PASS |
+| Full SQL replay/PGlite | NOT RUN | PGlite kunde inte installeras från samma blockerade mirror |
+| Supabase staging/db push | NOT RUN | Extern staging krävs |
+| Live Rinkel/Resend/46elks | NOT RUN | Providercredentials och riktig runtime krävs |
+
+## 2026-08-08 — hosted database lint follow-up
+
+- User-provided hosted `npm run verify`: PASS after `202608080001`.
+- User-provided migration list: Local=Remote through `202608080001`.
+- User-provided hosted `db lint`: identified FAILURE-0027..0029 plus PostGIS-owned diagnostics.
+- `scripts/remediation-regression-tests.mjs`: PASS after adding `202608080002` invariants.
+- `scripts/verify.mjs`: PASS, recognizes 50 migrations.
+- Full PGlite SQL replay for `202608080002`: NOT RUN in this sandbox because `@electric-sql/pglite` is absent.
+- Hosted application of `202608080002`: NOT RUN yet.

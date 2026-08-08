@@ -27,3 +27,25 @@ Uppdaterad 2026-08-07.
 
 - Node 22.22.2 / npm 10.9.7. Ingen Supabase-staging är ansluten i denna miljö, så allt
   DB-arbete är verifierat mot PGlite.
+
+## 2026-08-08 — efter consistency remediation
+
+Följande är fortfarande externa releasegates, inte lokalt bekräftade kodfel:
+
+- Applicera `202608080001_cross_surface_consistency_remediation.sql` mot separat Supabase staging
+  och kör hela migration replay där.
+- Kör `npm ci && npm run verify` i normal CI/staging. Den här sandboxens interna npm-mirror gav
+  404 för `pdf-lib@1.17.1` och Deno saknas, så full gate är `NOT RUN` för denna patch.
+- Bekräfta `RINKEL_API_KEY` i både webbruntime och relevanta worker-runtime environments och kör
+  ett verkligt dial/webhook/CDR/recording-reconciliation-test.
+- Kör tvåtenant negativa RLS-tester med riktiga JWT-sessioner efter de nya platform read policies.
+- En konkret BankID/e-sign-provider är fortfarande inte registrerad; providerabstraktionen finns,
+  men leverantör, credentials, callbackkontrakt och juridisk/assurance-konfiguration krävs innan
+  BankID kan påstås vara live.
+
+## 2026-08-08 — hosted DB lint gate
+
+- Apply `202608080002_database_lint_runtime_hardening.sql` to the linked Supabase project.
+- Regenerate types and rerun `npm run verify` after the migration.
+- Rerun `supabase db lint --linked --level error`; application-owned errors should be gone.
+- PostGIS-owned lint findings may remain because PostGIS is installed in `public`; do not edit extension-owned functions merely to silence plpgsql_check.

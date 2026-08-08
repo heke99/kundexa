@@ -467,8 +467,15 @@ export async function sendContract(form: FormData) {
   const recipientNameOverride = value(form, "recipient_name").slice(0, 200);
   const emailOverride = value(form, "recipient_email").toLowerCase();
   const replyToOverride = value(form, "reply_to").toLowerCase();
-  const expiresAt = value(form, "expires_at") ? new Date(value(form, "expires_at")) : new Date(Date.now() + 7 * 86400000);
-  if (!Number.isFinite(expiresAt.getTime()) || expiresAt <= new Date()) redirect(`/app/contracts/${contractId}?error=Sista svarsdatum måste vara i framtiden`);
+  let expiresAt: Date;
+  try {
+    expiresAt = value(form, "expires_at")
+      ? new Date(zonedLocalDateTimeToIso(value(form, "expires_at"), ctx.tenantTimezone))
+      : new Date(Date.now() + 7 * 86400000);
+  } catch {
+    redirect(`/app/contracts/${contractId}?error=Sista svarsdatum är ogiltigt för företagets tidszon`);
+  }
+  if (!Number.isFinite(expiresAt!.getTime()) || expiresAt! <= new Date()) redirect(`/app/contracts/${contractId}?error=Sista svarsdatum måste vara i framtiden`);
 
   const supabase = await createClient();
   const admin = createAdminClient();
@@ -522,17 +529,18 @@ export async function sendContract(form: FormData) {
   const token = randomToken();
   const code = randomToken(4).slice(0, 4).toUpperCase();
   const publicUrl = `${env.NEXT_PUBLIC_APP_URL}/accept/${token}`;
-  const expiresLabel = new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeStyle: "short", timeZone: "Europe/Stockholm" }).format(expiresAt);
+  const expiresLabel = new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeStyle: "short", timeZone: ctx.tenantTimezone }).format(expiresAt!);
   const sellerSnapshot = (contract.seller_snapshot ?? {}) as Record<string, unknown>;
   const branding = (sellerSnapshot.branding ?? {}) as Record<string, unknown>;
   const snapshotLogoUrl = typeof branding.logo_url === "string" && /^https:\/\//i.test(branding.logo_url) ? branding.logo_url : null;
   const snapshotContact = [sellerSnapshot.email, sellerSnapshot.phone_e164, sellerSnapshot.website].filter((item): item is string => typeof item === "string" && item.length > 0).join(" · ") || null;
+  const sellerLegalName = typeof sellerSnapshot.legal_name === "string" ? sellerSnapshot.legal_name : ctx.tenantLegalName;
   const renderedEmail = renderContractDeliveryEmail({
-    legalName: typeof sellerSnapshot.legal_name === "string" ? sellerSnapshot.legal_name : ctx.tenantLegalName,
+    legalName: sellerLegalName,
     customerName: recipientName, contractNumber: contract.contract_number, contractTitle: contract.title,
     acceptUrl: publicUrl, expiresAt: expiresLabel, introduction, contact: snapshotContact, logoUrl: snapshotLogoUrl,
   });
-  const smsBody = `Avtal ${contract.contract_number} från ${ctx.tenantLegalName}. Granska: ${publicUrl}. Svara JA ${code} eller NEJ ${code}. Giltigt till ${expiresLabel}.`;
+  const smsBody = `Avtal ${contract.contract_number} från ${sellerLegalName}. Granska: ${publicUrl}. Svara JA ${code} eller NEJ ${code}. Giltigt till ${expiresLabel}.`;
   const attachments = [{ document_id: canonicalDocument.id, filename: canonicalDocument.file_name, mime_type: "application/pdf" }];
   const { error } = await supabase.rpc("prepare_contract_delivery_v2", {
     p_contract_id: contractId,
@@ -543,7 +551,7 @@ export async function sendContract(form: FormData) {
     p_public_token_hash: sha256(token + env.KUNDEXA_WEBHOOK_PEPPER),
     p_public_token_ciphertext: encryptJson({ token }, env.KUNDEXA_ENCRYPTION_KEY),
     p_acceptance_code: code,
-    p_expires_at: expiresAt.toISOString(),
+    p_expires_at: expiresAt!.toISOString(),
     p_canonical_document_id: canonicalDocument.id,
     p_sms_from: smsFrom,
     p_sms_body: smsBody,
@@ -580,22 +588,24 @@ export async function extendContractExpiry(form: FormData) {
   const ctx = await getAppContext();
   assertPermission(ctx.role, "contracts.manage_expiry");
   const contractId = z.uuid().parse(value(form, "contract_id"));
-  const expiresAt = new Date(value(form, "expires_at"));
-  if (!Number.isFinite(expiresAt.getTime()) || expiresAt <= new Date()) redirect(`/app/contracts/${contractId}?error=Det nya svarsdatumet måste vara i framtiden`);
+  let expiresAt: Date;
+  try { expiresAt = new Date(zonedLocalDateTimeToIso(value(form, "expires_at"), ctx.tenantTimezone)); }
+  catch { redirect(`/app/contracts/${contractId}?error=Det nya svarsdatumet är ogiltigt för företagets tidszon`); }
+  if (!Number.isFinite(expiresAt!.getTime()) || expiresAt! <= new Date()) redirect(`/app/contracts/${contractId}?error=Det nya svarsdatumet måste vara i framtiden`);
   const admin = createAdminClient();
   const { data: request } = await admin.from("contract_acceptance_requests").select("id,expires_at").eq("tenant_id", ctx.tenantId).eq("contract_id", contractId).eq("status", "pending").order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (!request) redirect(`/app/contracts/${contractId}?error=Ingen aktiv acceptbegäran finns`);
-  const { error } = await admin.from("contract_acceptance_requests").update({ expires_at: expiresAt.toISOString() }).eq("tenant_id", ctx.tenantId).eq("id", request.id).eq("status", "pending");
+  const { error } = await admin.from("contract_acceptance_requests").update({ expires_at: expiresAt!.toISOString() }).eq("tenant_id", ctx.tenantId).eq("id", request.id).eq("status", "pending");
   if (error) redirect(`/app/contracts/${contractId}?error=${encodeURIComponent(error.message)}`);
-  await admin.from("contracts").update({ expires_at: expiresAt.toISOString() }).eq("tenant_id", ctx.tenantId).eq("id", contractId);
+  await admin.from("contracts").update({ expires_at: expiresAt!.toISOString() }).eq("tenant_id", ctx.tenantId).eq("id", contractId);
   const { data: policy } = await admin.from("contract_reminder_policies").select("final_reminder_before_expiry_hours").eq("tenant_id", ctx.tenantId).maybeSingle();
   if (policy) {
-    const finalReminderAt = new Date(expiresAt.getTime() - Number(policy.final_reminder_before_expiry_hours) * 3600000).toISOString();
+    const finalReminderAt = new Date(expiresAt!.getTime() - Number(policy.final_reminder_before_expiry_hours) * 3600000).toISOString();
     await admin.from("contract_reminders").update({ scheduled_at: finalReminderAt })
       .eq("tenant_id", ctx.tenantId).eq("acceptance_request_id", request.id).eq("kind", "automatic").eq("sequence_number", 3).eq("status", "scheduled");
   }
-  await admin.from("audit_logs").insert({ tenant_id: ctx.tenantId, actor_user_id: ctx.userId, action: "contract.expiry_extended", entity_type: "contract", entity_id: contractId, before_data: { expires_at: request.expires_at }, after_data: { expires_at: expiresAt.toISOString() } });
-  await admin.from("contract_events").insert({ tenant_id: ctx.tenantId, contract_id: contractId, event_type: "contract.expiry_extended", actor_user_id: ctx.userId, payload: { previous_expires_at: request.expires_at, expires_at: expiresAt.toISOString() } });
+  await admin.from("audit_logs").insert({ tenant_id: ctx.tenantId, actor_user_id: ctx.userId, action: "contract.expiry_extended", entity_type: "contract", entity_id: contractId, before_data: { expires_at: request.expires_at }, after_data: { expires_at: expiresAt!.toISOString() } });
+  await admin.from("contract_events").insert({ tenant_id: ctx.tenantId, contract_id: contractId, event_type: "contract.expiry_extended", actor_user_id: ctx.userId, payload: { previous_expires_at: request.expires_at, expires_at: expiresAt!.toISOString() } });
   revalidatePath(`/app/contracts/${contractId}`);
 }
 

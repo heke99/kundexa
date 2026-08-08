@@ -83,6 +83,10 @@ export function isPlatformOwner(role: string | null) {
   return role === "platform_owner";
 }
 
+export function canReadPlatformAdministration(role: string | null) {
+  return isPlatformAdmin(role) || role === "platform_auditor";
+}
+
 export async function getPlatformContext() {
   const context = await getAppContext();
   if (!context.platformRole) redirect("/app");

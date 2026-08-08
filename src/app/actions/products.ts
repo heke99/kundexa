@@ -36,35 +36,30 @@ export async function createProduct(form: FormData) {
   if (!parsed.success) redirect("/app/products?error=Kontrollera produkt- och prisuppgifterna");
 
   const supabase = await createClient();
+  const variableFees = parsed.data.variableFee > 0
+    ? [{ label: parsed.data.variableFeeLabel || "Rörlig avgift", amount: parsed.data.variableFee }]
+    : [];
   const { data: product, error } = await supabase.from("products").insert({
     tenant_id: context.tenantId,
     name: parsed.data.name,
     sku: parsed.data.sku || null,
     description: parsed.data.description || null,
     product_type: parsed.data.productType,
+    configuration: {
+      _initial_price: {
+        currency: "SEK",
+        setup_fee: parsed.data.setupFee,
+        recurring_fee: parsed.data.recurringFee,
+        recurring_interval: parsed.data.recurringFee ? "month" : null,
+        variable_fees: variableFees,
+        binding_months: parsed.data.bindingMonths || null,
+        notice_months: parsed.data.noticeMonths || null,
+        payment_terms_days: parsed.data.paymentTermsDays,
+        terms: parsed.data.terms ? { text: parsed.data.terms } : {},
+      },
+    },
   }).select("id").single();
-  if (error || !product) redirect(`/app/products?error=${encodeURIComponent(error?.message ?? "Produkten kunde inte skapas")}`);
-
-  const variableFees = parsed.data.variableFee > 0
-    ? [{ label: parsed.data.variableFeeLabel || "Rörlig avgift", amount: parsed.data.variableFee }]
-    : [];
-  const { error: priceError } = await supabase.from("product_price_versions").insert({
-    tenant_id: context.tenantId,
-    product_id: product.id,
-    version: 1,
-    setup_fee: parsed.data.setupFee,
-    recurring_fee: parsed.data.recurringFee,
-    recurring_interval: parsed.data.recurringFee ? "month" : null,
-    variable_fees: variableFees,
-    binding_months: parsed.data.bindingMonths || null,
-    notice_months: parsed.data.noticeMonths || null,
-    payment_terms_days: parsed.data.paymentTermsDays,
-    terms: parsed.data.terms ? { text: parsed.data.terms } : {},
-  });
-  if (priceError) {
-    await supabase.from("products").delete().eq("id", product.id);
-    redirect(`/app/products?error=${encodeURIComponent(priceError.message)}`);
-  }
+  if (error || !product) redirect(`/app/products?error=${encodeURIComponent(error?.message ?? "Produkten och priset kunde inte skapas atomiskt")}`);
 
   await supabase.from("audit_logs").insert({
     tenant_id: context.tenantId,
