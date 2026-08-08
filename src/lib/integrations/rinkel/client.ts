@@ -3,6 +3,11 @@ import { RinkelClient, RinkelError, RINKEL_DEFAULT_BASE_URL } from "../../../../
 
 export { RinkelClient, RINKEL_DEFAULT_BASE_URL };
 
+export function isPlatformRinkelRuntimeConfigured() {
+  const env = serverEnv();
+  return Boolean(env.RINKEL_API_KEY?.trim());
+}
+
 export function createPlatformRinkelClient(requestId?: string) {
   const env = serverEnv();
   if (!env.RINKEL_API_KEY) {

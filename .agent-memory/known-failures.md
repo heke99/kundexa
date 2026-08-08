@@ -134,3 +134,53 @@
 - Regression: `npm run test:api`.
 - Status: `RESOLVED IN CODE`.
 
+
+## FAILURE-0017 — Rinkel status kunde vara redo utan runtime API key — FIXED 2026-08-08
+Status härleddes från databaskatalogen men verifierade inte att den aktuella webbruntimen faktiskt
+hade `RINKEL_API_KEY`. Call route blockerar nu före reservation och status/OpenAPI/UI använder samma invariant.
+
+## FAILURE-0018 — platform_support kunde läsa för brett via service role — FIXED 2026-08-08
+Plattformssidor accepterade support och läste tenant/list/audit-data med admin-client. Reads går nu via
+session/RLS och capabilityn för administrationsläsning exkluderar support.
+
+## FAILURE-0019 — Auth user lookup hade 20 000-user cap — FIXED 2026-08-08
+Flera adminflöden listade högst 20 sidor x 1000. Gemensam paginerad helper saknar godtyckligt tak.
+
+## FAILURE-0020 — Customer API idempotency var race-känslig — FIXED 2026-08-08
+Två samtidiga POST kunde båda passera lookup före audit-insert. En unik reservation med stabilt customer UUID
+är nu source of truth för varje tenant/request key och fingerprint skyddar payload-reuse.
+
+## FAILURE-0021 — Product + initial price var inte atomiskt — FIXED 2026-08-08
+Applikationen försökte kompensera med delete om prisinsert misslyckades. Initial price skapas nu av en private
+trigger i samma INSERT-transaktion; fel rullar tillbaka hela produkten.
+
+## FAILURE-0022 — Resend projection/replay hade crash-window — FIXED 2026-08-08
+Webhookstatus och downstream contract/customer/reminder-projektion var separata commits och conflict-replay
+kunde felaktigt returnera duplicate. Projektionen och processed-status ligger nu i samma RPC-transaktion och
+icke-terminala webhookrader kan återupptas.
+
+## FAILURE-0023 — Contract expiry/seller identity kunde drifta — FIXED 2026-08-08
+`datetime-local` tolkades i serverns tidszon och SMS kunde använda dagens tenantnamn medan email använde
+snapshot. Expiry använder tenant timezone och båda kanalerna använder samma immutable seller identity.
+
+## FAILURE-0024 — Compliance-block och customer flags hade write-order gap — FIXED 2026-08-08
+Canonical compliance block projiceras nu i samma DB-transaktion och migrationen backfillar aktiva äldre block.
+
+## FAILURE-0025 — SMS provider success/local failure kunde leda till blind resend — FIXED 2026-08-08
+`submitting` reconciliation söker först providerhistorik och delivery callback kan korrelera via lokalt message-id.
+
+## FAILURE-0026 — Health var endast liveness — FIXED 2026-08-08
+`/api/ready` verifierar databasåtkomst separat från den avsiktligt enkla `/api/health` liveness-endpointen.
+
+## FAILURE-0027 — Hosted pgcrypto functions were outside SECURITY DEFINER search paths — FIXED 2026-08-08
+Hosted Supabase exposes pgcrypto through the `extensions` schema while several SECURITY DEFINER functions
+fixed their search path to `public`. `digest`/`gen_random_bytes` could therefore fail at runtime. Migration
+`202608080002` adds `extensions` to the fixed search path for the affected functions without changing signatures.
+
+## FAILURE-0028 — `fail_enrichment_job` freshness enum branch resolved as text — FIXED 2026-08-08
+The INSERT into `entity_freshness.state` used an uncast CASE expression. Hosted plpgsql_check reports a
+`directory_freshness_state`/text mismatch. Both branches are now explicitly cast to the enum.
+
+## FAILURE-0029 — Import normalization declared bigint row IDs as UUID — FIXED 2026-08-08
+`import_rows.id` is a bigint identity, but `apply_import_row_normalization` parsed incoming row IDs as uuid.
+Hosted plpgsql_check identified the invalid `bigint = uuid` comparison. The parser now declares `id bigint`.

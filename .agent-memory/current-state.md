@@ -40,3 +40,46 @@ Oförändrade sedan förra passet — inget av detta kan köras härifrån:
 
 Viktigt: de tre nya migrationerna har körts mot PGlite, inte mot en riktig Supabase-staging.
 `npm run db:push` och `npm run types:generate` mot staging återstår innan produktion.
+
+## 2026-08-08 — Cross-surface consistency remediation
+
+En forward-only remediation har lagts ovanpå 2026-08-07-baselinen i
+`202608080001_cross_surface_consistency_remediation.sql`.
+
+- Plattformens lässidor använder nu användarsession + RLS. `platform_support` får inte längre
+  indirekt service-role-läsning av tenant/list/audit-data som rollen saknar RLS-rätt till.
+- Auth-användarsökning paginerar utan den tidigare hårda 20 000-användargränsen.
+- Rinkel runtime readiness kontrollerar den faktiska servernyckeln före call reservation och
+  exponeras konsekvent i status-API, OpenAPI och dialer-hook.
+- Customer API-idempotens reserverar ett stabilt customer-id atomiskt under request key.
+- Produkt och första prisversion skapas i samma databastransaktion via private trigger.
+- Compliance-block är canonical write och projiceras atomiskt till kund; befintliga aktiva
+  block backfillas av migrationen.
+- Resend delivery-event, suppression, contract/reminder-projektion och webhook-status ligger
+  i samma RPC-transaktion; webhook replay kan återuppta icke-terminal tidigare leverans.
+- Kontraktsutgång tolkas i tenantens tidszon och email/SMS använder samma seller snapshot.
+- SMS-submit har provider-reconciliation och callbacken bär Kundexas lokala message-id så ett
+  provider-success/local-failure-fönster kan repareras utan blind dubbelsändning.
+- `/api/ready` skiljer database readiness från ren `/api/health` liveness.
+
+Lokal `npm run verify` startades: `types:verify` passerade men kedjan stoppades därefter på
+`typecheck:edge` eftersom Deno saknas. En ren `npm ci` stoppas dessutom av den interna npm-spegeln
+(`pdf-lib@1.17.1` 404). Detta ersätter inte
+2026-08-07-baselinens tidigare gröna fullverifiering; de nya ändringarna verifieras med de
+fristående kontroller som listas i `verification-matrix.md`.
+
+## 2026-08-08 — hosted DB lint follow-up
+
+User-provided hosted Supabase verification after `202608080001` is now green for generated types,
+Edge/Deno checks, all test suites, 50-migration static verification and Next.js production build.
+Remote migration history is synchronized through `202608080001`.
+
+Hosted `supabase db lint --linked --level error` exposed three application-owned runtime issues that
+local replay did not catch: pgcrypto functions were outside SECURITY DEFINER search paths,
+`fail_enrichment_job` produced text for `directory_freshness_state`, and
+`apply_import_row_normalization` declared bigint `import_rows.id` as uuid.
+
+Forward-only migration `202608080002_database_lint_runtime_hardening.sql` fixes those without changing
+public RPC signatures. Remaining lint findings in `st_findextent`, `populate_geometry_columns`,
+`postgis_full_version`, `lockrow` and `addauth` are PostGIS-owned extension functions and are not patched
+by Kundexa.

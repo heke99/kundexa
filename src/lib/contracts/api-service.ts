@@ -178,7 +178,7 @@ export async function sendContractFromApi(identity: ApiIdentity, contractId: str
   const [{ data: contract }, { data: tenant }] = await Promise.all([
     admin.from("contracts").select("id,contract_number,title,customer_id,source_call_id,seller_snapshot,customers(display_name,email,phone_e164)")
       .eq("tenant_id", identity.tenantId).eq("id", contractId).single(),
-    admin.from("tenants").select("name,legal_name").eq("id", identity.tenantId).single(),
+    admin.from("tenants").select("name,legal_name,timezone").eq("id", identity.tenantId).single(),
   ]);
   if (!contract) throw new Error("contract_not_found");
   if (!contract.source_call_id) throw new Error("source_call_required");
@@ -221,7 +221,7 @@ export async function sendContractFromApi(identity: ApiIdentity, contractId: str
   const token = randomToken();
   const code = randomToken(4).slice(0, 4).toUpperCase();
   const acceptUrl = `${env.NEXT_PUBLIC_APP_URL}/accept/${token}`;
-  const expiryLabel = new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeStyle: "short", timeZone: "Europe/Stockholm" }).format(expiresAt);
+  const expiryLabel = new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeStyle: "short", timeZone: tenant?.timezone ?? "Europe/Stockholm" }).format(expiresAt);
   const sellerSnapshot = (contract.seller_snapshot ?? {}) as Record<string, unknown>;
   const legalName = typeof sellerSnapshot.legal_name === "string" && sellerSnapshot.legal_name.trim()
     ? sellerSnapshot.legal_name

@@ -3,9 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { getPlatformContext, isPlatformAdmin, isPlatformOwner } from "@/lib/auth";
+import { findAuthUserByEmail } from "@/lib/supabase/auth-admin-users";
 
 const value = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
 
@@ -52,15 +52,11 @@ export async function updatePlatformMembership(form: FormData) {
   });
   if (!parsed.success) redirect("/app/platform?error=E-post, roll, status och anledning måste vara giltiga");
 
-  const admin = createAdminClient();
-  let page = 1;
   let targetUserId: string | null = null;
-  while (page <= 20 && !targetUserId) {
-    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 1000 });
-    if (error) redirect(`/app/platform?error=${encodeURIComponent(error.message)}`);
-    targetUserId = data.users.find((user) => user.email?.toLowerCase() === parsed.data.email)?.id ?? null;
-    if (data.users.length < 1000) break;
-    page += 1;
+  try {
+    targetUserId = (await findAuthUserByEmail(parsed.data.email))?.id ?? null;
+  } catch (error) {
+    redirect(`/app/platform?error=${encodeURIComponent(error instanceof Error ? error.message : "Auth-katalogen kunde inte läsas")}`);
   }
   if (!targetUserId) redirect("/app/platform?error=Användaren måste registreras i Kundexa innan en plattformsroll kan tilldelas");
 

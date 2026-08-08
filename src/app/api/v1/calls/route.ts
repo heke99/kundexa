@@ -4,7 +4,7 @@ import { getAppContext } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { assertPermission } from "@/lib/permissions";
-import { createPlatformRinkelClient } from "@/lib/integrations/rinkel/client";
+import { createPlatformRinkelClient, isPlatformRinkelRuntimeConfigured } from "@/lib/integrations/rinkel/client";
 import { safeRinkelError } from "@/lib/integrations/rinkel/errors";
 import { apiJson, getCorrelationId } from "@/lib/api-correlation";
 
@@ -156,6 +156,13 @@ export async function POST(request: Request) {
   try {
     const context = await getAppContext();
     assertPermission(context.role, "calls.create");
+    if (!isPlatformRinkelRuntimeConfigured()) {
+      return apiJson(correlationId, {
+        error: "RINKEL_RUNTIME_API_KEY_MISSING",
+        message: "Telefonitjänstens serverkonfiguration saknas. Kontakta plattformsadministratören.",
+        correlationId,
+      }, { status: 503 });
+    }
     const parsed = bodySchema.parse(await request.json());
     const supabase = await createClient();
     const result = await supabase.rpc("rinkel_reserve_platform_outbound_call_v2", {

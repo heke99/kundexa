@@ -1,0 +1,108 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+
+const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
+
+const [
+  migration,
+  lintMigration,
+  customerApi,
+  products,
+  calls,
+  telephonyStatus,
+  openapi,
+  dialerHook,
+  platformPage,
+  platformListsPage,
+  authUsers,
+  contracts,
+  apiContracts,
+  resendRoute,
+  customerActions,
+  adminActions,
+  automationRunner,
+  smsDelivery,
+  outbox,
+] = await Promise.all([
+  read("supabase/migrations/202608080001_cross_surface_consistency_remediation.sql"),
+  read("supabase/migrations/202608080002_database_lint_runtime_hardening.sql"),
+  read("src/app/api/v1/customers/route.ts"),
+  read("src/app/actions/products.ts"),
+  read("src/app/api/v1/calls/route.ts"),
+  read("src/app/api/v1/telephony/status/route.ts"),
+  read("src/app/api/openapi.json/route.ts"),
+  read("src/hooks/use-rinkel-dialer.ts"),
+  read("src/app/(dashboard)/app/platform/page.tsx"),
+  read("src/app/(dashboard)/app/platform/lists/page.tsx"),
+  read("src/lib/supabase/auth-admin-users.ts"),
+  read("src/app/actions/contracts.ts"),
+  read("src/lib/contracts/api-service.ts"),
+  read("src/app/api/webhooks/resend/[token]/route.ts"),
+  read("src/app/actions/customers.ts"),
+  read("src/app/actions/admin.ts"),
+  read("supabase/functions/automation-runner/index.ts"),
+  read("src/app/api/webhooks/46elks/sms/delivery/route.ts"),
+  read("supabase/functions/process-outbox/index.ts"),
+]);
+
+assert.match(migration, /audit_logs_customer_api_idempotency_uidx/);
+assert.match(lintMigration, /set search_path = public, extensions/);
+assert.match(lintMigration, /\'stale\'::public\.directory_freshness_state/);
+assert.match(lintMigration, /\'refreshing\'::public\.directory_freshness_state/);
+assert.match(lintMigration, /id bigint, normalized_data jsonb/);
+assert.doesNotMatch(lintMigration, /id uuid, normalized_data jsonb/);
+
+assert.match(customerApi, /action:\s*"customer\.api_created"/);
+assert.match(customerApi, /customerId\s*=\s*existingReservation\.entity_id/);
+assert.match(customerApi, /idempotency_key_reused_with_different_payload/);
+
+assert.match(migration, /products_create_initial_price/);
+assert.match(products, /_initial_price/);
+assert.doesNotMatch(products, /from\("products"\)\.delete\(/);
+assert.doesNotMatch(products, /from\("product_price_versions"\)\.insert\(/);
+
+for (const source of [calls, telephonyStatus, openapi, dialerHook]) {
+  assert.match(source, /RINKEL_RUNTIME_API_KEY_MISSING|runtimeConfigured/);
+}
+assert.match(calls, /if \(!isPlatformRinkelRuntimeConfigured\(\)\)/);
+
+assert.match(platformPage, /canReadPlatformAdministration/);
+assert.match(platformListsPage, /canReadPlatformAdministration/);
+assert.doesNotMatch(platformPage, /platformRole !== "platform_support"/);
+assert.doesNotMatch(platformPage, /createAdminClient/);
+assert.doesNotMatch(platformListsPage, /createAdminClient/);
+assert.match(migration, /tenants_platform_read/);
+assert.match(migration, /tenant_memberships_platform_read/);
+assert.doesNotMatch(authUsers, /page\s*<=\s*20/);
+assert.match(authUsers, /while \(true\)/);
+
+assert.match(contracts, /zonedLocalDateTimeToIso\(value\(form, "expires_at"\), ctx\.tenantTimezone\)/);
+assert.match(contracts, /timeZone: ctx\.tenantTimezone/);
+assert.match(contracts, /från \$\{sellerLegalName\}/);
+assert.match(apiContracts, /select\("name,legal_name,timezone"\)/);
+assert.match(apiContracts, /timeZone: tenant\?\.timezone/);
+
+assert.match(migration, /project_compliance_block_to_customer/);
+assert.match(migration, /with active_customer_blocks as/);
+assert.match(migration, /bool_or\(\'call\'=any\(channels\)\)/);
+assert.doesNotMatch(customerActions, /from\('customers'\)\.update\(\{do_not_call:true/);
+assert.doesNotMatch(adminActions, /marketing_allowed: false, do_not_call: true/);
+assert.doesNotMatch(automationRunner, /const update: Record<string, boolean \| string> = \{ blocked_reason/);
+
+assert.match(migration, /update public\.provider_webhook_events[\s\S]*provider='resend'/);
+assert.doesNotMatch(resendRoute, /from\("contract_events"\)\.insert/);
+assert.doesNotMatch(resendRoute, /from\("contracts"\)\.update/);
+assert.doesNotMatch(resendRoute, /cancel_contract_reminders/);
+assert.doesNotMatch(resendRoute, /do_not_email/);
+assert.match(resendRoute, /webhook_event_replay_lookup_failed/);
+assert.match(resendRoute, /\["processed", "ignored"\]\.includes\(existingEvent\.status\)/);
+
+assert.match(outbox, /reconcileSubmitted46ElksSms/);
+assert.match(outbox, /message_id=\$\{encodeURIComponent\(sms\.id\)\}/);
+assert.match(outbox, /sms_submission_reconciliation_pending/);
+assert.ok(outbox.indexOf("permanent_sms_outbound_feature_disabled") < outbox.indexOf("const credentials = await get46ElksCredentials(job.tenant_id)"), "SMS feature gate must run before provider credentials/reconciliation");
+assert.match(smsDelivery, /message_id/);
+assert.match(smsDelivery, /provider_message_id: providerId/);
+assert.match(smsDelivery, /from_number/);
+
+console.log("Remediation regression tests passed.");

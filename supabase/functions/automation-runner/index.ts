@@ -181,13 +181,6 @@ async function executeAction(run: Run, customer: Customer | null, action: Action
       });
       if (error) throw error;
     }
-    const update: Record<string, boolean | string> = { blocked_reason: String(action.reason ?? "Automationsregel") };
-    if (channels.includes("call")) update.do_not_call = true;
-    if (channels.includes("sms")) update.do_not_sms = true;
-    if (channels.includes("email")) update.do_not_email = true;
-    if (channels.length === 3) update.lifecycle = "blocked";
-    const { error } = await supabase.from("customers").update(update).eq("tenant_id", run.tenant_id).eq("id", customer.id);
-    if (error) throw error;
     return { blocked: channels };
   }
   if (type === "update_status") {

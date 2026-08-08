@@ -14,7 +14,7 @@
     "lint": "npm run typecheck",
     "typecheck": "npm run typegen && tsc --noEmit --pretty false --incremental false",
     "typecheck:edge": "deno check supabase/functions/_shared/crypto.ts supabase/functions/_shared/providers.ts supabase/functions/_shared/rinkel.ts supabase/functions/data-worker/index.ts supabase/functions/ingestion-worker/index.ts supabase/functions/maintenance-worker/index.ts supabase/functions/compliance-worker/index.ts supabase/functions/process-outbox/index.ts supabase/functions/rinkel-platform-worker/index.ts supabase/functions/automation-runner/index.ts supabase/functions/parsehub-worker/index.ts",
-    "test": "node scripts/verify.mjs && npm run test:rinkel && npm run test:contracts && npm run test:imports && npm run test:api && node scripts/verify-sql.mjs",
+    "test": "node scripts/remediation-regression-tests.mjs && node scripts/verify.mjs && npm run test:rinkel && npm run test:contracts && npm run test:imports && npm run test:api && node scripts/verify-sql.mjs",
     "test:watch": "node scripts/verify.mjs",
     "verify": "npm run types:verify && npm run typecheck:edge && npm run test && npm run build",
     "platform:bootstrap-owner": "node scripts/bootstrap-platform-owner.mjs",

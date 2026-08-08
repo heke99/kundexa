@@ -72,3 +72,24 @@ Gjort:
 
 Resultat: `npm run verify` PASS i sin helhet. Allt som kräver riktig Supabase-staging eller
 riktig Rinkel-provider är fortfarande `NOT RUN` — se `open-blockers.md`.
+
+## 2026-08-08 — cross-surface consistency remediation
+
+- Utgick från uppladdad Kundexa-zip och bevarade 2026-08-07 hardening i stället för att duplicera den.
+- Verifierade aktiva brister i platform RBAC, runtime telephony readiness, API-idempotency, product/pricing,
+  compliance, Resend replay/projection, contract timezone/seller identity, SMS reconciliation och readiness.
+- Lade endast en forward-only migration; inga levererade migrationer redigerades.
+- Lade regressionstest till standardtestkedjan och körde det PASS efter två review-pass.
+- `verify-generated-schema`: PASS. Contract delivery unit tests: PASS. Ändrad TS/TSX syntax: PASS (22 filer).
+- `npm run verify` startades: `types:verify` PASS, därefter BLOCKED ENVIRONMENT på `deno: not found`.
+  `npm ci` är också BLOCKED ENVIRONMENT eftersom sandboxens npm-mirror returnerar 404 för `pdf-lib@1.17.1`.
+  Staging/live-provider gates är fortsatt explicit `NOT RUN`.
+
+## 2026-08-08 — hosted DB lint follow-up
+
+- User supplied successful hosted verify/build output and synchronized migration history through `202608080001`.
+- Reviewed hosted `plpgsql_check` output and separated PostGIS extension diagnostics from Kundexa-owned defects.
+- Added forward-only migration `202608080002_database_lint_runtime_hardening.sql` for pgcrypto search path,
+  freshness enum typing and import-row bigint IDs.
+- Static remediation regression test PASS; verify script PASS for 50 migrations.
+- Full SQL replay unavailable in this sandbox because the PGlite dependency is missing; hosted push remains the decisive verification gate.

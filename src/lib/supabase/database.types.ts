@@ -14370,6 +14370,10 @@ export type Database = {
         Args: { p_parsehub_run_id: string }
         Returns: Json
       }
+      prune_rate_limit_counters: {
+        Args: { p_limit?: number; p_older_than?: string }
+        Returns: number
+      }
       queue_callback_outbound_call: {
         Args: {
           p_activity_id: string

@@ -196,9 +196,13 @@ assert.doesNotMatch(outboxWorker, /async function processRinkelEvent/, "Legacy t
 assert.doesNotMatch(outboxWorker, /async function processRinkelEnrichment/, "Legacy tenant Rinkel enrichment must be removed from the general outbox worker");
 
 const resendWebhook = await readFile(join(root, "src/app/api/webhooks/resend/[token]/route.ts"), "utf8");
-for (const pattern of [/request\.text\(\)/, /svix-id/, /svix-timestamp/, /svix-signature/, /timingSafeEqual/, /provider_webhook_events/, /provider_message_id/, /resendStatusForEvent/, /isPermanentResendFailure/, /mapped === "delivered"/, /\["complained", "suppressed"\]\.includes\(mapped\)/]) {
+for (const pattern of [/request\.text\(\)/, /svix-id/, /svix-timestamp/, /svix-signature/, /timingSafeEqual/, /provider_webhook_events/, /provider_message_id/, /resendStatusForEvent/, /apply_resend_delivery_event/, /webhook_event_replay_lookup_failed/, /\["processed", "ignored"\]\.includes\(existingEvent\.status\)/]) {
   assert.match(resendWebhook, pattern, `Resend webhook invariant missing: ${pattern}`);
 }
+for (const pattern of [/v_permanent boolean:=p_status in \('failed','bounced','complained','suppressed','cancelled','dead_letter'\)/, /if p_status='delivered' then/, /p_status in \('complained','suppressed'\)/, /perform public\.cancel_contract_reminders/, /do_not_email=true/]) {
+  assert.match(sql, pattern, `Atomic Resend projection invariant missing from migrations: ${pattern}`);
+}
+assert.doesNotMatch(resendWebhook, /from\("contract_events"\)\.insert|from\("contracts"\)\.update|cancel_contract_reminders|do_not_email/, "Resend webhook must not duplicate database projections outside apply_resend_delivery_event");
 const contractActions = await readFile(join(root, "src/app/actions/contracts.ts"), "utf8");
 for (const pattern of [/source_call_id/, /assertContractCallEligibility/, /ensureCanonicalContractDocument/, /prepare_contract_delivery_v2/, /schedule_manual_contract_reminder/, /cancel_contract_reminders/]) {
   assert.match(contractActions, pattern, `Contract action invariant missing: ${pattern}`);

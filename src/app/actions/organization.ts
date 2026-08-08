@@ -7,22 +7,12 @@ import { getAppContext } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { serverEnv } from "@/lib/env";
+import { findAuthUserByEmail } from "@/lib/supabase/auth-admin-users";
 
 const value = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
 const checked = (form: FormData, key: string) => form.get(key) === "on";
 const errorText = (error: { message?: string } | null | undefined) => encodeURIComponent((error?.message ?? "Åtgärden misslyckades").replaceAll("_", " "));
 
-async function findAuthUserByEmail(email: string) {
-  const admin = createAdminClient();
-  for (let page = 1; page <= 20; page += 1) {
-    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 1000 });
-    if (error) throw error;
-    const user = data.users.find((candidate) => candidate.email?.toLowerCase() === email.toLowerCase());
-    if (user) return user;
-    if (data.users.length < 1000) break;
-  }
-  return null;
-}
 
 export async function createTeam(form: FormData) {
   const context = await getAppContext();

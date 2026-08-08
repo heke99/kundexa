@@ -71,3 +71,22 @@ Autentiserade ytor svarade utan `Cache-Control` överhuvudtaget. Att sätta head
 route hade krävt ändring i ~60 filer och hade gått sönder vid nästa nya route. Proxyn ser
 alla requests, så policyn sätts där för `/app`, `/api` och `/onboarding`, med uttryckliga
 undantag för `/api/openapi.json` och `/api/public` som har egen medveten policy.
+
+## ADR-0012 — Runtime readiness måste innehålla faktisk secret-availability
+
+Databasen får beskriva katalog/allokering/capabilities men kan inte bevisa att den serverprocess som ska ringa
+har providernyckeln. Därför kombineras DB-status med server-side `RINKEL_API_KEY`-availability före dial och i
+status-API:t. Secretvärdet exponeras aldrig.
+
+## ADR-0013 — Konsistensfixar får inte skapa onödig public schema-drift
+
+Där en befintlig publik RPC-signatur räcker ersätts dess kropp forward-only. Nya transaktionshooks för product
+initial price och compliance projection ligger i `private` schema. Det håller den publika API/typeytan stabil
+samtidigt som flertabellsinvarianter flyttas till databastransktionen.
+
+## ADR-0014 — Extension-owned lint is separated from application-owned lint
+
+Kundexa does not rewrite functions owned by PostGIS solely to satisfy `plpgsql_check`. Application-owned
+functions must lint clean; extension-owned diagnostics are tracked separately. For pgcrypto portability,
+affected SECURITY DEFINER functions keep an explicit fixed search path of `public, extensions` so both
+local replay and hosted Supabase resolve the extension functions.
