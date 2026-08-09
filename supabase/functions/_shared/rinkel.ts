@@ -363,8 +363,15 @@ export class RinkelClient {
     return raw === null ? null : responseData(raw);
   }
 
-  async testWebhook(event: RinkelWebhookEvent) {
-    await this.request(`/webhooks/${event}/test`, { method: "POST", acceptNoContent: true });
+  async testWebhook(event: RinkelWebhookEvent, url: string) {
+    if (!url.trim()) {
+      throw new RinkelError("RINKEL_INVALID_REQUEST", "Webhook-testets URL saknas.");
+    }
+    await this.request(`/webhooks/${event}/test`, {
+      method: "POST",
+      body: { url },
+      acceptNoContent: true,
+    });
   }
 
   async getCallByCallId(callId: string, includeDetails = true): Promise<JsonObject | null> {

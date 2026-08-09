@@ -481,17 +481,23 @@ export async function configurePlatformRinkelWebhooks() {
           registered_at: configuredAt,
           last_verified_at: null,
         }).eq("platform_integration_id", integration.id).eq("event_type", event);
+        const testRequestedAt = new Date().toISOString();
+        const { error: testPendingError } = await admin.from("platform_rinkel_webhook_subscriptions").update({
+          status: "test_pending",
+          test_requested_at: testRequestedAt,
+          last_error: null,
+          last_error_code: null,
+          last_error_message: null,
+        }).eq("platform_integration_id", integration.id).eq("event_type", event);
+        if (testPendingError) throw testPendingError;
         try {
-          await client.testWebhook(event);
+          await client.testWebhook(event, url);
           testRequestedCount += 1;
-          await admin.from("platform_rinkel_webhook_subscriptions").update({
-            status: "test_pending",
-            test_requested_at: new Date().toISOString(),
-          }).eq("platform_integration_id", integration.id).eq("event_type", event);
         } catch (testError) {
           const safe = safePlatformError(testError);
           await admin.from("platform_rinkel_webhook_subscriptions").update({
             status: "registered",
+            test_requested_at: null,
             last_error: safe.message,
             last_error_code: safe.code,
             last_error_message: "Webhooken är registrerad men provider-testet kunde inte köras. Verifiering inväntar verklig leverans.",
@@ -513,13 +519,21 @@ export async function configurePlatformRinkelWebhooks() {
         throw eventError;
       }
     }
+    const { data: verificationRows, error: verificationReadError } = await admin
+      .from("platform_rinkel_webhook_subscriptions")
+      .select("event_type,status")
+      .eq("platform_integration_id", integration.id)
+      .in("event_type", [...RINKEL_CORE_WEBHOOK_EVENTS]);
+    if (verificationReadError) throw verificationReadError;
+    const verifiedCoreCount = (verificationRows ?? []).filter((item) => item.status === "verified").length;
+    const coreWebhooksVerified = verifiedCoreCount === RINKEL_CORE_WEBHOOK_EVENTS.length;
     await admin.from("platform_integrations").update({
-      webhook_status: testRequestedCount > 0 ? "test_pending" : "registered",
+      webhook_status: coreWebhooksVerified ? "verified" : testRequestedCount > 0 ? "test_pending" : "registered",
       capabilities: {
         ...(integration.capabilities ?? {}),
-        webhooks: false,
+        webhooks: coreWebhooksVerified,
         webhooks_registration: true,
-        core_webhooks_verified: false,
+        core_webhooks_verified: coreWebhooksVerified,
         insights_supported: !optionalFailures.includes("callInsights"),
       },
       ...(!integration.last_error_operation || integration.last_error_operation === "webhook_registration" ? {
@@ -531,9 +545,9 @@ export async function configurePlatformRinkelWebhooks() {
     }).eq("id", integration.id);
     await admin.from("platform_rinkel_capabilities").upsert({
       platform_integration_id: integration.id,
-      webhooks: false,
+      webhooks: coreWebhooksVerified,
       webhooks_registration: true,
-      core_webhooks_verified: false,
+      core_webhooks_verified: coreWebhooksVerified,
       insights_supported: !optionalFailures.includes("callInsights"),
       detected_at: configuredAt,
     }, { onConflict: "platform_integration_id" });

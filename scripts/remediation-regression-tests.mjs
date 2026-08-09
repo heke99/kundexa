@@ -32,6 +32,7 @@ const [
   topbar,
   onboarding,
   bootstrapPlatformOwner,
+  rinkelClient,
 ] = await Promise.all([
   read("supabase/migrations/202608080001_cross_surface_consistency_remediation.sql"),
   read("supabase/migrations/202608080002_database_lint_runtime_hardening.sql"),
@@ -61,6 +62,7 @@ const [
   read("src/components/app-shell/topbar.tsx"),
   read("src/app/onboarding/page.tsx"),
   read("scripts/bootstrap-platform-owner.mjs"),
+  read("supabase/functions/_shared/rinkel.ts"),
 ]);
 
 assert.match(migration, /audit_logs_customer_api_idempotency_uidx/);
@@ -96,6 +98,10 @@ assert.match(appLayout, /const platform = await getPlatformContext\(\)/);
 assert.match(platformTelephonyPage, /const context = await getPlatformContext\(\)/);
 assert.doesNotMatch(platformTelephonyPage, /getAppContext/);
 assert.match(rinkelActions, /async function platformAdminContext\(\)[\s\S]*getPlatformContext\(\)/);
+assert.match(rinkelClient, /async testWebhook\(event: RinkelWebhookEvent, url: string\)[\s\S]*body: \{ url \}/);
+assert.match(rinkelActions, /status: "test_pending"[\s\S]*test_requested_at: testRequestedAt[\s\S]*client\.testWebhook\(event, url\)/);
+assert.match(rinkelActions, /const coreWebhooksVerified = verifiedCoreCount === RINKEL_CORE_WEBHOOK_EVENTS\.length[\s\S]*webhooks: coreWebhooksVerified[\s\S]*core_webhooks_verified: coreWebhooksVerified/);
+
 assert.match(organizationActions, /export async function switchTenant[\s\S]*supabase\.auth\.getUser\(\)/);
 assert.doesNotMatch(organizationActions.match(/export async function switchTenant[\s\S]*$/)?.[0] ?? "", /await getAppContext\(\)/);
 assert.match(topbar, /platformMode && tenants\.length > 0 && !activeTenant/);

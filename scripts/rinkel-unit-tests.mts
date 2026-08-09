@@ -174,3 +174,24 @@ Deno.test("sends the documented dial request once and accepts 204", async () => 
   equal(capturedBody.to, "+46701111111", "dial destination");
   equal(capturedBody.anonymous, false, "dial anonymous flag");
 });
+
+Deno.test("sends webhook test URL in the documented request body", async () => {
+  let capturedUrl = "";
+  let capturedMethod = "";
+  let capturedBodyJson = "{}";
+  const client = new RinkelClient({
+    apiKey: "test-key",
+    fetchImpl: ((input, init) => {
+      capturedUrl = String(input);
+      capturedMethod = String(init?.method ?? "GET");
+      capturedBodyJson = String(init?.body ?? "{}");
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }) as typeof fetch,
+  });
+  const webhookUrl = "https://app.kundexa.se/api/webhooks/rinkel/test-secret/callEnd";
+  await client.testWebhook("callEnd", webhookUrl);
+  assert(capturedUrl.endsWith("/v1/webhooks/callEnd/test"), "webhook test endpoint");
+  equal(capturedMethod, "POST", "webhook test method");
+  const capturedBody = JSON.parse(capturedBodyJson) as { url?: unknown };
+  equal(capturedBody.url, webhookUrl, "webhook test url");
+});
