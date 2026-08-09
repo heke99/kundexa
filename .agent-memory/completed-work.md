@@ -98,3 +98,13 @@
 - Fixed freshness enum typing in `fail_enrichment_job`.
 - Fixed bigint/uuid mismatch in `apply_import_row_normalization`.
 - Added regression assertions for all three invariants.
+
+## 2026-08-08 — platform control-plane auth remediation
+
+- Decoupled platform owner/admin/auditor/support identity from tenant workspace state.
+- Routed `/app/platform/*` through an independent platform shell before tenant context resolution.
+- Fixed `/app/platform/telephony` and platform Rinkel actions to use the canonical platform context.
+- Made tenant switching reachable from a platform-only shell while preserving RPC authorization.
+- Added a non-sensitive restricted landing for support to avoid redirect loops.
+- Corrected bootstrap guidance and removed its arbitrary Auth-user pagination ceiling.
+- Expanded regression and general verification gates to lock the architecture in place.

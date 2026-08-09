@@ -49,3 +49,10 @@ Följande är fortfarande externa releasegates, inte lokalt bekräftade kodfel:
 - Regenerate types and rerun `npm run verify` after the migration.
 - Rerun `supabase db lint --linked --level error`; application-owned errors should be gone.
 - PostGIS-owned lint findings may remain because PostGIS is installed in `public`; do not edit extension-owned functions merely to silence plpgsql_check.
+
+## 2026-08-08 — platform auth follow-up
+
+- Deploy the tenant-independent platform auth patch and verify with a real `platform_owner` session that has no usable `active_tenant_id`: `/app/platform` and `/app/platform/telephony` must open.
+- Verify negative paths with real sessions: tenant-only user -> no platform access; `platform_support` -> restricted landing/no Rinkel writes; `platform_auditor` -> read-only platform administration/no Rinkel writes.
+- This sandbox could not run `npm ci` because its internal mirror returns 404 for `pdf-lib@1.17.1`; full `npm run verify` for this auth-only patch remains to be rerun in the normal project environment.
+- Read-only Supabase MCP verification was attempted but the connector denied permission, so live platform membership state was not inspected here.

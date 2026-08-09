@@ -46,6 +46,9 @@ export async function updateSession(request: NextRequest) {
   ].join("; ");
   const tenantScoped = isTenantScopedPath(request.nextUrl.pathname);
   const requestHeaders = new Headers(request.headers);
+  // Always overwrite this internal routing hint so clients cannot spoof which auth
+  // context the shared /app layout should require.
+  requestHeaders.set("x-kundexa-path", request.nextUrl.pathname);
   requestHeaders.set("x-nonce", nonce);
   requestHeaders.set("Content-Security-Policy", contentSecurityPolicy);
 

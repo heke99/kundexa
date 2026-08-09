@@ -36,14 +36,16 @@ const supabase = createClient(supabaseUrl, serviceRoleKey, {
 });
 
 let target = null;
-for (let page = 1; page <= 100 && !target; page += 1) {
+let page = 1;
+while (!target) {
   const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 1000 });
   if (error) {
     console.error(`Kunde inte läsa Supabase-användare: ${error.message}`);
     process.exit(1);
   }
   target = data.users.find((user) => user.email?.toLowerCase() === email) ?? null;
-  if (data.users.length < 1000) break;
+  if (target || data.users.length < 1000) break;
+  page += 1;
 }
 
 if (!target) {
@@ -80,14 +82,5 @@ if (auditError) {
   process.exit(1);
 }
 
-const { data: profile, error: profileError } = await supabase.from("profiles")
-  .select("active_tenant_id")
-  .eq("id", target.id)
-  .maybeSingle();
-
 console.log(`Plattformsägare aktiverad: ${email} (${target.id})`);
-if (profileError || !profile?.active_tenant_id) {
-  console.warn("Användaren saknar active_tenant_id. Slutför tenant-onboarding innan /app/platform/telephony öppnas.");
-} else {
-  console.log("Logga ut och in igen och öppna /app/platform/telephony.");
-}
+console.log("Plattformsåtkomst är tenantoberoende. Logga ut och in igen och öppna /app/platform eller /app/platform/telephony.");

@@ -40,3 +40,11 @@ infrastruktur.
 3. Run `npm run types:generate && npm run verify`.
 4. Run hosted DB lint again and confirm no Kundexa-owned function errors remain.
 5. Treat PostGIS extension-owned diagnostics separately from the application lint gate.
+
+## 2026-08-08 — platform auth deployment
+
+1. Overlay the platform-auth patch on the current repo and run `npm ci && npm run verify` in the normal Node 22/Deno environment.
+2. No database migration is required for this patch; existing platform RLS/RPC contracts are reused.
+3. Deploy the web app, sign out/in as `platform_owner`, and test `/app/platform` plus `/app/platform/telephony` with no active tenant requirement.
+4. Test switching from the platform shell into an existing active tenant and back to the platform control-plane.
+5. Run owner/admin/auditor/support negative authorization checks before live Rinkel provider testing.

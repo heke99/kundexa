@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Field, SelectField } from "@/components/ui/form-field";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getAppContext, isPlatformAdmin } from "@/lib/auth";
+import { getPlatformContext, isPlatformAdmin } from "@/lib/auth";
 import {
   allocatePlatformRinkelResource,
   assignPlatformPhoneNumberToTeams,
@@ -60,7 +60,7 @@ export default async function PlatformTelephonyPage({
   searchParams: Promise<{ error?: string; message?: string }>;
 }) {
   const params = await searchParams;
-  const context = await getAppContext();
+  const context = await getPlatformContext();
   if (!isPlatformAdmin(context.platformRole)) return <AccessDenied platformRole={context.platformRole} />;
 
   const admin = createAdminClient();

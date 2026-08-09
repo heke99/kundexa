@@ -220,12 +220,14 @@ export async function splitListToTeam(form: FormData) {
 }
 
 export async function switchTenant(form: FormData) {
-  await getAppContext();
+  const returnTo = value(form, "return_to") === "/app/platform" ? "/app/platform" : "/app";
   const parsed = z.uuid().safeParse(value(form, "tenant_id"));
-  if (!parsed.success) redirect("/app?error=Ogiltig tenant");
+  if (!parsed.success) redirect(`${returnTo}?error=Ogiltig tenant`);
   const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
   const { error } = await supabase.rpc("switch_active_tenant", { p_tenant_id: parsed.data });
-  if (error) redirect(`/app?error=${errorText(error)}`);
+  if (error) redirect(`${returnTo}?error=${errorText(error)}`);
   revalidatePath("/app", "layout");
   redirect("/app");
 }

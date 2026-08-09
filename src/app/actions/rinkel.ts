@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { getAppContext, isAdmin, isPlatformAdmin } from "@/lib/auth";
+import { getAppContext, getPlatformContext, isAdmin, isPlatformAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { sha256 } from "@/lib/crypto";
@@ -43,7 +43,7 @@ async function tenantAdminContext() {
 }
 
 async function platformAdminContext() {
-  const context = await getAppContext();
+  const context = await getPlatformContext();
   if (!isPlatformAdmin(context.platformRole)) throw new Error("Plattformsadmin krävs.");
   return context;
 }

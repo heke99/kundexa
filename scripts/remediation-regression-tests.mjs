@@ -23,6 +23,15 @@ const [
   automationRunner,
   smsDelivery,
   outbox,
+  auth,
+  appLayout,
+  platformTelephonyPage,
+  rinkelActions,
+  proxy,
+  organizationActions,
+  topbar,
+  onboarding,
+  bootstrapPlatformOwner,
 ] = await Promise.all([
   read("supabase/migrations/202608080001_cross_surface_consistency_remediation.sql"),
   read("supabase/migrations/202608080002_database_lint_runtime_hardening.sql"),
@@ -43,6 +52,15 @@ const [
   read("supabase/functions/automation-runner/index.ts"),
   read("src/app/api/webhooks/46elks/sms/delivery/route.ts"),
   read("supabase/functions/process-outbox/index.ts"),
+  read("src/lib/auth.ts"),
+  read("src/app/(dashboard)/app/layout.tsx"),
+  read("src/app/(dashboard)/app/platform/telephony/page.tsx"),
+  read("src/app/actions/rinkel.ts"),
+  read("src/lib/supabase/proxy.ts"),
+  read("src/app/actions/organization.ts"),
+  read("src/components/app-shell/topbar.tsx"),
+  read("src/app/onboarding/page.tsx"),
+  read("scripts/bootstrap-platform-owner.mjs"),
 ]);
 
 assert.match(migration, /audit_logs_customer_api_idempotency_uidx/);
@@ -65,6 +83,27 @@ for (const source of [calls, telephonyStatus, openapi, dialerHook]) {
   assert.match(source, /RINKEL_RUNTIME_API_KEY_MISSING|runtimeConfigured/);
 }
 assert.match(calls, /if \(!isPlatformRinkelRuntimeConfigured\(\)\)/);
+
+// Platform control-plane authorization must never depend on tenant workspace state.
+const platformContextBody = auth.slice(auth.indexOf("export const getPlatformContext"));
+assert.match(platformContextBody, /from\("platform_memberships"\)/);
+assert.doesNotMatch(platformContextBody, /getAppContext\(/);
+assert.doesNotMatch(platformContextBody, /active_tenant_id/);
+assert.match(auth, /if \(platformRole\) redirect\("\/app\/platform"\)/);
+assert.match(proxy, /requestHeaders\.set\("x-kundexa-path", request\.nextUrl\.pathname\)/);
+assert.match(appLayout, /platformMode = pathname === "\/app\/platform"/);
+assert.match(appLayout, /const platform = await getPlatformContext\(\)/);
+assert.match(platformTelephonyPage, /const context = await getPlatformContext\(\)/);
+assert.doesNotMatch(platformTelephonyPage, /getAppContext/);
+assert.match(rinkelActions, /async function platformAdminContext\(\)[\s\S]*getPlatformContext\(\)/);
+assert.match(organizationActions, /export async function switchTenant[\s\S]*supabase\.auth\.getUser\(\)/);
+assert.doesNotMatch(organizationActions.match(/export async function switchTenant[\s\S]*$/)?.[0] ?? "", /await getAppContext\(\)/);
+assert.match(topbar, /platformMode && tenants\.length > 0 && !activeTenant/);
+assert.match(onboarding, /if\(platformMembership\) redirect\('\/app\/platform'\)/);
+assert.doesNotMatch(bootstrapPlatformOwner, /Slutför tenant-onboarding innan \/app\/platform\/telephony/);
+assert.match(bootstrapPlatformOwner, /Plattformsåtkomst är tenantoberoende/);
+assert.doesNotMatch(bootstrapPlatformOwner, /page\s*<=\s*100/);
+assert.match(bootstrapPlatformOwner, /while \(!target\)/);
 
 assert.match(platformPage, /canReadPlatformAdministration/);
 assert.match(platformListsPage, /canReadPlatformAdministration/);

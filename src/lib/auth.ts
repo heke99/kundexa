@@ -2,6 +2,8 @@ import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 
+export type PlatformRole = "platform_owner" | "platform_admin" | "platform_support" | "platform_auditor";
+
 export type AppContext = {
   userId: string;
   email: string;
@@ -11,21 +13,44 @@ export type AppContext = {
   tenantTimezone: string;
   role: string;
   teamIds: string[];
-  platformRole: string | null;
+  platformRole: PlatformRole | null;
 };
 
+export type PlatformContext = {
+  userId: string;
+  email: string;
+  platformRole: PlatformRole;
+};
+
+type TenantRecord = { name?: string; legal_name?: string; timezone?: string; status?: string };
+
+function oneTenant(value: TenantRecord | TenantRecord[] | null | undefined) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+/**
+ * Tenant workspace context. Platform membership is checked before tenant redirects so
+ * control-plane users are never forced to manufacture or keep an active tenant merely
+ * to administer Kundexa itself.
+ */
 export const getAppContext = cache(async (): Promise<AppContext> => {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("active_tenant_id, full_name")
-    .eq("id", user.id)
-    .single();
+  const [{ data: profile }, { data: platformMembership, error: platformMembershipError }] = await Promise.all([
+    supabase.from("profiles").select("active_tenant_id").eq("id", user.id).maybeSingle(),
+    supabase.from("platform_memberships").select("role").eq("user_id", user.id).eq("status", "active").maybeSingle(),
+  ]);
+  if (platformMembershipError) {
+    console.error("platform_membership_lookup_failed", { userId: user.id, code: platformMembershipError.code ?? null });
+  }
+  const platformRole = (platformMembership?.role as PlatformRole | undefined) ?? null;
 
-  if (!profile?.active_tenant_id) redirect("/onboarding");
+  if (!profile?.active_tenant_id) {
+    if (platformRole) redirect("/app/platform");
+    redirect("/onboarding");
+  }
 
   const { data: membership } = await supabase
     .from("tenant_memberships")
@@ -33,41 +58,35 @@ export const getAppContext = cache(async (): Promise<AppContext> => {
     .eq("tenant_id", profile.active_tenant_id)
     .eq("user_id", user.id)
     .eq("status", "active")
-    .single();
+    .maybeSingle();
 
-  if (!membership) redirect("/onboarding");
+  if (!membership) {
+    if (platformRole) redirect("/app/platform");
+    redirect("/onboarding");
+  }
 
-  const [{ data: teamRows }, { data: platformMembership }] = await Promise.all([
-    supabase
+  const tenant = oneTenant(membership.tenants as TenantRecord | TenantRecord[] | null);
+  if (!tenant?.status || !["trial", "active"].includes(tenant.status)) {
+    if (platformRole) redirect("/app/platform");
+    redirect("/login?error=Tenantkontot är pausat eller avslutat");
+  }
+
+  const { data: teamRows } = await supabase
     .from("team_members")
     .select("team_id")
     .eq("tenant_id", profile.active_tenant_id)
-    .eq("user_id", user.id),
-    supabase
-      .from("platform_memberships")
-      .select("role,status")
-      .eq("user_id", user.id)
-      .eq("status", "active")
-      .maybeSingle(),
-  ]);
-
-  const tenantsValue = membership.tenants as unknown as { name?: string; legal_name?: string; timezone?: string; status?: string } | { name?: string; legal_name?: string; timezone?: string; status?: string }[] | null;
-  const tenantName = Array.isArray(tenantsValue) ? tenantsValue[0]?.name : tenantsValue?.name;
-  const tenantLegalName = Array.isArray(tenantsValue) ? tenantsValue[0]?.legal_name : tenantsValue?.legal_name;
-  const tenantTimezone = Array.isArray(tenantsValue) ? tenantsValue[0]?.timezone : tenantsValue?.timezone;
-  const tenantStatus = Array.isArray(tenantsValue) ? tenantsValue[0]?.status : tenantsValue?.status;
-  if (!tenantStatus || !["trial", "active"].includes(tenantStatus)) redirect("/login?error=Tenantkontot är pausat eller avslutat");
+    .eq("user_id", user.id);
 
   return {
     userId: user.id,
     email: user.email ?? "",
     tenantId: profile.active_tenant_id,
-    tenantName: tenantName ?? "Kundexa",
-    tenantLegalName: tenantLegalName ?? tenantName ?? "Kundexa",
-    tenantTimezone: tenantTimezone ?? "Europe/Stockholm",
+    tenantName: tenant.name ?? "Kundexa",
+    tenantLegalName: tenant.legal_name ?? tenant.name ?? "Kundexa",
+    tenantTimezone: tenant.timezone ?? "Europe/Stockholm",
     role: membership.role,
     teamIds: (teamRows ?? []).map((row) => row.team_id),
-    platformRole: platformMembership?.role ?? null,
+    platformRole,
   };
 });
 
@@ -87,8 +106,32 @@ export function canReadPlatformAdministration(role: string | null) {
   return isPlatformAdmin(role) || role === "platform_auditor";
 }
 
-export async function getPlatformContext() {
-  const context = await getAppContext();
-  if (!context.platformRole) redirect("/app");
-  return context;
-}
+/**
+ * Platform control-plane context is intentionally independent from profiles.active_tenant_id,
+ * tenant membership and tenant lifecycle. Platform authorization comes exclusively from an
+ * active platform_memberships row; tenant authorization remains in getAppContext().
+ */
+export const getPlatformContext = cache(async (): Promise<PlatformContext> => {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const { data: membership, error } = await supabase
+    .from("platform_memberships")
+    .select("role,status")
+    .eq("user_id", user.id)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (error) {
+    console.error("platform_context_lookup_failed", { userId: user.id, code: error.code ?? null });
+    redirect("/app");
+  }
+  if (!membership) redirect("/app");
+
+  return {
+    userId: user.id,
+    email: user.email ?? "",
+    platformRole: membership.role as PlatformRole,
+  };
+});

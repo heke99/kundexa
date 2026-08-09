@@ -83,3 +83,13 @@ Forward-only migration `202608080002_database_lint_runtime_hardening.sql` fixes 
 public RPC signatures. Remaining lint findings in `st_findextent`, `populate_geometry_columns`,
 `postgis_full_version`, `lockrow` and `addauth` are PostGIS-owned extension functions and are not patched
 by Kundexa.
+
+## 2026-08-08 — tenant-independent platform control-plane
+
+- `platform_owner`/`platform_admin`/`platform_auditor`/`platform_support` authenticate through `platform_memberships` independently of `profiles.active_tenant_id`.
+- `/app/platform/*` is detected in the shared layout from an internal path header overwritten by the proxy; those routes no longer enter tenant `getAppContext()` first.
+- Tenant pages still require an active tenant membership. A platform principal that lacks a usable tenant is redirected to `/app/platform`, not onboarding.
+- `/app/platform/telephony` and all platform Rinkel server actions use `getPlatformContext()`; tenant Rinkel settings continue to use `getAppContext()`.
+- A platform-only user can choose an existing tenant from the platform shell because `switchTenant` authenticates the user and lets the database RPC validate membership instead of requiring a pre-existing tenant context.
+- `platform_support` gets a safe restricted platform landing rather than a redirect loop; support/auditor still cannot perform Rinkel platform writes.
+- Bootstrap documentation no longer claims tenant onboarding is required for platform access, and its Auth-user pagination no longer has an arbitrary 100k cap.

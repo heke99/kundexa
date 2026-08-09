@@ -309,6 +309,17 @@ assert.doesNotMatch(rinkelDialerHook, /Telefonileverantören är tillfälligt ot
 const bootstrapPlatformOwner = await readFile(join(root, "scripts/bootstrap-platform-owner.mjs"), "utf8");
 assert.match(bootstrapPlatformOwner, /platform_owner\.bootstrapped/, "Initial platform owner bootstrap must be audited");
 assert.match(bootstrapPlatformOwner, /SUPABASE_SERVICE_ROLE_KEY/, "Platform owner bootstrap must run server-side with the service role");
+const platformAuth = await readFile(join(root, "src/lib/auth.ts"), "utf8");
+const platformAuthBody = platformAuth.slice(platformAuth.indexOf("export const getPlatformContext"));
+assert.match(platformAuthBody, /from\("platform_memberships"\)/, "Platform context must authorize against platform membership directly");
+assert.doesNotMatch(platformAuthBody, /getAppContext\(/, "Platform context must not depend on tenant app context");
+assert.doesNotMatch(platformAuthBody, /active_tenant_id/, "Platform context must not depend on active_tenant_id");
+const appLayout = await readFile(join(root, "src/app/(dashboard)/app/layout.tsx"), "utf8");
+assert.match(appLayout, /x-kundexa-path/, "Shared app layout must distinguish platform and tenant surfaces");
+assert.match(appLayout, /const platform = await getPlatformContext\(\)/, "Platform surfaces must use the independent platform context in the layout");
+const supabaseProxy = await readFile(join(root, "src/lib/supabase/proxy.ts"), "utf8");
+assert.match(supabaseProxy, /requestHeaders\.set\("x-kundexa-path", request\.nextUrl\.pathname\)/, "Proxy must overwrite the internal path hint used by the shared layout");
+assert.doesNotMatch(bootstrapPlatformOwner, /Slutför tenant-onboarding innan \/app\/platform\/telephony/, "Platform owner bootstrap must not require tenant onboarding");
 const rinkelActions = await readFile(join(root, "src/app/actions/rinkel.ts"), "utf8");
 assert.match(rinkelActions, /transcription:\s*false/, "Connection tests must not infer transcription from webhook access");
 assert.match(rinkelActions, /ai_insights:\s*false/, "Connection tests must not infer AI Insights from webhook access");

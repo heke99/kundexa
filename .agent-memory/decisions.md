@@ -90,3 +90,11 @@ Kundexa does not rewrite functions owned by PostGIS solely to satisfy `plpgsql_c
 functions must lint clean; extension-owned diagnostics are tracked separately. For pgcrypto portability,
 affected SECURITY DEFINER functions keep an explicit fixed search path of `public, extensions` so both
 local replay and hosted Supabase resolve the extension functions.
+
+## ADR-0015 — Platform identity is independent from tenant workspace identity
+
+`platform_memberships` is the sole authorization source for Kundexa control-plane access. `getPlatformContext()` must not call `getAppContext()`, inspect `active_tenant_id`, or require tenant lifecycle/membership. Tenant authorization remains exclusively in `getAppContext()`.
+
+The shared `/app` layout distinguishes `/app/platform/*` before resolving context. The proxy overwrites the internal route hint so clients cannot spoof the context mode. Platform pages use a platform-only shell and do not subscribe to tenant realtime or tenant counters.
+
+A user may possess both identities. Entering the control-plane does not grant tenant data; switching into a tenant still goes through the canonical `switch_active_tenant` RPC, which validates active membership.

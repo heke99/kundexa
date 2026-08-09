@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { ShieldCheck, ListFilter, Plus } from "@/components/icons";
 import { ModuleOverview } from "@/components/module-overview";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -19,7 +18,20 @@ const roleLabels: Record<string, string> = {
 export default async function PlatformPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string }> }) {
   const params = await searchParams;
   const context = await getPlatformContext();
-  if (!canReadPlatformAdministration(context.platformRole)) redirect("/app");
+  if (!canReadPlatformAdministration(context.platformRole)) {
+    return <ModuleOverview
+      title="Plattformsåtkomst"
+      description="Din plattformsroll är aktiv men har inte behörighet att läsa plattformsadministrationens tenant-, list- eller auditdata."
+      icon={ShieldCheck}
+      features={["Separat plattformsidentitet", "Minsta behörighet", "Ingen tenantberoende åtkomst"]}
+    >
+      {params.error ? <p className="form-error">{params.error}</p> : null}
+      <Card>
+        <CardHeader><h2>Begränsad plattformsroll</h2><Badge className="badge-warning">{roleLabels[context.platformRole] ?? context.platformRole}</Badge></CardHeader>
+        <CardContent><p>Kontakta en plattformsägare om rollen behöver utökas. Tenantroller ger inte plattformsbehörighet och plattformsrollen ger inte tenantdata automatiskt.</p></CardContent>
+      </Card>
+    </ModuleOverview>;
+  }
   const admin = await createClient();
   const [{ data: tenants }, { data: memberships }, { data: platformMemberships }, { data: audits }, { data: platformLists }] = await Promise.all([
     admin.from("tenants").select("id,name,legal_name,organization_number,status,created_at").order("created_at", { ascending: false }),

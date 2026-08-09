@@ -93,3 +93,12 @@ riktig Rinkel-provider är fortfarande `NOT RUN` — se `open-blockers.md`.
   freshness enum typing and import-row bigint IDs.
 - Static remediation regression test PASS; verify script PASS for 50 migrations.
 - Full SQL replay unavailable in this sandbox because the PGlite dependency is missing; hosted push remains the decisive verification gate.
+
+## 2026-08-08 — platform superadmin access remediation
+
+- Reproduced source-level root cause from uploaded repo: `getPlatformContext -> getAppContext`, shared `/app` layout tenant gate, direct tenant context in Rinkel platform page/actions, and tenant-gated `switchTenant`.
+- Implemented tenant-independent `getPlatformContext`, route-aware platform shell, platform-safe navigation/topbar, tenant fallback routing and support restricted landing.
+- Scanned all platform pages/actions/API routes after the patch; the only remaining `getAppContext()` in `actions/rinkel.ts` belongs to the tenant-admin helper and is intentionally tenant-scoped.
+- `remediation-regression-tests.mjs`: PASS. `verify.mjs`: PASS for 50 migrations/invariants. Changed TS/TSX syntax: PASS.
+- `npm ci`: blocked by sandbox npm mirror 404 for `pdf-lib@1.17.1`; full `npm run verify` not claimed.
+- Supabase MCP read-only aggregate check was attempted and denied by connector permissions; live role/session proof remains external.

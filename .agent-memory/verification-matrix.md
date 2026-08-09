@@ -51,3 +51,19 @@ kräver en riktig Supabase-staging eller riktig Rinkel-provider är fortfarande 
 - `scripts/verify.mjs`: PASS, recognizes 50 migrations.
 - Full PGlite SQL replay for `202608080002`: NOT RUN in this sandbox because `@electric-sql/pglite` is absent.
 - Hosted application of `202608080002`: NOT RUN yet.
+
+## 2026-08-08 — platform auth remediation
+
+| Kontroll | Resultat | Evidens |
+|---|---|---|
+| Platform context independent of tenant context | PASS | `remediation-regression-tests.mjs` asserts no `getAppContext`/`active_tenant_id` in `getPlatformContext` |
+| Shared layout selects platform context for `/app/platform/*` | PASS | proxy path header + layout regression assertions |
+| Platform telephony page/actions use platform context | PASS | regression assertions and source scan |
+| Tenant switch works without pre-existing tenant context | PASS | regression assertion; DB RPC remains authorization boundary |
+| Bootstrap no longer requires tenant onboarding / arbitrary page cap | PASS | regression assertions |
+| Changed TS/TSX syntax | PASS | TypeScript `transpileModule` over all changed TS/TSX files |
+| `node scripts/verify.mjs` | PASS | ran with temporary global-TypeScript symlink; 50 migrations/invariants verified |
+| `node scripts/remediation-regression-tests.mjs` | PASS | local execution |
+| `npm ci` | BLOCKED ENVIRONMENT | internal mirror 404 for `pdf-lib@1.17.1` |
+| Full `npm run verify` after this auth patch | NOT RUN | dependencies/Deno unavailable in this sandbox |
+| Live Supabase role/session proof | NOT RUN | Supabase MCP read denied permission |

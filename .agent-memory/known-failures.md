@@ -184,3 +184,15 @@ The INSERT into `entity_freshness.state` used an uncast CASE expression. Hosted 
 ## FAILURE-0029 — Import normalization declared bigint row IDs as UUID — FIXED 2026-08-08
 `import_rows.id` is a bigint identity, but `apply_import_row_normalization` parsed incoming row IDs as uuid.
 Hosted plpgsql_check identified the invalid `bigint = uuid` comparison. The parser now declares `id bigint`.
+
+## FAILURE-0030 — Platform superadmin was blocked by tenant context — FIXED 2026-08-08
+
+`getPlatformContext()` delegated to `getAppContext()`, `/app` layout always called `getAppContext()`, and `/app/platform/telephony` plus Rinkel platform actions called tenant context directly. A valid `platform_owner` could therefore be redirected to onboarding/login or denied whenever `active_tenant_id` was missing, invalid or suspended. Platform context is now independent and the layout resolves platform routes before tenant context.
+
+## FAILURE-0031 — Tenant switching required a tenant before switching — FIXED 2026-08-08
+
+`switchTenant` called `getAppContext()` before `switch_active_tenant`, so a platform-only principal with valid tenant memberships could not select one. The action now requires authentication only and delegates membership/lifecycle validation to the existing audited database RPC.
+
+## FAILURE-0032 — Platform support could enter a redirect loop — FIXED 2026-08-08
+
+Support has an active platform identity but intentionally lacks broad platform-data read capability. Redirecting support from `/app/platform` to `/app` could send a tenantless support user back into platform routing indefinitely. The root platform page now renders a restricted non-sensitive landing before any platform data query.
