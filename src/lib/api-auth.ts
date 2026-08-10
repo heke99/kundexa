@@ -72,6 +72,11 @@ export async function authenticateRequest(request: Request, requiredScope?: stri
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw jsonError("authentication_required", 401);
 
+  const { data: securityRows, error: securityError } = await supabase.rpc("current_user_security_state");
+  if (securityError) throw jsonError("security_state_unavailable", 503);
+  const securityState = Array.isArray(securityRows) ? securityRows[0] : securityRows;
+  if (securityState?.must_change_password) throw jsonError("password_change_required", 403);
+
   const { data: profile } = await supabase.from("profiles").select("active_tenant_id").eq("id", user.id).single();
   if (!profile?.active_tenant_id) throw jsonError("active_tenant_required", 403);
 

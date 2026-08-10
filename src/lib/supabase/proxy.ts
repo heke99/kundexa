@@ -10,7 +10,7 @@ import type { RuntimeDatabase } from "@/lib/supabase/runtime-database.types";
 // stays authoritative.
 function isTenantScopedPath(pathname: string) {
   if (pathname.startsWith("/api/openapi.json") || pathname.startsWith("/api/public")) return false;
-  return pathname.startsWith("/app") || pathname.startsWith("/api") || pathname.startsWith("/onboarding");
+  return pathname.startsWith("/app") || pathname.startsWith("/api") || pathname.startsWith("/onboarding") || pathname.startsWith("/change-password");
 }
 
 function securityHeaders(response: NextResponse, contentSecurityPolicy: string, tenantScoped: boolean) {

@@ -12,6 +12,7 @@ export type AppContext = {
   tenantLegalName: string;
   tenantTimezone: string;
   role: string;
+  primaryTeamId: string | null;
   teamIds: string[];
   platformRole: PlatformRole | null;
 };
@@ -22,21 +23,28 @@ export type PlatformContext = {
   platformRole: PlatformRole;
 };
 
-type TenantRecord = { name?: string; legal_name?: string; timezone?: string; status?: string };
+type TenantRecord = { name?: string; legal_name?: string; timezone?: string; status?: string; onboarding_status?: string };
 
 function oneTenant(value: TenantRecord | TenantRecord[] | null | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
-/**
- * Tenant workspace context. Platform membership is checked before tenant redirects so
- * control-plane users are never forced to manufacture or keep an active tenant merely
- * to administer Kundexa itself.
- */
+async function enforceFirstLoginGate(supabase: Awaited<ReturnType<typeof createClient>>) {
+  const { data: rows, error } = await supabase.rpc("current_user_security_state");
+  if (error) {
+    console.error("user_security_state_lookup_failed", { code: error.code ?? null });
+    redirect("/login?error=Säkerhetsstatus kunde inte verifieras");
+  }
+  const state = Array.isArray(rows) ? rows[0] : rows;
+  if (state?.must_change_password) redirect("/change-password");
+}
+
+/** Tenant workspace context. Authorization comes from database membership, never Auth user metadata. */
 export const getAppContext = cache(async (): Promise<AppContext> => {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
+  await enforceFirstLoginGate(supabase);
 
   const [{ data: profile }, { data: platformMembership, error: platformMembershipError }] = await Promise.all([
     supabase.from("profiles").select("active_tenant_id").eq("id", user.id).maybeSingle(),
@@ -54,7 +62,7 @@ export const getAppContext = cache(async (): Promise<AppContext> => {
 
   const { data: membership } = await supabase
     .from("tenant_memberships")
-    .select("role, tenants(name,legal_name,timezone,status)")
+    .select("role,primary_team_id, tenants(name,legal_name,timezone,status,onboarding_status)")
     .eq("tenant_id", profile.active_tenant_id)
     .eq("user_id", user.id)
     .eq("status", "active")
@@ -69,6 +77,10 @@ export const getAppContext = cache(async (): Promise<AppContext> => {
   if (!tenant?.status || !["trial", "active"].includes(tenant.status)) {
     if (platformRole) redirect("/app/platform");
     redirect("/login?error=Tenantkontot är pausat eller avslutat");
+  }
+  if (tenant.onboarding_status && tenant.onboarding_status !== "active") {
+    if (membership.role === "owner") redirect("/onboarding");
+    redirect("/login?error=Organisationens onboarding är inte slutförd");
   }
 
   const { data: teamRows } = await supabase
@@ -85,36 +97,23 @@ export const getAppContext = cache(async (): Promise<AppContext> => {
     tenantLegalName: tenant.legal_name ?? tenant.name ?? "Kundexa",
     tenantTimezone: tenant.timezone ?? "Europe/Stockholm",
     role: membership.role,
+    primaryTeamId: membership.primary_team_id ?? null,
     teamIds: (teamRows ?? []).map((row) => row.team_id),
     platformRole,
   };
 });
 
-export function isAdmin(role: string) {
-  return role === "owner" || role === "admin";
-}
+export function isAdmin(role: string) { return role === "owner" || role === "admin"; }
+export function isPlatformAdmin(role: string | null) { return role === "platform_owner" || role === "platform_admin"; }
+export function isPlatformOwner(role: string | null) { return role === "platform_owner"; }
+export function canReadPlatformAdministration(role: string | null) { return isPlatformAdmin(role) || role === "platform_auditor"; }
 
-export function isPlatformAdmin(role: string | null) {
-  return role === "platform_owner" || role === "platform_admin";
-}
-
-export function isPlatformOwner(role: string | null) {
-  return role === "platform_owner";
-}
-
-export function canReadPlatformAdministration(role: string | null) {
-  return isPlatformAdmin(role) || role === "platform_auditor";
-}
-
-/**
- * Platform control-plane context is intentionally independent from profiles.active_tenant_id,
- * tenant membership and tenant lifecycle. Platform authorization comes exclusively from an
- * active platform_memberships row; tenant authorization remains in getAppContext().
- */
+/** Platform control-plane authorization is independent of tenant membership. */
 export const getPlatformContext = cache(async (): Promise<PlatformContext> => {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
+  await enforceFirstLoginGate(supabase);
 
   const { data: membership, error } = await supabase
     .from("platform_memberships")
@@ -122,16 +121,10 @@ export const getPlatformContext = cache(async (): Promise<PlatformContext> => {
     .eq("user_id", user.id)
     .eq("status", "active")
     .maybeSingle();
-
   if (error) {
     console.error("platform_context_lookup_failed", { userId: user.id, code: error.code ?? null });
     redirect("/app");
   }
   if (!membership) redirect("/app");
-
-  return {
-    userId: user.id,
-    email: user.email ?? "",
-    platformRole: membership.role as PlatformRole,
-  };
+  return { userId: user.id, email: user.email ?? "", platformRole: membership.role as PlatformRole };
 });

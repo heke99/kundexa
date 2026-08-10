@@ -3,7 +3,8 @@ import { ShieldCheck, ListFilter, Plus } from "@/components/icons";
 import { ModuleOverview } from "@/components/module-overview";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Field } from "@/components/ui/form-field";
+import { Field, SelectField } from "@/components/ui/form-field";
+import { TemporaryPasswordFields } from "@/components/users/temporary-password-fields";
 import { createClient } from "@/lib/supabase/server";
 import { canReadPlatformAdministration, getPlatformContext, isPlatformAdmin, isPlatformOwner } from "@/lib/auth";
 import { updatePlatformMembership, updateTenantPlatformStatus } from "@/app/actions/platform";
@@ -88,9 +89,12 @@ export default async function PlatformPage({ searchParams }: { searchParams: Pro
           <Field label="Visningsnamn" name="name" required />
           <Field label="Juridiskt namn" name="legal_name" required />
           <Field label="Organisationsnummer" name="organization_number" />
+          <div className="form-grid"><Field label="Ägarens förnamn" name="owner_first_name" required /><Field label="Ägarens efternamn" name="owner_last_name" required /></div>
           <Field label="Tenantägarens e-post" name="owner_email" type="email" required />
-          <Field label="Tidszon" name="timezone" defaultValue="Europe/Stockholm" required />
-          <button className="button button-primary">Skapa tenant och bjud in ägare</button>
+          <TemporaryPasswordFields />
+          <div className="form-grid"><Field label="Tidszon" name="timezone" defaultValue="Europe/Stockholm" required /><SelectField label="Språk/locale" name="locale" defaultValue="sv-SE"><option value="sv-SE">Svenska (sv-SE)</option><option value="en-US">English (en-US)</option></SelectField></div>
+          <p className="muted">Huvudteam, tenantinställningar och juridisk standardavsändare skapas automatiskt. Det tillfälliga lösenordet sparas aldrig i Kundexas databas.</p>
+          <button className="button button-primary">Skapa tenant och ägare</button>
         </form></CardContent>
       </Card> : null}
     </div>
