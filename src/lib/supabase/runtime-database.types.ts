@@ -217,6 +217,10 @@ type MissingFunctionName =
   | "create_contract_draft_api_v2"
   | "create_contract_draft_v3"
   | "create_managed_team"
+  | "create_managed_team_v2"
+  | "create_or_resume_platform_tenant_owner"
+  | "complete_user_password_change"
+  | "current_user_security_state"
   | "create_platform_tenant"
   | "customer_list_seller_workload"
   | "fail_tenant_invitation"
@@ -226,11 +230,13 @@ type MissingFunctionName =
   | "finalize_tenant_invitation"
   | "finish_platform_rinkel_job"
   | "get_contract_call_eligibility"
+  | "get_user_security_state_for_provisioning"
   | "get_current_user_rinkel_numbers"
   | "get_managed_team_rinkel_resources"
   | "get_tenant_rinkel_resources"
   | "ingest_platform_rinkel_webhook_event"
   | "list_current_user_tenants"
+  | "mark_tenant_invitation_auth_provisioned"
   | "mark_acceptance_opened"
   | "navigation_badges"
   | "materialize_segment_to_campaign_for_tenant"
@@ -251,7 +257,9 @@ type MissingFunctionName =
   | "register_external_manual_call"
   | "register_tenant_invitation"
   | "reserve_tenant_invitation"
+  | "reserve_tenant_invitation_v2"
   | "remove_managed_team_member"
+  | "provision_user_security_state"
   | "replace_rinkel_user_mapping_v2"
   | "replace_rinkel_user_mapping_v3"
   | "resolve_contract_eligible_calls"
@@ -269,7 +277,9 @@ type MissingFunctionName =
   | "telephony_status_for_current_user"
   | "update_managed_team"
   | "update_tenant_member"
-  | "update_tenant_member_v2";
+  | "update_tenant_member_v2"
+  | "tenant_user_security_states"
+  | "update_tenant_member_v3";
 
 type FunctionOverrides = {
   [Name in MissingFunctionName]: FunctionOrFallback<Name>;

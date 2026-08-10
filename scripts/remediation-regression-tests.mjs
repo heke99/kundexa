@@ -101,6 +101,7 @@ const [
   securityProjectionMigration, signingCompletionMigration, performanceMigration, workerScheduler, edgeWorkerCron,
   navConfig, customerSearch, customerMultiSearch, rinkelDialer, dialerPage, listPage, contractsPage, reportsPage, dashboardPage,
   apiAuth, routeClassification, processOutboxCurrent, teamDailyLeadLimitMigration, rinkelProjectionMonotonicMigration,
+  canonicalProvisioningMigration, provisionUserSource, changePasswordAction, registerPage, usersPage, platformListActions, authActions,
 ] = await Promise.all([
   read("supabase/migrations/202608100008_security_resource_projection_and_rls.sql"),
   read("supabase/migrations/202608100009_contract_signing_generation_completion.sql"),
@@ -121,6 +122,13 @@ const [
   read("supabase/functions/process-outbox/index.ts"),
   read("supabase/migrations/202608100011_team_daily_lead_limit_enforcement.sql"),
   read("supabase/migrations/202608100012_rinkel_projection_monotonic_outcome_recording.sql"),
+  read("supabase/migrations/202608100013_canonical_user_provisioning_and_first_login.sql"),
+  read("src/lib/users/provision-user.ts"),
+  read("src/app/actions/change-password.ts"),
+  read("src/app/(auth)/register/page.tsx"),
+  read("src/app/(dashboard)/app/users/page.tsx"),
+  read("src/app/actions/platform-lists.ts"),
+  read("src/app/actions/auth.ts"),
 ]);
 
 
@@ -202,7 +210,7 @@ assert.doesNotMatch(verifierWebhookBlock, /\/platform_rinkel_webhook_events\//);
 assert.match(organizationActions, /export async function switchTenant[\s\S]*supabase\.auth\.getUser\(\)/);
 assert.doesNotMatch(organizationActions.match(/export async function switchTenant[\s\S]*$/)?.[0] ?? "", /await getAppContext\(\)/);
 assert.match(topbar, /platformMode && tenants\.length > 0 && !activeTenant/);
-assert.match(onboarding, /if\(platformMembership\) redirect\('\/app\/platform'\)/);
+assert.match(onboarding, /if \(platformMembership\) redirect\(["\']\/app\/platform["\']\)/);
 assert.doesNotMatch(bootstrapPlatformOwner, /Slutför tenant-onboarding innan \/app\/platform\/telephony/);
 assert.match(bootstrapPlatformOwner, /Plattformsåtkomst är tenantoberoende/);
 assert.doesNotMatch(bootstrapPlatformOwner, /page\s*<=\s*100/);
@@ -269,7 +277,7 @@ assert.doesNotMatch(activationBlock, /m\.status='invited'/);
 assert.doesNotMatch(invitationMigration.match(/create or replace function public\.register_tenant_invitation[\s\S]*?end \$\$;/)?.[0] ?? "", /insert into public\.team_members/);
 assert.match(organizationActions, /reserve_tenant_invitation/);
 assert.match(organizationActions, /finalize_tenant_invitation/);
-assert.match(organizationActions, /update_tenant_member_v2/);
+assert.match(organizationActions, /update_tenant_member_v3/);
 
 assert.match(listDistributionMigration, /customer_list_distribution_state/);
 assert.match(listDistributionMigration, /round_robin/);
@@ -385,5 +393,45 @@ assert.match(apiAuth, /api_key_actor_requires_tenant_admin/);
 assert.match(apiAuth, /assertApiObjectAccess/);
 assert.match(processOutboxCurrent, /kundexa\.evidence\.v3/);
 assert.match(processOutboxCurrent, /acceptance_generation/);
+
+// Canonical tenant/user provisioning and mandatory first-login credential gate.
+assert.match(canonicalProvisioningMigration, /create table if not exists private\.user_security_state/);
+assert.match(canonicalProvisioningMigration, /alter table private\.user_security_state enable row level security/);
+assert.match(canonicalProvisioningMigration, /create table if not exists private\.tenant_invitation_provisioning/);
+assert.match(canonicalProvisioningMigration, /create table if not exists private\.tenant_owner_bootstrap_keys/);
+assert.match(canonicalProvisioningMigration, /tenant_owner_bootstrap_already_exists/);
+assert.match(canonicalProvisioningMigration, /create or replace function public\.reserve_tenant_invitation_v2/);
+assert.match(canonicalProvisioningMigration, /create or replace function public\.create_or_resume_platform_tenant_owner/);
+assert.match(canonicalProvisioningMigration, /p_primary_team_id uuid default null/);
+assert.match(canonicalProvisioningMigration, /active_operational_member_requires_primary_team/);
+assert.match(canonicalProvisioningMigration, /legacy_active_operational_members_require_explicit_primary_team_resolution/);
+assert.match(canonicalProvisioningMigration, /delete from public\.team_members[\s\S]*not \(team_id=any\(v_team_ids\)\)/);
+assert.match(canonicalProvisioningMigration, /tenant\.member_suspended/);
+assert.match(canonicalProvisioningMigration, /tenant\.member_removed/);
+assert.match(canonicalProvisioningMigration, /tenant\.member_reactivated/);
+assert.match(canonicalProvisioningMigration, /if v_role='team_lead' then/);
+assert.doesNotMatch(canonicalProvisioningMigration, /team_ids\[1\]/);
+assert.doesNotMatch(canonicalProvisioningMigration, /select\s+[^;]*team_id[^;]*into\s+v_primary[^;]*order by[^;]*team_id/is);
+assert.match(canonicalProvisioningMigration, /revoke all on function public\.create_tenant_with_owner/);
+assert.match(canonicalProvisioningMigration, /revoke all on function public\.create_platform_tenant/);
+assert.match(provisionUserSource, /admin\.auth\.admin\.createUser/);
+assert.doesNotMatch(provisionUserSource, /inviteUserByEmail/);
+assert.match(provisionUserSource, /Existing Auth users are reused/);
+assert.match(provisionUserSource, /concurrent request may have created the same Auth identity/i);
+assert.match(organizationActions, /export async function createUser/);
+assert.match(organizationActions, /reserve_tenant_invitation_v2/);
+assert.doesNotMatch(organizationActions, /inviteUserByEmail/);
+assert.match(platformListActions, /create_or_resume_platform_tenant_owner/);
+assert.match(platformListActions, /provisionUser/);
+assert.doesNotMatch(platformListActions, /inviteUserByEmail/);
+assert.match(usersPage, /Skapa användare/);
+assert.match(usersPage, /name="primary_team_id"/);
+assert.match(changePasswordAction, /supabase\.auth\.updateUser\(\{ password:/);
+assert.ok(changePasswordAction.indexOf('auth.updateUser') < changePasswordAction.indexOf('complete_user_password_change'), 'Security state must clear only after Auth password update');
+assert.ok(changePasswordAction.indexOf('complete_user_password_change') < changePasswordAction.indexOf('activate_current_user_invitation'), 'Tenant/team activation must happen only after password replacement');
+assert.ok(authActions.indexOf('current_user_security_state') < authActions.indexOf('activate_current_user_invitation'), 'Login must enforce the first-login gate before invitation activation');
+assert.match(auth, /current_user_security_state/);
+assert.match(apiAuth, /password_change_required/);
+assert.match(registerPage, /Publik registrering är stängd/);
 
 console.log("Remediation regression tests passed.");

@@ -24,6 +24,7 @@ export default async function TeamsPage({ searchParams }: { searchParams: Promis
     ? (teams ?? []).map((team) => team.id)
     : (teamMembers ?? []).filter((member) => member.user_id === context.userId && member.role === "manager").map((member) => member.team_id));
   const mayCreate = ["owner", "admin", "team_lead"].includes(context.role);
+  const managerCandidates = (memberships ?? []).filter((membership) => membership.status === "active" && ["owner", "admin", "team_lead"].includes(membership.role));
 
   return <>
     <PageHeader title="Team och säljorganisation" description="Skapa team, utse teamledare, pausa leadtilldelning och sätt kapacitet. Teamledare kan administrera sina egna team och bjuda in säljare." />
@@ -75,7 +76,8 @@ export default async function TeamsPage({ searchParams }: { searchParams: Promis
           <Field label="Teamnamn" name="name" required />
           <TextareaField label="Beskrivning" name="description" />
           <div className="form-grid"><Field label="Kod" name="code" /><Field label="Avdelning" name="department" /><Field label="Kontor" name="office" /><Field label="Max medlemmar" name="max_members" type="number" min="1" max="10000" /><SelectField label="Standarddialer" name="default_dialing_mode" defaultValue="manual"><option value="manual">Manuell</option><option value="automatic">Automatisk</option></SelectField></div>
-          <label className="check-row"><input type="checkbox" name="invite_sellers_enabled" defaultChecked /> Teamledare får bjuda in säljare</label>
+          {context.role === "team_lead" ? <input type="hidden" name="manager_user_id" value={context.userId} /> : <SelectField label="Teamledare" name="manager_user_id" defaultValue=""><option value="">Ingen – tilldela senare</option>{managerCandidates.map((membership) => <option key={membership.user_id} value={membership.user_id}>{memberInfo.get(membership.user_id)?.name} · {membership.role}</option>)}</SelectField>}
+          <label className="check-row"><input type="checkbox" name="invite_sellers_enabled" defaultChecked /> Teamledare får skapa säljare</label>
           <button className="button button-primary">Skapa team</button>
         </form></CardContent>
       </Card> : null}

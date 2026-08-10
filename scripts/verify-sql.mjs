@@ -99,6 +99,45 @@ if (
 ) {
   throw new Error(`Directory RPC privilege boundary failed: ${JSON.stringify(privileges)}`);
 }
+const provisioningPrivileges = await db.query(`
+  select
+    has_function_privilege('authenticated','public.current_user_security_state()','EXECUTE') as authenticated_security_read,
+    has_function_privilege('authenticated','public.tenant_user_security_states()','EXECUTE') as authenticated_admin_security_read,
+    has_function_privilege('anon','public.current_user_security_state()','EXECUTE') as anon_security_read,
+    has_function_privilege('authenticated','public.provision_user_security_state(uuid,uuid)','EXECUTE') as authenticated_security_write,
+    has_function_privilege('service_role','public.provision_user_security_state(uuid,uuid)','EXECUTE') as service_security_write,
+    has_function_privilege('authenticated','public.complete_user_password_change(uuid)','EXECUTE') as authenticated_password_completion,
+    has_function_privilege('service_role','public.complete_user_password_change(uuid)','EXECUTE') as service_password_completion,
+    has_function_privilege('authenticated','public.create_or_resume_platform_tenant_owner(text,text,text,text,text,text,text,timestamptz,text)','EXECUTE') as authenticated_platform_tenant_owner,
+    has_function_privilege('anon','public.create_or_resume_platform_tenant_owner(text,text,text,text,text,text,text,timestamptz,text)','EXECUTE') as anon_platform_tenant_owner,
+    has_function_privilege('authenticated','public.create_platform_tenant(text,text,text,text,text,text)','EXECUTE') as authenticated_legacy_platform_tenant,
+    has_function_privilege('service_role','public.create_platform_tenant(text,text,text,text,text,text)','EXECUTE') as service_legacy_platform_tenant,
+    has_function_privilege('authenticated','public.create_managed_team_v2(text,text,text,text,text,boolean,integer,text,uuid)','EXECUTE') as authenticated_team_create_v2,
+    has_function_privilege('anon','public.create_managed_team_v2(text,text,text,text,text,boolean,integer,text,uuid)','EXECUTE') as anon_team_create_v2,
+    has_function_privilege('authenticated','public.update_tenant_member_v3(uuid,public.membership_role,public.membership_status,uuid,uuid[],uuid,boolean)','EXECUTE') as authenticated_member_update_v3,
+    has_function_privilege('anon','public.update_tenant_member_v3(uuid,public.membership_role,public.membership_status,uuid,uuid[],uuid,boolean)','EXECUTE') as anon_member_update_v3
+`);
+const provisioningPrivilege = provisioningPrivileges.rows[0];
+if (
+  !provisioningPrivilege.authenticated_security_read
+  || !provisioningPrivilege.authenticated_admin_security_read
+  || provisioningPrivilege.anon_security_read
+  || provisioningPrivilege.authenticated_security_write
+  || !provisioningPrivilege.service_security_write
+  || provisioningPrivilege.authenticated_password_completion
+  || !provisioningPrivilege.service_password_completion
+  || !provisioningPrivilege.authenticated_platform_tenant_owner
+  || provisioningPrivilege.anon_platform_tenant_owner
+  || provisioningPrivilege.authenticated_legacy_platform_tenant
+  || !provisioningPrivilege.service_legacy_platform_tenant
+  || !provisioningPrivilege.authenticated_team_create_v2
+  || provisioningPrivilege.anon_team_create_v2
+  || !provisioningPrivilege.authenticated_member_update_v3
+  || provisioningPrivilege.anon_member_update_v3
+) {
+  throw new Error(`Provisioning RPC privilege boundary failed: ${JSON.stringify(provisioningPrivilege)}`);
+}
+
 console.log(`Executed ${migrations.length} migrations: ${counts.tables} public tables, ${counts.functions} public functions, ${counts.policies} RLS policies.`);
 
 // Execute the canonical data path, not only DDL parsing: due scheduling -> lease ->
@@ -298,20 +337,34 @@ console.log("Executed idempotent onboarding and audited platform-administration 
 // Platform list bank -> tenant -> team -> seller, including invitation activation,
 // team-level pause/capacity and safe revocation that preserves already-started work.
 await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000014',false)`);
-const distributedTenantResult = await db.query(`select public.create_platform_tenant('Distributed Verify','Distributed Verify AB','5599000001','SE','Europe/Stockholm','sv-SE') as id`);
-const distributedTenantId = String(distributedTenantResult.rows[0].id);
-const distributedDefaultTeam = await db.query(`select id from public.teams where tenant_id=$1 and is_default limit 1`, [distributedTenantId]);
-const distributedDefaultTeamId = String(distributedDefaultTeam.rows[0].id);
+const distributedBootstrap = await db.query(`
+  select public.create_or_resume_platform_tenant_owner(
+    'Distributed Verify','Distributed Verify AB','5599000001','SE','Europe/Stockholm','sv-SE',
+    'distributed-owner@example.test',now()+interval '7 days','verify-platform-owner'
+  ) as result
+`);
+const distributedTenantId = String(distributedBootstrap.rows[0].result.tenant_id);
+const distributedDefaultTeamId = String(distributedBootstrap.rows[0].result.default_team_id);
+const distributedOwnerInvitationId = String(distributedBootstrap.rows[0].result.invitation_id);
 await db.exec(`
   insert into auth.users(id,email,raw_user_meta_data) values
-    ('00000000-0000-0000-0000-000000000040','distributed-owner@example.test','{"full_name":"Distributed Owner"}'),
+    ('00000000-0000-0000-0000-000000000040','distributed-owner@example.test','{"full_name":"Distributed Owner","provisioned_by_kundexa":true}'),
     ('00000000-0000-0000-0000-000000000041','distributed-seller@example.test','{"full_name":"Distributed Seller"}'),
     ('00000000-0000-0000-0000-000000000042','distributed-lead@example.test','{"full_name":"Distributed Team Lead"}');
 `);
-await db.query(`select public.register_tenant_invitation($1,'00000000-0000-0000-0000-000000000040','distributed-owner@example.test','owner'::public.membership_role,array[$2]::uuid[],'Owner invite',now()+interval '7 days')`, [distributedTenantId, distributedDefaultTeamId]);
+await db.query(`select public.provision_user_security_state('00000000-0000-0000-0000-000000000040','00000000-0000-0000-0000-000000000014')`);
+await db.query(`select public.mark_tenant_invitation_auth_provisioned($1,'00000000-0000-0000-0000-000000000040',true)`, [distributedOwnerInvitationId]);
+await db.query(`select public.finalize_tenant_invitation($1,'00000000-0000-0000-0000-000000000040')`, [distributedOwnerInvitationId]);
 await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000040',false)`);
+const ownerGate = await db.query(`select * from public.current_user_security_state()`);
+if (!ownerGate.rows[0]?.must_change_password) throw new Error(`New owner did not receive first-login password gate: ${JSON.stringify(ownerGate.rows)}`);
+const ownerBeforePassword = await db.query(`select status,primary_team_id from public.tenant_memberships where tenant_id=$1 and user_id='00000000-0000-0000-0000-000000000040'`, [distributedTenantId]);
+if (ownerBeforePassword.rows[0]?.status !== 'invited' || ownerBeforePassword.rows[0]?.primary_team_id) throw new Error(`Owner became operational before password replacement: ${JSON.stringify(ownerBeforePassword.rows)}`);
+await db.query(`select public.complete_user_password_change('00000000-0000-0000-0000-000000000040')`);
 const activatedOwner = await db.query(`select public.activate_current_user_invitation() as tenant_id`);
-if (String(activatedOwner.rows[0].tenant_id) !== distributedTenantId) throw new Error(`Tenant owner invitation activation failed: ${JSON.stringify(activatedOwner.rows)}`);
+if (String(activatedOwner.rows[0].tenant_id) !== distributedTenantId) throw new Error(`Tenant owner invitation activation failed after password replacement: ${JSON.stringify(activatedOwner.rows)}`);
+const ownerTenantState = await db.query(`select onboarding_status from public.tenants where id=$1`, [distributedTenantId]);
+if (ownerTenantState.rows[0]?.onboarding_status !== 'active') throw new Error(`Owner activation did not activate tenant after password replacement: ${JSON.stringify(ownerTenantState.rows)}`);
 let crossTenantSegmentBlocked = false;
 try {
   await db.query(`select public.refresh_segment_materialization('00000000-0000-0000-0000-000000000008','00000000-0000-0000-0000-000000000040')`);
@@ -342,6 +395,15 @@ try {
 if (!scopedServiceCampaignMismatchBlocked) throw new Error("Tenant-scoped service campaign materialization accepted foreign resources");
 const distributedTeamResult = await db.query(`select public.create_managed_team('Distribution Team','Runtime team','Sales','Malmö','distribution',true,25,'automatic') as id`);
 const distributedTeamId = String(distributedTeamResult.rows[0].id);
+const ownerAutoManager = await db.query(`select count(*)::int as count from public.team_members where tenant_id=$1 and team_id=$2 and user_id='00000000-0000-0000-0000-000000000040' and role='manager'`, [distributedTenantId, distributedTeamId]);
+if (Number(ownerAutoManager.rows[0].count) !== 0) throw new Error(`Owner/admin team creator was incorrectly auto-assigned as manager: ${JSON.stringify(ownerAutoManager.rows)}`);
+let missingPrimaryRejected = false;
+try {
+  await db.query(`select public.reserve_tenant_invitation_v2($1,'no-primary@example.test','sales'::public.membership_role,array[$2]::uuid[],null,null,now()+interval '7 days','verify:no-primary')`, [distributedTenantId, distributedTeamId]);
+} catch (error) {
+  missingPrimaryRejected = String(error).includes('primary_team_required');
+}
+if (!missingPrimaryRejected) throw new Error('Sales provisioning without an explicit primary team was not rejected');
 await db.query(`select public.register_tenant_invitation($1,'00000000-0000-0000-0000-000000000041','distributed-seller@example.test','sales'::public.membership_role,array[$2]::uuid[],'Seller invite',now()+interval '7 days')`, [distributedTenantId, distributedTeamId]);
 await db.query(`select public.register_tenant_invitation($1,'00000000-0000-0000-0000-000000000042','distributed-lead@example.test','team_lead'::public.membership_role,array[$2]::uuid[],'Lead invite',now()+interval '7 days')`, [distributedTenantId, distributedTeamId]);
 for (const userId of ['00000000-0000-0000-0000-000000000041','00000000-0000-0000-0000-000000000042']) {
@@ -349,6 +411,26 @@ for (const userId of ['00000000-0000-0000-0000-000000000041','00000000-0000-0000
   const activation = await db.query(`select public.activate_current_user_invitation() as tenant_id`);
   if (String(activation.rows[0].tenant_id) !== distributedTenantId) throw new Error(`Seller/team-lead invitation activation failed for ${userId}`);
 }
+const explicitPrimaryState = await db.query(`
+  select m.user_id,m.role,m.primary_team_id,tm.role as team_role,tm.is_primary
+  from public.tenant_memberships m
+  join public.team_members tm on tm.tenant_id=m.tenant_id and tm.user_id=m.user_id and tm.team_id=m.primary_team_id
+  where m.tenant_id=$1 and m.user_id in ('00000000-0000-0000-0000-000000000041','00000000-0000-0000-0000-000000000042')
+  order by m.user_id
+`, [distributedTenantId]);
+if (explicitPrimaryState.rows.length !== 2 || explicitPrimaryState.rows.some((row) => String(row.primary_team_id) !== distributedTeamId || row.is_primary !== true)) {
+  throw new Error(`Explicit primary-team activation failed: ${JSON.stringify(explicitPrimaryState.rows)}`);
+}
+const leadState = explicitPrimaryState.rows.find((row) => row.role === 'team_lead');
+if (!leadState || leadState.team_role !== 'manager') throw new Error(`Team lead was not activated as manager of the explicit primary team: ${JSON.stringify(explicitPrimaryState.rows)}`);
+const sellerState = explicitPrimaryState.rows.find((row) => row.role === 'sales');
+if (!sellerState || sellerState.team_role !== 'member') throw new Error(`Sales role received an invalid team-manager relation: ${JSON.stringify(explicitPrimaryState.rows)}`);
+
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000040',false)`);
+const explicitManagerTeam = await db.query(`select public.create_managed_team_v2('Managed Explicitly','Runtime manager assignment','Sales','Malmö','managed-explicit',true,25,'manual','00000000-0000-0000-0000-000000000042') as id`);
+const explicitManagerTeamId = String(explicitManagerTeam.rows[0].id);
+const explicitManagerState = await db.query(`select role from public.team_members where tenant_id=$1 and team_id=$2 and user_id='00000000-0000-0000-0000-000000000042'`, [distributedTenantId, explicitManagerTeamId]);
+if (explicitManagerState.rows.length !== 1 || explicitManagerState.rows[0].role !== 'manager') throw new Error(`Explicit team manager assignment failed: ${JSON.stringify(explicitManagerState.rows)}`);
 await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000014',false)`);
 const platformListResult = await db.query(`
   insert into public.platform_lists(name,source_provider,status,exclusivity_mode,default_exclusive_days,created_by)
@@ -420,16 +502,28 @@ const allocationRuntime = allocationState.rows[0];
 if (Number(allocationRuntime.converted)!==1 || Number(allocationRuntime.revoked)!==1 || Number(allocationRuntime.tenant_scoped_entries)!==2 || Number(allocationRuntime.safely_detached_entries)!==1 || Number(allocationRuntime.preserved_members)!==1 || Number(allocationRuntime.paused_lists)!==2 || Number(allocationRuntime.consumed_entries)!==1 || Number(allocationRuntime.available_entries)!==1) {
   throw new Error(`Safe platform allocation revocation failed: ${JSON.stringify(allocationRuntime)}`);
 }
+await db.exec(`
+  select public.provision_user_security_state('00000000-0000-0000-0000-000000000041','00000000-0000-0000-0000-000000000040');
+  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000041',false);
+`);
+const firstLoginState = await db.query(`select * from public.current_user_security_state()`);
+if (firstLoginState.rows.length !== 1 || firstLoginState.rows[0].must_change_password !== true) throw new Error(`First-login password gate state was not set: ${JSON.stringify(firstLoginState.rows)}`);
+await db.query(`select public.complete_user_password_change('00000000-0000-0000-0000-000000000041')`);
+const completedLoginState = await db.query(`select * from public.current_user_security_state()`);
+if (completedLoginState.rows.length !== 1 || completedLoginState.rows[0].must_change_password !== false || !completedLoginState.rows[0].password_changed_at) throw new Error(`Password-change completion state invalid: ${JSON.stringify(completedLoginState.rows)}`);
+
 console.log("Executed platform list bank, tenant invitation, team distribution, seller capacity and safe revocation runtime paths.");
 
 // Execute the canonical prospect -> assigned list -> claim -> call -> after-work -> order path.
 await db.exec(`
   select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
+  begin;
+  set constraints all deferred;
   insert into auth.users(id,email,raw_user_meta_data) values('00000000-0000-0000-0000-000000000020','seller@example.test','{"full_name":"Runtime Seller"}');
-  insert into public.tenant_memberships(tenant_id,user_id,role,status,joined_at) values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000020','sales','active',now());
+  insert into public.tenant_memberships(tenant_id,user_id,role,status,joined_at,primary_team_id) values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000020','sales','active',now(),'00000000-0000-0000-0000-000000000026');
   insert into public.teams(id,tenant_id,name,is_default) values('00000000-0000-0000-0000-000000000026','00000000-0000-0000-0000-000000000001','Runtime Sales Team',true);
-  insert into public.team_members(tenant_id,team_id,user_id,role)
-    select '00000000-0000-0000-0000-000000000001',id,'00000000-0000-0000-0000-000000000020','member' from public.teams where tenant_id='00000000-0000-0000-0000-000000000001' and is_default limit 1;
+  insert into public.team_members(tenant_id,team_id,user_id,role,is_primary)
+    values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000026','00000000-0000-0000-0000-000000000020','member',true);
   update public.profiles set active_tenant_id='00000000-0000-0000-0000-000000000001' where id='00000000-0000-0000-0000-000000000020';
   insert into public.customers(id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by)
   values
@@ -447,6 +541,7 @@ await db.exec(`
   insert into public.products(id,tenant_id,name,sku,active) values('00000000-0000-0000-0000-000000000023','00000000-0000-0000-0000-000000000001','Runtime Product','RUNTIME-PRODUCT',true);
   insert into public.product_price_versions(id,tenant_id,product_id,version,currency,setup_fee,recurring_fee,valid_from,active)
   values('00000000-0000-0000-0000-000000000024','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000023',1,'SEK',100,200,current_date,true);
+  commit;
 `);
 const defaultTeam = await db.query(`select id from public.teams where tenant_id='00000000-0000-0000-0000-000000000001' and is_default limit 1`);
 const runtimeTeamId = String(defaultTeam.rows[0].id);
@@ -621,10 +716,14 @@ await db.exec(`
     ('00000000-0000-0000-0000-000000000074','admin-b@example.test');
   insert into public.tenants(id,slug,name,legal_name)
     values('00000000-0000-0000-0000-000000000051','rinkel-tenant-b','Rinkel Tenant B','Rinkel Tenant B AB');
-  insert into public.tenant_memberships(tenant_id,user_id,role,status,joined_at)
+  insert into public.teams(id,tenant_id,name,is_default)
+    values('00000000-0000-0000-0000-000000000076','00000000-0000-0000-0000-000000000051','Rinkel Tenant B Sales',true);
+  insert into public.tenant_memberships(tenant_id,user_id,role,status,joined_at,primary_team_id)
     values
-    ('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000050','sales','active',now()),
-    ('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000074','admin','active',now());
+    ('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000050','sales','active',now(),'00000000-0000-0000-0000-000000000076'),
+    ('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000074','admin','active',now(),null);
+  insert into public.team_members(tenant_id,team_id,user_id,role,is_primary)
+    values('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000076','00000000-0000-0000-0000-000000000050','member',true);
   update public.profiles
     set active_tenant_id='00000000-0000-0000-0000-000000000051'
     where id in(

@@ -5,10 +5,9 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { getPlatformContext, isPlatformAdmin } from "@/lib/auth";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { serverEnv } from "@/lib/env";
-import { findAuthUserByEmail } from "@/lib/supabase/auth-admin-users";
+import { provisionUser } from "@/lib/users/provision-user";
+import { sendProvisioningNotification } from "@/lib/users/provisioning-notifications";
 
 const value = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
 const message = (error: { message?: string } | null | undefined) => encodeURIComponent((error?.message ?? "Åtgärden misslyckades").replaceAll("_", " "));
@@ -18,57 +17,55 @@ export async function createPlatformTenantAndInviteOwner(form: FormData) {
   const context = await getPlatformContext();
   if (!isPlatformAdmin(context.platformRole)) redirect("/app/platform?error=Plattformsadmin krävs");
   const parsed = z.object({
-    name: z.string().min(2).max(120), legalName: z.string().min(2).max(200),
-    organizationNumber: z.string().max(40), ownerEmail: z.email(), timezone: z.string().min(3).max(80),
+    name: z.string().min(2).max(120), legalName: z.string().min(2).max(200), organizationNumber: z.string().max(40),
+    ownerFirstName: z.string().min(1).max(100), ownerLastName: z.string().min(1).max(100), ownerEmail: z.email(),
+    temporaryPassword: z.string().max(128), temporaryPasswordConfirm: z.string().max(128), timezone: z.string().min(3).max(80), locale: z.string().min(2).max(20),
   }).safeParse({
     name: value(form, "name"), legalName: value(form, "legal_name"), organizationNumber: value(form, "organization_number"),
-    ownerEmail: value(form, "owner_email").toLowerCase(), timezone: value(form, "timezone") || "Europe/Stockholm",
+    ownerFirstName: value(form, "owner_first_name"), ownerLastName: value(form, "owner_last_name"), ownerEmail: value(form, "owner_email").toLowerCase(),
+    temporaryPassword: String(form.get("temporary_password") ?? ""), temporaryPasswordConfirm: String(form.get("temporary_password_confirm") ?? ""),
+    timezone: value(form, "timezone") || "Europe/Stockholm", locale: value(form, "locale") || "sv-SE",
   });
   if (!parsed.success) redirect("/app/platform?error=Kontrollera tenant- och ägaruppgifterna");
+  if (parsed.data.temporaryPassword !== parsed.data.temporaryPasswordConfirm) redirect("/app/platform?error=De tillfälliga lösenorden matchar inte");
+
   const supabase = await createClient();
-  const created = await supabase.rpc("create_platform_tenant", {
-    p_name: parsed.data.name, p_legal_name: parsed.data.legalName,
-    p_organization_number: parsed.data.organizationNumber || null, p_country_code: "SE",
-    p_timezone: parsed.data.timezone, p_locale: "sv-SE",
-  });
-  if (created.error || !created.data) redirect(`/app/platform?error=${message(created.error)}`);
-  const tenantId = String(created.data);
-  const admin = createAdminClient();
-  const team = await admin.from("teams").select("id").eq("tenant_id", tenantId).eq("is_default", true).limit(1).single();
-  if (team.error || !team.data) redirect("/app/platform?error=Tenant skapades men standardteamet kunde inte hittas");
-
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-  const reservation = await supabase.rpc("reserve_tenant_invitation", {
-    p_tenant_id: tenantId,
-    p_email: parsed.data.ownerEmail,
-    p_role: "owner",
-    p_team_ids: [team.data.id],
-    p_message: "Du har bjudits in som tenantägare i Kundexa.",
-    p_expires_at: expiresAt,
-    p_idempotency_key: `platform-owner:${randomUUID()}`,
+  const bootstrap = await supabase.rpc("create_or_resume_platform_tenant_owner", {
+    p_name: parsed.data.name, p_legal_name: parsed.data.legalName, p_organization_number: parsed.data.organizationNumber || null,
+    p_country_code: "SE", p_timezone: parsed.data.timezone, p_locale: parsed.data.locale, p_owner_email: parsed.data.ownerEmail,
+    p_expires_at: expiresAt, p_idempotency_key: `platform-owner:${randomUUID()}`,
   });
-  if (reservation.error || !reservation.data) redirect(`/app/platform?error=${message(reservation.error)}`);
-  const invitationId = String(reservation.data);
+  if (bootstrap.error || !bootstrap.data || typeof bootstrap.data !== "object" || Array.isArray(bootstrap.data)) redirect(`/app/platform?error=${message(bootstrap.error)}`);
+  const tenantId = String((bootstrap.data as { tenant_id?: string }).tenant_id ?? "");
+  const invitationId = String((bootstrap.data as { invitation_id?: string }).invitation_id ?? "");
+  if (!tenantId || !invitationId) redirect("/app/platform?error=Tenantbasen kunde inte provisioneras komplett");
 
-  let user = await findAuthUserByEmail(parsed.data.ownerEmail);
-  if (!user) {
-    const invited = await admin.auth.admin.inviteUserByEmail(parsed.data.ownerEmail, {
-      redirectTo: `${serverEnv().NEXT_PUBLIC_APP_URL}/auth/callback`,
-      data: { invited_tenant_id: tenantId, invited_role: "owner", tenant_invitation_id: invitationId },
+  let provisioned: Awaited<ReturnType<typeof provisionUser>>;
+  try {
+    provisioned = await provisionUser({
+      email: parsed.data.ownerEmail,
+      firstName: parsed.data.ownerFirstName,
+      lastName: parsed.data.ownerLastName,
+      temporaryPassword: parsed.data.temporaryPassword,
+      invitationId,
+      provisionedBy: context.userId,
     });
-    if (invited.error || !invited.data.user) {
-      await supabase.rpc("fail_tenant_invitation", { p_invitation_id: invitationId, p_reason: invited.error?.message ?? "auth_invitation_failed" });
-      redirect(`/app/platform?error=${message(invited.error)}`);
-    }
-    user = invited.data.user;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "owner_auth_provisioning_failed";
+    await supabase.rpc("fail_tenant_invitation", { p_invitation_id: invitationId, p_reason: reason });
+    redirect("/app/platform?error=Tenant skapades men ägaren kunde inte provisioneras. Flödet kan återupptas säkert.");
   }
-  const finalized = await supabase.rpc("finalize_tenant_invitation", { p_invitation_id: invitationId, p_invited_user_id: user.id });
+
+  const finalized = await supabase.rpc("finalize_tenant_invitation", { p_invitation_id: invitationId, p_invited_user_id: provisioned.user.id });
   if (finalized.error) {
     await supabase.rpc("fail_tenant_invitation", { p_invitation_id: invitationId, p_reason: finalized.error.message });
     redirect(`/app/platform?error=${message(finalized.error)}`);
   }
+  const notification = await sendProvisioningNotification({ email: parsed.data.ownerEmail, tenantName: parsed.data.name, created: provisioned.created });
+  if (!notification.sent) console.warn("owner_provisioning_notification_not_sent", { tenantId, userId: provisioned.user.id, reason: notification.reason });
   revalidatePath("/app/platform");
-  redirect(`/app/platform?message=${encodeURIComponent("Tenant skapades. Ägaren är reserverad och tenant blir aktiv först när inbjudan accepteras.")}`);
+  redirect(`/app/platform?message=${encodeURIComponent(provisioned.created ? "Tenant och ägare skapades. Ägaren måste byta det tillfälliga lösenordet vid första inloggningen." : "Tenant skapades och det befintliga Kundexa-kontot lades till som ägare utan lösenordsändring.")}`);
 }
 
 export async function allocatePlatformList(form: FormData) {

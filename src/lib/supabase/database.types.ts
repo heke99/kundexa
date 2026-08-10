@@ -13640,6 +13640,10 @@ export type Database = {
         Args: { p_error?: string; p_job_id: string }
         Returns: undefined
       }
+      complete_user_password_change: {
+        Args: { p_user_id: string }
+        Returns: undefined
+      }
       configure_generic_json_provider: {
         Args: {
           p_allowed_domains: string[]
@@ -13873,11 +13877,39 @@ export type Database = {
         }
         Returns: string
       }
+      create_managed_team_v2: {
+        Args: {
+          p_code?: string
+          p_default_dialing_mode?: string
+          p_department?: string
+          p_description?: string
+          p_invite_sellers_enabled?: boolean
+          p_manager_user_id?: string
+          p_max_members?: number
+          p_name: string
+          p_office?: string
+        }
+        Returns: string
+      }
       create_or_match_manual_prospect: {
         Args: {
           p_customer_type?: Database["public"]["Enums"]["customer_type"]
           p_display_name: string
           p_phone_e164: string
+        }
+        Returns: Json
+      }
+      create_or_resume_platform_tenant_owner: {
+        Args: {
+          p_country_code: string
+          p_expires_at?: string
+          p_idempotency_key?: string
+          p_legal_name: string
+          p_locale: string
+          p_name: string
+          p_organization_number: string
+          p_owner_email: string
+          p_timezone: string
         }
         Returns: Json
       }
@@ -13905,6 +13937,13 @@ export type Database = {
         Returns: Database["public"]["Enums"]["membership_role"]
       }
       current_tenant_id: { Args: never; Returns: string }
+      current_user_security_state: {
+        Args: never
+        Returns: {
+          must_change_password: boolean
+          password_changed_at: string
+        }[]
+      }
       customer_has_legal_retention: {
         Args: { p_customer_id: string; p_tenant_id: string }
         Returns: boolean
@@ -14350,6 +14389,15 @@ export type Database = {
       get_current_user_rinkel_numbers: { Args: never; Returns: Json }
       get_managed_team_rinkel_resources: { Args: never; Returns: Json }
       get_tenant_rinkel_resources: { Args: never; Returns: Json }
+      get_user_security_state_for_provisioning: {
+        Args: { p_user_id: string }
+        Returns: {
+          must_change_password: boolean
+          password_changed_at: string
+          provisioned_at: string
+          user_id: string
+        }[]
+      }
       gettransactionid: { Args: never; Returns: unknown }
       has_current_role: { Args: { p_roles: string[] }; Returns: boolean }
       haversine_km: {
@@ -14413,6 +14461,14 @@ export type Database = {
         Returns: boolean
       }
       mark_acceptance_opened: { Args: { p_request_id: string }; Returns: Json }
+      mark_tenant_invitation_auth_provisioned: {
+        Args: {
+          p_auth_user_was_created: boolean
+          p_invitation_id: string
+          p_user_id: string
+        }
+        Returns: undefined
+      }
       materialize_segment_to_campaign: {
         Args: { p_actor?: string; p_campaign_id: string; p_segment_id: string }
         Returns: Json
@@ -14569,6 +14625,10 @@ export type Database = {
       process_parsehub_import_run: {
         Args: { p_parsehub_run_id: string }
         Returns: Json
+      }
+      provision_user_security_state: {
+        Args: { p_provisioned_by: string; p_user_id: string }
+        Returns: undefined
       }
       prune_rate_limit_counters: {
         Args: { p_limit?: number; p_older_than?: string }
@@ -14941,6 +15001,19 @@ export type Database = {
           p_expires_at?: string
           p_idempotency_key?: string
           p_message?: string
+          p_role: Database["public"]["Enums"]["membership_role"]
+          p_team_ids?: string[]
+          p_tenant_id: string
+        }
+        Returns: string
+      }
+      reserve_tenant_invitation_v2: {
+        Args: {
+          p_email: string
+          p_expires_at?: string
+          p_idempotency_key?: string
+          p_message?: string
+          p_primary_team_id?: string
           p_role: Database["public"]["Enums"]["membership_role"]
           p_team_ids?: string[]
           p_tenant_id: string
@@ -15822,6 +15895,13 @@ export type Database = {
         Returns: string
       }
       telephony_status_for_current_user: { Args: never; Returns: Json }
+      tenant_user_security_states: {
+        Args: never
+        Returns: {
+          must_change_password: boolean
+          user_id: string
+        }[]
+      }
       undo_master_entity_merge: {
         Args: { p_actor: string; p_decision_id: string }
         Returns: undefined
@@ -15880,6 +15960,18 @@ export type Database = {
       }
       update_tenant_member_v2: {
         Args: {
+          p_reassign_user_id?: string
+          p_restore_team_assignments?: boolean
+          p_role: Database["public"]["Enums"]["membership_role"]
+          p_status: Database["public"]["Enums"]["membership_status"]
+          p_team_ids?: string[]
+          p_user_id: string
+        }
+        Returns: undefined
+      }
+      update_tenant_member_v3: {
+        Args: {
+          p_primary_team_id?: string
           p_reassign_user_id?: string
           p_restore_team_assignments?: boolean
           p_role: Database["public"]["Enums"]["membership_role"]
