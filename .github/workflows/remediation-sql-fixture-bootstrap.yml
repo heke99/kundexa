@@ -10,16 +10,16 @@ permissions:
 
 jobs:
   apply:
-    if: ${{ hashFiles('.remediation-bootstrap/sql-fixture.patch') != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Apply verified fixture patch
+      - name: Apply fixture patch and remove bootstrap
         shell: bash
         run: |
           set -euo pipefail
+          test -f .remediation-bootstrap/sql-fixture.patch
           git apply --check .remediation-bootstrap/sql-fixture.patch
           git apply .remediation-bootstrap/sql-fixture.patch
           git diff --check
