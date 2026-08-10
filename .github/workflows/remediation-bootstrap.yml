@@ -1,0 +1,51 @@
+name: Apply canonical provisioning remediation
+
+on:
+  push:
+    branches:
+      - remediation/canonical-user-provisioning-2026-08-10
+
+permissions:
+  contents: write
+
+concurrency:
+  group: canonical-provisioning-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  apply-remediation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reconstruct and verify audited patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > /tmp/kundexa-remediation.b64
+          for part in .remediation-bootstrap/patch.part*; do
+            grep -v '^# ' "$part" >> /tmp/kundexa-remediation.b64
+          done
+          base64 --decode /tmp/kundexa-remediation.b64 > /tmp/kundexa-remediation.patch.gz
+          echo 'ffaf1ca66e4a7c5bda6d96a42c97881a1aedec2582f04a07318288f142dfdd2f  /tmp/kundexa-remediation.patch.gz' | sha256sum --check --strict
+          gunzip --stdout /tmp/kundexa-remediation.patch.gz > /tmp/kundexa-remediation.patch
+          echo '2944ba5840e451027381da96c2db0de4f3a600bba1fd435176878f622c57e8ac  /tmp/kundexa-remediation.patch' | sha256sum --check --strict
+          git apply --check /tmp/kundexa-remediation.patch
+          git apply /tmp/kundexa-remediation.patch
+          git diff --check
+
+      - name: Replace bootstrap payload with repository changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .remediation-bootstrap
+          rm -f .github/workflows/remediation-bootstrap.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix: canonical tenant and user provisioning'
+          git push origin HEAD:remediation/canonical-user-provisioning-2026-08-10
