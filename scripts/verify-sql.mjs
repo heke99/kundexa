@@ -716,10 +716,14 @@ await db.exec(`
     ('00000000-0000-0000-0000-000000000074','admin-b@example.test');
   insert into public.tenants(id,slug,name,legal_name)
     values('00000000-0000-0000-0000-000000000051','rinkel-tenant-b','Rinkel Tenant B','Rinkel Tenant B AB');
-  insert into public.tenant_memberships(tenant_id,user_id,role,status,joined_at)
+  insert into public.teams(id,tenant_id,name,is_default)
+    values('00000000-0000-0000-0000-000000000076','00000000-0000-0000-0000-000000000051','Rinkel Tenant B Sales',true);
+  insert into public.tenant_memberships(tenant_id,user_id,role,status,joined_at,primary_team_id)
     values
-    ('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000050','sales','active',now()),
-    ('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000074','admin','active',now());
+    ('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000050','sales','active',now(),'00000000-0000-0000-0000-000000000076'),
+    ('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000074','admin','active',now(),null);
+  insert into public.team_members(tenant_id,team_id,user_id,role,is_primary)
+    values('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000076','00000000-0000-0000-0000-000000000050','member',true);
   update public.profiles
     set active_tenant_id='00000000-0000-0000-0000-000000000051'
     where id in(
