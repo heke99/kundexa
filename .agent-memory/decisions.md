@@ -99,13 +99,10 @@ The shared `/app` layout distinguishes `/app/platform/*` before resolving contex
 
 A user may possess both identities. Entering the control-plane does not grant tenant data; switching into a tenant still goes through the canonical `switch_active_tenant` RPC, which validates active membership.
 
-## ADR-0016 — Real Rinkel traffic is the production readiness proof
+## ADR-0016 — Incomplete Rinkel user payloads may not delete device inventory
 
-Synthetic provider webhook tests are diagnostics, not a release gate. Kundexa proves webhook readiness per event
-only after a real Rinkel event is durably ingested and successfully processed by the worker. A correlated real
-`outgoingCall` is also the proof that `/dial` is operational. Manual dial may be used to obtain this proof; automatic
-dial remains gated on all four core webhook types being verified and the worker being healthy.
-
-A Rinkel phone number has exactly one active tenant owner because inbound events identify the tenant through the
-called number. The owning tenant may grant that number to several of its teams. This preserves deterministic,
-tenant-safe inbound routing without creating parallel telephony models.
+Rinkel exposes both a user catalog endpoint and a user detail endpoint. Kundexa therefore does not assume that
+`GET /users` is an authoritative device inventory. Directory sync attempts `GET /users/:id` for each user and
+only deactivates stored device rows when the provider response is explicitly authoritative for devices. Missing
+or incomplete device information is preserved as a diagnostic state, never converted into a guessed provider id.
+Platform allocation fails closed when no synchronized active device exists.

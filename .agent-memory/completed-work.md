@@ -109,13 +109,11 @@
 - Corrected bootstrap guidance and removed its arbitrary Auth-user pagination ceiling.
 - Expanded regression and general verification gates to lock the architecture in place.
 
-## 2026-08-10 — Rinkel live-flow code closure
+## 2026-08-10 — Rinkel device mapping remediation
 
-- Removed the synthetic webhook-test dependency from production readiness.
-- Made real successfully processed provider events the webhook verification source of truth.
-- Collapsed public webhook persistence/queue/receipt/audit into one transactional ingest RPC.
-- Repaired dial/provider timestamp ownership and recovery-state monotonicity.
-- Made one active tenant owner per Rinkel number an enforced inbound-routing invariant while retaining multi-team sharing within that tenant.
-- Connected real correlated `outgoingCall` to dial readiness so `Driftklar` is reachable by evidence rather than a dead flag.
-- Updated platform UI, integration docs, staging protocol and regression/static verifiers to the same architecture.
-- Targeted Rinkel tests PASS 11/11; remediation regressions PASS; static 51-migration verifier PASS; changed TypeScript syntax PASS.
+- Added provider user-detail hydration for device discovery and compatibility parsing for common casing variants.
+- Made incomplete Rinkel device inventory non-destructive so a summary response cannot erase known devices.
+- Added central sync metadata and platform/tenant diagnostics for device completeness and provider detail failures.
+- Blocked platform allocation of a Rinkel user with no synchronized active device.
+- Added deterministic repair/auto-selection when exactly one active device exists; ambiguous multi-device users remain explicit.
+- Added SQL/runtime regression coverage for device-less allocation rejection and tenant projection diagnostics.

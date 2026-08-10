@@ -68,18 +68,16 @@ kräver en riktig Supabase-staging eller riktig Rinkel-provider är fortfarande 
 | Full `npm run verify` after this auth patch | NOT RUN | dependencies/Deno unavailable in this sandbox |
 | Live Supabase role/session proof | NOT RUN | Supabase MCP read denied permission |
 
-## 2026-08-10 Rinkel live-flow closure
+## 2026-08-10 — Rinkel device mapping remediation
 
-| Kontroll | Resultat | Kommentar |
+| Kontroll | Resultat | Evidens |
 |---|---|---|
-| `node scripts/remediation-regression-tests.mjs` | PASS | Live webhook verification, atomic ingest, dial timestamp/readiness and single-tenant number invariants |
-| `TERM=xterm node scripts/verify.mjs` | PASS | 51 migrationer och kanoniska Rinkel/Resend/tenant-invarianter |
-| Rinkel contract/unit suite | PASS 11/11 | Dial 204 contract, no POST retry, directory normalization, webhook registration and payload parsing |
-| Changed TS/TSX/MTS `transpileModule` | PASS | Rinkel client, actions, route, page, runtime type fallback and tests |
-| New migration structural checks | PASS | One transaction, balanced dollar blocks, no invalid `pg_catalog` special-form qualification |
-| Full `verify-sql.mjs` / PGlite replay | BLOCKED ENVIRONMENT | `@electric-sql/pglite` is unavailable in this artifact runtime; must run in normal workspace |
-| Linked Supabase SQL/migration inspection via MCP | BLOCKED PERMISSION | Connector returns MCP -32600 permission denied |
-| `npm run db:push` + `types:generate` + full `npm run verify` | NOT RUN | Required in linked user workspace before deploy |
-| Real outbound `outgoingCall → callStart → callEnd` | NOT RUN | Required provider acceptance gate |
-| Real inbound `incomingCall` | NOT RUN | Required provider acceptance gate; closes 4/4 |
-| CDR + recording reconciliation on same live call | NOT RUN | Required provider acceptance gate |
+| `node scripts/remediation-regression-tests.mjs` | PASS | Device hydration, non-destructive sync, allocation gate and UI mapping invariants |
+| `node scripts/verify.mjs` | PASS | Static verification recognizes 51 migrations; run with temporary global TypeScript link only for verifier execution |
+| Rinkel runtime/unit harness | PASS 15/15 | Includes `/users/:id` hydration, incomplete-inventory preservation, authoritative empty inventory and existing dial/webhook contracts |
+| Historical migration immutability | PASS | Only forward-only `202608100001_rinkel_device_inventory_mapping_hardening.sql` added |
+| Full `npm ci` | BLOCKED ENVIRONMENT | Internal mirror lacks `pdf-lib@1.17.1` |
+| Full `npm run verify` | NOT RUN | Project dependency set unavailable in sandbox; do not report as PASS |
+| PGlite SQL runtime replay | NOT RUN | Internal mirror lacks `@electric-sql/pglite` |
+| Linked Supabase migration/query | NOT RUN | Connector permission denied; must run from user's linked CLI/environment |
+| Real Rinkel device inventory + dial | NOT RUN | Requires provider account and real device allocation |

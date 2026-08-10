@@ -54,6 +54,22 @@ function time(value: string | null | undefined) {
   return value ? new Date(value).toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" }) : "aldrig";
 }
 
+function deviceSyncDiagnostic(raw: unknown) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { complete: false, source: "missing", error: null as string | null };
+  }
+  const meta = (raw as Record<string, unknown>)._kundexa_sync;
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
+    return { complete: false, source: "missing", error: null as string | null };
+  }
+  const value = meta as Record<string, unknown>;
+  return {
+    complete: value.device_inventory_complete === true,
+    source: typeof value.device_inventory_source === "string" ? value.device_inventory_source : "missing",
+    error: typeof value.device_inventory_error === "string" ? value.device_inventory_error : null,
+  };
+}
+
 export default async function PlatformTelephonyPage({
   searchParams,
 }: {
@@ -83,7 +99,7 @@ export default async function PlatformTelephonyPage({
   const integration = integrationResult.data;
   const results = await Promise.all([
     admin.from("platform_rinkel_capabilities").select("*").eq("platform_integration_id", integration.id).maybeSingle(),
-    admin.from("platform_rinkel_users").select("id,external_user_id,display_name,email,active,last_synced_at").eq("platform_integration_id", integration.id).order("display_name"),
+    admin.from("platform_rinkel_users").select("id,external_user_id,display_name,email,active,last_synced_at,raw_provider_data").eq("platform_integration_id", integration.id).order("display_name"),
     admin.from("platform_rinkel_devices").select("id,platform_rinkel_user_id,provider_device_id,display_name,device_type,provider_status,active,last_seen_at,last_synced_at").eq("platform_integration_id", integration.id).order("display_name"),
     admin.from("platform_rinkel_numbers").select("id,external_number_id,phone_number_e164,display_name,provider_status,active,recording_enabled,is_platform_default,last_synced_at").eq("platform_integration_id", integration.id).order("phone_number_e164"),
     admin.from("rinkel_user_allocations").select("id,rinkel_user_id,tenant_id,status,valid_from,valid_to").order("created_at", { ascending: false }),
@@ -193,7 +209,7 @@ export default async function PlatformTelephonyPage({
         <div className="grid grid-3" style={{ marginTop: 14 }}>
           <form action={testPlatformRinkelConnection}><button className="button button-secondary">Testa API och katalog</button></form>
           <form action={syncPlatformRinkelDirectory}><button className="button button-secondary">Synkronisera katalog</button></form>
-          <form action={configurePlatformRinkelWebhooks}><button className="button button-secondary">Registrera och synka webhookar</button></form>
+          <form action={configurePlatformRinkelWebhooks}><button className="button button-secondary">Registrera och testa webhookar</button></form>
         </div>
         <form action={setPlatformRinkelPaused} style={{ marginTop: 12 }}>
           <input type="hidden" name="paused" value={integration?.status === "disabled" ? "false" : "true"} />
@@ -225,7 +241,16 @@ export default async function PlatformTelephonyPage({
       <Card><CardHeader><h2>Rinkel-användare och enheter</h2><Badge>{users.length}</Badge></CardHeader><CardContent>{users.map((user) => {
         const allocation = activeUserAllocation.get(user.id);
         const userDevices = devicesByUser.get(user.id) ?? [];
-        return <div className="activity-line" key={user.id}><span className="activity-dot"><ShieldCheck size={14} /></span><div style={{ flex: 1 }}><strong>{user.display_name}</strong><p>{userDevices.filter((device) => device.active).length} aktiva enheter · {allocation ? tenantById.get(allocation.tenant_id) ?? allocation.tenant_id : "ledig"}</p>{userDevices.map((device) => <p className="muted" key={device.id}>{device.display_name ?? device.provider_device_id} · {device.provider_status} · synk {time(device.last_synced_at)}</p>)}</div><Badge className={user.active ? "badge-success" : "badge-warning"}>{user.active ? "aktiv" : "inaktiv"}</Badge>{allocation ? <form action={revokePlatformRinkelResource}><input type="hidden" name="resource_type" value="user" /><input type="hidden" name="allocation_id" value={allocation.id} /><input type="hidden" name="reason" value="Återkallad av plattformsadmin" /><button className="button button-ghost button-sm">Återkalla</button></form> : null}</div>;
+        const activeDevices = userDevices.filter((device) => device.active);
+        const diagnostic = deviceSyncDiagnostic(user.raw_provider_data);
+        const deviceMessage = activeDevices.length
+          ? `${activeDevices.length} aktiva enheter`
+          : diagnostic.error
+            ? `device-detaljer kunde inte hämtas (${diagnostic.error})`
+            : diagnostic.complete
+              ? "Rinkel rapporterar 0 aktiva enheter"
+              : "device-inventering saknas i providerdata";
+        return <div className="activity-line" key={user.id}><span className="activity-dot"><ShieldCheck size={14} /></span><div style={{ flex: 1 }}><strong>{user.display_name}</strong><p>{deviceMessage} · {allocation ? tenantById.get(allocation.tenant_id) ?? allocation.tenant_id : "ledig"}</p>{userDevices.map((device) => <p className="muted" key={device.id}>{device.display_name ?? device.provider_device_id} · {device.provider_status} · synk {time(device.last_synced_at)}</p>)}{!activeDevices.length ? <p className="form-error">Användaren kan inte mappas till en säljare förrän en riktig aktiv Rinkel-enhet har synkroniserats.</p> : null}</div><Badge className={user.active && activeDevices.length ? "badge-success" : "badge-warning"}>{user.active ? activeDevices.length ? "ringklar" : "saknar enhet" : "inaktiv"}</Badge>{allocation ? <form action={revokePlatformRinkelResource}><input type="hidden" name="resource_type" value="user" /><input type="hidden" name="allocation_id" value={allocation.id} /><input type="hidden" name="reason" value="Återkallad av plattformsadmin" /><button className="button button-ghost button-sm">Återkalla</button></form> : null}</div>;
       })}</CardContent></Card>
       <Card><CardHeader><h2>Telefonnummer och teamåtkomst</h2><Badge>{numbers.length}</Badge></CardHeader><CardContent>{numbers.map((number) => {
         const grants = teamGrantsByNumber.get(number.id) ?? [];
@@ -253,13 +278,24 @@ export default async function PlatformTelephonyPage({
           if (!tenantTeams.length) return null;
           return <div className="team-assignment-group" key={tenant.id}><strong>{tenant.name}</strong>{tenantTeams.map((team) => <label className="team-assignment-option" key={team.id}><input type="checkbox" name="team_ids" value={team.id} /><span>{team.name}</span></label>)}</div>;
         })}</fieldset>
-        <p className="muted">Välj ett eller flera team inom samma bolag. Ett telefonnummer kan delas av flera team i bolaget, men inte av flera bolag eftersom inkommande samtal annars blir tenant-tvetydiga.</p>
+        <p className="muted">Du kan välja team från flera bolag samtidigt. Alla aktiva medlemmar i valda team får använda numret.</p>
         <Field label="Anledning" name="reason" required />
         <button className="button button-primary">Tilldela till valda team</button>
       </form></CardContent></Card>
       <Card><CardHeader><h2>Tilldela telefoni-användare</h2></CardHeader><CardContent><form action={allocatePlatformRinkelResource} className="form-stack">
         <input type="hidden" name="resource_type" value="user" />
-        <SelectField label="Telefoni-användare" name="resource_id" required><option value="">Välj användare</option>{users.filter((user) => user.active).map((user) => <option key={user.id} value={user.id}>{user.display_name}</option>)}</SelectField>
+        <SelectField label="Telefoni-användare" name="resource_id" required><option value="">Välj användare</option>{users.filter((user) => user.active).map((user) => {
+          const activeDeviceCount = (devicesByUser.get(user.id) ?? []).filter((device) => device.active).length;
+          const diagnostic = deviceSyncDiagnostic(user.raw_provider_data);
+          const suffix = activeDeviceCount
+            ? `${activeDeviceCount} aktiva enheter`
+            : diagnostic.error
+              ? `device-synkfel ${diagnostic.error}`
+              : diagnostic.complete
+                ? "0 enheter hos Rinkel"
+                : "device-inventering ej verifierad";
+          return <option key={user.id} value={user.id} disabled={!activeDeviceCount}>{user.display_name} · {suffix}</option>;
+        })}</SelectField>
         <SelectField label="Bolag" name="tenant_id" required><option value="">Välj bolag</option>{tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.name}</option>)}</SelectField>
         <Field label="Anledning" name="reason" required />
         <button className="button button-primary">Tilldela användare</button>
@@ -267,7 +303,7 @@ export default async function PlatformTelephonyPage({
     </div>
 
     <div className="split-layout">
-      <Card><CardHeader><h2>Webhookar</h2><Badge>{coreVerified}/4 kärnevent</Badge></CardHeader><CardContent>{subscriptions.map((subscription) => <div className="activity-line" key={subscription.event_type}><span className="activity-dot"><Plug size={14} /></span><div style={{ flex: 1 }}><strong>{subscription.event_type}</strong><p>{subscription.required ? "Obligatorisk" : "Valfri"} · provider {subscription.provider_active ? "aktiv" : "ej aktiv"} · HTTP {subscription.last_http_status ?? "–"}</p><p className="muted">Registrerad {time(subscription.registered_at)} · senast mottaget {time(subscription.last_received_at)} · processat {time(subscription.last_processed_at)} · verifierat {time(subscription.last_verified_at)} · events {subscription.received_count}/{subscription.processed_count}/{subscription.failed_count} mottagna/processade/fel</p>{subscription.last_error_code ? <p className="form-error">{subscription.last_error_code}: {subscription.last_error_message}</p> : null}</div><Badge className={subscription.status === "verified" ? "badge-success" : subscription.status === "unsupported" ? "" : "badge-warning"}>{subscription.status}</Badge></div>)}</CardContent></Card>
+      <Card><CardHeader><h2>Webhookar</h2><Badge>{coreVerified}/4 kärnevent</Badge></CardHeader><CardContent>{subscriptions.map((subscription) => <div className="activity-line" key={subscription.event_type}><span className="activity-dot"><Plug size={14} /></span><div style={{ flex: 1 }}><strong>{subscription.event_type}</strong><p>{subscription.required ? "Obligatorisk" : "Valfri"} · provider {subscription.provider_active ? "aktiv" : "ej aktiv"} · HTTP {subscription.last_http_status ?? "–"}</p><p className="muted">Registrerad {time(subscription.registered_at)} · test begärt {time(subscription.test_requested_at)} · mottaget {time(subscription.test_received_at)} · processat {time(subscription.last_processed_at)} · events {subscription.received_count}/{subscription.processed_count}/{subscription.failed_count} mottagna/processade/fel</p>{subscription.last_error_code ? <p className="form-error">{subscription.last_error_code}: {subscription.last_error_message}</p> : null}</div><Badge className={subscription.status === "verified" ? "badge-success" : subscription.status === "unsupported" ? "" : "badge-warning"}>{subscription.status}</Badge></div>)}</CardContent></Card>
       <Card><CardHeader><h2>Öppna konflikter</h2><Badge className={conflicts.length ? "badge-warning" : "badge-success"}>{conflicts.length}</Badge></CardHeader><CardContent>{conflicts.length ? conflicts.map((conflict) => <div className="activity-line" key={conflict.id}><span className="activity-dot"><ShieldCheck size={14} /></span><div style={{ flex: 1 }}><strong>{conflict.conflict_type}</strong><p>{conflict.provider_resource_type} · {conflict.provider_resource_key}</p></div>{conflict.event_id ? <form action={reprocessPlatformRinkelEvent}><input type="hidden" name="conflict_id" value={conflict.id} /><button className="button button-ghost button-sm">Återbehandla</button></form> : null}</div>) : <p>Inga öppna korrelations- eller allokeringskonflikter.</p>}</CardContent></Card>
     </div>
 

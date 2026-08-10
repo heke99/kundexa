@@ -21,6 +21,10 @@ type TenantRinkelResources = {
     displayName: string;
     email: string | null;
     hasDevice: boolean;
+    activeDeviceCount?: number;
+    deviceInventoryComplete?: boolean;
+    deviceInventorySource?: string | null;
+    deviceInventoryError?: string | null;
     active: boolean;
     devices: Array<{ id: string; providerDeviceId: string; displayName: string | null; deviceType: string | null; status: string; active: boolean; lastSyncedAt: string }>;
   }>;

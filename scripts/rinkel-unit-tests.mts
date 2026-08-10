@@ -9,6 +9,7 @@ import {
   normalizeRinkelUser,
   parseRinkelWebhookPayload,
   safeRinkelError,
+  staleRinkelDeviceIds,
 } from "../supabase/functions/_shared/rinkel.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -175,34 +176,92 @@ Deno.test("sends the documented dial request once and accepts 204", async () => 
   equal(capturedBody.anonymous, false, "dial anonymous flag");
 });
 
-Deno.test("registers a Rinkel webhook with the documented provider contract", async () => {
+Deno.test("sends webhook test URL in the documented request body", async () => {
   let capturedUrl = "";
   let capturedMethod = "";
-  let capturedHeader = "";
   let capturedBodyJson = "{}";
   const client = new RinkelClient({
     apiKey: "test-key",
     fetchImpl: ((input, init) => {
       capturedUrl = String(input);
       capturedMethod = String(init?.method ?? "GET");
-      capturedHeader = new Headers(init?.headers).get("x-rinkel-api-key") ?? "";
       capturedBodyJson = String(init?.body ?? "{}");
       return Promise.resolve(new Response(null, { status: 204 }));
     }) as typeof fetch,
   });
-  await client.subscribeWebhook("outgoingCall", {
-    url: "https://app.example.test/api/webhooks/rinkel/redacted/outgoingCall",
-    contentType: "application/json",
-    active: true,
-    description: "Kundexa central Rinkel webhook",
-  });
-  assert(capturedUrl.endsWith("/v1/webhooks/outgoingCall"), "webhook endpoint");
-  equal(capturedMethod, "POST", "webhook method");
-  equal(capturedHeader, "test-key", "webhook auth header");
-  const body = JSON.parse(capturedBodyJson) as Record<string, unknown>;
-  equal(body.url, "https://app.example.test/api/webhooks/rinkel/redacted/outgoingCall", "webhook URL");
-  equal(body.contentType, "application/json", "webhook content type");
-  equal(body.active, true, "webhook active");
-  equal(body.description, "Kundexa central Rinkel webhook", "webhook description");
+  const webhookUrl = "https://app.kundexa.se/api/webhooks/rinkel/test-secret/callEnd";
+  await client.testWebhook("callEnd", webhookUrl);
+  assert(capturedUrl.endsWith("/v1/webhooks/callEnd/test"), "webhook test endpoint");
+  equal(capturedMethod, "POST", "webhook test method");
+  const capturedBody = JSON.parse(capturedBodyJson) as { url?: unknown };
+  equal(capturedBody.url, webhookUrl, "webhook test url");
 });
 
+
+Deno.test("hydrates Rinkel user device inventory from the documented user detail endpoint", async () => {
+  const seen: string[] = [];
+  const client = new RinkelClient({
+    apiKey: "test-key",
+    fetchImpl: ((input) => {
+      const url = String(input);
+      seen.push(url);
+      if (url.endsWith("/v1/users")) {
+        return Promise.resolve(Response.json({ data: [{ id: "u1", fullName: "Ada", email: "ada@example.test" }] }));
+      }
+      if (url.endsWith("/v1/users/u1")) {
+        return Promise.resolve(Response.json({ data: {
+          id: "u1",
+          fullName: "Ada",
+          email: "ada@example.test",
+          devices: [{ id: "device-detail-1", displayName: "Webphone", status: "active" }],
+        } }));
+      }
+      return Promise.resolve(new Response("not found", { status: 404 }));
+    }) as typeof fetch,
+  });
+  const users = await client.listUsersWithDeviceDetails();
+  equal(seen.length, 2, "list + detail requests");
+  equal(users[0].devices.length, 1, "hydrated device count");
+  equal(users[0].deviceId, "device-detail-1", "hydrated default device");
+  assert(users[0].deviceInventoryComplete, "detail devices[] must be authoritative");
+});
+
+Deno.test("preserves stored devices when Rinkel device inventory is incomplete", () => {
+  const incomplete = normalizeRinkelUser({ id: "u1", fullName: "Ada" });
+  assert(!incomplete.deviceInventoryComplete, "summary without devices must remain incomplete");
+  equal(staleRinkelDeviceIds(incomplete, ["known-device"] ).length, 0, "incomplete inventory must not stale devices");
+
+  const authoritative = normalizeRinkelUser({
+    id: "u1",
+    fullName: "Ada",
+    devices: [{ id: "current-device", status: "active" }],
+  });
+  const stale = staleRinkelDeviceIds(authoritative, ["current-device", "removed-device"]);
+  equal(stale.length, 1, "authoritative inventory stale count");
+  equal(stale[0], "removed-device", "only absent authoritative device should stale");
+});
+
+Deno.test("supports scalar and snake_case Rinkel device identifiers without treating them as complete inventory", () => {
+  const user = normalizeRinkelUser({
+    user_id: "u-snake",
+    full_name: "Snake User",
+    device_id: "device-snake",
+  });
+  equal(user.id, "u-snake", "snake user id");
+  equal(user.deviceId, "device-snake", "snake device id");
+  equal(user.devices[0].id, "device-snake", "snake synthesized device");
+  assert(!user.deviceInventoryComplete, "scalar device is usable but not complete inventory");
+});
+
+
+Deno.test("authoritative Rinkel devices array wins over stale scalar device id", () => {
+  const user = normalizeRinkelUser({
+    id: "u-authoritative",
+    fullName: "Authoritative User",
+    defaultDeviceId: "stale-default",
+    devices: [],
+  });
+  assert(user.deviceInventoryComplete, "explicit devices[] must be authoritative");
+  equal(user.devices.length, 0, "stale scalar must not create a phantom device");
+  equal(user.deviceId, null, "stale scalar must not remain dialable when authoritative inventory is empty");
+});

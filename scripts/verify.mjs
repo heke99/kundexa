@@ -7,6 +7,9 @@ const root = new URL("../", import.meta.url).pathname;
 const migrationDir = join(root, "supabase/migrations");
 const migrations = (await readdir(migrationDir)).filter((name) => name.endsWith(".sql")).sort();
 assert.ok(migrations.length >= 22, "Expected at least twenty-two migrations");
+const migrationVersions = migrations.map((name) => name.match(/^(\d+)_/)?.[1] ?? "");
+assert.ok(migrationVersions.every(Boolean), "Every migration filename must start with a numeric version");
+assert.equal(new Set(migrationVersions).size, migrationVersions.length, "Migration versions must be unique");
 for (let i = 1; i < migrations.length; i++) assert.ok(migrations[i] > migrations[i - 1], "Migrations must be ordered");
 const sql = (await Promise.all(migrations.map((name) => readFile(join(migrationDir, name), "utf8")))).join("\n");
 
@@ -255,14 +258,23 @@ const rinkelWebhookSecurity = await readFile(join(root, "src/lib/webhooks/rinkel
 assert.match(rinkelWebhookSecurity, /process\.env\.VERCEL === "1"/, "Rinkel IP extraction must trust Vercel's controlled forwarding header only on Vercel");
 assert.match(rinkelWebhookSecurity, /RINKEL_TRUST_X_REAL_IP/, "Non-Vercel x-real-ip trust must be explicit and disabled by default");
 assert.match(rinkelWebhookSecurity, /RINKEL_WEBHOOK_ALLOWED_IPS/, "Documented Rinkel source IPs must be configurable server-side");
-for (const pattern of [/verifyRinkelNetwork/, /authenticatePlatformRinkelWebhook/, /parseRinkelWebhookRequest/, /ingest_platform_rinkel_webhook_event/]) {
-  assert.match(rinkelWebhook, pattern, `Rinkel webhook invariant missing: ${pattern}`);
+for (const pattern of [/verifyRinkelNetwork/, /authenticatePlatformRinkelWebhook/, /parseRinkelWebhookRequest/, /admin\.rpc\("ingest_platform_rinkel_webhook_event"/, /status:\s*503/, /status:\s*200/]) {
+  assert.match(rinkelWebhook, pattern, `Rinkel webhook route invariant missing: ${pattern}`);
 }
-assert.doesNotMatch(rinkelWebhook, /from\("platform_rinkel_webhook_events"\)/, "Rinkel webhook callback must not perform direct event-table roundtrips");
-assert.doesNotMatch(rinkelWebhook, /from\("platform_rinkel_jobs"\)/, "Rinkel webhook callback must not perform direct job-table roundtrips");
-const rinkelIngressMigration = await readFile(join(root, "supabase/migrations/202608100001_rinkel_webhook_live_verification_and_ingest.sql"), "utf8");
-for (const pattern of [/platform_rinkel_webhook_events/, /rinkel\.process_event/, /record_platform_rinkel_webhook_receipt/, /platform_audit_logs/, /on conflict\(provider_event_id\) do nothing/]) {
-  assert.match(rinkelIngressMigration, pattern, `Atomic Rinkel webhook ingest invariant missing: ${pattern}`);
+assert.doesNotMatch(rinkelWebhook, /\.from\("platform_rinkel_webhook_events"\)/, "Rinkel webhook route must keep durable ingest behind the atomic RPC");
+const rinkelWebhookRepairMigration = await readFile(join(root, "supabase/migrations/202608100003_rinkel_webhook_live_verification_repair.sql"), "utf8");
+for (const pattern of [
+  /create or replace function public\.ingest_platform_rinkel_webhook_event/,
+  /insert into public\.platform_rinkel_webhook_events/,
+  /on conflict\(provider_event_id\) do nothing/,
+  /insert into public\.platform_rinkel_jobs/,
+  /'rinkel\.process_event'/,
+  /on conflict\(idempotency_key\) do nothing/,
+  /record_platform_rinkel_webhook_receipt/,
+  /'ingest_mode','atomic_rpc'/,
+  /grant execute on function public\.ingest_platform_rinkel_webhook_event/,
+]) {
+  assert.match(rinkelWebhookRepairMigration, pattern, `Rinkel webhook ingest invariant missing: ${pattern}`);
 }
 const rinkelCalls = await readFile(join(root, "src/app/api/v1/calls/route.ts"), "utf8");
 assert.match(rinkelCalls, /rinkel_reserve_platform_outbound_call/, "Rinkel calls require a central atomic local reservation before provider dial");

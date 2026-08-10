@@ -57,15 +57,14 @@ Följande är fortfarande externa releasegates, inte lokalt bekräftade kodfel:
 - This sandbox could not run `npm ci` because its internal mirror returns 404 for `pdf-lib@1.17.1`; full `npm run verify` for this auth-only patch remains to be rerun in the normal project environment.
 - Read-only Supabase MCP verification was attempted but the connector denied permission, so live platform membership state was not inspected here.
 
-## 2026-08-10 — Remaining Rinkel release blockers after code remediation
+## 2026-08-10 — Rinkel device live gate
 
-The code-level Rinkel blockers found in this pass are resolved in the forward-only patch. The remaining blockers
-are deployment/evidence gates, not reasons to expand the audit:
-
-1. Apply `202608100001_rinkel_webhook_live_verification_and_ingest.sql` to the linked Supabase project.
-2. Regenerate Supabase types from that linked schema and run the full project verifier on Node 22 + Deno.
-3. Deploy the web commit and keep the Rinkel worker on the same repo revision/runtime secrets.
-4. Complete one answered real outbound call and observe processed `outgoingCall`, `callStart`, `callEnd`.
-5. Complete one real inbound call to the allocated number and observe processed `incomingCall`; required core state must be 4/4.
-6. Confirm zero open allocation/correlation conflicts for the tested number, zero failed/dead-letter jobs, and successful CDR/recording reconciliation.
-7. Only after those gates pass, enable automatic dial for the tenant/team under test.
+- Apply `202608100001_rinkel_device_inventory_mapping_hardening.sql` to the linked project and regenerate
+  generated types before final delivery verification.
+- Run the central Rinkel directory sync against the real account and confirm at least one active
+  `platform_rinkel_devices` row exists for the provider user intended for the seller.
+- If Rinkel's real `GET /users/:id` response for this account still exposes no usable device id, the code now
+  fails closed with an explicit device-inventory diagnostic; provider/account capability must then be resolved
+  with Rinkel rather than fabricating a device id.
+- Full `npm run verify` and PGlite SQL replay remain NOT RUN in this sandbox because the internal npm mirror
+  does not provide the required project dependencies. Rinkel runtime contract tests and static verifier are PASS.

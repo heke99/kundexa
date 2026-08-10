@@ -49,17 +49,11 @@ infrastruktur.
 4. Test switching from the platform shell into an existing active tenant and back to the platform control-plane.
 5. Run owner/admin/auditor/support negative authorization checks before live Rinkel provider testing.
 
-## 2026-08-10 — Canonical Rinkel deployment and acceptance order
+## 2026-08-10 — Rinkel device mapping rollout
 
-1. Overlay the 2026-08-10 Rinkel closure patch on the current `main` worktree.
-2. Run the fast pre-schema checks: remediation regressions, static verifier and Rinkel unit tests.
-3. Push only the new forward-only migration to linked Supabase; do not edit historical migrations.
-4. Regenerate linked Supabase types, then run full `npm run verify` and hosted `db lint`.
-5. Commit/push `main` and confirm Vercel production is built from that exact commit.
-6. In `/app/platform/telephony`: test API/catalog, sync directory, then register/sync webhook configuration.
-7. Allocate one active Rinkel user to the test tenant and one active number to one or more teams **inside that tenant**.
-8. In `/app/integrations`: map the Kundexa seller to the allocated Rinkel user + active device + number; enable tenant telephony and manual dial; set caller-ID default.
-9. Place and answer one real outbound test call. Confirm `outgoingCall`, `callStart`, `callEnd` are processed and dial readiness becomes true.
-10. Call the allocated number from an external phone. Confirm `incomingCall` is processed and core webhook readiness becomes 4/4.
-11. Run/observe CDR reconciliation and recording projection; require no open conflict and no failed/dead-letter job for the test call.
-12. Enable automatic dial only after the above runtime evidence is green.
+1. Dry-run the linked Supabase push and confirm only the new forward-only device hardening migration is pending.
+2. Apply the migration, run `npm run types:generate`, then run the complete `npm run verify` in the normal project environment.
+3. Deploy the web code, open `/app/platform/telephony`, and run `Synkronisera katalog`.
+4. Confirm the intended Rinkel user shows one or more active devices before allocating that user to a tenant.
+5. Open the tenant `/app/integrations`; map Kundexa seller -> allocated Rinkel user -> active device -> allocated number.
+6. Make one real manual `/dial` call. If provider responds `Device or number not found`, inspect the synchronized provider ids rather than changing ids manually.

@@ -6,7 +6,6 @@ const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 const [
   migration,
   lintMigration,
-  rinkelWebhookMigration,
   customerApi,
   products,
   calls,
@@ -34,11 +33,15 @@ const [
   onboarding,
   bootstrapPlatformOwner,
   rinkelClient,
+  deviceMigration,
+  rinkelMappingForm,
   rinkelWebhookRoute,
+  rinkelWebhookRepairMigration,
+  verifier,
+  sqlVerifier,
 ] = await Promise.all([
   read("supabase/migrations/202608080001_cross_surface_consistency_remediation.sql"),
   read("supabase/migrations/202608080002_database_lint_runtime_hardening.sql"),
-  read("supabase/migrations/202608100001_rinkel_webhook_live_verification_and_ingest.sql"),
   read("src/app/api/v1/customers/route.ts"),
   read("src/app/actions/products.ts"),
   read("src/app/api/v1/calls/route.ts"),
@@ -66,7 +69,12 @@ const [
   read("src/app/onboarding/page.tsx"),
   read("scripts/bootstrap-platform-owner.mjs"),
   read("supabase/functions/_shared/rinkel.ts"),
+  read("supabase/migrations/202608100002_rinkel_device_inventory_mapping_hardening.sql"),
+  read("src/components/rinkel-user-mapping-form.tsx"),
   read("src/app/api/webhooks/rinkel/[secret]/[event]/route.ts"),
+  read("supabase/migrations/202608100003_rinkel_webhook_live_verification_repair.sql"),
+  read("scripts/verify.mjs"),
+  read("scripts/verify-sql.mjs"),
 ]);
 
 assert.match(migration, /audit_logs_customer_api_idempotency_uidx/);
@@ -102,46 +110,35 @@ assert.match(appLayout, /const platform = await getPlatformContext\(\)/);
 assert.match(platformTelephonyPage, /const context = await getPlatformContext\(\)/);
 assert.doesNotMatch(platformTelephonyPage, /getAppContext/);
 assert.match(rinkelActions, /async function platformAdminContext\(\)[\s\S]*getPlatformContext\(\)/);
-// Rinkel's public API exposes a webhook-test endpoint but not a stable request-body
-// contract in the rendered reference. Production readiness must therefore be
-// driven by registered provider state plus real, successfully processed events.
-assert.doesNotMatch(rinkelClient, /testWebhook\(/);
-assert.doesNotMatch(rinkelActions, /client\.testWebhook\(/);
-assert.doesNotMatch(rinkelActions, /status: "test_pending"/);
-assert.match(rinkelActions, /verification_mode: "real_provider_event_processed"/);
-assert.match(rinkelActions, /provider_active_core_events: registeredCoreCount/);
-assert.match(rinkelActions, /verified_core_events: verifiedCoreCount/);
+assert.match(rinkelClient, /async testWebhook\(event: RinkelWebhookEvent, url: string\)[\s\S]*body: \{ url \}/);
+assert.match(rinkelActions, /status: "test_pending"[\s\S]*test_requested_at: testRequestedAt[\s\S]*client\.testWebhook\(event, url\)/);
 assert.match(rinkelActions, /const coreWebhooksVerified = verifiedCoreCount === RINKEL_CORE_WEBHOOK_EVENTS\.length[\s\S]*webhooks: coreWebhooksVerified[\s\S]*core_webhooks_verified: coreWebhooksVerified/);
-assert.match(platformTelephonyPage, /Registrera och synka webhookar/);
+assert.match(rinkelClient, /async listUsersWithDeviceDetails\(\)/);
+assert.match(rinkelClient, /async getUser\(userId: string, fallback\?: RinkelUser\)/);
+assert.match(rinkelClient, /deviceInventoryComplete: hasDeviceArray/);
+assert.match(rinkelClient, /if \(!user\.deviceInventoryComplete\) return \[\]/);
+assert.match(rinkelActions, /client\.listUsersWithDeviceDetails\(\)/);
+assert.match(rinkelActions, /staleRinkelDeviceIds/);
+assert.match(rinkelActions, /repairUniqueRinkelDeviceMappings/);
+assert.match(rinkelActions, /_kundexa_sync/);
+assert.match(deviceMigration, /RINKEL_USER_DEVICE_MISSING/);
+assert.match(deviceMigration, /deviceInventoryComplete/);
+assert.match(deviceMigration, /activeDeviceCount/);
+assert.match(deviceMigration, /set search_path=''/);
+assert.match(rinkelMappingForm, /if \(nextDevices\.length === 1\) setSelectedDeviceId\(nextDevices\[0\]\.id\)/);
+assert.match(rinkelMappingForm, /device-inventering ej verifierad/);
 
-// A real successfully processed provider event verifies that subscription even
-// when no synthetic test receipt exists. The callback is one durable RPC so the
-// public endpoint can acknowledge Rinkel without a chain of PostgREST roundtrips.
-assert.match(rinkelWebhookMigration, /create or replace function public\.ingest_platform_rinkel_webhook_event/);
-assert.match(rinkelWebhookMigration, /create or replace function public\.record_platform_rinkel_webhook_processed[\s\S]*set status='verified'/);
-const processedFunction = rinkelWebhookMigration.slice(
-  rinkelWebhookMigration.indexOf("create or replace function public.record_platform_rinkel_webhook_processed"),
-  rinkelWebhookMigration.indexOf("create or replace function public.ingest_platform_rinkel_webhook_event"),
-);
-assert.doesNotMatch(processedFunction, /test_received_at is not null/);
-assert.match(rinkelWebhookMigration, /processed_count>0[\s\S]*last_processed_at is not null/);
-assert.match(rinkelWebhookMigration, /revoke all on function public\.ingest_platform_rinkel_webhook_event[\s\S]*from public,anon,authenticated/);
-assert.match(rinkelWebhookMigration, /grant execute on function public\.ingest_platform_rinkel_webhook_event[\s\S]*to service_role/);
+// The public Rinkel callback owns validation + one atomic ingest RPC. Durable
+// event/job/idempotency invariants belong to the latest forward-only migration.
 assert.match(rinkelWebhookRoute, /admin\.rpc\("ingest_platform_rinkel_webhook_event"/);
-assert.doesNotMatch(rinkelWebhookRoute, /from\("platform_rinkel_webhook_events"\)/);
-assert.doesNotMatch(rinkelWebhookRoute, /from\("platform_rinkel_jobs"\)/);
-assert.doesNotMatch(rinkelWebhookRoute, /record_platform_rinkel_webhook_receipt/);
-assert.match(rinkelWebhookMigration, /v_core_registered boolean:=false/);
-assert.match(rinkelWebhookMigration, /webhooks_registration=excluded\.webhooks_registration/);
-assert.match(rinkelWebhookMigration, /if p_event_type='outgoingCall'[\s\S]*dial_endpoint_reachable=true[\s\S]*dial_test_succeeded=true/);
-assert.match(rinkelWebhookMigration, /create or replace function public\.call_status_rank[\s\S]*when 'provider_outcome_unknown' then 20[\s\S]*when 'reconciliation_required' then 20/);
-assert.match(rinkelWebhookMigration, /old\.status not in \('provider_outcome_unknown','reconciliation_required'\)/);
-assert.match(rinkelWebhookMigration, /provider_state_updated_at=case when p_outcome='failed' then v_now else call_row\.provider_state_updated_at end/);
-assert.match(rinkelWebhookMigration, /initiated_at=least\(coalesce\(call_row\.initiated_at,v_occurred\),v_occurred\)/);
-assert.match(rinkelWebhookMigration, /create or replace function private\.enforce_rinkel_number_single_active_tenant/);
-assert.match(rinkelWebhookMigration, /raise exception 'RINKEL_NUMBER_TENANT_CONFLICT'/);
-assert.match(rinkelActions, /RINKEL_NUMBER_TENANT_CONFLICT:/);
-assert.match(platformTelephonyPage, /Ett telefonnummer kan delas av flera team i bolaget, men inte av flera bolag/);
+assert.doesNotMatch(rinkelWebhookRoute, /\.from\("platform_rinkel_webhook_events"\)/);
+assert.match(rinkelWebhookRepairMigration, /insert into public\.platform_rinkel_webhook_events/);
+assert.match(rinkelWebhookRepairMigration, /insert into public\.platform_rinkel_jobs/);
+assert.match(rinkelWebhookRepairMigration, /'rinkel\.process_event'/);
+assert.match(rinkelWebhookRepairMigration, /on conflict\(idempotency_key\) do nothing/);
+assert.match(verifier, /ingest_platform_rinkel_webhook_event/);
+const verifierWebhookBlock = verifier.slice(verifier.indexOf("const rinkelWebhook ="), verifier.indexOf("const rinkelCalls ="));
+assert.doesNotMatch(verifierWebhookBlock, /\/platform_rinkel_webhook_events\//);
 
 assert.match(organizationActions, /export async function switchTenant[\s\S]*supabase\.auth\.getUser\(\)/);
 assert.doesNotMatch(organizationActions.match(/export async function switchTenant[\s\S]*$/)?.[0] ?? "", /await getAppContext\(\)/);
@@ -190,5 +187,15 @@ assert.ok(outbox.indexOf("permanent_sms_outbound_feature_disabled") < outbox.ind
 assert.match(smsDelivery, /message_id/);
 assert.match(smsDelivery, /provider_message_id: providerId/);
 assert.match(smsDelivery, /from_number/);
+
+// Migration hygiene: the device hardening must use a unique version and SQL special
+// forms such as COALESCE must never be schema-qualified as functions.
+assert.doesNotMatch(deviceMigration, /pg_catalog\.coalesce\s*\(/i);
+assert.match(sqlVerifier, /rejectedCrossTenantNumberAllocation/);
+assert.match(sqlVerifier, /RINKEL_NUMBER_TENANT_CONFLICT/);
+assert.match(sqlVerifier, /singleTenantPlatformAllocation/);
+assert.match(sqlVerifier, /Tenant B caller-ID projection leaked another tenant's Rinkel number/);
+assert.doesNotMatch(sqlVerifier, /Central Rinkel number was not shareable across tenants/);
+assert.doesNotMatch(sqlVerifier, /Shared caller ID was not visible in tenant B/);
 
 console.log("Remediation regression tests passed.");

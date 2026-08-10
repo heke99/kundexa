@@ -55,6 +55,9 @@ export type RinkelUser = {
   id: string;
   deviceId: string | null;
   devices: RinkelDevice[];
+  deviceInventoryComplete: boolean;
+  deviceInventorySource: "embedded_devices" | "scalar_device" | "missing";
+  deviceInventoryError: RinkelErrorCode | null;
   email: string | null;
   fullName: string;
   active: boolean;
@@ -287,6 +290,36 @@ export class RinkelClient {
     return data.map((entry) => normalizeRinkelUser(entry));
   }
 
+  async getUser(userId: string, fallback?: RinkelUser): Promise<RinkelUser> {
+    const normalizedId = userId.trim();
+    if (!normalizedId || normalizedId.length > 200) {
+      throw new RinkelError("RINKEL_INVALID_REQUEST", "Rinkel-användarens id är ogiltigt.");
+    }
+    const raw = await this.request(`/users/${encodeURIComponent(normalizedId)}`, { retrySafe: true });
+    const detail = object(responseData(raw));
+    const merged = fallback ? { ...fallback.raw, ...detail } : detail;
+    return normalizeRinkelUser(merged);
+  }
+
+  async listUsersWithDeviceDetails(): Promise<RinkelUser[]> {
+    const users = await this.listUsers();
+    const hydrated: RinkelUser[] = [];
+    const concurrency = 4;
+    for (let offset = 0; offset < users.length; offset += concurrency) {
+      const batch = users.slice(offset, offset + concurrency);
+      const results = await Promise.all(batch.map(async (user) => {
+        try {
+          return await this.getUser(user.id, user);
+        } catch (error) {
+          const safe = safeRinkelError(error);
+          return { ...user, deviceInventoryError: safe.code };
+        }
+      }));
+      hydrated.push(...results);
+    }
+    return hydrated;
+  }
+
   async listNumbers(): Promise<RinkelNumber[]> {
     const raw = await this.request("/numbers", { retrySafe: true });
     const data = responseData(raw);
@@ -363,6 +396,16 @@ export class RinkelClient {
     return raw === null ? null : responseData(raw);
   }
 
+  async testWebhook(event: RinkelWebhookEvent, url: string) {
+    if (!url.trim()) {
+      throw new RinkelError("RINKEL_INVALID_REQUEST", "Webhook-testets URL saknas.");
+    }
+    await this.request(`/webhooks/${event}/test`, {
+      method: "POST",
+      body: { url },
+      acceptNoContent: true,
+    });
+  }
 
   async getCallByCallId(callId: string, includeDetails = true): Promise<JsonObject | null> {
     try {
@@ -474,12 +517,12 @@ function normalizeRinkelDevice(value: unknown, fallbackIndex: number): RinkelDev
     return { id: value.trim(), displayName: null, type: null, status: "unknown", active: true, raw: { id: value.trim() } };
   }
   const item = object(value);
-  const id = string(item.id ?? item.deviceId, `devices[${fallbackIndex}].id`)!;
+  const id = string(item.id ?? item.deviceId ?? item.device_id, `devices[${fallbackIndex}].id`)!;
   const status = string(item.status, `devices[${fallbackIndex}].status`, true) ?? "unknown";
   return {
     id,
-    displayName: string(item.displayName ?? item.name ?? item.label, `devices[${fallbackIndex}].displayName`, true),
-    type: string(item.type ?? item.deviceType, `devices[${fallbackIndex}].type`, true),
+    displayName: string(item.displayName ?? item.display_name ?? item.name ?? item.label, `devices[${fallbackIndex}].displayName`, true),
+    type: string(item.type ?? item.deviceType ?? item.device_type, `devices[${fallbackIndex}].type`, true),
     status,
     active: item.active === undefined ? !["inactive", "disabled", "removed"].includes(status.toLowerCase()) : boolean(item.active),
     raw: item,
@@ -488,32 +531,58 @@ function normalizeRinkelDevice(value: unknown, fallbackIndex: number): RinkelDev
 
 export function normalizeRinkelUser(value: unknown): RinkelUser {
   const item = object(value);
-  const fullName = string(item.fullName ?? item.name ?? item.displayName, "fullName", true)
-    ?? [string(item.firstName, "firstName", true), string(item.lastName, "lastName", true)].filter(Boolean).join(" ")
+  const fullName = string(item.fullName ?? item.full_name ?? item.name ?? item.displayName ?? item.display_name, "fullName", true)
+    ?? [
+      string(item.firstName ?? item.first_name, "firstName", true),
+      string(item.lastName ?? item.last_name, "lastName", true),
+    ].filter(Boolean).join(" ")
     ?? "";
   if (!fullName) throw new RinkelError("RINKEL_SCHEMA_ERROR", "Rinkel-användaren saknar namn.");
-  const legacyDeviceId = string(item.deviceId ?? item.defaultDeviceId, "deviceId", true);
+
+  const hasDeviceArray = Object.prototype.hasOwnProperty.call(item, "devices");
+  if (hasDeviceArray && !Array.isArray(item.devices)) {
+    throw new RinkelError("RINKEL_SCHEMA_ERROR", "Rinkel-användarens device-lista är ogiltig.");
+  }
+  const legacyDeviceId = string(
+    item.deviceId ?? item.defaultDeviceId ?? item.device_id ?? item.default_device_id,
+    "deviceId",
+    true,
+  );
   const rawDevices = Array.isArray(item.devices) ? item.devices : [];
   const devices = rawDevices.map((device, index) => normalizeRinkelDevice(device, index));
-  if (legacyDeviceId && !devices.some((device) => device.id === legacyDeviceId)) {
+  if (legacyDeviceId && !hasDeviceArray && !devices.some((device) => device.id === legacyDeviceId)) {
     devices.unshift({
       id: legacyDeviceId,
       displayName: "Standardenhet",
       type: null,
       status: "unknown",
       active: true,
-      raw: { id: legacyDeviceId, source: "legacy_deviceId" },
+      raw: { id: legacyDeviceId, source: "scalar_device_id" },
     });
   }
+  const deviceInventorySource = hasDeviceArray
+    ? "embedded_devices"
+    : legacyDeviceId
+      ? "scalar_device"
+      : "missing";
   return {
-    id: string(item.id ?? item.userId, "id")!,
-    deviceId: devices.find((device) => device.active)?.id ?? legacyDeviceId,
+    id: string(item.id ?? item.userId ?? item.user_id, "id")!,
+    deviceId: devices.find((device) => device.active)?.id ?? (hasDeviceArray ? null : legacyDeviceId),
     devices,
+    deviceInventoryComplete: hasDeviceArray,
+    deviceInventorySource,
+    deviceInventoryError: null,
     email: string(item.email, "email", true),
     fullName,
     active: item.active === undefined ? true : boolean(item.active),
     raw: item,
   };
+}
+
+export function staleRinkelDeviceIds(user: RinkelUser, storedProviderDeviceIds: string[]): string[] {
+  if (!user.deviceInventoryComplete) return [];
+  const live = new Set(user.devices.map((device) => device.id));
+  return storedProviderDeviceIds.filter((deviceId) => !live.has(deviceId));
 }
 
 export function normalizeRinkelNumber(value: unknown): RinkelNumber {

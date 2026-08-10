@@ -44,6 +44,11 @@ await db.exec(`
 
 const migrationDir = join(root, "supabase/migrations");
 const migrations = (await readdir(migrationDir)).filter((name) => name.endsWith(".sql")).sort();
+const migrationVersions = migrations.map((name) => name.match(/^(\d+)_/)?.[1] ?? "");
+if (migrationVersions.some((version) => !version)) throw new Error("Every migration filename must start with a numeric version");
+if (new Set(migrationVersions).size !== migrationVersions.length) {
+  throw new Error(`Duplicate migration version detected: ${migrationVersions.filter((version, index) => migrationVersions.indexOf(version) !== index).join(", ")}`);
+}
 for (const migration of migrations) {
   let sql = await readFile(join(migrationDir, migration), "utf8");
   sql = sql.replace(/create extension if not exists pgcrypto;\s*/ig, "");
@@ -629,6 +634,11 @@ await db.exec(`
     id,platform_integration_id,external_user_id,external_device_id,display_name
   ) select '00000000-0000-0000-0000-000000000053',id,'platform-user-b','device-b','Platform User B'
     from public.platform_integrations where provider='rinkel' and disabled_at is null;
+  insert into public.platform_rinkel_users(
+    id,platform_integration_id,external_user_id,external_device_id,display_name,raw_provider_data
+  ) select '00000000-0000-0000-0000-000000000075',id,'platform-user-no-device',null,'Platform User No Device',
+    '{"_kundexa_sync":{"device_inventory_complete":true,"device_inventory_source":"embedded_devices","device_inventory_error":null}}'::jsonb
+    from public.platform_integrations where provider='rinkel' and disabled_at is null;
   insert into public.platform_rinkel_numbers(
     id,platform_integration_id,external_number_id,phone_number_e164,display_name
   ) select '00000000-0000-0000-0000-000000000054',id,'platform-number-a','+46811111111','Platform Number A'
@@ -661,11 +671,25 @@ await db.exec(`
     tenant_id,kundexa_user_id,rinkel_user_allocation_id,default_number_allocation_id,selected_device_id
   ) values
     ('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000056','00000000-0000-0000-0000-000000000058','00000000-0000-0000-0000-000000000072');
-  insert into public.rinkel_number_allocations(id,rinkel_number_id,tenant_id)
-    values('00000000-0000-0000-0000-000000000061','00000000-0000-0000-0000-000000000054','00000000-0000-0000-0000-000000000051');
-  insert into public.rinkel_number_grants(tenant_id,number_allocation_id,access_level,active)
-    values('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000061','dial',true);
 `);
+await db.exec(`
+  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000014',false);
+  select set_config('request.jwt.claim.role','authenticated',false);
+`);
+let rejectedDeviceLessAllocation = false;
+try {
+  await db.query(`select public.allocate_platform_rinkel_resource(
+    'user',
+    '00000000-0000-0000-0000-000000000075',
+    '00000000-0000-0000-0000-000000000051',
+    'runtime device gate test'
+  )`);
+} catch (error) {
+  rejectedDeviceLessAllocation = String(error).includes('RINKEL_USER_DEVICE_MISSING');
+}
+if (!rejectedDeviceLessAllocation) {
+  throw new Error('Platform allocation accepted a Rinkel user without an active synchronized device.');
+}
 await db.exec(`
   select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000074',false);
   select set_config('request.jwt.claim.role','authenticated',false);
@@ -715,12 +739,28 @@ if (Number(mappingAfterRejectedDevice.rows[0].count) !== 1) {
   throw new Error(`Rejected device attempt damaged the valid mapping: ${JSON.stringify(mappingAfterRejectedDevice.rows)}`);
 }
 
-const sharedPlatformAllocation = await db.query(`select count(*)::int as count
+let rejectedCrossTenantNumberAllocation = false;
+try {
+  await db.exec(`
+    insert into public.rinkel_number_allocations(id,rinkel_number_id,tenant_id)
+    values(
+      '00000000-0000-0000-0000-000000000061',
+      '00000000-0000-0000-0000-000000000054',
+      '00000000-0000-0000-0000-000000000051'
+    );
+  `);
+} catch (error) {
+  rejectedCrossTenantNumberAllocation = String(error).includes('RINKEL_NUMBER_TENANT_CONFLICT');
+}
+if (!rejectedCrossTenantNumberAllocation) {
+  throw new Error('Central Rinkel number was incorrectly allowed to have active allocations in multiple tenants.');
+}
+const singleTenantPlatformAllocation = await db.query(`select count(*)::int as count
   from public.rinkel_number_allocations
   where rinkel_number_id='00000000-0000-0000-0000-000000000054'
     and status='active' and valid_to is null`);
-if (Number(sharedPlatformAllocation.rows[0].count) !== 2) {
-  throw new Error(`Central Rinkel number was not shareable across tenants: ${JSON.stringify(sharedPlatformAllocation.rows)}`);
+if (Number(singleTenantPlatformAllocation.rows[0].count) !== 1) {
+  throw new Error(`Central Rinkel number single-tenant ownership invariant failed: ${JSON.stringify(singleTenantPlatformAllocation.rows)}`);
 }
 await db.exec(`
   select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
@@ -731,16 +771,18 @@ if (
   tenantAResources.rows[0].resources.users.length !== 1
   || tenantAResources.rows[0].resources.numbers.length !== 1
   || tenantAResources.rows[0].resources.users[0].displayName !== "Platform User A"
+  || tenantAResources.rows[0].resources.users[0].activeDeviceCount !== 1
+  || typeof tenantAResources.rows[0].resources.users[0].deviceInventoryComplete !== "boolean"
   || tenantAResources.rows[0].resources.numbers[0].number !== "+46811111111"
-) throw new Error(`Tenant A central Rinkel projection leaked or omitted resources: ${JSON.stringify(tenantAResources.rows[0])}`);
+) throw new Error(`Tenant A central Rinkel projection leaked, omitted device diagnostics or omitted resources: ${JSON.stringify(tenantAResources.rows[0])}`);
 await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000050',false)`);
 const tenantBCallerIds = await db.query(`select public.get_current_user_rinkel_numbers() as numbers`);
 if (
-  tenantBCallerIds.rows[0].numbers.length !== 2
-  || !tenantBCallerIds.rows[0].numbers.some((item) => item.number === "+46811111111")
-  || !tenantBCallerIds.rows[0].numbers.some((item) => item.number === "+46822222222")
+  tenantBCallerIds.rows[0].numbers.length !== 1
+  || tenantBCallerIds.rows[0].numbers[0].number !== "+46822222222"
+  || tenantBCallerIds.rows[0].numbers.some((item) => item.number === "+46811111111")
 ) {
-  throw new Error(`Shared caller ID was not visible in tenant B: ${JSON.stringify(tenantBCallerIds.rows[0])}`);
+  throw new Error(`Tenant B caller-ID projection leaked another tenant's Rinkel number: ${JSON.stringify(tenantBCallerIds.rows[0])}`);
 }
 await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
 const centralStatus = await db.query(`select public.telephony_status_for_current_user() as status`);
@@ -802,7 +844,7 @@ if (
   historicalTenant.rows[0].tenant_id !== "00000000-0000-0000-0000-000000000001"
   || historicalTenant.rows[0].allocation_id !== "00000000-0000-0000-0000-000000000058"
 ) throw new Error(`Historical Rinkel call moved with number allocation: ${JSON.stringify(historicalTenant.rows[0])}`);
-console.log("Executed central Rinkel catalog, two-tenant isolation, shared cross-tenant allocation, atomic reservation, idempotent replay, provider finalization and immutable call history runtime paths.");
+console.log("Executed central Rinkel catalog, two-tenant isolation, single-tenant number ownership, rejected cross-tenant allocation, atomic reservation, idempotent replay, provider finalization and immutable call history runtime paths.");
 
 // Performance/scraper operations runtime path: aggregated RPCs, atomic ingestion
 // quota reservation, admin run controls, dead-letter re-drive and duplicate-run guards.

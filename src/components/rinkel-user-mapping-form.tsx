@@ -20,6 +20,10 @@ type TelephonyUserOption = {
   allocationId: string;
   displayName: string;
   hasDevice: boolean;
+  activeDeviceCount?: number;
+  deviceInventoryComplete?: boolean;
+  deviceInventorySource?: string | null;
+  deviceInventoryError?: string | null;
   active: boolean;
   devices: DeviceOption[];
 };
@@ -59,8 +63,12 @@ export function RinkelUserMappingForm({
       required
       value={selectedUserAllocationId}
       onChange={(event) => {
-        setSelectedUserAllocationId(event.target.value);
+        const allocationId = event.target.value;
+        setSelectedUserAllocationId(allocationId);
         setSelectedDeviceId("");
+        const nextUser = users.find((user) => user.allocationId === allocationId);
+        const nextDevices = nextUser?.devices.filter((device) => device.active) ?? [];
+        if (nextDevices.length === 1) setSelectedDeviceId(nextDevices[0].id);
       }}
     >
       <option value="">Välj telefoni-användare</option>
@@ -69,9 +77,22 @@ export function RinkelUserMappingForm({
         value={user.allocationId}
         disabled={!user.active || !user.hasDevice}
       >
-        {user.displayName} · {user.hasDevice ? `${user.devices.filter((device) => device.active).length} aktiva enheter` : "enhet saknas"}{user.active ? "" : " · inaktiv"}
+        {user.displayName} · {user.hasDevice
+          ? `${user.activeDeviceCount ?? user.devices.filter((device) => device.active).length} aktiva enheter`
+          : user.deviceInventoryError
+            ? `device-synkfel ${user.deviceInventoryError}`
+            : user.deviceInventoryComplete
+              ? "Rinkel rapporterar 0 aktiva enheter"
+              : "device-inventering ej verifierad"}{user.active ? "" : " · inaktiv"}
       </option>)}
     </SelectField>
+    {selectedUser && activeDevices.length === 0 ? <p className="form-error">
+      {selectedUser.deviceInventoryError
+        ? `Rinkels user-detail kunde inte hämtas (${selectedUser.deviceInventoryError}). Synkronisera katalogen igen innan mappning.`
+        : selectedUser.deviceInventoryComplete
+          ? "Rinkel rapporterar ingen aktiv enhet för den här telefoni-användaren. Kontrollera användarens app/webphone/telefon i Rinkel och synkronisera katalogen igen."
+          : "Kundexa har ännu ingen verifierad device-inventering för användaren. Kör Synkronisera katalog i plattformsadmin först."}
+    </p> : null}
     <SelectField
       label="Aktiv telefonienhet"
       name="selected_device_id"
