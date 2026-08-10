@@ -114,6 +114,11 @@ export async function createUser(form: FormData) {
   redirect(`/app/users?message=${encodeURIComponent(resultMessage)}`);
 }
 
+/** Legacy action name kept for internal compatibility. All provisioning uses the canonical create-user flow. */
+export async function inviteUser(form: FormData) {
+  return createUser(form);
+}
+
 export async function updateTeam(form: FormData) {
   const context = await getAppContext();
   if (!["owner", "admin", "team_lead"].includes(context.role)) redirect("/app/teams?error=Teambehörighet krävs");
