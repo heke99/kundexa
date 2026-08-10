@@ -39,6 +39,16 @@ const [
   rinkelWebhookRepairMigration,
   verifier,
   sqlVerifier,
+  invitationMigration,
+  listDistributionMigration,
+  rinkelRuntimeMigration,
+  contractGenerationMigration,
+  publicContractAction,
+  smsInboundRoute,
+  permissions,
+  sidebar,
+  verifyWorkflow,
+  openapiVerifier,
 ] = await Promise.all([
   read("supabase/migrations/202608080001_cross_surface_consistency_remediation.sql"),
   read("supabase/migrations/202608080002_database_lint_runtime_hardening.sql"),
@@ -75,7 +85,56 @@ const [
   read("supabase/migrations/202608100003_rinkel_webhook_live_verification_repair.sql"),
   read("scripts/verify.mjs"),
   read("scripts/verify-sql.mjs"),
+  read("supabase/migrations/202608100004_invitation_membership_team_hardening.sql"),
+  read("supabase/migrations/202608100005_list_distribution_dialer_authorization.sql"),
+  read("supabase/migrations/202608100006_rinkel_runtime_authorization_and_failure_recovery.sql"),
+  read("supabase/migrations/202608100007_contract_acceptance_generation_and_policy.sql"),
+  read("src/app/actions/public-contract.ts"),
+  read("src/app/api/webhooks/46elks/sms/inbound/route.ts"),
+  read("src/lib/permissions.ts"),
+  read("src/components/app-shell/sidebar.tsx"),
+  read(".github/workflows/verify.yml"),
+  read("scripts/verify-openapi-coverage.mjs"),
 ]);
+
+const [
+  securityProjectionMigration, signingCompletionMigration, performanceMigration, workerScheduler, edgeWorkerCron,
+  navConfig, customerSearch, customerMultiSearch, rinkelDialer, dialerPage, listPage, contractsPage, reportsPage, dashboardPage,
+  apiAuth, routeClassification, processOutboxCurrent, teamDailyLeadLimitMigration, rinkelProjectionMonotonicMigration,
+] = await Promise.all([
+  read("supabase/migrations/202608100008_security_resource_projection_and_rls.sql"),
+  read("supabase/migrations/202608100009_contract_signing_generation_completion.sql"),
+  read("supabase/migrations/202608100010_reporting_navigation_performance.sql"),
+  read("src/lib/workers/scheduled-edge-worker.ts"),
+  read("src/app/api/cron/edge-workers/[worker]/route.ts"),
+  read("src/components/app-shell/nav-config.ts"),
+  read("src/components/customer-search-select.tsx"),
+  read("src/components/customer-multi-search-select.tsx"),
+  read("src/components/rinkel-dialer.tsx"),
+  read("src/app/(dashboard)/app/dialer/page.tsx"),
+  read("src/app/(dashboard)/app/lists/[id]/page.tsx"),
+  read("src/app/(dashboard)/app/contracts/page.tsx"),
+  read("src/app/(dashboard)/app/reports/page.tsx"),
+  read("src/app/(dashboard)/app/page.tsx"),
+  read("src/lib/api-auth.ts"),
+  read("scripts/api-route-classification.json"),
+  read("supabase/functions/process-outbox/index.ts"),
+  read("supabase/migrations/202608100011_team_daily_lead_limit_enforcement.sql"),
+  read("supabase/migrations/202608100012_rinkel_projection_monotonic_outcome_recording.sql"),
+]);
+
+
+// List work authorization must enforce both seller-assignment and team-member caps.
+assert.match(teamDailyLeadLimitMigration, /tm\.daily_lead_limit is null/);
+assert.match(teamDailyLeadLimitMigration, /claimed\.last_claimed_by=a\.user_id/);
+assert.match(teamDailyLeadLimitMigration, /a\.daily_capacity is null/);
+assert.match(teamDailyLeadLimitMigration, /not tm\.assignment_paused/);
+
+// Rinkel provider projection is monotonic across late/out-of-order lifecycle events.
+assert.match(rinkelProjectionMonotonicMigration, /old\.recording_status in \('available_at_provider','copy_pending','stored_privately'\)/);
+assert.match(rinkelProjectionMonotonicMigration, /old\.provider_outcome is not null and new\.provider_outcome is null/);
+assert.match(rinkelProjectionMonotonicMigration, /new\.provider_outcome:=old\.provider_outcome/);
+assert.match(rinkelProjectionMonotonicMigration, /public\.call_status_rank\(old\.status\)=100/);
 
 assert.match(migration, /audit_logs_customer_api_idempotency_uidx/);
 assert.match(lintMigration, /set search_path = public, extensions/);
@@ -93,7 +152,7 @@ assert.match(products, /_initial_price/);
 assert.doesNotMatch(products, /from\("products"\)\.delete\(/);
 assert.doesNotMatch(products, /from\("product_price_versions"\)\.insert\(/);
 
-for (const source of [calls, telephonyStatus, openapi, dialerHook]) {
+for (const source of [calls, telephonyStatus, dialerHook]) {
   assert.match(source, /RINKEL_RUNTIME_API_KEY_MISSING|runtimeConfigured/);
 }
 assert.match(calls, /if \(!isPlatformRinkelRuntimeConfigured\(\)\)/);
@@ -197,5 +256,134 @@ assert.match(sqlVerifier, /singleTenantPlatformAllocation/);
 assert.match(sqlVerifier, /Tenant B caller-ID projection leaked another tenant's Rinkel number/);
 assert.doesNotMatch(sqlVerifier, /Central Rinkel number was not shareable across tenants/);
 assert.doesNotMatch(sqlVerifier, /Shared caller ID was not visible in tenant B/);
+
+// 2026-08-10 production remediation invariants.
+assert.match(invitationMigration, /active_tenant_member_already_exists/);
+assert.match(invitationMigration, /create or replace function public\.assert_team_capacity/);
+assert.match(invitationMigration, /create or replace function public\.can_operate_in_team/);
+assert.match(invitationMigration, /create or replace function public\.activate_current_user_invitation/);
+const activationBlock = invitationMigration.match(/create or replace function public\.activate_current_user_invitation[\s\S]*?end \$\$;/)?.[0] ?? "";
+assert.match(activationBlock, /from public\.tenant_invitations/);
+assert.match(activationBlock, /status='pending'/);
+assert.doesNotMatch(activationBlock, /m\.status='invited'/);
+assert.doesNotMatch(invitationMigration.match(/create or replace function public\.register_tenant_invitation[\s\S]*?end \$\$;/)?.[0] ?? "", /insert into public\.team_members/);
+assert.match(organizationActions, /reserve_tenant_invitation/);
+assert.match(organizationActions, /finalize_tenant_invitation/);
+assert.match(organizationActions, /update_tenant_member_v2/);
+
+assert.match(listDistributionMigration, /customer_list_distribution_state/);
+assert.match(listDistributionMigration, /round_robin/);
+assert.match(listDistributionMigration, /allow_skip/);
+assert.match(listDistributionMigration, /allow_browse/);
+assert.match(listDistributionMigration, /claim_expires_at<now\(\)/);
+assert.match(listDistributionMigration, /can_operate_in_team/);
+
+assert.match(rinkelRuntimeMigration, /can_access_customer\(p_customer_id\)/);
+assert.match(rinkelRuntimeMigration, /create or replace function public\.evaluate_exact_call_policy/);
+assert.match(rinkelRuntimeMigration, /exact_call_policy_denied/);
+assert.match(rinkelRuntimeMigration, /evaluate_contact_policy_for_tenant/);
+assert.match(rinkelRuntimeMigration, /v_purpose:='direct_marketing'/);
+assert.match(rinkelRuntimeMigration, /provider_rejected_before_start/);
+assert.match(rinkelRuntimeMigration, /not tm\.assignment_paused/);
+assert.match(rinkelRuntimeMigration, /RINKEL_MAPPING_TENANT_ADMIN_REQUIRED/);
+assert.match(sqlVerifier, /00000000-0000-0000-0000-000000000025','\+46702222225','runtime','1','not_listed'/);
+assert.match(sqlVerifier, /centralResult\.purpose !== \"direct_marketing\"/);
+assert.match(sqlVerifier, /create function auth\.jwt\(\) returns jsonb/);
+assert.match(sqlVerifier, /set_config\('request\.jwt\.claim\.role','service_role',false\)[\s\S]*rinkel_finalize_platform_dial[\s\S]*set_config\('request\.jwt\.claim\.role','authenticated',false\)/);
+
+assert.match(contractGenerationMigration, /acceptance_generation/);
+assert.match(contractGenerationMigration, /source_call_eligibility_snapshot/);
+assert.match(contractGenerationMigration, /contract_source_call_snapshot_is_immutable/);
+assert.match(contractGenerationMigration, /record_contract_acceptance_v3/);
+assert.match(contractGenerationMigration, /acceptance_request_superseded_generation/);
+assert.match(contractGenerationMigration, /acceptance_code_required/);
+assert.match(contractGenerationMigration, /manual_contract_disposition_allowed/);
+assert.match(publicContractAction, /record_contract_acceptance_v3/);
+assert.match(publicContractAction, /request\.require_code && !parsed\.data\.acceptanceCode/);
+assert.match(smsInboundRoute, /record_contract_acceptance_v3/);
+assert.doesNotMatch(smsInboundRoute, /rpc\("record_contract_acceptance",/);
+assert.match(contracts, /rpc\("activate_completed_contract"/);
+assert.match(contractGenerationMigration, /signature_policy_snapshot/);
+assert.match(contractGenerationMigration, /signature_policy_requires_external_signing/);
+assert.match(contractGenerationMigration, /final_signed_document_hash_required/);
+assert.match(contractGenerationMigration, /completed_evidence_package_required/);
+assert.match(contractGenerationMigration, /contract\.acceptance_recorded/);
+
+assert.match(permissions, /routeAccessMap/);
+assert.match(permissions, /resourcePermissionMap/);
+assert.match(sidebar, /canAccessRoute/);
+assert.match(appLayout, /canAccessRoute/);
+assert.match(verifyWorkflow, /denoland\/setup-deno@v2/);
+assert.match(verifyWorkflow, /npm run openapi:verify/);
+assert.match(openapiVerifier, /unclassified route/);
+assert.match(openapiVerifier, /public route missing from OpenAPI/);
+assert.doesNotMatch(openapi.match(/"\/calls": \{[\s\S]*?\n      \},/)?.[0] ?? "", /purpose: \{ type: "string" \}/);
+
+
+
+// Latest production-readiness layers: scoped provider projections, generation-safe
+// signing, source-controlled workers and bounded database-backed UI queries.
+assert.match(securityProjectionMigration, /create or replace function public\.get_tenant_rinkel_resources/);
+assert.match(securityProjectionMigration, /create or replace function public\.get_current_user_rinkel_numbers/);
+assert.match(securityProjectionMigration, /create or replace function public\.get_managed_team_rinkel_resources/);
+assert.match(securityProjectionMigration, /tm\.role/);
+assert.doesNotMatch(securityProjectionMigration, /tm\.team_role/);
+assert.match(securityProjectionMigration, /not tm\.assignment_paused/);
+
+assert.match(signingCompletionMigration, /r\.generation=new\.acceptance_generation/);
+assert.match(signingCompletionMigration, /e\.generation=new\.acceptance_generation/);
+assert.match(signingCompletionMigration, /idempotent_replay/);
+assert.match(signingCompletionMigration, /completed_envelope_document_mismatch/);
+assert.match(signingCompletionMigration, /coalesce\(\(ep\.manifest->>'generation'\)::integer,0\)=v_envelope\.generation/);
+assert.match(signingCompletionMigration, /source_call_eligibility_snapshot/);
+assert.match(signingCompletionMigration, /final_signed_document_invalid/);
+assert.match(sqlVerifier, /'signed_pdf','signed\.pdf','contracts\/verify\/signed\.pdf','application\/pdf','final-signed-sha-256',2048/);
+assert.match(sqlVerifier, /activate_completed_contract\('00000000-0000-0000-0000-000000000086'\)/);
+assert.match(sqlVerifier, /idempotent_replay !== true/);
+assert.match(sqlVerifier, /contract\.signed\.confirmation:00000000-0000-0000-0000-000000000086:0/);
+assert.doesNotMatch(sqlVerifier, /post_sign_executed/);
+const signingContractMarker = sqlVerifier.indexOf("VERIFY-SIGN-1");
+const signingRuntimeStart = sqlVerifier.lastIndexOf("insert into public.customers", signingContractMarker);
+const signingRuntimeEnd = sqlVerifier.indexOf("Executed production hardening runtime paths", signingContractMarker);
+assert.ok(signingContractMarker > 0 && signingRuntimeStart > 0 && signingRuntimeEnd > signingRuntimeStart, "Signing runtime verification block missing");
+const signingRuntimeBlock = sqlVerifier.slice(signingRuntimeStart, signingRuntimeEnd);
+assert.match(signingRuntimeBlock, /10000000-0000-0000-0000-000000000001/);
+assert.match(signingRuntimeBlock, /Signing Runtime Prospect/);
+assert.doesNotMatch(signingRuntimeBlock, /00000000-0000-0000-0000-000000000021/);
+
+assert.match(workerScheduler, /scheduledEdgeWorkers/);
+assert.match(workerScheduler, /record_platform_worker_heartbeat/);
+assert.match(edgeWorkerCron, /invokeScheduledEdgeWorker/);
+assert.match(verifyWorkflow, /npm ci/);
+assert.match(verifyWorkflow, /node scripts\/verify-sql\.mjs/);
+assert.match(verifyWorkflow, /npm run build/);
+
+assert.doesNotMatch(navConfig, /\/app\/queues/);
+assert.doesNotMatch(permissions, /"\/app\/queues"/);
+assert.match(routeClassification, /"\/calls"[\s\S]*"classification": "internal"/);
+assert.match(openapiVerifier, /internal route must not be published in OpenAPI/);
+
+assert.match(performanceMigration, /create or replace function public\.navigation_badges/);
+assert.match(performanceMigration, /create or replace function public\.report_sales_overview/);
+assert.match(performanceMigration, /create or replace function public\.contract_registry_page/);
+assert.match(performanceMigration, /create or replace function public\.customer_list_seller_workload/);
+assert.match(reportsPage, /rpc\("report_sales_overview"/);
+assert.match(contractsPage, /rpc\("contract_registry_page"/);
+assert.match(dashboardPage, /getAppContext/);
+assert.match(dashboardPage, /Teamdashboard/);
+
+assert.match(customerSearch, /setTimeout[\s\S]*350/);
+assert.match(customerSearch, /AbortError/);
+assert.match(customerMultiSearch, /limit", "30"/);
+assert.match(rinkelDialer, /Dialer customer search failed/);
+assert.doesNotMatch(dialerPage, /\.limit\(500\)/);
+assert.doesNotMatch(listPage, /from\("customers"\)[\s\S]*\.limit\(500\)/);
+assert.match(listPage, /CustomerMultiSearchSelect/);
+assert.match(listPage, /customer_list_seller_workload/);
+
+assert.match(apiAuth, /api_key_actor_requires_tenant_admin/);
+assert.match(apiAuth, /assertApiObjectAccess/);
+assert.match(processOutboxCurrent, /kundexa\.evidence\.v3/);
+assert.match(processOutboxCurrent, /acceptance_generation/);
 
 console.log("Remediation regression tests passed.");

@@ -46,7 +46,7 @@ for (const [pattern, message] of [
   [/schedule_manual_contract_reminder/i, "manual contract reminders are required"],
   [/enqueue_due_contract_reminders/i, "scheduled contract reminders are required"],
   [/cancel_contract_reminders/i, "pending reminders must be cancellable atomically"],
-  [/record_contract_acceptance_v2/i, "document-bound atomic acceptance is required"],
+  [/record_contract_acceptance_v3/i, "generation-bound policy-aware atomic acceptance is required"],
   [/dead_letter_outbox_job/i, "permanent provider failures require dead-letter handling"],
   [/activate_automation/i, "controlled automation activation is required"],
   [/enqueue_outgoing_webhook_event/i, "outgoing webhook routing is required"],
@@ -211,7 +211,7 @@ for (const pattern of [/source_call_id/, /assertContractCallEligibility/, /ensur
   assert.match(contractActions, pattern, `Contract action invariant missing: ${pattern}`);
 }
 const publicContractActions = await readFile(join(root, "src/app/actions/public-contract.ts"), "utf8");
-assert.match(publicContractActions, /record_contract_acceptance_v2/, "Public acceptance must use the document-bound atomic RPC");
+assert.match(publicContractActions, /record_contract_acceptance_v3/, "Public acceptance must use the generation-bound policy-aware atomic RPC");
 assert.match(publicContractActions, /canonical_document_sha256/, "Public acceptance must bind the exact canonical PDF hash");
 const contractWizard = await readFile(join(root, "src/app/(dashboard)/app/contracts/new/page.tsx"), "utf8");
 assert.match(contractWizard, /Registrera tidigare samtal/, "Manual contract wizard must support audited external calls");

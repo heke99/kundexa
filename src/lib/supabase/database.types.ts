@@ -1780,6 +1780,7 @@ export type Database = {
           decline_phrases: string[]
           declined_at: string | null
           expires_at: string
+          generation: number
           id: string
           method: Database["public"]["Enums"]["acceptance_method"]
           opened_at: string | null
@@ -1806,6 +1807,7 @@ export type Database = {
           decline_phrases?: string[]
           declined_at?: string | null
           expires_at: string
+          generation?: number
           id?: string
           method: Database["public"]["Enums"]["acceptance_method"]
           opened_at?: string | null
@@ -1832,6 +1834,7 @@ export type Database = {
           decline_phrases?: string[]
           declined_at?: string | null
           expires_at?: string
+          generation?: number
           id?: string
           method?: Database["public"]["Enums"]["acceptance_method"]
           opened_at?: string | null
@@ -2310,6 +2313,7 @@ export type Database = {
           email: string | null
           expired_at: string | null
           full_name: string
+          generation: number
           id: string
           identity_assurance_level: string
           identity_number: string | null
@@ -2331,6 +2335,7 @@ export type Database = {
           email?: string | null
           expired_at?: string | null
           full_name: string
+          generation?: number
           id?: string
           identity_assurance_level?: string
           identity_number?: string | null
@@ -2352,6 +2357,7 @@ export type Database = {
           email?: string | null
           expired_at?: string | null
           full_name?: string
+          generation?: number
           id?: string
           identity_assurance_level?: string
           identity_number?: string | null
@@ -2697,6 +2703,7 @@ export type Database = {
           price_version_id: string | null
           rendered_body: string
           rendered_terms: string | null
+          signature_policy_snapshot: Json | null
           snapshot_hash: string | null
           superseded_at: string | null
           template_version_id: string | null
@@ -2715,6 +2722,7 @@ export type Database = {
           price_version_id?: string | null
           rendered_body: string
           rendered_terms?: string | null
+          signature_policy_snapshot?: Json | null
           snapshot_hash?: string | null
           superseded_at?: string | null
           template_version_id?: string | null
@@ -2733,6 +2741,7 @@ export type Database = {
           price_version_id?: string | null
           rendered_body?: string
           rendered_terms?: string | null
+          signature_policy_snapshot?: Json | null
           snapshot_hash?: string | null
           superseded_at?: string | null
           template_version_id?: string | null
@@ -2773,6 +2782,7 @@ export type Database = {
       }
       contracts: {
         Row: {
+          acceptance_generation: number
           accepted_at: string | null
           activated_at: string | null
           active_version_id: string | null
@@ -2800,6 +2810,8 @@ export type Database = {
           seller_snapshot: Json
           send_block_reason: string | null
           signed_at: string | null
+          source_call_eligibility_locked_at: string | null
+          source_call_eligibility_snapshot: Json | null
           source_call_id: string | null
           source_type: string | null
           starts_on: string | null
@@ -2813,6 +2825,7 @@ export type Database = {
           value: number
         }
         Insert: {
+          acceptance_generation?: number
           accepted_at?: string | null
           activated_at?: string | null
           active_version_id?: string | null
@@ -2840,6 +2853,8 @@ export type Database = {
           seller_snapshot?: Json
           send_block_reason?: string | null
           signed_at?: string | null
+          source_call_eligibility_locked_at?: string | null
+          source_call_eligibility_snapshot?: Json | null
           source_call_id?: string | null
           source_type?: string | null
           starts_on?: string | null
@@ -2853,6 +2868,7 @@ export type Database = {
           value?: number
         }
         Update: {
+          acceptance_generation?: number
           accepted_at?: string | null
           activated_at?: string | null
           active_version_id?: string | null
@@ -2880,6 +2896,8 @@ export type Database = {
           seller_snapshot?: Json
           send_block_reason?: string | null
           signed_at?: string | null
+          source_call_eligibility_locked_at?: string | null
+          source_call_eligibility_snapshot?: Json | null
           source_call_id?: string | null
           source_type?: string | null
           starts_on?: string | null
@@ -3155,6 +3173,52 @@ export type Database = {
             columns: ["tenant_id", "segment_id"]
             isOneToOne: false
             referencedRelation: "segments"
+            referencedColumns: ["tenant_id", "id"]
+          },
+        ]
+      }
+      customer_list_distribution_state: {
+        Row: {
+          last_user_id: string | null
+          list_id: string
+          sequence: number
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          last_user_id?: string | null
+          list_id: string
+          sequence?: number
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          last_user_id?: string | null
+          list_id?: string
+          sequence?: number
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "customer_list_distribution_state_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "customer_list_distribution_state_tenant_id_last_user_id_fkey"
+            columns: ["tenant_id", "last_user_id"]
+            isOneToOne: false
+            referencedRelation: "tenant_memberships"
+            referencedColumns: ["tenant_id", "user_id"]
+          },
+          {
+            foreignKeyName: "customer_list_distribution_state_tenant_id_list_id_fkey"
+            columns: ["tenant_id", "list_id"]
+            isOneToOne: false
+            referencedRelation: "customer_lists"
             referencedColumns: ["tenant_id", "id"]
           },
         ]
@@ -11270,6 +11334,7 @@ export type Database = {
           created_at: string
           created_by: string | null
           final_document_id: string | null
+          generation: number
           id: string
           provider: string
           provider_envelope_id: string | null
@@ -11288,6 +11353,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           final_document_id?: string | null
+          generation?: number
           id?: string
           provider: string
           provider_envelope_id?: string | null
@@ -11306,6 +11372,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           final_document_id?: string | null
+          generation?: number
           id?: string
           provider?: string
           provider_envelope_id?: string | null
@@ -12415,10 +12482,14 @@ export type Database = {
           created_at: string
           email: string
           expires_at: string
+          failure_reason: string | null
+          finalized_at: string | null
           id: string
+          idempotency_key: string | null
           invited_by: string | null
           invited_user_id: string | null
           message: string | null
+          orchestration_status: string
           revoked_at: string | null
           role: Database["public"]["Enums"]["membership_role"]
           status: string
@@ -12431,10 +12502,14 @@ export type Database = {
           created_at?: string
           email: string
           expires_at?: string
+          failure_reason?: string | null
+          finalized_at?: string | null
           id?: string
+          idempotency_key?: string | null
           invited_by?: string | null
           invited_user_id?: string | null
           message?: string | null
+          orchestration_status?: string
           revoked_at?: string | null
           role: Database["public"]["Enums"]["membership_role"]
           status?: string
@@ -12447,10 +12522,14 @@ export type Database = {
           created_at?: string
           email?: string
           expires_at?: string
+          failure_reason?: string | null
+          finalized_at?: string | null
           id?: string
+          idempotency_key?: string | null
           invited_by?: string | null
           invited_user_id?: string | null
           message?: string | null
+          orchestration_status?: string
           revoked_at?: string | null
           role?: Database["public"]["Enums"]["membership_role"]
           status?: string
@@ -12643,7 +12722,12 @@ export type Database = {
           legal_name: string
           locale: string
           name: string
+          onboarding_completed_at: string | null
+          onboarding_error: string | null
+          onboarding_status: string
           organization_number: string | null
+          owner_invitation_id: string | null
+          owner_user_id: string | null
           slug: string
           status: string
           timezone: string
@@ -12657,7 +12741,12 @@ export type Database = {
           legal_name: string
           locale?: string
           name: string
+          onboarding_completed_at?: string | null
+          onboarding_error?: string | null
+          onboarding_status?: string
           organization_number?: string | null
+          owner_invitation_id?: string | null
+          owner_user_id?: string | null
           slug: string
           status?: string
           timezone?: string
@@ -12671,7 +12760,12 @@ export type Database = {
           legal_name?: string
           locale?: string
           name?: string
+          onboarding_completed_at?: string | null
+          onboarding_error?: string | null
+          onboarding_status?: string
           organization_number?: string | null
+          owner_invitation_id?: string | null
+          owner_user_id?: string | null
           slug?: string
           status?: string
           timezone?: string
@@ -13019,6 +13113,10 @@ export type Database = {
         Args: { p_automation_id: string }
         Returns: undefined
       }
+      activate_completed_contract: {
+        Args: { p_contract_id: string }
+        Returns: Json
+      }
       activate_current_user_invitation: { Args: never; Returns: string }
       add_customers_to_list: {
         Args: { p_customer_ids: string[]; p_list_id: string }
@@ -13134,6 +13232,15 @@ export type Database = {
         }
         Returns: Json
       }
+      assert_team_capacity: {
+        Args: {
+          p_additional?: number
+          p_exclude_invitation_id?: string
+          p_team_id: string
+          p_tenant_id: string
+        }
+        Returns: undefined
+      }
       assign_platform_rinkel_number_to_teams: {
         Args: { p_number_id: string; p_reason?: string; p_team_ids: string[] }
         Returns: Json
@@ -13153,6 +13260,11 @@ export type Database = {
         Returns: boolean
       }
       can_manage_team: { Args: { p_team_id: string }; Returns: boolean }
+      can_operate_in_team: {
+        Args: { p_team_id: string; p_user_id?: string }
+        Returns: boolean
+      }
+      can_read_team: { Args: { p_team_id: string }; Returns: boolean }
       can_work_customer_list: { Args: { p_list_id: string }; Returns: boolean }
       can_write_contract: {
         Args: { p_contract_id?: string; p_customer_id?: string }
@@ -13569,6 +13681,42 @@ export type Database = {
         }
         Returns: boolean
       }
+      contract_registry_page: {
+        Args: {
+          p_attention?: string
+          p_call_missing?: boolean
+          p_date_from?: string
+          p_date_to?: string
+          p_limit?: number
+          p_offset?: number
+          p_owner_user_id?: string
+          p_product_id?: string
+          p_search?: string
+          p_status?: string
+          p_team_id?: string
+        }
+        Returns: {
+          audience: string
+          contract_number: string
+          created_at: string
+          customer_name: string
+          expires_at: string
+          id: string
+          latest_delivery_channel: string
+          latest_delivery_failure: string
+          latest_delivery_status: string
+          owner_user_id: string
+          product_id: string
+          product_name: string
+          reminders_overdue: number
+          reminders_sent: number
+          source_call_id: string
+          status: string
+          team_id: string
+          title: string
+          updated_at: string
+        }[]
+      }
       control_ingestion_run: {
         Args: { p_action: string; p_run_id: string }
         Returns: Json
@@ -13772,6 +13920,13 @@ export type Database = {
           list_id: string
           open_members: number
           total_members: number
+        }[]
+      }
+      customer_list_seller_workload: {
+        Args: { p_list_id: string }
+        Returns: {
+          remaining: number
+          user_id: string
         }[]
       }
       dashboard_overview: { Args: never; Returns: Json }
@@ -14005,6 +14160,20 @@ export type Database = {
         }
         Returns: Json
       }
+      evaluate_exact_call_policy: {
+        Args: {
+          p_callback_activity_id?: string
+          p_contact_person_id: string
+          p_contract_id?: string
+          p_customer_id: string
+          p_list_member_id?: string
+          p_session_id?: string
+          p_target_phone: string
+          p_tenant_id: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
       execute_data_subject_erasure: {
         Args: { p_actor?: string; p_request_id: string }
         Returns: Json
@@ -14049,6 +14218,10 @@ export type Database = {
         Args: { p_delay_seconds?: number; p_error: string; p_job_id: string }
         Returns: undefined
       }
+      fail_tenant_invitation: {
+        Args: { p_invitation_id: string; p_reason: string }
+        Returns: undefined
+      }
       finalize_signing_envelope: {
         Args: {
           p_envelope_id: string
@@ -14056,6 +14229,10 @@ export type Database = {
           p_provider_evidence?: Json
         }
         Returns: Json
+      }
+      finalize_tenant_invitation: {
+        Args: { p_invitation_id: string; p_invited_user_id: string }
+        Returns: string
       }
       finish_platform_rinkel_job: {
         Args: {
@@ -14171,6 +14348,7 @@ export type Database = {
         Returns: Json
       }
       get_current_user_rinkel_numbers: { Args: never; Returns: Json }
+      get_managed_team_rinkel_resources: { Args: never; Returns: Json }
       get_tenant_rinkel_resources: { Args: never; Returns: Json }
       gettransactionid: { Args: never; Returns: unknown }
       has_current_role: { Args: { p_roles: string[] }; Returns: boolean }
@@ -14230,6 +14408,10 @@ export type Database = {
         }[]
       }
       longtransactionsenabled: { Args: never; Returns: boolean }
+      manual_contract_disposition_allowed: {
+        Args: { p_disposition: string; p_tenant_id: string }
+        Returns: boolean
+      }
       mark_acceptance_opened: { Args: { p_request_id: string }; Returns: Json }
       materialize_segment_to_campaign: {
         Args: { p_actor?: string; p_campaign_id: string; p_segment_id: string }
@@ -14261,6 +14443,7 @@ export type Database = {
         }
         Returns: string
       }
+      navigation_badges: { Args: never; Returns: Json }
       normalize_due_geographies: { Args: { p_limit?: number }; Returns: number }
       normalize_geo_token: { Args: { p_value: string }; Returns: string }
       normalize_identity_value: {
@@ -14584,6 +14767,23 @@ export type Database = {
         }
         Returns: string
       }
+      record_contract_acceptance_v3: {
+        Args: {
+          p_acceptance_code?: string
+          p_acceptance_phrase?: string
+          p_acceptance_text?: string
+          p_evidence?: Json
+          p_ip_address?: unknown
+          p_method: Database["public"]["Enums"]["acceptance_method"]
+          p_normalized_response?: string
+          p_provider_message_id?: string
+          p_raw_response?: string
+          p_request_id: string
+          p_status: Database["public"]["Enums"]["acceptance_status"]
+          p_user_agent?: string
+        }
+        Returns: string
+      }
       record_ingestion_raw_payload: {
         Args: {
           p_content_type: string
@@ -14726,6 +14926,7 @@ export type Database = {
         }
         Returns: string
       }
+      report_sales_overview: { Args: { p_since?: string }; Returns: Json }
       requeue_platform_rinkel_job: {
         Args: { p_job_id: string; p_reason: string }
         Returns: undefined
@@ -14733,6 +14934,18 @@ export type Database = {
       reserve_provider_ingestion_usage: {
         Args: { p_run_id: string; p_units?: number }
         Returns: Json
+      }
+      reserve_tenant_invitation: {
+        Args: {
+          p_email: string
+          p_expires_at?: string
+          p_idempotency_key?: string
+          p_message?: string
+          p_role: Database["public"]["Enums"]["membership_role"]
+          p_team_ids?: string[]
+          p_tenant_id: string
+        }
+        Returns: string
       }
       reserve_usage_for_tenant: {
         Args: { p_amount?: number; p_metric: string; p_tenant_id: string }
@@ -15661,6 +15874,17 @@ export type Database = {
           p_reassign_user_id?: string
           p_role: Database["public"]["Enums"]["membership_role"]
           p_status: Database["public"]["Enums"]["membership_status"]
+          p_user_id: string
+        }
+        Returns: undefined
+      }
+      update_tenant_member_v2: {
+        Args: {
+          p_reassign_user_id?: string
+          p_restore_team_assignments?: boolean
+          p_role: Database["public"]["Enums"]["membership_role"]
+          p_status: Database["public"]["Enums"]["membership_status"]
+          p_team_ids?: string[]
           p_user_id: string
         }
         Returns: undefined

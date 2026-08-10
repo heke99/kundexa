@@ -10,30 +10,34 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
 import { Badge } from "@/components/ui/badge";
+import { CustomerMultiSearchSelect } from "@/components/customer-multi-search-select";
 import { formatDate } from "@/lib/utils";
 import { isoToZonedLocalDateTime } from "@/lib/domain/time";
 
 export default async function ListDetailPage({ params, searchParams }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ error?: string; saved?: string; imported?: string }>;
+  searchParams: Promise<{ error?: string; saved?: string; imported?: string; member_page?: string }>;
 }) {
   const { id } = await params;
   const query = await searchParams;
   const context = await getAppContext();
   const supabase = await createClient();
+  const memberPage = Math.max(1, Number.parseInt(query.member_page ?? "1", 10) || 1);
+  const memberPageSize = 100;
+  const memberOffset = (memberPage - 1) * memberPageSize;
   // Kandidatstatus och medlemsantal aggregeras i databasen i stället för att hämta alla rader.
-  const [{ data: list }, { data: mayManage }, { data: members }, { data: assignments }, { data: memberships }, { data: teamMembers }, { data: customers }, { data: dispositions }, { data: segments }, { data: candidateCounts }, { data: listOverview }, { data: phoneNumbers }, { data: teams }] = await Promise.all([
+  const [{ data: list }, { data: mayManage }, { data: members }, { data: assignments }, { data: memberships }, { data: teamMembers }, { data: dispositions }, { data: segments }, { data: candidateCounts }, { data: listOverview }, { data: sellerWorkloadData }, { data: phoneNumbers }, { data: teams }] = await Promise.all([
     supabase.from("customer_lists").select("*").eq("id", id).single(),
     supabase.rpc("can_manage_customer_list", { p_list_id: id }),
-    supabase.from("customer_list_members").select("id,customer_id,assigned_user_id,state,attempts,outcome,next_attempt_at,customers(display_name,phone_e164,city,do_not_call)").eq("list_id", id).order("priority", { ascending: false }).limit(500),
+    supabase.from("customer_list_members").select("id,customer_id,assigned_user_id,state,attempts,outcome,next_attempt_at,customers(display_name,phone_e164,city,do_not_call)").eq("list_id", id).order("priority", { ascending: false }).order("id").range(memberOffset, memberOffset + memberPageSize),
     supabase.from("customer_list_seller_assignments").select("user_id,status,weight,daily_capacity,starts_at,ends_at").eq("list_id", id),
     supabase.from("tenant_memberships").select("user_id,role,status,profiles:user_id(full_name)").eq("status", "active").in("role", ["owner", "admin", "team_lead", "sales"]),
     supabase.from("team_members").select("team_id,user_id"),
-    supabase.from("customers").select("id,display_name,phone_e164,city,lifecycle").in("lifecycle", ["prospect", "lead", "customer"]).is("deleted_at", null).order("updated_at", { ascending: false }).limit(500),
     supabase.from("list_dispositions").select("key,label,outcome_group,terminal,retry_after_minutes,requires_callback,requires_order").eq("list_id", id).eq("active", true).order("sort_order"),
     supabase.from("segments").select("id,name,segment_type,last_refreshed_at").eq("active", true).order("name"),
     supabase.rpc("customer_list_candidate_counts", { p_list_id: id }),
     supabase.rpc("customer_list_overview", { p_list_id: id }),
+    supabase.rpc("customer_list_seller_workload", { p_list_id: id }),
     supabase.from("phone_numbers").select("id,number_e164").eq("status", "active").eq("supports_voice", true).order("number_e164"),
     supabase.from("teams").select("id,name,status").eq("status", "active").order("name"),
   ]);
@@ -44,9 +48,8 @@ export default async function ListDetailPage({ params, searchParams }: {
   const teamUserIds = list.team_id ? new Set((teamMembers ?? []).filter((item) => item.team_id === list.team_id).map((item) => item.user_id)) : null;
   const availableSellers = (memberships ?? []).filter((member) => !teamUserIds || teamUserIds.has(member.user_id));
   const sellerNames = new Map(availableSellers.map((member) => { const profile=Array.isArray(member.profiles)?member.profiles[0]:member.profiles; return [member.user_id,profile?.full_name??member.user_id]; }));
-  const existingCustomerIds = new Set((members ?? []).map((member) => member.customer_id));
-  const sellerWorkload = new Map<string, number>();
-  for (const member of members ?? []) if (member.assigned_user_id && !["completed", "blocked"].includes(member.state)) sellerWorkload.set(member.assigned_user_id, (sellerWorkload.get(member.assigned_user_id) ?? 0) + 1);
+  const sellerWorkload = new Map<string, number>(((sellerWorkloadData ?? []) as Array<{ user_id: string; remaining: number }>).map((row) => [row.user_id, Number(row.remaining)]));
+  const memberRows = (members ?? []).slice(0, memberPageSize);
   const settings = list.settings && typeof list.settings === "object" && !Array.isArray(list.settings) ? list.settings as Record<string, unknown> : {};
   const allowedDays = new Set(list.allowed_days ?? [1, 2, 3, 4, 5]);
 
@@ -65,13 +68,18 @@ export default async function ListDetailPage({ params, searchParams }: {
     <div className="split-layout">
       <div className="grid">
         <Card>
-          <CardHeader><h2><ListFilter size={17} /> Listmedlemmar</h2><Badge>{members?.length ?? 0}</Badge></CardHeader>
+          <CardHeader><h2><ListFilter size={17} /> Listmedlemmar</h2><Badge>{Number(memberStats.total_members)}</Badge></CardHeader>
           <CardContent style={{ padding: 0 }}><DataTable headers={["Prospekt", "Telefon", "Ort", "Status", "Försök", "Nästa", "Utfall"]}>
-            {members?.map((member) => {
+            {memberRows.map((member) => {
               const customer = Array.isArray(member.customers) ? member.customers[0] : member.customers;
               return <tr key={member.id}><td><Link href={`/app/customers/${member.customer_id}`}><strong>{customer?.display_name ?? "Okänt prospekt"}</strong></Link></td><td>{customer?.phone_e164 ?? "—"}</td><td>{customer?.city ?? "—"}</td><td><Badge className={member.state === "completed" ? "badge-success" : member.state === "blocked" ? "badge-danger" : ""}>{member.state}</Badge></td><td>{member.attempts}</td><td>{formatDate(member.next_attempt_at)}</td><td>{member.outcome ?? "—"}</td></tr>;
             })}
-          </DataTable></CardContent>
+          </DataTable>
+          <div className="toolbar-left" style={{ padding: 14 }}>
+            {memberPage > 1 ? <Link className="button button-ghost button-sm" href={`/app/lists/${id}?member_page=${memberPage - 1}`}>Föregående</Link> : null}
+            <span className="muted">Sida {memberPage}</span>
+            {(members?.length ?? 0) > memberPageSize ? <Link className="button button-ghost button-sm" href={`/app/lists/${id}?member_page=${memberPage + 1}`}>Nästa</Link> : null}
+          </div></CardContent>
         </Card>
         <Card>
           <CardHeader><h2>Samtalsutfall</h2><Badge>{dispositions?.length ?? 0}</Badge></CardHeader>
@@ -148,7 +156,7 @@ export default async function ListDetailPage({ params, searchParams }: {
         <Card>
           <CardHeader><h3>Lägg till prospekt</h3></CardHeader>
           <CardContent><form action={addCustomersToList} className="form-stack"><input type="hidden" name="list_id" value={id} />
-            <label className="field"><span>Prospekt och kunder</span><select name="customer_ids" multiple size={10}>{customers?.filter((customer) => !existingCustomerIds.has(customer.id)).map((customer) => <option key={customer.id} value={customer.id}>{customer.display_name} · {customer.phone_e164 ?? "telefon saknas"} · {customer.city ?? "ort saknas"}</option>)}</select><small>Markera flera med Cmd/Ctrl.</small></label>
+            <CustomerMultiSearchSelect name="customer_ids" label="Prospekt och kunder" />
             <button className="button button-secondary">Lägg till valda</button>
           </form></CardContent>
         </Card>

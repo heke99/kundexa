@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { authenticateRequest } from "@/lib/api-auth";
+import { authenticateRequest, assertApiObjectAccess } from "@/lib/api-auth";
 import { apiSendContractSchema, sendContractFromApi } from "@/lib/contracts/api-service";
 import { apiJson, getCorrelationId, withCorrelation } from "@/lib/api-correlation";
 
@@ -8,6 +8,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   try {
     const identity = await authenticateRequest(request, "contracts:send");
     const { id } = await params;
+    await assertApiObjectAccess(identity, "contract", id);
     const input = apiSendContractSchema.parse(await request.json());
     const result = await sendContractFromApi(identity, id, input);
     return apiJson(correlationId, { data: result }, { status: result.idempotent_replay ? 200 : 202 });

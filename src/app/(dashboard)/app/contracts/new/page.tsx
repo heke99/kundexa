@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
 import { formatDate } from "@/lib/utils";
 import { getAppContext } from "@/lib/auth";
+import { CustomerSearchSelect, type CustomerSearchOption } from "@/components/customer-search-select";
 
 type CallOption = {
   id: string; ended_at: string; started_at: string; duration_seconds: number; direction: string;
@@ -20,8 +21,12 @@ export default async function NewContractPage({ searchParams }: { searchParams: 
   const params = await searchParams;
   const ctx = await getAppContext();
   const supabase = await createClient();
-  const [{ data: customers }, { data: products }, { data: prices }, { data: versions }, { data: legalEntities }, { data: dispositions }, { data: members }, { data: teams }] = await Promise.all([
-    supabase.from("customers").select("id,display_name,customer_type,email,phone_e164,organization_number").is("deleted_at", null).order("display_name").limit(500),
+  const selectedCustomer = params.customer_id
+    ? (await supabase.from("customers")
+      .select("id,display_name,customer_type,email,phone_e164,organization_number,do_not_call,do_not_sms,do_not_email")
+      .eq("id", params.customer_id).is("deleted_at", null).maybeSingle()).data as CustomerSearchOption | null
+    : null;
+  const [{ data: products }, { data: prices }, { data: versions }, { data: legalEntities }, { data: dispositions }, { data: members }, { data: teams }] = await Promise.all([
     supabase.from("products").select("id,name").eq("active", true).order("name"),
     supabase.from("product_price_versions").select("product_id,version,recurring_fee,currency,binding_months,notice_months,payment_terms_days").eq("active", true).order("version", { ascending: false }),
     supabase.from("contract_template_versions").select("id,version,status,contract_templates(name,audience,active,current_version_id)").eq("status", "approved").order("created_at", { ascending: false }),
@@ -30,7 +35,6 @@ export default async function NewContractPage({ searchParams }: { searchParams: 
     supabase.from("tenant_memberships").select("user_id,role,profiles:user_id(full_name)").eq("status", "active").in("role", ["owner", "admin", "team_lead", "sales", "contract_manager"]),
     supabase.from("teams").select("id,name").eq("status", "active").order("name"),
   ]);
-  const selectedCustomer = customers?.find((customer) => customer.id === params.customer_id) ?? null;
   let eligibleCalls: CallOption[] = [];
   if (selectedCustomer) {
     const { data } = await supabase.rpc("resolve_contract_eligible_calls", { p_customer_id: selectedCustomer.id });
@@ -63,10 +67,7 @@ export default async function NewContractPage({ searchParams }: { searchParams: 
         <CardHeader><h2><Badge>1</Badge> Kund</h2>{selectedCustomer ? <Badge className="badge-success">Vald</Badge> : null}</CardHeader>
         <CardContent>
           <form method="get" className="form-stack">
-            <SelectField label="Sök och välj befintlig kund" name="customer_id" defaultValue={selectedCustomer?.id ?? ""} required>
-              <option value="">Välj kund</option>
-              {customers?.map((customer) => <option key={customer.id} value={customer.id}>{customer.display_name} · {customer.customer_type === "person" ? "Privat" : "Företag"}{customer.organization_number ? ` · ${customer.organization_number}` : ""}</option>)}
-            </SelectField>
+            <CustomerSearchSelect name="customer_id" label="Befintlig kund" channel="contract" defaultValue={selectedCustomer?.id ?? ""} initialCustomer={selectedCustomer} required />
             <button className="button button-secondary">Välj kund</button>
           </form>
           <details style={{ marginTop: 18 }}>

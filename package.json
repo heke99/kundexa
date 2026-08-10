@@ -16,7 +16,7 @@
     "typecheck:edge": "deno check supabase/functions/_shared/crypto.ts supabase/functions/_shared/providers.ts supabase/functions/_shared/rinkel.ts supabase/functions/data-worker/index.ts supabase/functions/ingestion-worker/index.ts supabase/functions/maintenance-worker/index.ts supabase/functions/compliance-worker/index.ts supabase/functions/process-outbox/index.ts supabase/functions/rinkel-platform-worker/index.ts supabase/functions/automation-runner/index.ts supabase/functions/parsehub-worker/index.ts",
     "test": "node scripts/remediation-regression-tests.mjs && node scripts/verify.mjs && npm run test:rinkel && npm run test:contracts && npm run test:imports && npm run test:api && node scripts/verify-sql.mjs",
     "test:watch": "node scripts/verify.mjs",
-    "verify": "npm run types:verify && npm run typecheck:edge && npm run test && npm run build",
+    "verify": "npm run types:verify && npm run typecheck:edge && npm run test && npm run openapi:verify && npm run build",
     "platform:bootstrap-owner": "node scripts/bootstrap-platform-owner.mjs",
     "supabase:login": "npx supabase@2.109.1 login",
     "supabase:link": "npx supabase@2.109.1 link",
@@ -30,7 +30,8 @@
     "test:contracts": "node scripts/contract-delivery-unit-tests.mjs",
     "test:rinkel": "deno test scripts/rinkel-unit-tests.mts",
     "types:verify": "node scripts/verify-generated-schema.mjs",
-    "test:api": "rm -rf .tmp-api-tests && tsc scripts/api-core-tests.ts --outDir .tmp-api-tests --module commonjs --moduleResolution node --target ES2022 --esModuleInterop --skipLibCheck --strict --noEmit false --types node && node .tmp-api-tests/scripts/api-core-tests.js && rm -rf .tmp-api-tests"
+    "test:api": "rm -rf .tmp-api-tests && tsc scripts/api-core-tests.ts --outDir .tmp-api-tests --module commonjs --moduleResolution node --target ES2022 --esModuleInterop --skipLibCheck --strict --noEmit false --types node && node .tmp-api-tests/scripts/api-core-tests.js && rm -rf .tmp-api-tests",
+    "openapi:verify": "node scripts/verify-openapi-coverage.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.3",

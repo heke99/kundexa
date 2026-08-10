@@ -1,4 +1,4 @@
-import { authenticateRequest } from "@/lib/api-auth";
+import { authenticateRequest, assertApiObjectAccess } from "@/lib/api-auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sha256Bytes } from "@/lib/crypto";
 import { apiJson, getCorrelationId, withCorrelation } from "@/lib/api-correlation";
@@ -8,6 +8,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   try {
     const identity = await authenticateRequest(request, "contracts:read");
     const { id, documentId } = await params;
+    await assertApiObjectAccess(identity, "contract", id);
+    await assertApiObjectAccess(identity, "contract_document", documentId);
     const admin = createAdminClient();
     const { data: document, error } = await admin.from("contract_documents")
       .select("file_name,storage_path,mime_type,sha256")

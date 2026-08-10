@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { getAppContext } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -62,7 +63,22 @@ export async function inviteUser(form: FormData) {
   if (!parsed.success) redirect("/app/users?error=Kontrollera e-post, roll och team");
   if (context.role === "team_lead" && parsed.data.role !== "sales") redirect("/app/users?error=Teamledare får endast bjuda in säljare");
   if (context.role !== "owner" && parsed.data.role === "owner") redirect("/app/users?error=Endast tenantägaren får bjuda in en annan ägare");
+  if (["team_lead"].includes(parsed.data.role) && !parsed.data.teamIds.length) redirect("/app/users?error=En teamledare måste tilldelas minst ett team");
   if (context.role === "team_lead" && !parsed.data.teamIds.length) redirect("/app/users?error=Välj minst ett av dina team");
+
+  const supabase = await createClient();
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const reservation = await supabase.rpc("reserve_tenant_invitation", {
+    p_tenant_id: context.tenantId,
+    p_email: parsed.data.email,
+    p_role: parsed.data.role,
+    p_team_ids: parsed.data.teamIds,
+    p_message: parsed.data.message || null,
+    p_expires_at: expiresAt,
+    p_idempotency_key: `invite:${randomUUID()}`,
+  });
+  if (reservation.error || !reservation.data) redirect(`/app/users?error=${errorText(reservation.error)}`);
+  const invitationId = String(reservation.data);
 
   const admin = createAdminClient();
   const env = serverEnv();
@@ -70,26 +86,26 @@ export async function inviteUser(form: FormData) {
   if (!user) {
     const invited = await admin.auth.admin.inviteUserByEmail(parsed.data.email, {
       redirectTo: `${env.NEXT_PUBLIC_APP_URL}/auth/callback`,
-      data: { invited_tenant_id: context.tenantId, invited_role: parsed.data.role },
+      data: { invited_tenant_id: context.tenantId, invited_role: parsed.data.role, tenant_invitation_id: invitationId },
     });
-    if (invited.error || !invited.data.user) redirect(`/app/users?error=${errorText(invited.error)}`);
+    if (invited.error || !invited.data.user) {
+      await supabase.rpc("fail_tenant_invitation", { p_invitation_id: invitationId, p_reason: invited.error?.message ?? "auth_invitation_failed" });
+      redirect(`/app/users?error=${errorText(invited.error)}`);
+    }
     user = invited.data.user;
   }
 
-  const supabase = await createClient();
-  const { error } = await supabase.rpc("register_tenant_invitation", {
-    p_tenant_id: context.tenantId,
+  const finalized = await supabase.rpc("finalize_tenant_invitation", {
+    p_invitation_id: invitationId,
     p_invited_user_id: user.id,
-    p_email: parsed.data.email,
-    p_role: parsed.data.role,
-    p_team_ids: parsed.data.teamIds,
-    p_message: parsed.data.message || null,
-    p_expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
   });
-  if (error) redirect(`/app/users?error=${errorText(error)}`);
+  if (finalized.error) {
+    await supabase.rpc("fail_tenant_invitation", { p_invitation_id: invitationId, p_reason: finalized.error.message });
+    redirect(`/app/users?error=${errorText(finalized.error)}`);
+  }
   revalidatePath("/app/users");
   revalidatePath("/app/teams");
-  redirect(`/app/users?message=${encodeURIComponent(user.last_sign_in_at ? "Användaren kopplades till tenant och valda team" : "Inbjudan skickades och teamtilldelningen är förberedd")}`);
+  redirect(`/app/users?message=${encodeURIComponent(user.last_sign_in_at ? "Inbjudan är reserverad och kopplad till användaren. Teamtilldelning sker först när inbjudan accepteras." : "Inbjudan skickades. Teamtilldelning sker atomiskt när användaren accepterar.")}`);
 }
 
 export async function updateTeam(form: FormData) {
@@ -139,23 +155,27 @@ export async function updateTenantMember(form: FormData) {
     role: z.enum(["owner", "admin", "team_lead", "sales", "contract_manager", "quality", "backoffice", "finance", "viewer"]),
     status: z.enum(["invited", "active", "suspended", "removed"]),
     reassignUserId: z.union([z.uuid(), z.literal("")]),
+    teamIds: z.array(z.uuid()).max(50),
   }).safeParse({
     userId: value(form, "user_id"), role: value(form, "role"), status: value(form, "status"),
-    reassignUserId: value(form, "reassign_user_id"),
+    reassignUserId: value(form, "reassign_user_id"), teamIds: form.getAll("team_ids").map(String).filter(Boolean),
   });
-  if (!parsed.success) redirect("/app/users?error=Kontrollera medlemsrollen och statusen");
+  if (!parsed.success) redirect("/app/users?error=Kontrollera medlemsrollen, statusen och teamen");
+  if (parsed.data.role === "team_lead" && parsed.data.status === "active" && !parsed.data.teamIds.length) redirect("/app/users?error=Välj minst ett team som teamledaren ska leda");
   const supabase = await createClient();
-  const { error } = await supabase.rpc("update_tenant_member", {
+  const { error } = await supabase.rpc("update_tenant_member_v2", {
     p_user_id: parsed.data.userId,
     p_role: parsed.data.role,
     p_status: parsed.data.status,
     p_reassign_user_id: parsed.data.reassignUserId || null,
+    p_team_ids: parsed.data.teamIds,
+    p_restore_team_assignments: checked(form, "restore_team_assignments"),
   });
   if (error) redirect(`/app/users?error=${errorText(error)}`);
   revalidatePath("/app/users");
   revalidatePath("/app/teams");
   revalidatePath("/app/lists");
-  redirect("/app/users?message=Medlemmen och öppna arbetsobjekt uppdaterades");
+  redirect("/app/users?message=Medlemmen, teamrollen och öppna arbetsobjekt uppdaterades atomiskt");
 }
 
 export async function setTeamMember(form: FormData) {

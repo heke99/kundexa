@@ -1,0 +1,134 @@
+{
+  "/api-keys": {
+    "classification": "internal",
+    "reason": "Session-only tenant API-key administration"
+  },
+  "/calls/{id}/recording": {
+    "classification": "internal",
+    "reason": "Session-bound playback policy and short-lived redirect; not API-key compatible"
+  },
+  "/calls/{id}/transcription/retry": {
+    "classification": "internal",
+    "reason": "Session-bound user operation against the current call scope"
+  },
+  "/calls/complete": {
+    "classification": "internal",
+    "reason": "Interactive after-call compatibility endpoint"
+  },
+  "/calls": {
+    "classification": "internal",
+    "reason": "Session-bound Rinkel dial/list workflow relies on auth.uid() and the current user device mapping"
+  },
+  "/contracts/{id}/deliveries": {
+    "classification": "public"
+  },
+  "/contracts/{id}/documents/{documentId}": {
+    "classification": "public"
+  },
+  "/contracts/{id}/events": {
+    "classification": "public"
+  },
+  "/contracts/{id}/extend-expiry": {
+    "classification": "public"
+  },
+  "/contracts/{id}/reminders": {
+    "classification": "public"
+  },
+  "/contracts/{id}": {
+    "classification": "public"
+  },
+  "/contracts/{id}/send": {
+    "classification": "public"
+  },
+  "/contracts": {
+    "classification": "public"
+  },
+  "/customers/{id}": {
+    "classification": "public"
+  },
+  "/customers": {
+    "classification": "public"
+  },
+  "/dialer/complete": {
+    "classification": "internal",
+    "reason": "Interactive dialer state transition"
+  },
+  "/dialer/next": {
+    "classification": "internal",
+    "reason": "Interactive dialer state transition"
+  },
+  "/dialer/pause": {
+    "classification": "internal",
+    "reason": "Interactive dialer state transition"
+  },
+  "/dialer/sessions": {
+    "classification": "internal",
+    "reason": "Interactive dialer state transition"
+  },
+  "/directory/discover": {
+    "classification": "public"
+  },
+  "/directory/entities/{id}/refresh": {
+    "classification": "public"
+  },
+  "/directory/entities/{id}": {
+    "classification": "public"
+  },
+  "/directory/search": {
+    "classification": "public"
+  },
+  "/enrichment/jobs": {
+    "classification": "public"
+  },
+  "/import-profiles": {
+    "classification": "internal",
+    "reason": "Session-only import configuration"
+  },
+  "/imports/csv": {
+    "classification": "internal",
+    "reason": "Deprecated alias of /imports/file"
+  },
+  "/imports/file": {
+    "classification": "internal",
+    "reason": "Browser multipart import flow redirects into the tenant UI and uses session-bound RLS"
+  },
+  "/integrations/parsehub/projects": {
+    "classification": "internal",
+    "reason": "Session-only provider configuration"
+  },
+  "/integrations/parsehub/webhook": {
+    "classification": "internal",
+    "reason": "Provider callback authenticated by project secret"
+  },
+  "/integrations/resend/test": {
+    "classification": "public"
+  },
+  "/integrations/rinkel/status": {
+    "classification": "internal",
+    "reason": "Deprecated alias of /telephony/status"
+  },
+  "/platform/lists/import": {
+    "classification": "internal",
+    "reason": "Platform-owner import surface"
+  },
+  "/segments/{id}/campaign": {
+    "classification": "public"
+  },
+  "/segments/{id}/refresh": {
+    "classification": "public"
+  },
+  "/segments/preview": {
+    "classification": "public"
+  },
+  "/segments": {
+    "classification": "public"
+  },
+  "/telephony/status": {
+    "classification": "internal",
+    "reason": "Current-user readiness projection depends on auth.uid() and the session Rinkel mapping"
+  },
+  "/voice-client": {
+    "classification": "internal",
+    "reason": "410 legacy endpoint"
+  }
+}

@@ -18,7 +18,7 @@ export async function GET() {
     openapi: "3.1.0",
     info: {
       title: "Kundexa API",
-      version: "1.1.0",
+      version: "1.2.0",
       description: "Tenant-isolerat API för CRM, licensstyrd katalog, datainsamling, segment, avtal, import och telefoni. API-nycklar lagras endast hashade.",
     },
     servers: [{ url: "/api/v1" }],
@@ -53,25 +53,30 @@ export async function GET() {
         patch: { operationId: "updateCustomer", summary: "Uppdatera tillåtna kundfält", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], requestBody: { required: true, content: { "application/json": { schema: { type: "object", additionalProperties: false } } } }, responses: { "200": { description: "Uppdaterad" } } },
       },
       "/contracts": {
-        get: { operationId: "listContracts", summary: "Lista avtal", responses: { "200": { description: "Avtalslista" } } },
+        get: { operationId: "listContracts", summary: "Lista avtal", "x-required-scope": "contracts:read", responses: { "200": { description: "Avtalslista" } } },
+        post: { operationId: "createContract", summary: "Skapa avtalsutkast", "x-required-scope": "contracts:write", responses: { "201": { description: "Avtalsutkast skapat" }, "409": { description: "Affärsregel eller idempotenskonflikt" } } },
       },
-      "/imports/file": {
-        post: { operationId: "previewFileImport", summary: "Säkerhetsskanna, ladda upp och validera CSV, JSON, NDJSON, XML eller XLSX", security: [{ bearerAuth: [] }], requestBody: { required: true, content: { "multipart/form-data": { schema: { type: "object", required: ["name", "file"], properties: { name: { type: "string" }, file: { type: "string", format: "binary", description: "Högst 50 MB" }, simulate: { type: "boolean" } } } } } }, responses: { "303": { description: "Resultat visas i webbappen" } } },
+      "/contracts/{id}": {
+        get: { operationId: "getContract", summary: "Hämta avtal", "x-required-scope": "contracts:read", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], responses: { "200": { description: "Avtal" }, "404": { description: "Saknas" } } },
       },
-      "/calls": {
-        get: { operationId: "listCalls", summary: "Lista tenantseparerade kanoniska samtal", responses: { "200": { description: "Samtalslista" } } },
-        post: { operationId: "startRinkelCall", summary: "Reservera lokalt och starta ett samtal genom Kundexas centrala telefoni", requestBody: { required: true, content: { "application/json": { schema: { type: "object", additionalProperties: false, required: ["customerId", "targetPhone", "clientRequestId", "idempotencyKey"], properties: { customerId: { type: "string", format: "uuid" }, contactPersonId: { type: ["string", "null"], format: "uuid" }, targetPhone: { type: "string", pattern: "^\\\\+[1-9][0-9]{7,14}$" }, clientRequestId: { type: "string", format: "uuid" }, idempotencyKey: { type: "string", minLength: 8 }, purpose: { type: "string" }, numberAllocationId: { type: ["string", "null"], format: "uuid", description: "Valfri explicit caller-ID-allokering som måste vara aktiv och tillgänglig för användaren." } } } } } }, responses: { "202": { description: "Samtalsbegäran accepterad eller inväntar säker avstämning" }, "409": { description: "Telefoni, policy, mappning eller aktiv enhet blockerar" } } },
+      "/contracts/{id}/deliveries": {
+        get: { operationId: "listContractDeliveries", summary: "Lista leveransförsök för avtal", "x-required-scope": "contracts:read", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], responses: { "200": { description: "Leveranser" } } },
       },
-      "/telephony/status": {
-        get: { operationId: "getTelephonyStatus", summary: "Hämta aktuell användares säkra telefoni-, mappnings- och nummerstatus", responses: { "200": { description: "Telefonistatus", content: { "application/json": { schema: { type: "object", additionalProperties: false, required: ["platformConfigured", "runtimeConfigured", "apiVerified", "coreWebhooksVerified", "workerHealthy", "tenantEnabled", "manualReady", "automaticReady", "status", "blockers"], properties: { platformConfigured: { type: "boolean" }, runtimeConfigured: { type: "boolean", description: "True only when the server runtime has the central telephony API credential required to submit calls." }, apiVerified: { type: "boolean" }, platformReady: { type: "boolean" }, coreWebhooksVerified: { type: "boolean" }, workerHealthy: { type: "boolean" }, tenantEnabled: { type: "boolean" }, tenantHasNumber: { type: "boolean" }, userMapped: { type: "boolean" }, userHasActiveDevice: { type: "boolean" }, userHasDevice: { type: "boolean", deprecated: true }, userHasNumberAccess: { type: "boolean" }, manualReady: { type: "boolean" }, automaticReady: { type: "boolean" }, webhookReady: { type: "boolean" }, status: { type: "string" }, blockers: { type: "array", items: { type: "object", required: ["code", "message"], properties: { code: { type: "string" }, message: { type: "string" } } } }, errorCode: { type: ["string", "null"] }, errorMessage: { type: ["string", "null"] } } } } } } } },
+      "/contracts/{id}/documents/{documentId}": {
+        get: { operationId: "downloadContractDocument", summary: "Hämta behörighetskontrollerat avtalsdokument", "x-required-scope": "contracts:read", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }, { name: "documentId", in: "path", required: true, schema: { type: "string", format: "uuid" } }], responses: { "200": { description: "Dokument" }, "404": { description: "Saknas" } } },
       },
-      "/calls/{id}/recording": {
-        get: { operationId: "playCallRecording", summary: "Skapa tenant- och rollverifierad kortlivad uppspelningsredirect", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], responses: { "307": { description: "Kortlivad privat eller providerstream" }, "403": { description: "Åtkomst nekad" }, "404": { description: "Inspelning saknas" } } },
+      "/contracts/{id}/events": {
+        get: { operationId: "listContractEvents", summary: "Lista avtalsevents", "x-required-scope": "contracts:read", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], responses: { "200": { description: "Events" } } },
       },
-      "/calls/{id}/transcription/retry": {
-        post: { operationId: "retryCallTranscription", summary: "Köa capability-styrd transkriptionshämtning", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], responses: { "202": { description: "Jobbet är köat" }, "409": { description: "Samtalet kan inte berikas" } } },
+      "/contracts/{id}/extend-expiry": {
+        post: { operationId: "extendContractExpiry", summary: "Förläng aktuell acceptansbegäran", "x-required-scope": "contracts:manage_expiry", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], responses: { "200": { description: "Giltighet förlängd" }, "409": { description: "Kan inte förlängas" } } },
       },
-
+      "/contracts/{id}/reminders": {
+        post: { operationId: "scheduleContractReminder", summary: "Schemalägg avtals-påminnelse", "x-required-scope": "contracts:remind", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], responses: { "202": { description: "Påminnelse köad" } } },
+      },
+      "/contracts/{id}/send": {
+        post: { operationId: "sendContract", summary: "Lås kanonisk version och skicka aktuell acceptansgeneration", "x-required-scope": "contracts:send", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], responses: { "202": { description: "Utskicket köat" }, "409": { description: "Källsamtal, dokument eller kanal blockerar" } } },
+      },
       "/directory/discover": {
         post: { operationId: "discoverDirectoryEntities", summary: "Starta tillståndsstyrd discovery/ingestion från en konfigurerad källa", "x-required-scope": "directory:refresh", responses: { "202": { description: "Ingestionjobb schemalagt" } } },
       },
@@ -99,6 +104,9 @@ export async function GET() {
       },
       "/segments/preview": {
         post: { operationId: "previewSegment", summary: "Förhandsvisa segment lokalt utan externa anrop", "x-required-scope": "directory:read", responses: { "200": { description: "Urval och freshness-sammanställning" } } },
+      },
+      "/integrations/resend/test": {
+        post: { operationId: "testResendIntegration", summary: "Testa tenantens Resend-konfiguration utan att exponera credentials", "x-required-scope": "integrations:test", responses: { "200": { description: "Testmeddelande accepterat" }, "409": { description: "Konfiguration eller provider blockerar" } } },
       },
     },
   }, { headers: { "cache-control": "public, max-age=300" } });

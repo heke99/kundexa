@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { authenticateRequest } from "@/lib/api-auth";
+import { authenticateRequest, assertApiObjectAccess } from "@/lib/api-auth";
 import { apiExtendExpirySchema, extendExpiryFromApi } from "@/lib/contracts/api-service";
 import { apiJson, getCorrelationId, withCorrelation } from "@/lib/api-correlation";
 
@@ -8,6 +8,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   try {
     const identity = await authenticateRequest(request, "contracts:manage_expiry");
     const { id } = await params;
+    await assertApiObjectAccess(identity, "contract", id);
     const input = apiExtendExpirySchema.parse(await request.json());
     const result = await extendExpiryFromApi(identity, id, input);
     return apiJson(correlationId, { data: result });

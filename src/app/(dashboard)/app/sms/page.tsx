@@ -3,7 +3,42 @@ import { createClient } from "@/lib/supabase/server";
 import { queueSms } from "@/app/actions/communications";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { SelectField, TextareaField } from "@/components/ui/form-field";
+import { TextareaField } from "@/components/ui/form-field";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
-export default async function SmsPage({searchParams}:{searchParams:Promise<{customer?:string;error?:string}>}){const p=await searchParams;const s=await createClient();const [{data:customers},{data:messages}]=await Promise.all([s.from('customers').select('id,display_name,phone_e164,do_not_sms').not('phone_e164','is',null).order('display_name'),s.from('sms_messages').select('*,customers(display_name)').order('created_at',{ascending:false}).limit(60)]);return <><PageHeader title="SMS" description="Tenantseparerad SMS-inkorg, leveransstatus och avtalsaccept via riktiga nummer."/>{p.error?<p className="form-error">{p.error}</p>:null}<div className="split-layout"><Card><CardHeader><h2>Historik</h2><Badge>{messages?.length??0}</Badge></CardHeader><CardContent>{messages?.map(m=>{const c=Array.isArray(m.customers)?m.customers[0]:m.customers;return <div className="activity-line" key={m.id}><span className="activity-dot"><MessageSquareText size={14}/></span><div><strong>{c?.display_name??(m.direction==='outbound'?m.to_number:m.from_number)}</strong><p>{m.body}</p><small className="muted">{m.direction} · {m.status}</small></div><time>{formatDate(m.created_at)}</time></div>})}</CardContent></Card><Card><CardHeader><h2><Send size={16}/> Nytt SMS</h2></CardHeader><CardContent><form action={queueSms} className="form-stack"><input type="hidden" name="idempotency_key" value={crypto.randomUUID()}/><SelectField label="Kund" name="customer_id" defaultValue={p.customer??''} required><option value="">Välj kund</option>{customers?.map(c=><option key={c.id} value={c.id} disabled={c.do_not_sms}>{c.display_name} · {c.phone_e164}{c.do_not_sms?' · SPÄRRAD':''}</option>)}</SelectField><TextareaField label="Meddelande" name="body" maxLength={1600} required/><button className="button button-primary"><Send size={16}/> Lägg i säker sändkö</button></form><div className="notice warning" style={{marginTop:16}}>För svar och avtalsaccept måste avsändaren vara ett SMS-kompatibelt telefonnummer, inte endast ett alfanumeriskt avsändarnamn.</div></CardContent></Card></div></>}
+import { CustomerSearchSelect, type CustomerSearchOption } from "@/components/customer-search-select";
+
+export default async function SmsPage({ searchParams }: { searchParams: Promise<{ customer?: string; error?: string }> }) {
+  const params = await searchParams;
+  const supabase = await createClient();
+  const initialCustomer = params.customer
+    ? (await supabase.from("customers")
+      .select("id,customer_type,display_name,email,phone_e164,organization_number,do_not_call,do_not_sms,do_not_email")
+      .eq("id", params.customer).not("phone_e164", "is", null).maybeSingle()).data as CustomerSearchOption | null
+    : null;
+  const { data: messages } = await supabase.from("sms_messages")
+    .select("id,direction,status,body,to_number,from_number,created_at,customers(display_name)")
+    .order("created_at", { ascending: false }).limit(60);
+
+  return <>
+    <PageHeader title="SMS" description="Tenantseparerad SMS-inkorg, leveransstatus och avtalsaccept via riktiga nummer." />
+    {params.error ? <p className="form-error">{params.error}</p> : null}
+    <div className="split-layout">
+      <Card><CardHeader><h2>Historik</h2><Badge>{messages?.length ?? 0}</Badge></CardHeader><CardContent>
+        {messages?.map((message) => {
+          const customer = Array.isArray(message.customers) ? message.customers[0] : message.customers;
+          return <div className="activity-line" key={message.id}><span className="activity-dot"><MessageSquareText size={14} /></span><div><strong>{customer?.display_name ?? (message.direction === "outbound" ? message.to_number : message.from_number)}</strong><p>{message.body}</p><small className="muted">{message.direction} · {message.status}</small></div><time>{formatDate(message.created_at)}</time></div>;
+        })}
+      </CardContent></Card>
+      <Card><CardHeader><h2><Send size={16} /> Nytt SMS</h2></CardHeader><CardContent>
+        <form action={queueSms} className="form-stack">
+          <input type="hidden" name="idempotency_key" value={crypto.randomUUID()} />
+          <CustomerSearchSelect name="customer_id" channel="sms" defaultValue={params.customer ?? ""} initialCustomer={initialCustomer} required />
+          <TextareaField label="Meddelande" name="body" maxLength={1600} required />
+          <button className="button button-primary"><Send size={16} /> Lägg i säker sändkö</button>
+        </form>
+        <div className="notice warning" style={{ marginTop: 16 }}>För svar och avtalsaccept måste avsändaren vara ett SMS-kompatibelt telefonnummer, inte endast ett alfanumeriskt avsändarnamn.</div>
+      </CardContent></Card>
+    </div>
+  </>;
+}

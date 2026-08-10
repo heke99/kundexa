@@ -1,4 +1,4 @@
-import { authenticateRequest, dataClientForIdentity } from "@/lib/api-auth";
+import { authenticateRequest, assertApiObjectAccess, dataClientForIdentity } from "@/lib/api-auth";
 import { apiJson, getCorrelationId, withCorrelation } from "@/lib/api-correlation";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -6,6 +6,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   try {
     const identity = await authenticateRequest(request, "contracts:read");
     const { id } = await params;
+    await assertApiObjectAccess(identity, "contract", id);
     const db = await dataClientForIdentity(identity);
     const { data, error } = await db.from("contract_events").select("id,event_type,actor_user_id,payload,occurred_at")
       .eq("tenant_id", identity.tenantId).eq("contract_id", id).order("occurred_at", { ascending: true });

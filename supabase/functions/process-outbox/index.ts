@@ -461,17 +461,24 @@ async function processEvidence(job: Job) {
 
   const tenant = singleRelation(contract.tenants);
   const customer = singleRelation(contract.customers);
+  const generation = Number(request?.generation ?? contract.acceptance_generation ?? 0);
   const manifestBase = {
-    schema: "kundexa.evidence.v2",
+    schema: "kundexa.evidence.v3",
     generated_at: new Date().toISOString(),
+    generation,
     request_id: requestId || request?.id || null,
     acceptance_id: acceptanceId || acceptance.id,
-    contract,
-    active_version: activeVersion,
+    contract_id: contract.id,
+    contract_version_id: activeVersion.id,
+    contract_number: contract.contract_number,
     snapshot_hash: activeVersion.snapshot_hash ?? activeVersion.document_hash,
+    signature_policy_snapshot: activeVersion.signature_policy_snapshot ?? null,
+    source_call_id: contract.source_call_id ?? null,
+    source_call_eligibility_snapshot: contract.source_call_eligibility_snapshot ?? null,
+    source_call_eligibility_locked_at: contract.source_call_eligibility_locked_at ?? null,
+    source_call_live_projection: sourceCall,
     canonical_document: { id: canonicalDocument.id, sha256: canonicalHash, file_name: canonicalDocument.file_name, size_bytes: canonicalBytes.length },
     acceptance,
-    source_call: sourceCall,
     deliveries,
     emails,
     sms,
@@ -499,8 +506,9 @@ async function processEvidence(job: Job) {
     { heading: "Snapshot SHA-256", text: activeVersion.snapshot_hash ?? activeVersion.document_hash ?? "saknas" },
     { heading: "Kanonisk PDF SHA-256", text: canonicalHash },
     { heading: "Accepterad PDF SHA-256", text: canonicalHash },
-    { heading: "Acceptans", text: JSON.stringify({ id: acceptance.id, method: acceptance.method, status: acceptance.status, accepted_at: acceptance.accepted_at, name: acceptance.acceptance_phrase, ip: acceptance.ip_address, user_agent: acceptance.user_agent }) },
-    { heading: "Källsamtal", text: JSON.stringify(sourceCall) },
+    { heading: "Acceptans", text: JSON.stringify({ id: acceptance.id, generation, method: acceptance.method, status: acceptance.status, accepted_at: acceptance.accepted_at, name: acceptance.acceptance_phrase, ip: acceptance.ip_address, user_agent: acceptance.user_agent }) },
+    { heading: "Källsamtal – låst eligibility", text: JSON.stringify(contract.source_call_eligibility_snapshot ?? null) },
+    { heading: "Signaturpolicy", text: JSON.stringify(activeVersion.signature_policy_snapshot ?? null) },
     { heading: "Kommunikation", text: `${deliveries?.length ?? 0} leveranser, ${emails?.length ?? 0} e-postmeddelanden och ${sms?.length ?? 0} SMS ingår i manifestet.` },
     { heading: "Manifest SHA-256", text: finalManifestHash },
   ]);
@@ -513,7 +521,7 @@ async function processEvidence(job: Job) {
     { document_type: "manifest", file_name: `evidence-${key}.json`, storage_path: manifestPath, mime_type: "application/json", size_bytes: manifestBytes.length, sha256: finalManifestHash },
     { document_type: "signed_pdf", file_name: `accepted-${contract.contract_number}.pdf`, storage_path: acceptedPath, mime_type: "application/pdf", size_bytes: canonicalBytes.length, sha256: canonicalHash },
     { document_type: "evidence_pdf", file_name: `evidence-${contract.contract_number}.pdf`, storage_path: evidencePath, mime_type: "application/pdf", size_bytes: evidencePdf.length, sha256: evidenceHash },
-  ].map((row) => ({ ...row, tenant_id: job.tenant_id, contract_id: contractId, contract_version_id: contract.active_version_id, metadata: { acceptance_id: acceptance.id, request_id: requestId || request?.id || null, canonical_document_id: canonicalDocument.id, canonical_document_sha256: canonicalHash, manifest_hash: finalManifestHash, immutable: true } }));
+  ].map((row) => ({ ...row, tenant_id: job.tenant_id, contract_id: contractId, contract_version_id: contract.active_version_id, metadata: { acceptance_id: acceptance.id, request_id: requestId || request?.id || null, generation, canonical_document_id: canonicalDocument.id, canonical_document_sha256: canonicalHash, manifest_hash: finalManifestHash, immutable: true } }));
   const insertedDocuments: Record<string, string> = {};
   for (const row of documentRows) {
     const { data, error } = await supabase.from("contract_documents").upsert(row, { onConflict: "tenant_id,storage_path" }).select("id,document_type").single();
@@ -536,7 +544,7 @@ async function processEvidence(job: Job) {
   };
   const { error: evidenceError } = await supabase.from("evidence_packages").upsert(evidenceRow, { onConflict: "tenant_id,acceptance_id" });
   if (evidenceError) throw evidenceError;
-  await supabase.from("contract_events").insert({ tenant_id: job.tenant_id, contract_id: contractId, event_type: "evidence.completed", payload: { acceptance_id: acceptance.id, manifest_hash: finalManifestHash, signed_pdf_id: insertedDocuments.signed_pdf, evidence_pdf_id: insertedDocuments.evidence_pdf, canonical_document_id: canonicalDocument.id } });
+  await supabase.from("contract_events").insert({ tenant_id: job.tenant_id, contract_id: contractId, event_type: "evidence.completed", payload: { acceptance_id: acceptance.id, generation, manifest_hash: finalManifestHash, signed_pdf_id: insertedDocuments.signed_pdf, evidence_pdf_id: insertedDocuments.evidence_pdf, canonical_document_id: canonicalDocument.id } });
 }
 
 async function processContractConfirmation(job: Job) {
@@ -603,13 +611,17 @@ async function processSignedContractConfirmation(job: Job) {
   const finalDocumentId = String(job.payload.final_document_id ?? "");
   if (!contractId || !finalDocumentId) throw new Error("signed_confirmation_payload_missing");
 
-  const [{ data: contract, error: contractError }, { data: tenant }, { data: document, error: documentError }, { data: recipients, error: recipientsError }] = await Promise.all([
-    supabase.from("contracts").select("id,tenant_id,contract_number,title,customer_id,active_version_id,signed_at").eq("tenant_id", job.tenant_id).eq("id", contractId).single(),
+  const { data: contract, error: contractError } = await supabase.from("contracts")
+    .select("id,tenant_id,contract_number,title,customer_id,active_version_id,signed_at,acceptance_generation")
+    .eq("tenant_id", job.tenant_id).eq("id", contractId).single();
+  if (contractError || !contract) throw new Error("signed_confirmation_contract_not_found");
+  const generation = Number(job.payload.generation ?? contract.acceptance_generation ?? 0);
+  if (generation !== Number(contract.acceptance_generation ?? 0)) throw new Error("signed_confirmation_generation_superseded");
+  const [{ data: tenant }, { data: document, error: documentError }, { data: recipients, error: recipientsError }] = await Promise.all([
     supabase.from("tenants").select("legal_name").eq("id", job.tenant_id).single(),
     supabase.from("contract_documents").select("id,contract_version_id,file_name,sha256").eq("tenant_id", job.tenant_id).eq("id", finalDocumentId).eq("contract_id", contractId).eq("document_type", "signed_pdf").single(),
-    supabase.from("contract_recipients").select("id,full_name,email,status,required").eq("tenant_id", job.tenant_id).eq("contract_id", contractId).eq("status", "signed"),
+    supabase.from("contract_recipients").select("id,full_name,email,status,required,generation").eq("tenant_id", job.tenant_id).eq("contract_id", contractId).eq("generation", generation).eq("status", "signed"),
   ]);
-  if (contractError || !contract) throw new Error("signed_confirmation_contract_not_found");
   if (documentError || !document) throw new Error("signed_confirmation_document_not_found");
   if (recipientsError) throw new Error(recipientsError.message);
   if (!tenant) throw new Error("signed_confirmation_tenant_not_found");
@@ -618,7 +630,7 @@ async function processSignedContractConfirmation(job: Job) {
   const signedLabel = new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeStyle: "short", timeZone: "Europe/Stockholm" }).format(new Date(signedAt));
   for (const recipient of recipients ?? []) {
     if (!recipient.email) continue;
-    const idempotencyKey = `contract-signed/${contract.id}/${recipient.id}/email`;
+    const idempotencyKey = `contract-signed/${contract.id}/${generation}/${recipient.id}/email`;
     const text = `Hej ${recipient.full_name},
 
 Avtal ${contract.contract_number} (${contract.title}) hos ${tenant.legal_name} är fullständigt signerat sedan ${signedLabel}. Det slutligt signerade dokumentet finns bifogat.
@@ -664,7 +676,7 @@ ${tenant.legal_name}`;
       job_type: "email.send",
       aggregate_type: "email_message",
       aggregate_id: email.id,
-      payload: { email_message_id: email.id, contract_id: contract.id, final_document_id: document.id },
+      payload: { email_message_id: email.id, contract_id: contract.id, generation, final_document_id: document.id },
       idempotency_key: idempotencyKey,
       priority: 30,
     }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true });

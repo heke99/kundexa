@@ -23,6 +23,12 @@ await db.exec(`
   create function auth.role() returns text language sql stable as $$
     select coalesce(nullif(current_setting('request.jwt.claim.role', true),''), 'authenticated')
   $$;
+  create function auth.jwt() returns jsonb language sql stable as $$
+    select jsonb_build_object(
+      'sub', nullif(current_setting('request.jwt.claim.sub', true),''),
+      'role', coalesce(nullif(current_setting('request.jwt.claim.role', true),''), 'authenticated')
+    )
+  $$;
   create schema storage;
   create table storage.buckets (
     id text primary key, name text not null, public boolean not null default false,
@@ -432,7 +438,9 @@ await db.exec(`
   insert into public.contact_people(id,tenant_id,customer_id,full_name,role,phone_e164,is_primary)
   values('00000000-0000-0000-0000-000000000027','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000021','Runtime Owner','Ägare','+46708888888',true);
   insert into public.nix_checks(tenant_id,customer_id,phone_e164,source,source_version,result,checked_at,valid_until,evidence)
-  values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000021','+46708888888','runtime','1','not_listed',now(),now()+interval '30 days','{}');
+  values
+    ('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000021','+46708888888','runtime','1','not_listed',now(),now()+interval '30 days','{}'),
+    ('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000025','+46702222225','runtime','1','not_listed',now(),now()+interval '30 days','{}');
   insert into public.phone_numbers(id,tenant_id,number_e164,supports_voice,status,webhook_token_hash)
   values('00000000-0000-0000-0000-000000000022','00000000-0000-0000-0000-000000000001','+46401234567',true,'active','runtime-hash')
   on conflict(tenant_id,number_e164) do nothing;
@@ -817,6 +825,9 @@ const centralResult = centralReservation.rows[0].result;
 if (!centralResult.callId || centralResult.numberId !== "platform-number-a" || centralResult.deviceId !== "device-a") {
   throw new Error(`Central Rinkel reservation failed: ${JSON.stringify(centralResult)}`);
 }
+if (centralResult.purpose !== "direct_marketing") {
+  throw new Error(`Central Rinkel purpose was not derived server-side: ${JSON.stringify(centralResult)}`);
+}
 const centralReplay = await db.query(`
   select public.rinkel_reserve_platform_outbound_call(
     '00000000-0000-0000-0000-000000000025',null,'+46703333333',null,null,null,
@@ -828,6 +839,7 @@ if (!centralReplay.rows[0].result.idempotentReplay || centralReplay.rows[0].resu
 }
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
 await db.query(`select public.rinkel_finalize_platform_dial($1,$2,'accepted',null,null)`, [centralResult.callId, centralResult.attemptId]);
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
 const centralFinal = await db.query(`select c.status call_status,a.status attempt_status
   from public.calls c join public.rinkel_call_attempts_v2 a on a.call_id=c.id where c.id=$1`, [centralResult.callId]);
 if (centralFinal.rows[0].call_status !== "dial_requested" || centralFinal.rows[0].attempt_status !== "awaiting_provider_event") {
@@ -1178,6 +1190,13 @@ const finalEmailProjection = await db.query(`select status from public.email_mes
 if (finalEmailProjection.rows[0].status !== 'opened') throw new Error(`Resend projection did not remain opened: ${JSON.stringify(finalEmailProjection.rows[0])}`);
 
 await db.exec(`
+  insert into public.customers(
+    id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by
+  ) values(
+    '10000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001',
+    'company','prospect','Signing Runtime Prospect','+46702222999',true,'legitimate_interest',
+    '00000000-0000-0000-0000-000000000002'
+  );
   insert into public.contract_templates(id,tenant_id,name,contract_type,audience)
   values('00000000-0000-0000-0000-000000000084','00000000-0000-0000-0000-000000000001','Signing verify','sales','B2B');
   insert into public.contract_template_versions(
@@ -1192,7 +1211,7 @@ await db.exec(`
     id,tenant_id,contract_number,customer_id,template_id,owner_user_id,audience,status,title
   ) values(
     '00000000-0000-0000-0000-000000000086','00000000-0000-0000-0000-000000000001','VERIFY-SIGN-1',
-    '00000000-0000-0000-0000-000000000021','00000000-0000-0000-0000-000000000084',
+    '10000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000084',
     '00000000-0000-0000-0000-000000000002','B2B','ready','Signing verify contract'
   );
   insert into public.contract_versions(
@@ -1205,11 +1224,11 @@ await db.exec(`
   update public.contracts set active_version_id='00000000-0000-0000-0000-000000000087'
     where id='00000000-0000-0000-0000-000000000086';
   insert into public.contract_documents(
-    id,tenant_id,contract_id,contract_version_id,document_type,file_name,storage_path,mime_type,sha256
+    id,tenant_id,contract_id,contract_version_id,document_type,file_name,storage_path,mime_type,sha256,size_bytes
   ) values(
     '00000000-0000-0000-0000-000000000088','00000000-0000-0000-0000-000000000001',
     '00000000-0000-0000-0000-000000000086','00000000-0000-0000-0000-000000000087',
-    'signed_pdf','signed.pdf','contracts/verify/signed.pdf','application/pdf','final-signed-sha-256'
+    'signed_pdf','signed.pdf','contracts/verify/signed.pdf','application/pdf','final-signed-sha-256',2048
   );
   insert into public.contract_recipients(
     id,tenant_id,contract_id,full_name,email,role,signing_order,required,status,identity_assurance_level,signed_at
@@ -1266,25 +1285,61 @@ await db.exec(`
 const firstFinalize = await db.query(`select public.finalize_signing_envelope(
   '00000000-0000-0000-0000-000000000090','00000000-0000-0000-0000-000000000088','{"verified":true}'
 ) as result`);
-if (!firstFinalize.rows[0].result.post_sign_executed) throw new Error(`Post-sign process did not execute: ${JSON.stringify(firstFinalize.rows[0])}`);
+if (firstFinalize.rows[0].result.status !== 'signed' || firstFinalize.rows[0].result.idempotent_replay === true) {
+  throw new Error(`Signing finalization did not complete the canonical signed state: ${JSON.stringify(firstFinalize.rows[0])}`);
+}
 const replayFinalize = await db.query(`select public.finalize_signing_envelope(
   '00000000-0000-0000-0000-000000000090','00000000-0000-0000-0000-000000000088','{"verified":true}'
 ) as result`);
-if (replayFinalize.rows[0].result.post_sign_executed) throw new Error(`Post-sign replay executed twice: ${JSON.stringify(replayFinalize.rows[0])}`);
+if (replayFinalize.rows[0].result.status !== 'signed' || replayFinalize.rows[0].result.idempotent_replay !== true) {
+  throw new Error(`Signing finalization replay was not idempotent: ${JSON.stringify(replayFinalize.rows[0])}`);
+}
+const preActivation = await db.query(`
+  select
+    (select status from public.contracts where id='00000000-0000-0000-0000-000000000086') contract_status,
+    (select lifecycle from public.customers where id='10000000-0000-0000-0000-000000000001') customer_lifecycle
+`);
+if (preActivation.rows[0].contract_status !== 'signed' || preActivation.rows[0].customer_lifecycle !== 'prospect') {
+  throw new Error(`Signing finalization bypassed explicit contract activation: ${JSON.stringify(preActivation.rows[0])}`);
+}
+await db.exec(`
+  select set_config('request.jwt.claim.role','authenticated',false);
+  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
+`);
+const firstActivation = await db.query(`select public.activate_completed_contract('00000000-0000-0000-0000-000000000086') as result`);
+if (firstActivation.rows[0].result.status !== 'active' || firstActivation.rows[0].result.already_active === true) {
+  throw new Error(`Completed contract activation failed: ${JSON.stringify(firstActivation.rows[0])}`);
+}
+const replayActivation = await db.query(`select public.activate_completed_contract('00000000-0000-0000-0000-000000000086') as result`);
+if (replayActivation.rows[0].result.status !== 'active' || replayActivation.rows[0].result.already_active !== true) {
+  throw new Error(`Contract activation replay was not idempotent: ${JSON.stringify(replayActivation.rows[0])}`);
+}
 const postSignState = await db.query(`
   select
     (select status from public.contracts where id='00000000-0000-0000-0000-000000000086') contract_status,
-    (select lifecycle from public.customers where id='00000000-0000-0000-0000-000000000021') customer_lifecycle,
-    (select count(*)::int from public.contract_post_sign_runs where contract_id='00000000-0000-0000-0000-000000000086') post_sign_runs,
+    (select lifecycle from public.customers where id='10000000-0000-0000-0000-000000000001') customer_lifecycle,
     (select count(*)::int from public.activities where metadata->>'post_sign_contract_id'='00000000-0000-0000-0000-000000000086') onboarding_activities,
     (select count(*)::int from public.signing_documents where envelope_id='00000000-0000-0000-0000-000000000090' and document_role='final_signed') final_documents,
-    (select count(*)::int from public.outbox_jobs where idempotency_key='contract.signed.confirmation:00000000-0000-0000-0000-000000000086') confirmation_jobs
+    (select count(*)::int from public.evidence_packages where contract_id='00000000-0000-0000-0000-000000000086' and status='completed' and manifest->>'generation'='0') evidence_packages,
+    (select count(*)::int from public.outbox_jobs where idempotency_key='contract.signed.confirmation:00000000-0000-0000-0000-000000000086:0') confirmation_jobs,
+    (select count(*)::int from public.contract_events where contract_id='00000000-0000-0000-0000-000000000086' and event_type='contract.activated') activation_events,
+    (select count(*)::int from public.audit_logs where entity_type='contract' and entity_id='00000000-0000-0000-0000-000000000086' and action='contract.activated') activation_audits
 `);
 const postSign = postSignState.rows[0];
-if (postSign.contract_status !== 'signed' || postSign.customer_lifecycle !== 'customer' || Number(postSign.post_sign_runs) !== 1 || Number(postSign.onboarding_activities) !== 1 || Number(postSign.final_documents) !== 1 || Number(postSign.confirmation_jobs) !== 1) {
-  throw new Error(`Post-sign exactly-once state invalid: ${JSON.stringify(postSign)}`);
+if (
+  postSign.contract_status !== 'active'
+  || postSign.customer_lifecycle !== 'customer'
+  || Number(postSign.onboarding_activities) !== 1
+  || Number(postSign.final_documents) !== 1
+  || Number(postSign.evidence_packages) !== 1
+  || Number(postSign.confirmation_jobs) !== 1
+  || Number(postSign.activation_events) !== 1
+  || Number(postSign.activation_audits) !== 1
+) {
+  throw new Error(`Finalize/activate exactly-once state invalid: ${JSON.stringify(postSign)}`);
 }
-console.log("Executed production hardening runtime paths: import truncation, Rinkel buffering/monotonicity, Resend reducer and exactly-once signing finalization.");
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+console.log("Executed production hardening runtime paths: import truncation, Rinkel buffering/monotonicity, Resend reducer, generation-bound signing finalization and idempotent contract activation.");
 
 // Generated-type drift. `types:verify` only asserts that a hand-maintained list of names is
 // present, so a table or column added by a migration and never regenerated into

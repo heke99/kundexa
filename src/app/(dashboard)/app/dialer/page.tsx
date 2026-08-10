@@ -13,8 +13,10 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
   const params = await searchParams;
   const supabase = await createClient();
   const now = new Date().toISOString();
-  const [{ data: customers }, { data: recent }, { data: lists }, { data: callbacks }, { data: callerIdData }] = await Promise.all([
-    supabase.from("customers").select("id,display_name,phone_e164,do_not_call").not("phone_e164", "is", null).is("deleted_at", null).order("display_name").limit(500),
+  const [{ data: selectedCustomer }, { data: recent }, { data: lists }, { data: callbacks }, { data: callerIdData }] = await Promise.all([
+    params.customer
+      ? supabase.from("customers").select("id,display_name,phone_e164,do_not_call").eq("id", params.customer).not("phone_e164", "is", null).is("deleted_at", null).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
     supabase.from("calls").select("id,to_number,status,disposition,created_at,customers(display_name)").order("created_at", { ascending: false }).limit(8),
     supabase.from("customer_lists").select("id,name,dialing_mode,priority,status").eq("status", "active").order("priority", { ascending: false }),
     supabase.from("activities").select("id,customer_id,list_id,callback_scope,due_at,title,customers(display_name,phone_e164)").eq("type", "callback").eq("status", "open").lte("due_at", now).order("due_at").limit(20),
@@ -28,7 +30,7 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
       {!lists?.length ? <div className="notice">Du har inga aktiva och tilldelade ringlistor.</div> : null}
     </div>
     <div className="dialer-grid">
-      <div className="phone-panel"><RinkelDialer customers={customers ?? []} initialCustomer={params.customer} callbackActivityId={params.callback} callerIdOptions={(callerIdData ?? []) as Array<{ allocationId: string; number: string; displayName: string | null; isDefault?: boolean; accessSource?: "user" | "team" | "tenant" }>} /></div>
+      <div className="phone-panel"><RinkelDialer customers={selectedCustomer ? [selectedCustomer] : []} initialCustomer={selectedCustomer?.id} callbackActivityId={params.callback} callerIdOptions={(callerIdData ?? []) as Array<{ allocationId: string; number: string; displayName: string | null; isDefault?: boolean; accessSource?: "user" | "team" | "tenant" }>} /></div>
       <div className="grid">
         <Card><CardHeader><h2><Plus size={17} /> Ring ett nytt nummer</h2></CardHeader><CardContent><p className="muted">Numret matchas först mot befintliga kundkort. Finns ingen träff skapas ett enda nytt prospekt.</p><form action={createManualProspect} className="form-grid"><Field label="Namn eller nummer" name="display_name" placeholder="Nytt prospekt" /><Field label="Telefonnummer" name="phone" type="tel" required placeholder="070 123 45 67" /><SelectField label="Typ" name="customer_type" defaultValue="person"><option value="person">Privatperson</option><option value="company">Företag</option></SelectField><button className="button button-secondary" style={{ alignSelf: "end" }}>Matcha och öppna</button></form></CardContent></Card>
         <Card><CardHeader><h2><Clock3 size={17} /> Förfallna återkomster</h2><Badge className={callbacks?.length ? "badge-warning" : ""}>{callbacks?.length ?? 0}</Badge></CardHeader><CardContent>{callbacks?.map((callback) => {

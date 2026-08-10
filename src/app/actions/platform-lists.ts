@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { getPlatformContext, isPlatformAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -35,23 +36,39 @@ export async function createPlatformTenantAndInviteOwner(form: FormData) {
   const admin = createAdminClient();
   const team = await admin.from("teams").select("id").eq("tenant_id", tenantId).eq("is_default", true).limit(1).single();
   if (team.error || !team.data) redirect("/app/platform?error=Tenant skapades men standardteamet kunde inte hittas");
+
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const reservation = await supabase.rpc("reserve_tenant_invitation", {
+    p_tenant_id: tenantId,
+    p_email: parsed.data.ownerEmail,
+    p_role: "owner",
+    p_team_ids: [team.data.id],
+    p_message: "Du har bjudits in som tenantägare i Kundexa.",
+    p_expires_at: expiresAt,
+    p_idempotency_key: `platform-owner:${randomUUID()}`,
+  });
+  if (reservation.error || !reservation.data) redirect(`/app/platform?error=${message(reservation.error)}`);
+  const invitationId = String(reservation.data);
+
   let user = await findAuthUserByEmail(parsed.data.ownerEmail);
   if (!user) {
     const invited = await admin.auth.admin.inviteUserByEmail(parsed.data.ownerEmail, {
       redirectTo: `${serverEnv().NEXT_PUBLIC_APP_URL}/auth/callback`,
-      data: { invited_tenant_id: tenantId, invited_role: "owner" },
+      data: { invited_tenant_id: tenantId, invited_role: "owner", tenant_invitation_id: invitationId },
     });
-    if (invited.error || !invited.data.user) redirect(`/app/platform?error=${message(invited.error)}`);
+    if (invited.error || !invited.data.user) {
+      await supabase.rpc("fail_tenant_invitation", { p_invitation_id: invitationId, p_reason: invited.error?.message ?? "auth_invitation_failed" });
+      redirect(`/app/platform?error=${message(invited.error)}`);
+    }
     user = invited.data.user;
   }
-  const registered = await supabase.rpc("register_tenant_invitation", {
-    p_tenant_id: tenantId, p_invited_user_id: user.id, p_email: parsed.data.ownerEmail,
-    p_role: "owner", p_team_ids: [team.data.id], p_message: "Du har bjudits in som tenantägare i Kundexa.",
-    p_expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-  });
-  if (registered.error) redirect(`/app/platform?error=${message(registered.error)}`);
+  const finalized = await supabase.rpc("finalize_tenant_invitation", { p_invitation_id: invitationId, p_invited_user_id: user.id });
+  if (finalized.error) {
+    await supabase.rpc("fail_tenant_invitation", { p_invitation_id: invitationId, p_reason: finalized.error.message });
+    redirect(`/app/platform?error=${message(finalized.error)}`);
+  }
   revalidatePath("/app/platform");
-  redirect(`/app/platform?message=${encodeURIComponent("Tenant skapades och ägaren bjöds in")}`);
+  redirect(`/app/platform?message=${encodeURIComponent("Tenant skapades. Ägaren är reserverad och tenant blir aktiv först när inbjudan accepteras.")}`);
 }
 
 export async function allocatePlatformList(form: FormData) {

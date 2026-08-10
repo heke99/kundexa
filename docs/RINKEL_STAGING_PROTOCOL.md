@@ -102,6 +102,8 @@ incomingCall
 | incomingCall | Mottaget, tenant-korrelerat och processat | NOT_RUN |
 | Kärnwebhookar | `incomingCall/outgoingCall/callStart/callEnd` = 4/4 verified | NOT_RUN |
 | Worker | Heartbeat yngre än tre minuter | NOT_RUN |
+| Exact-target policy | Vald telefon tillhör tillåten kund/kontakt och purpose härleds server-side från arbetsobjektet | NOT_RUN |
+| Caller-ID scope | Pausad teammedlem kan inte få teamets nummergrant; explicit otillåtet nummer faller inte tillbaka tyst | NOT_RUN |
 | Konflikter | Inga öppna korrelations-/nummerägarkonflikter | NOT_RUN |
 | Failed/dead-letter | Inga oförklarade workerfel | NOT_RUN |
 | Auto-dialer | Kan aktiveras först när ovanstående readiness är grön | NOT_RUN |
@@ -110,6 +112,7 @@ incomingCall
 
 | Kontroll | Krav | Status |
 |---|---|---|
+| Definitivt provideravslag före start | Call/attempt markeras failed, dialer/list-claim släpps atomiskt och kundförsök konsumeras inte | NOT_RUN |
 | Timeout/nätfel efter dial | Ingen blind POST-retry; attempt blir osäkert och CDR/webhook reparerar | NOT_RUN |
 | Sent provider-event | `provider_outcome_unknown/reconciliation_required` får återgå till verklig ringing/answered state | NOT_RUN |
 | Dubblett webhook | Idempotent; samma provider-event skapar inte dubbla calls/jobs | NOT_RUN |

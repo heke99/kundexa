@@ -2,7 +2,7 @@ import {
   Activity, BarChart3, Blocks, BookUser, Bot, BriefcaseBusiness, Building2, CalendarCheck2, CalendarDays,
   CircleDollarSign, ClipboardList, Contact, FileSignature, FileText, Gauge, Headphones,
   Import, Inbox, KeyRound, LayoutList, ListFilter, Megaphone, MessageSquareText, Package,
-  PhoneCall, PhoneForwarded, Plug, ScrollText, Search, Settings, ShieldCheck, Users, Webhook,
+  PhoneCall, Plug, ScrollText, Search, Settings, ShieldCheck, Users, Webhook,
 } from "@/components/icons";
 
 export const navGroups = [
@@ -11,7 +11,6 @@ export const navGroups = [
     { href: "/app/dialer", label: "Dialer", icon: PhoneCall },
     { href: "/app/callbacks", label: "Återkomster", icon: CalendarCheck2 },
     { href: "/app/calls", label: "Mina samtal", icon: Headphones },
-    { href: "/app/queues", label: "Samtalsköer", icon: PhoneForwarded },
     { href: "/app/activities", label: "Aktiviteter", icon: Activity },
     { href: "/app/calendar", label: "Kalender", icon: CalendarDays },
   ]},

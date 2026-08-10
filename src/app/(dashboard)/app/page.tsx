@@ -1,5 +1,6 @@
 import { Activity, FileSignature, PhoneCall, Target, TrendingUp, Users } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
+import { getAppContext } from "@/lib/auth";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -13,7 +14,15 @@ type DashboardOverview = {
 };
 
 export default async function DashboardPage() {
-  const supabase = await createClient();
+  const [supabase, context] = await Promise.all([createClient(), getAppContext()]);
+  const dashboardCopy: Record<string, { title: string; description: string; customerLabel: string }> = {
+    sales: { title: "Min dashboard", description: "Dina kunder, samtal, aktiviteter och avtal inom ditt aktuella access-scope.", customerLabel: "Mina kunder och prospekt" },
+    team_lead: { title: "Teamdashboard", description: "Resultat och arbetsläge för de team du faktiskt leder.", customerLabel: "Teamets kunder och prospekt" },
+    contract_manager: { title: "Avtalsdashboard", description: "Avtal, aktiviteter och kundärenden inom ditt avtals-scope.", customerLabel: "Kunder i avtalsflödet" },
+    quality: { title: "Kvalitetsdashboard", description: "Samtal, kvalitet och avtal som din roll får granska.", customerLabel: "Behöriga kundposter" },
+    finance: { title: "Ekonomidashboard", description: "Kommersiell överblick inom din behörighet.", customerLabel: "Behöriga kundposter" },
+  };
+  const copy = dashboardCopy[context.role] ?? { title: "Dashboard", description: "Tenantens försäljning, aktiviteter och avtal inom ditt behörighetsscope.", customerLabel: "Kunder och prospekt" };
   // Alla nyckeltal aggregeras i databasen i ett anrop; inga obegränsade rådatamängder hämtas.
   const [{ data: overviewData }, recentContracts] = await Promise.all([
     supabase.rpc("dashboard_overview"),
@@ -21,9 +30,9 @@ export default async function DashboardPage() {
   ]);
   const overview = (overviewData ?? { customers: 0, callsToday: 0, pendingContracts: 0, openActivities: 0, openDeals: 0, wonDealValue: 0 }) as DashboardOverview;
   return <>
-    <PageHeader title="Dashboard" description="Realtidsbild av försäljning, aktiviteter och avtal." />
+    <PageHeader title={copy.title} description={copy.description} />
     <div className="grid grid-4">
-      <StatCard icon={Users} label="Kunder och prospekt" value={overview.customers} detail="Aktiva poster" />
+      <StatCard icon={Users} label={copy.customerLabel} value={overview.customers} detail="Aktiva poster" />
       <StatCard icon={PhoneCall} label="Samtal idag" value={overview.callsToday} detail="In- och utgående" />
       <StatCard icon={FileSignature} label="Avtal väntar" value={overview.pendingContracts} detail="Skickade eller öppnade" />
       <StatCard icon={TrendingUp} label="Vunnet värde" value={formatCurrency(Number(overview.wonDealValue))} detail="Alla vunna affärer" />
