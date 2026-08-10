@@ -28,6 +28,6 @@ Local checks passed before publishing the patch:
 - `git diff --check`
 - TypeScript `transpileModule` syntax pass for all changed TS/TSX files
 
-The SQL runtime fixture was aligned to the same explicit-primary-team invariant instead of weakening the production constraint.
+The SQL runtime fixtures were aligned to the same explicit-primary-team invariant, including the central Rinkel tenant/seller path, instead of weakening the production constraint.
 
 The local sandbox cannot perform a clean `npm ci` because its package mirror returns 404 for `pdf-lib@1.17.1`; therefore full dependency-backed verification is delegated to the repository GitHub Actions workflow. Live Kundexa Supabase staging/type regeneration and real-provider checks remain external gates and must not be claimed until a linked Kundexa project is available.
