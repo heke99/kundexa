@@ -13,6 +13,10 @@ const value = (form: FormData, key: string) => String(form.get(key) ?? "").trim(
 const checked = (form: FormData, key: string) => form.get(key) === "on";
 const errorText = (error: { message?: string } | null | undefined) => encodeURIComponent((error?.message ?? "Åtgärden misslyckades").replaceAll("_", " "));
 
+type InvitationRpcError = { message?: string } | null;
+type InvitationRpcResult<T> = { data: T | null; error: InvitationRpcError };
+type InvitationRpc = <T>(name: string, args: Record<string, unknown>) => Promise<InvitationRpcResult<T>>;
+
 
 export async function createTeam(form: FormData) {
   const context = await getAppContext();
@@ -63,33 +67,80 @@ export async function inviteUser(form: FormData) {
   if (context.role === "team_lead" && parsed.data.role !== "sales") redirect("/app/users?error=Teamledare får endast bjuda in säljare");
   if (context.role !== "owner" && parsed.data.role === "owner") redirect("/app/users?error=Endast tenantägaren får bjuda in en annan ägare");
   if (context.role === "team_lead" && !parsed.data.teamIds.length) redirect("/app/users?error=Välj minst ett av dina team");
-
-  const admin = createAdminClient();
-  const env = serverEnv();
-  let user = await findAuthUserByEmail(parsed.data.email);
-  if (!user) {
-    const invited = await admin.auth.admin.inviteUserByEmail(parsed.data.email, {
-      redirectTo: `${env.NEXT_PUBLIC_APP_URL}/auth/callback`,
-      data: { invited_tenant_id: context.tenantId, invited_role: parsed.data.role },
-    });
-    if (invited.error || !invited.data.user) redirect(`/app/users?error=${errorText(invited.error)}`);
-    user = invited.data.user;
-  }
+  if (parsed.data.role === "team_lead" && !parsed.data.teamIds.length) redirect("/app/users?error=En teamledare måste tilldelas minst ett team");
 
   const supabase = await createClient();
-  const { error } = await supabase.rpc("register_tenant_invitation", {
+  // These RPCs are introduced by the forward migration in this branch. The local
+  // generated schema is refreshed from staging before merge; keep the schema-ahead
+  // cast isolated here until that generation step has run.
+  const invitationRpc = supabase.rpc as unknown as InvitationRpc;
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const idempotencyKey = `tenant-invite:${context.tenantId}:${crypto.randomUUID()}`;
+
+  // Reserve and validate in Postgres before creating/sending an Auth invitation.
+  // This prevents orphan Auth invites and makes team-capacity checks authoritative.
+  const reserved = await invitationRpc<string>("reserve_tenant_invitation", {
     p_tenant_id: context.tenantId,
-    p_invited_user_id: user.id,
     p_email: parsed.data.email,
     p_role: parsed.data.role,
     p_team_ids: parsed.data.teamIds,
     p_message: parsed.data.message || null,
-    p_expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    p_expires_at: expiresAt,
+    p_idempotency_key: idempotencyKey,
   });
-  if (error) redirect(`/app/users?error=${errorText(error)}`);
+  if (reserved.error || !reserved.data) redirect(`/app/users?error=${errorText(reserved.error)}`);
+  const invitationId = reserved.data;
+
+  const failReservation = async (reason: string) => {
+    try {
+      await invitationRpc<null>("fail_tenant_invitation", {
+        p_invitation_id: invitationId,
+        p_reason: reason,
+      });
+    } catch (error) {
+      console.error("Failed to mark tenant invitation orchestration as failed", { invitationId, error });
+    }
+  };
+
+  const admin = createAdminClient();
+  const env = serverEnv();
+  let user;
+  try {
+    user = await findAuthUserByEmail(parsed.data.email);
+    if (!user) {
+      const invited = await admin.auth.admin.inviteUserByEmail(parsed.data.email, {
+        redirectTo: `${env.NEXT_PUBLIC_APP_URL}/auth/callback`,
+        data: { invited_tenant_id: context.tenantId, invited_role: parsed.data.role },
+      });
+      if (invited.error || !invited.data.user) {
+        await failReservation("auth_invite_failed");
+        redirect(`/app/users?error=${errorText(invited.error)}`);
+      }
+      user = invited.data.user;
+    }
+  } catch (error) {
+    await failReservation("auth_user_resolution_failed");
+    console.error("Tenant invitation Auth orchestration failed", { invitationId, error });
+    redirect("/app/users?error=Inbjudan kunde inte skickas");
+  }
+
+  if (!user) {
+    await failReservation("auth_user_missing_after_invite");
+    redirect("/app/users?error=Inbjudan kunde inte kopplas till användaren");
+  }
+
+  const finalized = await invitationRpc<string>("finalize_tenant_invitation", {
+    p_invitation_id: invitationId,
+    p_invited_user_id: user.id,
+  });
+  if (finalized.error || !finalized.data) {
+    await failReservation("invitation_finalize_failed");
+    redirect(`/app/users?error=${errorText(finalized.error)}`);
+  }
+
   revalidatePath("/app/users");
   revalidatePath("/app/teams");
-  redirect(`/app/users?message=${encodeURIComponent(user.last_sign_in_at ? "Användaren kopplades till tenant och valda team" : "Inbjudan skickades och teamtilldelningen är förberedd")}`);
+  redirect(`/app/users?message=${encodeURIComponent(user.last_sign_in_at ? "Inbjudan förbereddes för den befintliga användaren och aktiveras först när den accepteras" : "Inbjudan skickades och teamtilldelningen aktiveras först när användaren accepterar")}`);
 }
 
 export async function updateTeam(form: FormData) {
