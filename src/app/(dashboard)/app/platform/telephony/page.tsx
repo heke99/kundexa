@@ -193,7 +193,7 @@ export default async function PlatformTelephonyPage({
         <div className="grid grid-3" style={{ marginTop: 14 }}>
           <form action={testPlatformRinkelConnection}><button className="button button-secondary">Testa API och katalog</button></form>
           <form action={syncPlatformRinkelDirectory}><button className="button button-secondary">Synkronisera katalog</button></form>
-          <form action={configurePlatformRinkelWebhooks}><button className="button button-secondary">Registrera och testa webhookar</button></form>
+          <form action={configurePlatformRinkelWebhooks}><button className="button button-secondary">Registrera och synka webhookar</button></form>
         </div>
         <form action={setPlatformRinkelPaused} style={{ marginTop: 12 }}>
           <input type="hidden" name="paused" value={integration?.status === "disabled" ? "false" : "true"} />
@@ -253,7 +253,7 @@ export default async function PlatformTelephonyPage({
           if (!tenantTeams.length) return null;
           return <div className="team-assignment-group" key={tenant.id}><strong>{tenant.name}</strong>{tenantTeams.map((team) => <label className="team-assignment-option" key={team.id}><input type="checkbox" name="team_ids" value={team.id} /><span>{team.name}</span></label>)}</div>;
         })}</fieldset>
-        <p className="muted">Du kan välja team från flera bolag samtidigt. Alla aktiva medlemmar i valda team får använda numret.</p>
+        <p className="muted">Välj ett eller flera team inom samma bolag. Ett telefonnummer kan delas av flera team i bolaget, men inte av flera bolag eftersom inkommande samtal annars blir tenant-tvetydiga.</p>
         <Field label="Anledning" name="reason" required />
         <button className="button button-primary">Tilldela till valda team</button>
       </form></CardContent></Card>
@@ -267,7 +267,7 @@ export default async function PlatformTelephonyPage({
     </div>
 
     <div className="split-layout">
-      <Card><CardHeader><h2>Webhookar</h2><Badge>{coreVerified}/4 kärnevent</Badge></CardHeader><CardContent>{subscriptions.map((subscription) => <div className="activity-line" key={subscription.event_type}><span className="activity-dot"><Plug size={14} /></span><div style={{ flex: 1 }}><strong>{subscription.event_type}</strong><p>{subscription.required ? "Obligatorisk" : "Valfri"} · provider {subscription.provider_active ? "aktiv" : "ej aktiv"} · HTTP {subscription.last_http_status ?? "–"}</p><p className="muted">Registrerad {time(subscription.registered_at)} · test begärt {time(subscription.test_requested_at)} · mottaget {time(subscription.test_received_at)} · processat {time(subscription.last_processed_at)} · events {subscription.received_count}/{subscription.processed_count}/{subscription.failed_count} mottagna/processade/fel</p>{subscription.last_error_code ? <p className="form-error">{subscription.last_error_code}: {subscription.last_error_message}</p> : null}</div><Badge className={subscription.status === "verified" ? "badge-success" : subscription.status === "unsupported" ? "" : "badge-warning"}>{subscription.status}</Badge></div>)}</CardContent></Card>
+      <Card><CardHeader><h2>Webhookar</h2><Badge>{coreVerified}/4 kärnevent</Badge></CardHeader><CardContent>{subscriptions.map((subscription) => <div className="activity-line" key={subscription.event_type}><span className="activity-dot"><Plug size={14} /></span><div style={{ flex: 1 }}><strong>{subscription.event_type}</strong><p>{subscription.required ? "Obligatorisk" : "Valfri"} · provider {subscription.provider_active ? "aktiv" : "ej aktiv"} · HTTP {subscription.last_http_status ?? "–"}</p><p className="muted">Registrerad {time(subscription.registered_at)} · senast mottaget {time(subscription.last_received_at)} · processat {time(subscription.last_processed_at)} · verifierat {time(subscription.last_verified_at)} · events {subscription.received_count}/{subscription.processed_count}/{subscription.failed_count} mottagna/processade/fel</p>{subscription.last_error_code ? <p className="form-error">{subscription.last_error_code}: {subscription.last_error_message}</p> : null}</div><Badge className={subscription.status === "verified" ? "badge-success" : subscription.status === "unsupported" ? "" : "badge-warning"}>{subscription.status}</Badge></div>)}</CardContent></Card>
       <Card><CardHeader><h2>Öppna konflikter</h2><Badge className={conflicts.length ? "badge-warning" : "badge-success"}>{conflicts.length}</Badge></CardHeader><CardContent>{conflicts.length ? conflicts.map((conflict) => <div className="activity-line" key={conflict.id}><span className="activity-dot"><ShieldCheck size={14} /></span><div style={{ flex: 1 }}><strong>{conflict.conflict_type}</strong><p>{conflict.provider_resource_type} · {conflict.provider_resource_key}</p></div>{conflict.event_id ? <form action={reprocessPlatformRinkelEvent}><input type="hidden" name="conflict_id" value={conflict.id} /><button className="button button-ghost button-sm">Återbehandla</button></form> : null}</div>) : <p>Inga öppna korrelations- eller allokeringskonflikter.</p>}</CardContent></Card>
     </div>
 

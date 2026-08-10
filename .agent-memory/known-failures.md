@@ -196,3 +196,40 @@ Hosted plpgsql_check identified the invalid `bigint = uuid` comparison. The pars
 ## FAILURE-0032 — Platform support could enter a redirect loop — FIXED 2026-08-08
 
 Support has an active platform identity but intentionally lacks broad platform-data read capability. Redirecting support from `/app/platform` to `/app` could send a tenantless support user back into platform routing indefinitely. The root platform page now renders a restricted non-sensitive landing before any platform data query.
+
+## FAILURE-0033 — Rinkel webhook readiness depended on a synthetic provider test — FIXED IN CODE 2026-08-10
+
+The final webhook reducer only promoted a subscription to `verified` when a prior synthetic test receipt had
+set `test_received_at`. A real Rinkel event could therefore be received and processed successfully while the
+platform remained permanently below 4/4. The public Rinkel test endpoint is no longer a production gate;
+any successfully processed real provider event now verifies that event type and recomputes platform readiness.
+
+## FAILURE-0034 — Rinkel webhook callback performed too many sequential database writes — FIXED IN CODE 2026-08-10
+
+The public callback performed integration lookup, event insert, duplicate lookup, job insert, subscription lookup,
+receipt RPC and audit insert serially before acknowledging the provider. That widened the risk of missing Rinkel's
+webhook acknowledgement window. The route now performs validation plus one service-role RPC;
+`ingest_platform_rinkel_webhook_event` durably stores the raw event, queues processing, records receipt health and
+audits in one transaction before HTTP 200 is returned.
+
+## FAILURE-0035 — Local dial/recovery timestamps could suppress real Rinkel lifecycle events — FIXED IN CODE 2026-08-10
+
+`rinkel_finalize_platform_dial` treated the local HTTP 204 completion time as provider lifecycle time and recovery
+states outranked some real provider states. A legitimate `outgoingCall` emitted just before the HTTP response, or
+a late event after reconciliation had started, could therefore be treated as stale/regressive. Accepted/unknown
+dial finalization no longer owns provider timestamps; recovery states rank below real ringing/answered states and
+the monotonic trigger ignores recovery-local timestamps when real provider events arrive.
+
+## FAILURE-0036 — One Rinkel number could be active in multiple tenants although inbound routing has only the number — FIXED IN CODE 2026-08-10
+
+Shared-team allocation allowed the same provider number to be active in multiple tenants, but `incomingCall` only
+identifies the called number as the tenant-routing key. This created an intentional inbound correlation conflict.
+New active cross-tenant number allocations are now rejected with `RINKEL_NUMBER_TENANT_CONFLICT`; the same number
+may still be shared by multiple teams inside one tenant. Existing ambiguous allocations are preserved and surfaced
+as open platform conflicts instead of being silently revoked.
+
+## FAILURE-0037 — Rinkel dial readiness flags could never become true — FIXED IN CODE 2026-08-10
+
+The platform UI required `dial_endpoint_reachable` and `dial_test_succeeded` for `Driftklar`, but no runtime path
+set either flag to true. A successfully processed and correlated real `outgoingCall` now provides the round-trip
+proof and atomically promotes the dial capability. Catalog GETs continue to prove only catalog access.

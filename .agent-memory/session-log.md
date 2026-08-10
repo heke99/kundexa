@@ -102,3 +102,12 @@ riktig Rinkel-provider är fortfarande `NOT RUN` — se `open-blockers.md`.
 - `remediation-regression-tests.mjs`: PASS. `verify.mjs`: PASS for 50 migrations/invariants. Changed TS/TSX syntax: PASS.
 - `npm ci`: blocked by sandbox npm mirror 404 for `pdf-lib@1.17.1`; full `npm run verify` not claimed.
 - Supabase MCP read-only aggregate check was attempted and denied by connector permissions; live role/session proof remains external.
+
+## 2026-08-10 — Rinkel production-flow investigation
+
+- Re-read the newly uploaded repo ZIP, all final Rinkel migrations/RPC definitions, web route, worker, allocation/mapping logic and dial path.
+- Re-verified current Rinkel API/docs rather than assuming the synthetic webhook test body.
+- Live Vercel evidence showed the worker healthy (HTTP 200 every minute) while failed synthetic tests produced no public webhook-route traffic; the failure occurred before delivery reached Kundexa.
+- Found and fixed five independent production-flow issues: real webhook events did not verify readiness, callback DB latency, local/provider timestamp races, cross-tenant number ambiguity, and unreachable dial readiness flags.
+- Preserved the central one-key Rinkel architecture and the existing tenant/team/seller mapping model; no parallel telephony path was added.
+- Supabase MCP SQL/list-migration access was denied, and this artifact runtime lacks PGlite/project dependencies. These external/runtime steps remain explicit deployment gates rather than being reported as passed.

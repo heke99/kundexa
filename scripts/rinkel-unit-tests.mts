@@ -175,23 +175,34 @@ Deno.test("sends the documented dial request once and accepts 204", async () => 
   equal(capturedBody.anonymous, false, "dial anonymous flag");
 });
 
-Deno.test("sends webhook test URL in the documented request body", async () => {
+Deno.test("registers a Rinkel webhook with the documented provider contract", async () => {
   let capturedUrl = "";
   let capturedMethod = "";
+  let capturedHeader = "";
   let capturedBodyJson = "{}";
   const client = new RinkelClient({
     apiKey: "test-key",
     fetchImpl: ((input, init) => {
       capturedUrl = String(input);
       capturedMethod = String(init?.method ?? "GET");
+      capturedHeader = new Headers(init?.headers).get("x-rinkel-api-key") ?? "";
       capturedBodyJson = String(init?.body ?? "{}");
       return Promise.resolve(new Response(null, { status: 204 }));
     }) as typeof fetch,
   });
-  const webhookUrl = "https://app.kundexa.se/api/webhooks/rinkel/test-secret/callEnd";
-  await client.testWebhook("callEnd", webhookUrl);
-  assert(capturedUrl.endsWith("/v1/webhooks/callEnd/test"), "webhook test endpoint");
-  equal(capturedMethod, "POST", "webhook test method");
-  const capturedBody = JSON.parse(capturedBodyJson) as { url?: unknown };
-  equal(capturedBody.url, webhookUrl, "webhook test url");
+  await client.subscribeWebhook("outgoingCall", {
+    url: "https://app.example.test/api/webhooks/rinkel/redacted/outgoingCall",
+    contentType: "application/json",
+    active: true,
+    description: "Kundexa central Rinkel webhook",
+  });
+  assert(capturedUrl.endsWith("/v1/webhooks/outgoingCall"), "webhook endpoint");
+  equal(capturedMethod, "POST", "webhook method");
+  equal(capturedHeader, "test-key", "webhook auth header");
+  const body = JSON.parse(capturedBodyJson) as Record<string, unknown>;
+  equal(body.url, "https://app.example.test/api/webhooks/rinkel/redacted/outgoingCall", "webhook URL");
+  equal(body.contentType, "application/json", "webhook content type");
+  equal(body.active, true, "webhook active");
+  equal(body.description, "Kundexa central Rinkel webhook", "webhook description");
 });
+

@@ -93,3 +93,22 @@ by Kundexa.
 - A platform-only user can choose an existing tenant from the platform shell because `switchTenant` authenticates the user and lets the database RPC validate membership instead of requiring a pre-existing tenant context.
 - `platform_support` gets a safe restricted platform landing rather than a redirect loop; support/auditor still cannot perform Rinkel platform writes.
 - Bootstrap documentation no longer claims tenant onboarding is required for platform access, and its Auth-user pagination no longer has an arbitrary 100k cap.
+
+## 2026-08-10 — Rinkel live-flow closure remediation
+
+- Forward-only migration `202608100001_rinkel_webhook_live_verification_and_ingest.sql` closes the live provider
+  readiness gaps without editing delivered migrations.
+- Webhook registration is verified by provider catalog read-back; production readiness no longer depends on the
+  provider's synthetic `/webhooks/:event/test` request shape.
+- A real successfully processed `incomingCall`, `outgoingCall`, `callStart` or `callEnd` promotes that subscription
+  to `verified`; 4/4 is recomputed from database truth.
+- Public webhook ingress is one durable service-role RPC before HTTP 200; correlation/CDR remains asynchronous.
+- A correlated real `outgoingCall` promotes the previously unreachable dial readiness flags.
+- HTTP 204 from `/dial` no longer creates a fake provider lifecycle timestamp; provider time comes from webhook/CDR.
+- Recovery statuses can no longer suppress a later valid Rinkel event due to local/provider clock ordering.
+- One provider number may be active in exactly one tenant, while multiple teams inside that tenant may share it.
+- Existing cross-tenant number ambiguity is surfaced as a platform conflict and is never silently guessed away.
+- Local verification in the constrained artifact runtime: remediation regressions PASS, static verifier PASS for
+  51 migrations, changed TypeScript syntax PASS, targeted Rinkel contract tests PASS 11/11.
+- Full PGlite/hosted replay and full `npm run verify` remain to be run in the user's normal linked Node 22 + Deno
+  workspace because this artifact runtime lacks the project's installed dependency set and Supabase MCP SQL access.

@@ -75,6 +75,7 @@ function safePlatformError(error: unknown): SafePlatformError {
         ACTIVE_TEAM_SELECTION_INVALID: "Ett eller flera valda team är inaktiva eller finns inte längre.",
         ACTIVE_TEAM_NUMBER_GRANT_NOT_FOUND: "Teamets nummeråtkomst finns inte längre.",
         PHONE_NUMBER_INACTIVE: "Telefonnumret är inaktivt eller saknas i katalogen.",
+        RINKEL_NUMBER_TENANT_CONFLICT: "Telefonnumret är redan aktivt tilldelat ett annat bolag. Ett Rinkel-nummer kan delas av flera team inom samma bolag, men inte av flera bolag eftersom inkommande samtal annars inte kan tenant-korreleras säkert.",
         TENANT_NOT_ACTIVE: "Ett valt bolag är inte aktivt.",
         DEVICE_MISSING: "Den valda telefonienheten är inaktiv eller hör inte till den valda telefoni-användaren.",
         NUMBER_ALLOCATION_MISSING: "Det valda telefonnumret är inaktivt eller inte tilldelat företaget.",
@@ -446,17 +447,37 @@ export async function configurePlatformRinkelWebhooks() {
   let successMessage = "";
   try {
     const client = createPlatformRinkelClient(crypto.randomUUID());
-    const existing = await client.listWebhooks();
+    const [providerWebhooks, localResult] = await Promise.all([
+      client.listWebhooks(),
+      admin.from("platform_rinkel_webhook_subscriptions")
+        .select("event_type,status,target_url_hash,last_verified_at")
+        .eq("platform_integration_id", integration.id),
+    ]);
+    if (localResult.error) throw localResult.error;
+    const localByEvent = new Map((localResult.data ?? []).map((item) => [item.event_type, item]));
     await admin.from("platform_integrations").update({ webhook_status: "registering" }).eq("id", integration.id);
     const optionalFailures: string[] = [];
-    let testRequestedCount = 0;
+
     for (const event of allEvents) {
       const required = RINKEL_CORE_WEBHOOK_EVENTS.includes(event as (typeof RINKEL_CORE_WEBHOOK_EVENTS)[number]);
       const url = `${base}/api/webhooks/rinkel/${env.RINKEL_WEBHOOK_SECRET}/${event}`;
+      const targetUrlHash = sha256(url);
+      const local = localByEvent.get(event);
+      const current = providerWebhooks.find((item) => item.event === event);
+      const providerNeedsChange = !current
+        || current.url !== url
+        || !current.active
+        || current.contentType !== "application/json";
+      const mayPreserveVerification = Boolean(
+        local?.status === "verified"
+          && local.target_url_hash === targetUrlHash
+          && !providerNeedsChange,
+      );
+
       await admin.from("platform_rinkel_webhook_subscriptions").upsert({
         platform_integration_id: integration.id,
         event_type: event,
-        target_url_hash: sha256(url),
+        target_url_hash: targetUrlHash,
         target_url_redacted: `${base}/api/webhooks/rinkel/[REDACTED]/${event}`,
         required,
         status: "registering",
@@ -464,45 +485,41 @@ export async function configurePlatformRinkelWebhooks() {
         last_error_code: null,
         last_error_message: null,
       }, { onConflict: "platform_integration_id,event_type" });
+
       try {
-        const current = existing.find((item) => item.event === event);
         if (!current) {
-          await client.subscribeWebhook(event, { url, contentType: "application/json", active: true, description: "Kundexa central Rinkel webhook" });
-        } else if (current.url !== url || !current.active || current.contentType !== "application/json") {
-          await client.updateWebhook(event, { url, contentType: "application/json", active: true, description: "Kundexa central Rinkel webhook" });
+          await client.subscribeWebhook(event, {
+            url,
+            contentType: "application/json",
+            active: true,
+            description: "Kundexa central Rinkel webhook",
+          });
+        } else if (providerNeedsChange) {
+          await client.updateWebhook(event, {
+            url,
+            contentType: "application/json",
+            active: true,
+            description: "Kundexa central Rinkel webhook",
+          });
         }
+
         const verifiedCatalog = (await client.listWebhooks()).find((item) => item.event === event);
         if (!verifiedCatalog || verifiedCatalog.url !== url || !verifiedCatalog.active || verifiedCatalog.contentType !== "application/json") {
           throw new Error("RINKEL_WEBHOOK_REGISTRATION_MISMATCH");
         }
-        await admin.from("platform_rinkel_webhook_subscriptions").update({
-          status: "registered",
+
+        const { error: subscriptionUpdateError } = await admin.from("platform_rinkel_webhook_subscriptions").update({
+          status: mayPreserveVerification ? "verified" : "registered",
           provider_active: true,
           registered_at: configuredAt,
-          last_verified_at: null,
-        }).eq("platform_integration_id", integration.id).eq("event_type", event);
-        const testRequestedAt = new Date().toISOString();
-        const { error: testPendingError } = await admin.from("platform_rinkel_webhook_subscriptions").update({
-          status: "test_pending",
-          test_requested_at: testRequestedAt,
+          test_requested_at: null,
+          test_received_at: null,
+          last_verified_at: mayPreserveVerification ? local?.last_verified_at ?? configuredAt : null,
           last_error: null,
           last_error_code: null,
           last_error_message: null,
         }).eq("platform_integration_id", integration.id).eq("event_type", event);
-        if (testPendingError) throw testPendingError;
-        try {
-          await client.testWebhook(event, url);
-          testRequestedCount += 1;
-        } catch (testError) {
-          const safe = safePlatformError(testError);
-          await admin.from("platform_rinkel_webhook_subscriptions").update({
-            status: "registered",
-            test_requested_at: null,
-            last_error: safe.message,
-            last_error_code: safe.code,
-            last_error_message: "Webhooken är registrerad men provider-testet kunde inte köras. Verifiering inväntar verklig leverans.",
-          }).eq("platform_integration_id", integration.id).eq("event_type", event);
-        }
+        if (subscriptionUpdateError) throw subscriptionUpdateError;
       } catch (eventError) {
         const safe = safePlatformError(eventError);
         if (!required && ["RINKEL_PLAN_UNSUPPORTED", "RINKEL_FORBIDDEN", "RINKEL_NUMBER_NOT_FOUND"].includes(safe.code)) {
@@ -519,20 +536,26 @@ export async function configurePlatformRinkelWebhooks() {
         throw eventError;
       }
     }
+
     const { data: verificationRows, error: verificationReadError } = await admin
       .from("platform_rinkel_webhook_subscriptions")
-      .select("event_type,status")
+      .select("event_type,status,provider_active")
       .eq("platform_integration_id", integration.id)
       .in("event_type", [...RINKEL_CORE_WEBHOOK_EVENTS]);
     if (verificationReadError) throw verificationReadError;
-    const verifiedCoreCount = (verificationRows ?? []).filter((item) => item.status === "verified").length;
+    const verifiedCoreCount = (verificationRows ?? []).filter(
+      (item) => item.status === "verified" && item.provider_active,
+    ).length;
+    const registeredCoreCount = (verificationRows ?? []).filter((item) => item.provider_active).length;
     const coreWebhooksVerified = verifiedCoreCount === RINKEL_CORE_WEBHOOK_EVENTS.length;
-    await admin.from("platform_integrations").update({
-      webhook_status: coreWebhooksVerified ? "verified" : testRequestedCount > 0 ? "test_pending" : "registered",
+    const coreWebhooksRegistered = registeredCoreCount === RINKEL_CORE_WEBHOOK_EVENTS.length;
+
+    const { error: integrationUpdateError } = await admin.from("platform_integrations").update({
+      webhook_status: coreWebhooksVerified ? "verified" : coreWebhooksRegistered ? "registered" : "degraded",
       capabilities: {
         ...(integration.capabilities ?? {}),
         webhooks: coreWebhooksVerified,
-        webhooks_registration: true,
+        webhooks_registration: coreWebhooksRegistered,
         core_webhooks_verified: coreWebhooksVerified,
         insights_supported: !optionalFailures.includes("callInsights"),
       },
@@ -543,25 +566,30 @@ export async function configurePlatformRinkelWebhooks() {
         last_error_operation: null,
       } : {}),
     }).eq("id", integration.id);
-    await admin.from("platform_rinkel_capabilities").upsert({
+    if (integrationUpdateError) throw integrationUpdateError;
+
+    const { error: capabilityUpdateError } = await admin.from("platform_rinkel_capabilities").upsert({
       platform_integration_id: integration.id,
       webhooks: coreWebhooksVerified,
-      webhooks_registration: true,
+      webhooks_registration: coreWebhooksRegistered,
       core_webhooks_verified: coreWebhooksVerified,
       insights_supported: !optionalFailures.includes("callInsights"),
       detected_at: configuredAt,
     }, { onConflict: "platform_integration_id" });
+    if (capabilityUpdateError) throw capabilityUpdateError;
+
     await platformAudit(context.userId, "rinkel.webhooks_configured", "platform_integration", integration.id, {
       core_events: RINKEL_CORE_WEBHOOK_EVENTS,
       optional_events: RINKEL_OPTIONAL_WEBHOOK_EVENTS,
       optional_unsupported: optionalFailures,
-      verification_state: testRequestedCount > 0 ? "test_pending" : "registered",
-      provider_tests_requested: testRequestedCount,
+      provider_active_core_events: registeredCoreCount,
+      verified_core_events: verifiedCoreCount,
+      verification_mode: "real_provider_event_processed",
     });
     revalidatePath("/app/platform/telephony");
-    successMessage = testRequestedCount > 0
-      ? "Fyra kärnwebhookar är registrerade. De blir verifierade först när Kundexa har mottagit och behandlat testeventen."
-      : "Fyra kärnwebhookar är registrerade. Leverantörstestet var inte tillgängligt; verifiering inväntar verklig leverans och workerbehandling.";
+    successMessage = coreWebhooksVerified
+      ? "Fyra kärnwebhookar är registrerade, aktiva och verifierade av verkligt processade Rinkel-event."
+      : `Fyra kärnwebhookar är registrerade hos Rinkel. ${verifiedCoreCount}/4 är verifierade av verklig trafik. Gör ett manuellt utgående testsamtal och ett inkommande testsamtal för att verifiera hela eventkedjan.`;
   } catch (error) {
     const safe = safePlatformError(error);
     await admin.from("platform_integrations").update({

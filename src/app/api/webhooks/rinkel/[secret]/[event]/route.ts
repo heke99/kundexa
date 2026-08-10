@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { sha256 } from "@/lib/crypto";
+import { serverEnv } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   authenticatePlatformRinkelWebhook,
@@ -14,8 +16,10 @@ export async function POST(
 ) {
   const params = await context.params;
   if (!authenticatePlatformRinkelWebhook(params.secret)) return new NextResponse(null, { status: 403 });
+
   const network = await verifyRinkelNetwork(request);
   if (!network.allowed) return new NextResponse(null, { status: 403 });
+
   let parsed: Awaited<ReturnType<typeof parseRinkelWebhookRequest>>;
   try {
     parsed = await parseRinkelWebhookRequest(request, params.event);
@@ -26,88 +30,53 @@ export async function POST(
     });
   }
 
-  const admin = createAdminClient();
-  const { data: integration, error: integrationError } = await admin.from("platform_integrations")
-    .select("id")
-    .eq("provider", "rinkel")
-    .eq("is_canonical", true)
-    .single();
-  if (integrationError || !integration) return new NextResponse(null, { status: 503 });
-
-  const externalCallId = parsed.payload.id;
+  const env = serverEnv();
+  if (!env.RINKEL_WEBHOOK_SECRET) return new NextResponse(null, { status: 503 });
+  const base = env.RINKEL_WEBHOOK_PUBLIC_BASE_URL.replace(/\/+$/, "");
+  const targetUrl = `${base}/api/webhooks/rinkel/${env.RINKEL_WEBHOOK_SECRET}/${parsed.event}`;
+  const receivedAt = new Date().toISOString();
   const eventAt = "datetime" in parsed.payload ? parsed.payload.datetime : null;
+  const externalCallId = parsed.payload.id;
   const providerEventId = [
     parsed.event,
     externalCallId,
     eventAt ?? "insights",
     parsed.payloadHash,
   ].join(":");
-  const { data: event, error } = await admin.from("platform_rinkel_webhook_events").upsert({
-    platform_integration_id: integration.id,
-    event_type: parsed.event,
-    external_call_id: externalCallId,
-    provider_event_id: providerEventId,
-    payload_hash: parsed.payloadHash,
-    content_type: parsed.contentType,
-    source_ip: network.ip,
-    headers: {
+
+  // Rinkel retries or disables webhook delivery when acknowledgement is slow.
+  // Keep the public callback to one durable database roundtrip: the RPC stores
+  // the idempotent raw event, queues async processing, updates receipt health,
+  // and writes the platform audit record atomically before this route returns 200.
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("ingest_platform_rinkel_webhook_event", {
+    p_event_type: parsed.event,
+    p_external_call_id: externalCallId,
+    p_provider_event_id: providerEventId,
+    p_payload_hash: parsed.payloadHash,
+    p_content_type: parsed.contentType,
+    p_source_ip: network.ip,
+    p_headers: {
       user_agent: request.headers.get("user-agent")?.slice(0, 200) ?? null,
       request_id: request.headers.get("x-request-id")?.slice(0, 100) ?? null,
     },
-    payload: parsed.payload,
-    event_at: eventAt,
-    status: "received",
-  }, { onConflict: "provider_event_id", ignoreDuplicates: true }).select("id").maybeSingle();
-  if (error) return new NextResponse(null, { status: 503 });
-
-  let eventId = event?.id ?? null;
-  if (!eventId) {
-    const { data: existing } = await admin.from("platform_rinkel_webhook_events")
-      .select("id").eq("provider_event_id", providerEventId).maybeSingle();
-    eventId = existing?.id ?? null;
-  }
-  if (!eventId) return new NextResponse(null, { status: 503 });
-  const { error: queueError } = await admin.from("platform_rinkel_jobs").upsert({
-    job_type: "rinkel.process_event",
-    aggregate_id: eventId,
-    idempotency_key: `rinkel.process_event:${eventId}`,
-    payload: { event_id: eventId },
-  }, { onConflict: "idempotency_key", ignoreDuplicates: true });
-  if (queueError) return new NextResponse(null, { status: 503 });
-  const receivedAt = new Date().toISOString();
-  const { data: subscription } = await admin.from("platform_rinkel_webhook_subscriptions")
-    .select("status,test_requested_at")
-    .eq("platform_integration_id", integration.id)
-    .eq("event_type", parsed.event)
-    .maybeSingle();
-  const testRequestedAt = subscription?.test_requested_at ? Date.parse(subscription.test_requested_at) : Number.NaN;
-  const receiptAt = Date.parse(receivedAt);
-  const isTestReceipt = Boolean(
-    subscription?.status === "test_pending"
-      && Number.isFinite(testRequestedAt)
-      && receiptAt >= testRequestedAt
-      && receiptAt - testRequestedAt <= 10 * 60_000,
-  );
-  const { error: receiptError } = await admin.rpc("record_platform_rinkel_webhook_receipt", {
-    p_platform_integration_id: integration.id,
-    p_event_type: parsed.event,
+    p_payload: parsed.payload,
+    p_event_at: eventAt,
+    p_target_url_hash: sha256(targetUrl),
+    p_target_url_redacted: `${base}/api/webhooks/rinkel/[REDACTED]/${parsed.event}`,
     p_received_at: receivedAt,
-    p_http_status: 200,
-    p_is_test_receipt: isTestReceipt,
   });
-  if (receiptError) return new NextResponse(null, { status: 503 });
-  const { error: auditError } = await admin.from("platform_audit_logs").insert({
-    action: event ? "rinkel.webhook_received" : "rinkel.webhook_duplicate",
-    entity_type: "platform_rinkel_webhook_event",
-    entity_id: eventId,
-    metadata: {
-      event_type: parsed.event,
-      provider_event_id: providerEventId,
-      test_receipt: isTestReceipt,
-    },
-  });
-  if (auditError) {
-    console.error("rinkel_webhook_audit_failed", { eventId, eventType: parsed.event, code: auditError.code });
+  if (error || !data) {
+    console.error("rinkel_webhook_ingest_failed", {
+      eventType: parsed.event,
+      code: error?.code ?? "NO_RESULT",
+    });
+    return new NextResponse(null, { status: 503 });
   }
-  return NextResponse.json({ accepted: true, duplicate: !event }, { status: 200 });
+
+  const result = data as Record<string, unknown>;
+  return NextResponse.json({
+    accepted: true,
+    duplicate: result.duplicate === true,
+  }, { status: 200 });
 }

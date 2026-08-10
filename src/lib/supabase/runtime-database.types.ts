@@ -208,6 +208,7 @@ type MissingFunctionName =
   | "get_contract_call_eligibility"
   | "get_current_user_rinkel_numbers"
   | "get_tenant_rinkel_resources"
+  | "ingest_platform_rinkel_webhook_event"
   | "list_current_user_tenants"
   | "mark_acceptance_opened"
   | "materialize_segment_to_campaign_for_tenant"

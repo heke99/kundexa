@@ -6,6 +6,7 @@ const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 const [
   migration,
   lintMigration,
+  rinkelWebhookMigration,
   customerApi,
   products,
   calls,
@@ -33,9 +34,11 @@ const [
   onboarding,
   bootstrapPlatformOwner,
   rinkelClient,
+  rinkelWebhookRoute,
 ] = await Promise.all([
   read("supabase/migrations/202608080001_cross_surface_consistency_remediation.sql"),
   read("supabase/migrations/202608080002_database_lint_runtime_hardening.sql"),
+  read("supabase/migrations/202608100001_rinkel_webhook_live_verification_and_ingest.sql"),
   read("src/app/api/v1/customers/route.ts"),
   read("src/app/actions/products.ts"),
   read("src/app/api/v1/calls/route.ts"),
@@ -63,6 +66,7 @@ const [
   read("src/app/onboarding/page.tsx"),
   read("scripts/bootstrap-platform-owner.mjs"),
   read("supabase/functions/_shared/rinkel.ts"),
+  read("src/app/api/webhooks/rinkel/[secret]/[event]/route.ts"),
 ]);
 
 assert.match(migration, /audit_logs_customer_api_idempotency_uidx/);
@@ -98,9 +102,46 @@ assert.match(appLayout, /const platform = await getPlatformContext\(\)/);
 assert.match(platformTelephonyPage, /const context = await getPlatformContext\(\)/);
 assert.doesNotMatch(platformTelephonyPage, /getAppContext/);
 assert.match(rinkelActions, /async function platformAdminContext\(\)[\s\S]*getPlatformContext\(\)/);
-assert.match(rinkelClient, /async testWebhook\(event: RinkelWebhookEvent, url: string\)[\s\S]*body: \{ url \}/);
-assert.match(rinkelActions, /status: "test_pending"[\s\S]*test_requested_at: testRequestedAt[\s\S]*client\.testWebhook\(event, url\)/);
+// Rinkel's public API exposes a webhook-test endpoint but not a stable request-body
+// contract in the rendered reference. Production readiness must therefore be
+// driven by registered provider state plus real, successfully processed events.
+assert.doesNotMatch(rinkelClient, /testWebhook\(/);
+assert.doesNotMatch(rinkelActions, /client\.testWebhook\(/);
+assert.doesNotMatch(rinkelActions, /status: "test_pending"/);
+assert.match(rinkelActions, /verification_mode: "real_provider_event_processed"/);
+assert.match(rinkelActions, /provider_active_core_events: registeredCoreCount/);
+assert.match(rinkelActions, /verified_core_events: verifiedCoreCount/);
 assert.match(rinkelActions, /const coreWebhooksVerified = verifiedCoreCount === RINKEL_CORE_WEBHOOK_EVENTS\.length[\s\S]*webhooks: coreWebhooksVerified[\s\S]*core_webhooks_verified: coreWebhooksVerified/);
+assert.match(platformTelephonyPage, /Registrera och synka webhookar/);
+
+// A real successfully processed provider event verifies that subscription even
+// when no synthetic test receipt exists. The callback is one durable RPC so the
+// public endpoint can acknowledge Rinkel without a chain of PostgREST roundtrips.
+assert.match(rinkelWebhookMigration, /create or replace function public\.ingest_platform_rinkel_webhook_event/);
+assert.match(rinkelWebhookMigration, /create or replace function public\.record_platform_rinkel_webhook_processed[\s\S]*set status='verified'/);
+const processedFunction = rinkelWebhookMigration.slice(
+  rinkelWebhookMigration.indexOf("create or replace function public.record_platform_rinkel_webhook_processed"),
+  rinkelWebhookMigration.indexOf("create or replace function public.ingest_platform_rinkel_webhook_event"),
+);
+assert.doesNotMatch(processedFunction, /test_received_at is not null/);
+assert.match(rinkelWebhookMigration, /processed_count>0[\s\S]*last_processed_at is not null/);
+assert.match(rinkelWebhookMigration, /revoke all on function public\.ingest_platform_rinkel_webhook_event[\s\S]*from public,anon,authenticated/);
+assert.match(rinkelWebhookMigration, /grant execute on function public\.ingest_platform_rinkel_webhook_event[\s\S]*to service_role/);
+assert.match(rinkelWebhookRoute, /admin\.rpc\("ingest_platform_rinkel_webhook_event"/);
+assert.doesNotMatch(rinkelWebhookRoute, /from\("platform_rinkel_webhook_events"\)/);
+assert.doesNotMatch(rinkelWebhookRoute, /from\("platform_rinkel_jobs"\)/);
+assert.doesNotMatch(rinkelWebhookRoute, /record_platform_rinkel_webhook_receipt/);
+assert.match(rinkelWebhookMigration, /v_core_registered boolean:=false/);
+assert.match(rinkelWebhookMigration, /webhooks_registration=excluded\.webhooks_registration/);
+assert.match(rinkelWebhookMigration, /if p_event_type='outgoingCall'[\s\S]*dial_endpoint_reachable=true[\s\S]*dial_test_succeeded=true/);
+assert.match(rinkelWebhookMigration, /create or replace function public\.call_status_rank[\s\S]*when 'provider_outcome_unknown' then 20[\s\S]*when 'reconciliation_required' then 20/);
+assert.match(rinkelWebhookMigration, /old\.status not in \('provider_outcome_unknown','reconciliation_required'\)/);
+assert.match(rinkelWebhookMigration, /provider_state_updated_at=case when p_outcome='failed' then v_now else call_row\.provider_state_updated_at end/);
+assert.match(rinkelWebhookMigration, /initiated_at=least\(coalesce\(call_row\.initiated_at,v_occurred\),v_occurred\)/);
+assert.match(rinkelWebhookMigration, /create or replace function private\.enforce_rinkel_number_single_active_tenant/);
+assert.match(rinkelWebhookMigration, /raise exception 'RINKEL_NUMBER_TENANT_CONFLICT'/);
+assert.match(rinkelActions, /RINKEL_NUMBER_TENANT_CONFLICT:/);
+assert.match(platformTelephonyPage, /Ett telefonnummer kan delas av flera team i bolaget, men inte av flera bolag/);
 
 assert.match(organizationActions, /export async function switchTenant[\s\S]*supabase\.auth\.getUser\(\)/);
 assert.doesNotMatch(organizationActions.match(/export async function switchTenant[\s\S]*$/)?.[0] ?? "", /await getAppContext\(\)/);

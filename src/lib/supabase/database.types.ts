@@ -14182,6 +14182,23 @@ export type Database = {
         Args: { p_amount?: number; p_metric: string; p_tenant_id: string }
         Returns: undefined
       }
+      ingest_platform_rinkel_webhook_event: {
+        Args: {
+          p_content_type: string
+          p_event_at: string
+          p_event_type: string
+          p_external_call_id: string
+          p_headers: Json
+          p_payload: Json
+          p_payload_hash: string
+          p_provider_event_id: string
+          p_received_at?: string
+          p_source_ip: string
+          p_target_url_hash: string
+          p_target_url_redacted: string
+        }
+        Returns: Json
+      }
       is_contract_call_eligible: {
         Args: {
           p_call_id: string

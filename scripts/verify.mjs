@@ -255,8 +255,14 @@ const rinkelWebhookSecurity = await readFile(join(root, "src/lib/webhooks/rinkel
 assert.match(rinkelWebhookSecurity, /process\.env\.VERCEL === "1"/, "Rinkel IP extraction must trust Vercel's controlled forwarding header only on Vercel");
 assert.match(rinkelWebhookSecurity, /RINKEL_TRUST_X_REAL_IP/, "Non-Vercel x-real-ip trust must be explicit and disabled by default");
 assert.match(rinkelWebhookSecurity, /RINKEL_WEBHOOK_ALLOWED_IPS/, "Documented Rinkel source IPs must be configurable server-side");
-for (const pattern of [/verifyRinkelNetwork/, /authenticatePlatformRinkelWebhook/, /parseRinkelWebhookRequest/, /platform_rinkel_webhook_events/, /rinkel\.process_event/, /ignoreDuplicates: true/]) {
+for (const pattern of [/verifyRinkelNetwork/, /authenticatePlatformRinkelWebhook/, /parseRinkelWebhookRequest/, /ingest_platform_rinkel_webhook_event/]) {
   assert.match(rinkelWebhook, pattern, `Rinkel webhook invariant missing: ${pattern}`);
+}
+assert.doesNotMatch(rinkelWebhook, /from\("platform_rinkel_webhook_events"\)/, "Rinkel webhook callback must not perform direct event-table roundtrips");
+assert.doesNotMatch(rinkelWebhook, /from\("platform_rinkel_jobs"\)/, "Rinkel webhook callback must not perform direct job-table roundtrips");
+const rinkelIngressMigration = await readFile(join(root, "supabase/migrations/202608100001_rinkel_webhook_live_verification_and_ingest.sql"), "utf8");
+for (const pattern of [/platform_rinkel_webhook_events/, /rinkel\.process_event/, /record_platform_rinkel_webhook_receipt/, /platform_audit_logs/, /on conflict\(provider_event_id\) do nothing/]) {
+  assert.match(rinkelIngressMigration, pattern, `Atomic Rinkel webhook ingest invariant missing: ${pattern}`);
 }
 const rinkelCalls = await readFile(join(root, "src/app/api/v1/calls/route.ts"), "utf8");
 assert.match(rinkelCalls, /rinkel_reserve_platform_outbound_call/, "Rinkel calls require a central atomic local reservation before provider dial");

@@ -48,12 +48,16 @@ Servern väljer Rinkels interna `numberId` i denna ordning:
 1. explicit nummerallokering för samtalet,
 2. ringlistans standard,
 3. kampanjens standard,
-4. teamets standard,
-5. tenantens standard,
-6. plattformens reservstandard,
-7. säljarens äldre standard som bakåtkompatibel sista reserv.
+4. kundens tilldelade teams standard,
+5. säljarens mapping-standard,
+6. säljarens teamstandard,
+7. tenantens standard,
+8. plattformens reservstandard,
+9. därefter endast en explicit tillgänglig grant-fallback om ingen standard gav en giltig kandidat.
 
-Varje kandidat måste vara aktiv, tillhöra rätt tenant/allokering, vara grantad till användaren och ha ett aktivt Rinkel-nummer. Ett explicit men otillåtet val ger fel; det får inte tyst falla vidare till ett annat nummer. Samtalet sparar resolverns källa och allokerings-ID för audit.
+Varje kandidat måste vara aktiv, tillhöra rätt tenant/allokering och ha en aktiv `dial`/`manage`-grant som omfattar säljaren. Ett explicit men otillåtet val ger fel och får inte tyst falla vidare. Samtalet sparar resolverns källa och allokerings-ID för audit.
+
+Ett aktivt Rinkel-nummer får bara ha **en aktiv tenantägare**. Det kan delas av flera team inom samma tenant. Detta är nödvändigt eftersom `incomingCall` identifierar mottagaren med det ringda numret; flera aktiva tenantallokeringar skulle göra inbound tenant-korrelation tvetydig.
 
 ## Utgående samtal och idempotens
 
@@ -81,13 +85,14 @@ Obligatoriska kärnevent:
 - `callStart`
 - `callEnd`
 
-Valfritt event:
+Valfritt event: `callInsights`. Insights får vara `unsupported` utan att kärntelefonin degraderas.
 
-- `callInsights`
+Webhookregistrering och webhookverifiering är två olika bevis:
 
-Insights får vara `unsupported` utan att kärntelefonin degraderas. Webhookens statuslivscykel är `not_configured`, `registering`, `registered`, `test_pending`, `verified`, `degraded`, `failed`, `unsupported` eller `disabled`.
+1. **Registrerad**: Kundexa skapar/uppdaterar webhooken hos Rinkel och läser tillbaka exakt event, publik HTTPS-URL, `application/json` och `active=true`.
+2. **Verified**: ett verkligt provider-event har mottagits av Kundexas publika endpoint och därefter processats framgångsrikt av `rinkel-platform-worker`.
 
-Registrering räcker inte för `verified`. Kundexa läser tillbaka exakt event/HTTPS-URL/aktiv status, begär providertest när det stöds och markerar eventet verifierat först när testleveransen faktiskt har mottagits och processats.
+Ett syntetiskt `/webhooks/:event/test` är inte en production-readiness-gate. Den publika Rinkel-referensen dokumenterar testendpointen men den ska inte vara nödvändig för att bevisa den verkliga samtalskedjan. Live readiness byggs därför på riktiga provider-event.
 
 Endpointen:
 
@@ -95,7 +100,11 @@ Endpointen:
 POST https://app.example.com/api/webhooks/rinkel/{secret}/{event}
 ```
 
-validerar metod, event, route-secret, content type, body-storlek, JSON/form-data, schema och konfigurerbar IP-allowlist. Den lagrar eventet idempotent innan tung bearbetning, svarar snabbt och låter aldrig payloaden bestämma tenant. Tenant härleds från central nummerallokering, användarmapping, pending attempt eller befintligt provider-call-ID. Tvetydighet blir konflikt och får aldrig gissas.
+validerar route-secret, event, content type, maxstorlek, payloadschema och provider-IP. Därefter gör den **en atomisk service-role RPC** som lagrar det idempotenta råeventet, köar workerjobbet, uppdaterar receipt-health och audit innan endpointen svarar HTTP 200. Tung korrelation/CDR/recordingbearbetning sker asynkront.
+
+Tenant härleds aldrig från godtycklig payloaddata. Inbound tenant kommer från numrets enda aktiva tenantallokering. Outbound tenant kommer från en server-reserverad pending attempt. Tvetydighet blir `platform_rinkel_conflicts` och får aldrig gissas.
+
+4/4 readiness uppnås genom ett besvarat verkligt utgående testsamtal (`outgoingCall`, `callStart`, `callEnd`) plus ett verkligt inkommande test (`incomingCall`). Auto-dialer förblir stängd tills alla fyra event har processats och workern är frisk.
 
 ## Worker, retry och dead letter
 
@@ -146,11 +155,14 @@ I staging/production måste webhookbasen vara publik HTTPS och får inte vara lo
 
 ## Migration och verifiering
 
-Den framåtriktade produktionskompletteringen är:
+De relevanta framåtriktade produktionsmigrationerna är:
 
 ```text
 supabase/migrations/202608020003_rinkel_production_completion.sql
+supabase/migrations/202608100001_rinkel_webhook_live_verification_and_ingest.sql
 ```
+
+`202608100001` stänger livekedjan genom atomisk webhook-ingest, verklig-event-baserad 4/4-verifiering, korrigerad provider-tidslinje efter `/dial` och skydd mot cross-tenant nummerägarskap.
 
 Efter migration:
 
@@ -168,4 +180,4 @@ Genererade Supabase-typer får inte handredigeras. `types:verify` förblir rött
 
 ## Liveverifiering
 
-Markera aldrig verklig Rinkel-funktion som verifierad utifrån mockar. Följ `docs/RINKEL_STAGING_PROTOCOL.md` för API, katalog, devices, webhooktest, worker heartbeat, riktigt utgående samtal, caller-ID, eventkedja, CDR, inspelning, transkribering, Insights och tvåtenanttest.
+Markera aldrig verklig Rinkel-funktion som verifierad utifrån mockar. Följ `docs/RINKEL_STAGING_PROTOCOL.md` exakt: central API/katalog → webhook read-back → tenant/team/user/device/nummermapping → besvarat verkligt outbound-test → verkligt inbound-test → 4/4 → CDR/recording/recovery/tvåtenanttest → först därefter auto-dial.

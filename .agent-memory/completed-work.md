@@ -108,3 +108,14 @@
 - Added a non-sensitive restricted landing for support to avoid redirect loops.
 - Corrected bootstrap guidance and removed its arbitrary Auth-user pagination ceiling.
 - Expanded regression and general verification gates to lock the architecture in place.
+
+## 2026-08-10 — Rinkel live-flow code closure
+
+- Removed the synthetic webhook-test dependency from production readiness.
+- Made real successfully processed provider events the webhook verification source of truth.
+- Collapsed public webhook persistence/queue/receipt/audit into one transactional ingest RPC.
+- Repaired dial/provider timestamp ownership and recovery-state monotonicity.
+- Made one active tenant owner per Rinkel number an enforced inbound-routing invariant while retaining multi-team sharing within that tenant.
+- Connected real correlated `outgoingCall` to dial readiness so `Driftklar` is reachable by evidence rather than a dead flag.
+- Updated platform UI, integration docs, staging protocol and regression/static verifiers to the same architecture.
+- Targeted Rinkel tests PASS 11/11; remediation regressions PASS; static 51-migration verifier PASS; changed TypeScript syntax PASS.
