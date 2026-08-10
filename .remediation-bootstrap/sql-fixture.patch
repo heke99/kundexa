@@ -1,0 +1,29 @@
+diff --git a/scripts/verify-sql.mjs b/scripts/verify-sql.mjs
+index 7fe2ac5..0b43ffe 100644
+--- a/scripts/verify-sql.mjs
++++ b/scripts/verify-sql.mjs
+@@ -517,11 +517,13 @@ console.log("Executed platform list bank, tenant invitation, team distribution,
+ // Execute the canonical prospect -> assigned list -> claim -> call -> after-work -> order path.
+ await db.exec(`
+   select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
++  begin;
++  set constraints all deferred;
+   insert into auth.users(id,email,raw_user_meta_data) values('00000000-0000-0000-0000-000000000020','seller@example.test','{"full_name":"Runtime Seller"}');
+-  insert into public.tenant_memberships(tenant_id,user_id,role,status,joined_at) values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000020','sales','active',now());
++  insert into public.tenant_memberships(tenant_id,user_id,role,status,joined_at,primary_team_id) values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000020','sales','active',now(),'00000000-0000-0000-0000-000000000026');
+   insert into public.teams(id,tenant_id,name,is_default) values('00000000-0000-0000-0000-000000000026','00000000-0000-0000-0000-000000000001','Runtime Sales Team',true);
+-  insert into public.team_members(tenant_id,team_id,user_id,role)
+-    select '00000000-0000-0000-0000-000000000001',id,'00000000-0000-0000-0000-000000000020','member' from public.teams where tenant_id='00000000-0000-0000-0000-000000000001' and is_default limit 1;
++  insert into public.team_members(tenant_id,team_id,user_id,role,is_primary)
++    values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000026','00000000-0000-0000-0000-000000000020','member',true);
+   update public.profiles set active_tenant_id='00000000-0000-0000-0000-000000000001' where id='00000000-0000-0000-0000-000000000020';
+   insert into public.customers(id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by)
+   values
+@@ -539,6 +541,7 @@ await db.exec(`
+   insert into public.products(id,tenant_id,name,sku,active) values('00000000-0000-0000-0000-000000000023','00000000-0000-0000-0000-000000000001','Runtime Product','RUNTIME-PRODUCT',true);
+   insert into public.product_price_versions(id,tenant_id,product_id,version,currency,setup_fee,recurring_fee,valid_from,active)
+   values('00000000-0000-0000-0000-000000000024','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000023',1,'SEK',100,200,current_date,true);
++  commit;
+ `);
+ const defaultTeam = await db.query(`select id from public.teams where tenant_id='00000000-0000-0000-0000-000000000001' and is_default limit 1`);
+ const runtimeTeamId = String(defaultTeam.rows[0].id);
