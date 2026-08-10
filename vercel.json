@@ -10,6 +10,30 @@
     {
       "path": "/api/cron/rinkel-platform-worker",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/edge-workers/automation-runner",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/edge-workers/data-worker",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/edge-workers/ingestion-worker",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/edge-workers/compliance-worker",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/edge-workers/parsehub-worker",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/edge-workers/maintenance-worker",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

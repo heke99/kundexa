@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Phone, Radio } from "@/components/icons";
 import { useRinkelDialer } from "@/hooks/use-rinkel-dialer";
 import { useCallRealtime } from "@/hooks/use-call-realtime";
@@ -26,6 +26,9 @@ export function RinkelDialer({
   callerIdOptions?: CallerIdOption[];
 }) {
   const [selected, setSelected] = useState(initialCustomer ?? "");
+  const [customerQuery, setCustomerQuery] = useState("");
+  const [customerOptions, setCustomerOptions] = useState<Customer[]>(customers);
+  const [customerSearchLoading, setCustomerSearchLoading] = useState(false);
   const [callId, setCallId] = useState<string | null>(null);
   const initialCallerId = callerIdOptions.find((option) => option.isDefault) ?? callerIdOptions[0];
   const [numberAllocationId, setNumberAllocationId] = useState(initialCallerId?.allocationId ?? "");
@@ -42,13 +45,48 @@ export function RinkelDialer({
     setAfterCall(true);
   });
 
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      const normalizedQuery = customerQuery.trim();
+      if (normalizedQuery.length === 1) {
+        setCustomerOptions(customers);
+        return;
+      }
+      setCustomerSearchLoading(true);
+      try {
+        const url = new URL("/api/v1/customers", window.location.origin);
+        url.searchParams.set("limit", "30");
+        if (normalizedQuery) url.searchParams.set("q", normalizedQuery);
+        const response = await fetch(url, { signal: controller.signal, credentials: "same-origin", cache: "no-store" });
+        if (!response.ok) return;
+        const payload = await response.json() as { data?: Customer[] };
+        const next = payload.data ?? [];
+        const initial = customers.find((customer) => customer.id === initialCustomer);
+        setCustomerOptions(initial && !next.some((customer) => customer.id === initial.id) ? [initial, ...next] : next);
+      } catch (caught) {
+        if (!(caught instanceof DOMException && caught.name === "AbortError")) console.error("Dialer customer search failed", caught);
+      } finally {
+        if (!controller.signal.aborted) setCustomerSearchLoading(false);
+      }
+    }, 350);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [customerQuery, customers, initialCustomer]);
+
+  const visibleCustomers = useMemo(() => {
+    const byId = new Map<string, Customer>();
+    for (const customer of customerOptions) byId.set(customer.id, customer);
+    for (const customer of customers) byId.set(customer.id, customer);
+    return [...byId.values()];
+  }, [customerOptions, customers]);
+
   async function call() {
     if (!selected || rinkel.calling) return;
     if (!numberAllocationId) {
       setError("Du saknar ett tilldelat utgående telefonnummer.");
       return;
     }
-    const customer = customers.find((item) => item.id === selected);
+    const customer = visibleCustomers.find((item) => item.id === selected);
     if (!customer?.phone_e164) return;
     requestKeyRef.current ??= `rinkel.call:${crypto.randomUUID()}`;
     setError(null);
@@ -113,12 +151,17 @@ export function RinkelDialer({
         <Radio size={12} /> {rinkel.status}
       </span>
     </div>
-    <div className="phone-display">{customers.find((customer) => customer.id === selected)?.phone_e164 ?? "Välj kund"}</div>
+    <div className="phone-display">{visibleCustomers.find((customer) => customer.id === selected)?.phone_e164 ?? "Välj kund"}</div>
+    <label className="field dialer-customer-select">
+      <span>Sök kund eller prospekt</span>
+      <input type="search" value={customerQuery} onChange={(event) => setCustomerQuery(event.target.value)} placeholder="Namn, telefon eller e-post" autoComplete="off" />
+      <small>{customerSearchLoading ? "Söker…" : "Visar högst 30 behöriga träffar"}</small>
+    </label>
     <label className="field dialer-customer-select">
       <span>Kund eller prospekt</span>
       <select value={selected} onChange={(event) => setSelected(event.target.value)}>
         <option value="">Välj kund</option>
-        {customers.map((customer) => <option key={customer.id} value={customer.id} disabled={customer.do_not_call}>
+        {visibleCustomers.map((customer) => <option key={customer.id} value={customer.id} disabled={customer.do_not_call}>
           {customer.display_name} · {customer.phone_e164}{customer.do_not_call ? " · SPÄRRAD" : ""}
         </option>)}
       </select>

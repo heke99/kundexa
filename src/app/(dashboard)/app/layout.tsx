@@ -1,9 +1,11 @@
 import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/app-shell/sidebar";
 import { Topbar } from "@/components/app-shell/topbar";
 import { getAppContext, getPlatformContext } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { RealtimeRefresh } from "@/components/app-shell/realtime-refresh";
+import { canAccessRoute } from "@/lib/permissions";
 
 export const dynamic = "force-dynamic";
 
@@ -38,17 +40,18 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   }
 
   const ctx = await getAppContext();
-  const now = Date.now();
-  const [{ data: callbacks }, { count: listCount }, { data: tenantOptions }] = await Promise.all([
-    supabase.from("activities").select("due_at,snoozed_until").eq("type", "callback").eq("status", "open").limit(500),
-    supabase.from("customer_lists").select("id", { count: "exact", head: true }).eq("status", "active"),
+  if (pathname.startsWith("/app/") && !canAccessRoute(ctx.role, pathname)) redirect("/app?error=Du saknar behörighet till den arbetsytan");
+  const [{ data: badges }, { data: tenantOptions }] = await Promise.all([
+    supabase.rpc("navigation_badges"),
     supabase.rpc("list_current_user_tenants"),
   ]);
-  const dueCallbacks = (callbacks ?? []).filter((item) => new Date(item.snoozed_until ?? item.due_at ?? 0).getTime() <= now).length;
+  const navigationBadges = (badges ?? { dueCallbacks: 0, activeLists: 0 }) as { dueCallbacks?: number; activeLists?: number };
+  const dueCallbacks = Number(navigationBadges.dueCallbacks ?? 0);
+  const activeLists = Number(navigationBadges.activeLists ?? 0);
 
   return <div className="app-shell">
     <RealtimeRefresh />
-    <Sidebar platformRole={ctx.platformRole} dueCallbacks={dueCallbacks} activeLists={listCount ?? 0} />
+    <Sidebar platformRole={ctx.platformRole} role={ctx.role} dueCallbacks={dueCallbacks} activeLists={activeLists} />
     <main className="app-main">
       <Topbar
         tenantName={ctx.tenantName}

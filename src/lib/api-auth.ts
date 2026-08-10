@@ -55,6 +55,10 @@ export async function authenticateRequest(request: Request, requiredScope?: stri
       .eq("status", "active")
       .maybeSingle();
     if (!membership) throw jsonError("api_key_actor_membership_inactive", 403);
+    // API-key requests execute through the service-role transport. Keep that bypass
+    // capability restricted to tenant-wide administrative actors; team/user-scoped
+    // automation must use session auth/RLS until impersonated-RLS tokens are supported.
+    if (!["owner", "admin"].includes(membership.role)) throw jsonError("api_key_actor_requires_tenant_admin", 403);
     if (requiredScope) {
       const permission = apiScopePermission[requiredScope];
       if (!permission || !can(membership.role, permission)) throw jsonError("api_key_actor_insufficient_permission", 403);
@@ -106,4 +110,33 @@ export async function authenticateRequest(request: Request, requiredScope?: stri
 
 export async function dataClientForIdentity(identity: ApiIdentity): Promise<SupabaseClient> {
   return identity.source === "api_key" ? createAdminClient() : createClient();
+}
+
+
+export type ApiObjectResource = "customer" | "contract" | "call" | "contract_document";
+
+/**
+ * Explicit object gate for API-key detail endpoints. Session requests continue to
+ * use normal RLS; API keys use service-role transport and therefore must prove
+ * tenant ownership before any object read/write.
+ */
+export async function assertApiObjectAccess(identity: ApiIdentity, resource: ApiObjectResource, id: string) {
+  if (identity.source === "session") return;
+  if (!identity.userId || !["owner", "admin"].includes(identity.role ?? "")) throw jsonError("api_object_access_denied", 403);
+  const admin = createAdminClient();
+  let exists = false;
+  if (resource === "customer") {
+    const { data } = await admin.from("customers").select("id").eq("tenant_id", identity.tenantId).eq("id", id).is("deleted_at", null).maybeSingle();
+    exists = Boolean(data);
+  } else if (resource === "contract") {
+    const { data } = await admin.from("contracts").select("id").eq("tenant_id", identity.tenantId).eq("id", id).maybeSingle();
+    exists = Boolean(data);
+  } else if (resource === "call") {
+    const { data } = await admin.from("calls").select("id").eq("tenant_id", identity.tenantId).eq("id", id).maybeSingle();
+    exists = Boolean(data);
+  } else {
+    const { data } = await admin.from("contract_documents").select("id").eq("tenant_id", identity.tenantId).eq("id", id).maybeSingle();
+    exists = Boolean(data);
+  }
+  if (!exists) throw jsonError("not_found", 404);
 }

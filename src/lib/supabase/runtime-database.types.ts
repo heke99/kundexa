@@ -98,11 +98,23 @@ type TableOverrides = {
   contract_recipients: ExtendTable<"contract_recipients", {
     declined_at: string | null;
     expired_at: string | null;
+    generation: number;
     identity_assurance_level: string;
     provider_recipient_id: string | null;
     required: boolean;
     signed_at: string | null;
     status: string;
+  }>;
+  contracts: ExtendTable<"contracts", {
+    acceptance_generation: number;
+    source_call_eligibility_locked_at: string | null;
+    source_call_eligibility_snapshot: Json | null;
+  }>;
+  contract_versions: ExtendTable<"contract_versions", {
+    signature_policy_snapshot: Json | null;
+  }>;
+  contract_acceptance_requests: ExtendTable<"contract_acceptance_requests", {
+    generation: number;
   }>;
   contract_template_versions: ExtendTable<"contract_template_versions", {
     signature_policy: Json;
@@ -178,7 +190,7 @@ type TableOverrides = {
   telephony_policies: ExtendTable<"telephony_policies", { default_number_allocation_id: string | null; }>;
   tenant_invitations: TableOrFallback<"tenant_invitations">;
   email_delivery_events: TableOrFallback<"email_delivery_events">;
-  signing_envelopes: TableOrFallback<"signing_envelopes">;
+  signing_envelopes: ExtendTable<"signing_envelopes", { generation: number; }>;
   signing_recipients: TableOrFallback<"signing_recipients">;
   signing_attempts: TableOrFallback<"signing_attempts">;
   signing_events: TableOrFallback<"signing_events">;
@@ -187,7 +199,10 @@ type TableOverrides = {
 };
 
 type MissingFunctionName =
+  | "activate_completed_contract"
   | "activate_current_user_invitation"
+  | "assert_team_capacity"
+  | "can_operate_in_team"
   | "allocate_platform_list_to_tenant"
   | "allocate_platform_rinkel_resource"
   | "assign_platform_rinkel_number_to_teams"
@@ -196,25 +211,34 @@ type MissingFunctionName =
   | "claim_platform_rinkel_jobs"
   | "complete_dialer_work_v2"
   | "complete_manual_call_work_v2"
+  | "contract_registry_page"
   | "correlate_rinkel_incoming_event"
   | "correlate_rinkel_outgoing_event"
   | "create_contract_draft_api_v2"
   | "create_contract_draft_v3"
   | "create_managed_team"
   | "create_platform_tenant"
+  | "customer_list_seller_workload"
+  | "fail_tenant_invitation"
   | "extend_contract_acceptance_expiry_api_v2"
+  | "evaluate_exact_call_policy"
   | "finalize_signing_envelope"
+  | "finalize_tenant_invitation"
   | "finish_platform_rinkel_job"
   | "get_contract_call_eligibility"
   | "get_current_user_rinkel_numbers"
+  | "get_managed_team_rinkel_resources"
   | "get_tenant_rinkel_resources"
   | "ingest_platform_rinkel_webhook_event"
   | "list_current_user_tenants"
   | "mark_acceptance_opened"
+  | "navigation_badges"
   | "materialize_segment_to_campaign_for_tenant"
   | "prepare_contract_delivery_api_v2"
   | "prepare_contract_delivery_v2"
   | "record_contract_acceptance_v2"
+  | "record_contract_acceptance_v3"
+  | "report_sales_overview"
   | "record_platform_rinkel_webhook_failure"
   | "record_platform_rinkel_webhook_processed"
   | "record_platform_rinkel_webhook_receipt"
@@ -226,6 +250,7 @@ type MissingFunctionName =
   | "refresh_segment_materialization_for_tenant"
   | "register_external_manual_call"
   | "register_tenant_invitation"
+  | "reserve_tenant_invitation"
   | "remove_managed_team_member"
   | "replace_rinkel_user_mapping_v2"
   | "replace_rinkel_user_mapping_v3"
@@ -243,7 +268,8 @@ type MissingFunctionName =
   | "switch_active_tenant"
   | "telephony_status_for_current_user"
   | "update_managed_team"
-  | "update_tenant_member";
+  | "update_tenant_member"
+  | "update_tenant_member_v2";
 
 type FunctionOverrides = {
   [Name in MissingFunctionName]: FunctionOrFallback<Name>;

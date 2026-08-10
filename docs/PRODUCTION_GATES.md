@@ -9,7 +9,7 @@ Följande måste godkännas före försäljning eller skarp kundtrafik.
 - Officiellt och aktuellt geografiskt referensregister importerat och verifierat.
 - Verifierade Rinkel-webhookpayloads, eventordning, oklara `/dial`-utfall, inspelningslänkar och providerfel mot staging.
 - Samma logiska `RINKEL_API_KEY` finns server-side i Vercel och Supabase Edge Secrets; ingen Rinkel-credential finns per tenant.
-- Alla fem centrala Rinkel-webhookar, katalogsynk, resursallokering, nödstopp och reconciliation är liveverifierade.
+- Alla fyra kärnwebhookar (`incomingCall`, `outgoingCall`, `callStart`, `callEnd`), katalogsynk, resursallokering, nödstopp och reconciliation är liveverifierade. `callInsights` verifieras separat endast när den kapabiliteten används.
 - NIX-resultatmapping, giltighet och omkontroll testad med verklig källa.
 - SPF, DKIM och DMARC verifierade för alla avsändardomäner.
 - Vald BankID/e-signleverantör där stark identitet krävs.

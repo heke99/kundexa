@@ -25,12 +25,12 @@ export async function GET(request: Request) {
     const limit = Math.min(Number(url.searchParams.get("limit") ?? 50), 200);
     const db = await dataClientForIdentity(identity);
     let query = db.from("customers")
-      .select("id,customer_type,lifecycle,display_name,email,phone_e164,organization_number,city,county,industry,sni_code,assigned_user_id,assigned_team_id,updated_at")
+      .select("id,customer_type,lifecycle,display_name,email,phone_e164,organization_number,city,county,industry,sni_code,assigned_user_id,assigned_team_id,do_not_call,do_not_sms,do_not_email,updated_at")
       .eq("tenant_id", identity.tenantId)
       .is("deleted_at", null)
       .order("updated_at", { ascending: false })
       .limit(limit);
-    const search = q ? buildIlikeOrFilter(["display_name", "organization_number", "phone_e164"], q) : null;
+    const search = q ? buildIlikeOrFilter(["display_name", "organization_number", "phone_e164", "email"], q) : null;
     if (search) query = query.or(search);
     const { data, error } = await query;
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });

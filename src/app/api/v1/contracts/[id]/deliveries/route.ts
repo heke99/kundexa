@@ -1,4 +1,4 @@
-import { authenticateRequest, dataClientForIdentity } from "@/lib/api-auth";
+import { authenticateRequest, assertApiObjectAccess, dataClientForIdentity } from "@/lib/api-auth";
 import { apiJson, getCorrelationId, withCorrelation } from "@/lib/api-correlation";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -6,6 +6,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   try {
     const identity = await authenticateRequest(request, "contracts:read");
     const { id } = await params;
+    await assertApiObjectAccess(identity, "contract", id);
     const db = await dataClientForIdentity(identity);
     const { data, error } = await db.from("contract_deliveries")
       .select("*,email_messages(id,status,provider_status,provider_message_id,sent_at,delivered_at,opened_at,clicked_at,failure_code,error_message),sms_messages(id,status,provider_message_id,sent_at,delivered_at,error_message)")

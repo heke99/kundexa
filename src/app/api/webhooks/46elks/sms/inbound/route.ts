@@ -94,7 +94,7 @@ export async function POST(request: Request) {
         }
 
         const normalized = normalizeAcceptanceText(message);
-        const { error } = await admin.rpc("record_contract_acceptance", {
+        const { error } = await admin.rpc("record_contract_acceptance_v3", {
           p_request_id: acceptanceRequest.id,
           p_method: "sms",
           p_status: status,
@@ -121,7 +121,7 @@ export async function POST(request: Request) {
       if (!matched && acceptanceRequests?.length === 1) {
         const acceptanceRequest = acceptanceRequests[0];
         const normalized = normalizeAcceptanceText(message);
-        const { error } = await admin.rpc("record_contract_acceptance", {
+        const { error } = await admin.rpc("record_contract_acceptance_v3", {
           p_request_id: acceptanceRequest.id,
           p_method: "sms",
           p_status: "manual_review_required",

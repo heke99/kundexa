@@ -160,9 +160,13 @@ De relevanta framåtriktade produktionsmigrationerna är:
 ```text
 supabase/migrations/202608020003_rinkel_production_completion.sql
 supabase/migrations/202608100001_rinkel_webhook_live_verification_and_ingest.sql
+supabase/migrations/202608100002_rinkel_device_inventory_mapping_hardening.sql
+supabase/migrations/202608100003_rinkel_webhook_live_verification_repair.sql
+supabase/migrations/202608100006_rinkel_runtime_authorization_and_failure_recovery.sql
+supabase/migrations/202608100008_security_resource_projection_and_rls.sql
 ```
 
-`202608100001` stänger livekedjan genom atomisk webhook-ingest, verklig-event-baserad 4/4-verifiering, korrigerad provider-tidslinje efter `/dial` och skydd mot cross-tenant nummerägarskap.
+`202608100001` stänger livekedjan genom atomisk webhook-ingest, verklig-event-baserad 4/4-verifiering, korrigerad provider-tidslinje efter `/dial` och skydd mot cross-tenant nummerägarskap. `202608100002` gör device inventory/mapping explicit och `202608100003` reparerar live-verifieringskedjan. `202608100006` gör exact-target policy, server-derived purpose, objektåtkomst, pausad teamåtkomst, caller-ID och definitiv provider-rejection till en del av den kanoniska reservation/finalisering-kedjan. `202608100008` begränsar Rinkel-resursprojektioner och känslig RLS efter roll och aktuellt team-scope.
 
 Efter migration:
 

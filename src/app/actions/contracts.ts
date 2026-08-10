@@ -630,20 +630,10 @@ export async function cancelFutureContractReminders(form: FormData) {
 export async function activateContract(form: FormData) {
   const ctx = await getAppContext();
   assertPermission(ctx.role, "contracts.activate");
-  const contractId = value(form, "contract_id");
+  const contractId = z.uuid().parse(value(form, "contract_id"));
   const supabase = await createClient();
-  const [{ data: contract }, { count: evidenceCount }] = await Promise.all([
-    supabase.from("contracts").select("status").eq("id", contractId).single(),
-    supabase.from("evidence_packages").select("*", { count: "exact", head: true }).eq("contract_id", contractId).eq("status", "completed"),
-  ]);
-  if (contract?.status !== "accepted") redirect(`/app/contracts/${contractId}?error=Endast ett accepterat avtal kan aktiveras`);
-  if (!evidenceCount) redirect(`/app/contracts/${contractId}?error=Bevispaketet måste vara färdigställt innan aktivering`);
-
-  const now = new Date().toISOString();
-  const { error } = await supabase.from("contracts").update({ status: "active", activated_at: now }).eq("id", contractId);
+  const { error } = await supabase.rpc("activate_completed_contract", { p_contract_id: contractId });
   if (error) redirect(`/app/contracts/${contractId}?error=${encodeURIComponent(error.message)}`);
-  await supabase.from("contract_events").insert({ tenant_id: ctx.tenantId, contract_id: contractId, event_type: "contract.activated", actor_user_id: ctx.userId, payload: { activated_at: now } });
-  await supabase.from("audit_logs").insert({ tenant_id: ctx.tenantId, actor_user_id: ctx.userId, action: "contract.activated", entity_type: "contract", entity_id: contractId, after_data: { activated_at: now } });
   revalidatePath(`/app/contracts/${contractId}`);
   revalidatePath("/app/contracts");
 }

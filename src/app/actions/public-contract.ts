@@ -16,10 +16,12 @@ export async function respondPublicContract(formData: FormData) {
     fullName: z.string().min(2).max(200),
     confirm: z.literal("on"),
     decision: z.enum(["accept", "decline"]),
+    acceptanceCode: z.string().trim().max(32).optional(),
   }).safeParse({
     fullName: String(formData.get("full_name") ?? "").trim(),
     confirm: formData.get("confirm"),
     decision: String(formData.get("decision") ?? "accept"),
+    acceptanceCode: String(formData.get("acceptance_code") ?? "").trim() || undefined,
   });
   if (!token || !parsed.success) redirect(`/accept/${token}?error=Bekräfta namn och ditt uttryckliga besked`);
 
@@ -28,7 +30,7 @@ export async function respondPublicContract(formData: FormData) {
   const tokenHash = sha256(token + env.KUNDEXA_WEBHOOK_PEPPER);
   const { data: request } = await admin
     .from("contract_acceptance_requests")
-    .select("id,tenant_id,status,expires_at,canonical_document_id,canonical_document_sha256")
+    .select("id,tenant_id,status,expires_at,require_code,canonical_document_id,canonical_document_sha256")
     .eq("public_token_hash", tokenHash)
     .single();
   if (!request) redirect(`/accept/${token}?error=Länken är ogiltig`);
@@ -39,6 +41,7 @@ export async function respondPublicContract(formData: FormData) {
     redirect(`/accept/${token}?error=Acceptlänken har löpt ut`);
   }
   if (!request.canonical_document_id || !request.canonical_document_sha256) redirect(`/accept/${token}?error=Avtalsdokumentets bindning saknas`);
+  if (request.require_code && !parsed.data.acceptanceCode) redirect(`/accept/${token}?error=Ange acceptanskoden som skickades till dig`);
 
   const { data: allowed } = await admin.rpc("consume_rate_limit", {
     p_tenant_id: request.tenant_id,
@@ -53,14 +56,14 @@ export async function respondPublicContract(formData: FormData) {
   const userAgent = requestHeaders.get("user-agent");
   const accepted = parsed.data.decision === "accept";
   const acceptanceText = accepted ? ACCEPTANCE_TEXT : DECLINE_TEXT;
-  const { error } = await admin.rpc("record_contract_acceptance_v2", {
+  const { error } = await admin.rpc("record_contract_acceptance_v3", {
     p_request_id: request.id,
     p_method: "web",
     p_status: accepted ? "accepted_via_web" : "declined",
     p_raw_response: accepted ? "WEB_ACCEPT" : "WEB_DECLINE",
     p_normalized_response: accepted ? "WEB_ACCEPT" : "WEB_DECLINE",
     p_acceptance_phrase: parsed.data.fullName,
-    p_acceptance_code: null,
+    p_acceptance_code: parsed.data.acceptanceCode ?? null,
     p_ip_address: ip,
     p_user_agent: userAgent,
     p_provider_message_id: null,
