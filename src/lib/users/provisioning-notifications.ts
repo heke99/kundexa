@@ -6,7 +6,14 @@ export async function sendProvisioningNotification(input: {
   created: boolean;
 }) {
   const env = serverEnv();
-  if (!env.RESEND_API_KEY || !env.DEFAULT_EMAIL_FROM_ADDRESS || !env.DEFAULT_EMAIL_FROM_NAME) return { sent: false as const, reason: "resend_not_configured" as const };
+  const missingConfiguration = [
+    !env.RESEND_API_KEY ? "RESEND_API_KEY" : null,
+    !env.DEFAULT_EMAIL_FROM_ADDRESS ? "DEFAULT_EMAIL_FROM_ADDRESS" : null,
+    !env.DEFAULT_EMAIL_FROM_NAME ? "DEFAULT_EMAIL_FROM_NAME" : null,
+  ].filter((entry): entry is string => Boolean(entry));
+  if (missingConfiguration.length > 0) {
+    return { sent: false as const, reason: `resend_not_configured:${missingConfiguration.join(",")}` };
+  }
 
   const loginUrl = `${env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "")}/login`;
   const subject = input.created ? `Ditt Kundexa-konto hos ${input.tenantName}` : `Du har lagts till i ${input.tenantName}`;
