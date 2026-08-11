@@ -30,11 +30,11 @@ enable_signup = false
 
 [auth.email.template.invite]
 subject = "Du är inbjuden till Kundexa"
-content_path = "./templates/invite.html"
+content_path = "./supabase/templates/invite.html"
 
 [auth.email.template.recovery]
 subject = "Återställ ditt Kundexa-lösenord"
-content_path = "./templates/recovery.html"
+content_path = "./supabase/templates/recovery.html"
 
 [auth.email.notification.password_changed]
 enabled = true
