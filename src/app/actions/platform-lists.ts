@@ -7,11 +7,9 @@ import { randomUUID } from "node:crypto";
 import { getPlatformContext, isPlatformAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { provisionUser } from "@/lib/users/provision-user";
-import { sendProvisioningNotification } from "@/lib/users/provisioning-notifications";
 
 const value = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
 const message = (error: { message?: string } | null | undefined) => encodeURIComponent((error?.message ?? "Åtgärden misslyckades").replaceAll("_", " "));
-
 
 export async function createPlatformTenantAndInviteOwner(form: FormData) {
   const context = await getPlatformContext();
@@ -19,15 +17,13 @@ export async function createPlatformTenantAndInviteOwner(form: FormData) {
   const parsed = z.object({
     name: z.string().min(2).max(120), legalName: z.string().min(2).max(200), organizationNumber: z.string().max(40),
     ownerFirstName: z.string().min(1).max(100), ownerLastName: z.string().min(1).max(100), ownerEmail: z.email(),
-    temporaryPassword: z.string().max(128), temporaryPasswordConfirm: z.string().max(128), timezone: z.string().min(3).max(80), locale: z.string().min(2).max(20),
+    timezone: z.string().min(3).max(80), locale: z.string().min(2).max(20),
   }).safeParse({
     name: value(form, "name"), legalName: value(form, "legal_name"), organizationNumber: value(form, "organization_number"),
     ownerFirstName: value(form, "owner_first_name"), ownerLastName: value(form, "owner_last_name"), ownerEmail: value(form, "owner_email").toLowerCase(),
-    temporaryPassword: String(form.get("temporary_password") ?? ""), temporaryPasswordConfirm: String(form.get("temporary_password_confirm") ?? ""),
     timezone: value(form, "timezone") || "Europe/Stockholm", locale: value(form, "locale") || "sv-SE",
   });
   if (!parsed.success) redirect("/app/platform?error=Kontrollera tenant- och ägaruppgifterna");
-  if (parsed.data.temporaryPassword !== parsed.data.temporaryPasswordConfirm) redirect("/app/platform?error=De tillfälliga lösenorden matchar inte");
 
   const supabase = await createClient();
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -47,14 +43,13 @@ export async function createPlatformTenantAndInviteOwner(form: FormData) {
       email: parsed.data.ownerEmail,
       firstName: parsed.data.ownerFirstName,
       lastName: parsed.data.ownerLastName,
-      temporaryPassword: parsed.data.temporaryPassword,
       invitationId,
       provisionedBy: context.userId,
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "owner_auth_provisioning_failed";
     await supabase.rpc("fail_tenant_invitation", { p_invitation_id: invitationId, p_reason: reason });
-    redirect("/app/platform?error=Tenant skapades men ägaren kunde inte provisioneras. Flödet kan återupptas säkert.");
+    redirect("/app/platform?error=Tenant skapades men ägarens Supabase Auth-inbjudan kunde inte skickas. Flödet kan återupptas säkert.");
   }
 
   const finalized = await supabase.rpc("finalize_tenant_invitation", { p_invitation_id: invitationId, p_invited_user_id: provisioned.user.id });
@@ -62,10 +57,8 @@ export async function createPlatformTenantAndInviteOwner(form: FormData) {
     await supabase.rpc("fail_tenant_invitation", { p_invitation_id: invitationId, p_reason: finalized.error.message });
     redirect(`/app/platform?error=${message(finalized.error)}`);
   }
-  const notification = await sendProvisioningNotification({ email: parsed.data.ownerEmail, tenantName: parsed.data.name, created: provisioned.created });
-  if (!notification.sent) console.warn("owner_provisioning_notification_not_sent", { tenantId, userId: provisioned.user.id, reason: notification.reason });
   revalidatePath("/app/platform");
-  redirect(`/app/platform?message=${encodeURIComponent(provisioned.created ? "Tenant och ägare skapades. Ägaren måste byta det tillfälliga lösenordet vid första inloggningen." : "Tenant skapades och det befintliga Kundexa-kontot lades till som ägare utan lösenordsändring.")}`);
+  redirect(`/app/platform?message=${encodeURIComponent(provisioned.invited ? "Tenant och ägare skapades. Supabase skickade aktiveringsmailet via Invite User-mallen." : "Tenant skapades och det befintliga Kundexa-kontot lades till som ägare utan credential-ändring.")}`);
 }
 
 export async function allocatePlatformList(form: FormData) {

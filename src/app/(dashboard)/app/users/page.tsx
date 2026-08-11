@@ -7,7 +7,6 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
 import { Badge } from "@/components/ui/badge";
-import { TemporaryPasswordFields } from "@/components/users/temporary-password-fields";
 import { formatDate } from "@/lib/utils";
 
 export default async function UsersPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string }> }) {
@@ -33,7 +32,7 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
   const activeMembers = (memberships ?? []).filter((membership) => membership.status === "active");
 
   return <>
-    <PageHeader title="Användare" description="Skapa användare med tydlig roll och ett explicit primärt team. Befintliga Kundexa-konton återanvänds utan lösenordsändring." />
+    <PageHeader title="Användare" description="Skapa användare med roll och primärt team. Nya konton får en Supabase Auth-inbjudan via den konfigurerade Invite User-mallen." />
     {params.error ? <p className="form-error">{params.error}</p> : null}
     {params.message ? <div className="notice">{params.message}</div> : null}
     <div className={mayCreate ? "split-layout" : "grid"}>
@@ -42,7 +41,7 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
           const profile = Array.isArray(membership.profiles) ? membership.profiles[0] : membership.profiles;
           const primaryTeam = membership.primary_team_id ? teamNames.get(membership.primary_team_id) ?? membership.primary_team_id : "Ej tilldelat";
           const requiresPassword = passwordRequiredByUser.get(membership.user_id) === true;
-          return <tr key={membership.user_id}><td><strong>{profile?.full_name ?? "Provisionerad användare"}</strong></td><td>{membership.role}</td><td>{primaryTeam}</td><td><Badge className={membership.status === "active" && !requiresPassword ? "badge-success" : "badge-warning"}>{requiresPassword ? "lösenordsbyte krävs" : membership.status}</Badge></td><td>{formatDate(membership.joined_at)}</td><td>{formatDate(profile?.last_seen_at)}</td></tr>;
+          return <tr key={membership.user_id}><td><strong>{profile?.full_name ?? "Provisionerad användare"}</strong></td><td>{membership.role}</td><td>{primaryTeam}</td><td><Badge className={membership.status === "active" && !requiresPassword ? "badge-success" : "badge-warning"}>{requiresPassword ? "kontoaktivering krävs" : membership.status}</Badge></td><td>{formatDate(membership.joined_at)}</td><td>{formatDate(profile?.last_seen_at)}</td></tr>;
         })}</DataTable>
       </CardContent></Card>
 
@@ -55,9 +54,8 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
           <option value="sales">Säljare</option>
         </SelectField>
         <SelectField label="Primärt team" name="primary_team_id" defaultValue=""><option value="">Ingen teamtilldelning</option>{availableTeams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</SelectField>
-        <TemporaryPasswordFields />
         <TextareaField label="Intern anteckning (valfri)" name="message" />
-        <p className="muted">För ett nytt Auth-konto används lösenordet bara till första inloggningen. Om e-posten redan har ett Kundexa-konto ignoreras det tillfälliga lösenordet och det befintliga lösenordet behålls.</p>
+        <p className="muted">Nya användare får ett mail från Supabase Auth. De klickar på aktiveringslänken och väljer sitt eget lösenord. Befintliga Kundexa-konton återanvänds utan credential-ändring.</p>
         <button className="button button-primary" disabled={!availableTeams.length && context.role === "team_lead"}><UserPlus size={16} /> Skapa användare</button>
       </form></CardContent></Card> : null}
     </div>
@@ -73,7 +71,7 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
         <div className="form-grid"><SelectField label="Roll" name="role" defaultValue={membership.role}>
           {context.role === "owner" ? <><option value="owner">Tenantägare</option><option value="admin">Administratör</option></> : null}
           <option value="team_lead">Teamledare</option><option value="sales">Säljare</option><option value="contract_manager">Avtalsansvarig</option><option value="quality">Kvalitetskontroll</option><option value="backoffice">Backoffice</option><option value="finance">Ekonomi</option><option value="viewer">Läsbehörig</option>
-        </SelectField><SelectField label="Status" name="status" defaultValue={membership.status}>{membership.status === "invited" ? <><option value="invited">Provisionerad</option><option value="removed">Återkalla</option></> : <><option value="active">Aktiv</option><option value="suspended">Pausad</option><option value="removed">Borttagen</option></>}</SelectField><SelectField label="Primärt team" name="primary_team_id" defaultValue={membership.primary_team_id ?? ""}><option value="">Inget primärt team</option>{availableTeams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</SelectField><SelectField label="Omfördela öppet arbete till" name="reassign_user_id" defaultValue=""><option value="">Teamets gemensamma kö / ingen ägare</option>{activeMembers.filter((candidate) => candidate.user_id !== membership.user_id).map((candidate) => { const candidateProfile = Array.isArray(candidate.profiles) ? candidate.profiles[0] : candidate.profiles; return <option key={candidate.user_id} value={candidate.user_id}>{candidateProfile?.full_name ?? candidate.user_id} · {candidate.role}</option>; })}</SelectField></div>
+        </SelectField><SelectField label="Status" name="status" defaultValue={membership.status}>{membership.status === "invited" ? <><option value="invited">Inbjuden</option><option value="removed">Återkalla</option></> : <><option value="active">Aktiv</option><option value="suspended">Pausad</option><option value="removed">Borttagen</option></>}</SelectField><SelectField label="Primärt team" name="primary_team_id" defaultValue={membership.primary_team_id ?? ""}><option value="">Inget primärt team</option>{availableTeams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</SelectField><SelectField label="Omfördela öppet arbete till" name="reassign_user_id" defaultValue=""><option value="">Teamets gemensamma kö / ingen ägare</option>{activeMembers.filter((candidate) => candidate.user_id !== membership.user_id).map((candidate) => { const candidateProfile = Array.isArray(candidate.profiles) ? candidate.profiles[0] : candidate.profiles; return <option key={candidate.user_id} value={candidate.user_id}>{candidateProfile?.full_name ?? candidate.user_id} · {candidate.role}</option>; })}</SelectField></div>
         <fieldset className="form-section"><legend>Teamrelationer</legend>{availableTeams.map((team) => <label className="check-row" key={team.id}><input type="checkbox" name="team_ids" value={team.id} defaultChecked={selectedTeamIds.has(team.id)} /> {team.name}</label>)}</fieldset>
         {membership.status === "suspended" ? <label className="check-row"><input type="checkbox" name="restore_team_assignments" defaultChecked /> Återuppta tidigare team- och listtilldelningar vid återaktivering</label> : <input type="hidden" name="restore_team_assignments" value="on" />}
         <p className="muted">Sales och team lead måste ha ett explicit primärt team. Pausade och borttagna användare återaktiveras genom ett uttryckligt statusflöde, inte genom ny användarskapning.</p>

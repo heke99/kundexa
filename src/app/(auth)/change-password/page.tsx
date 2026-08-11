@@ -16,11 +16,11 @@ export default async function ChangePasswordPage({ searchParams }: { searchParam
   if (!state?.must_change_password) redirect("/app");
 
   return <main className="auth-page">
-    <section className="auth-brand"><Logo /><div><h1>Välj ditt personliga lösenord.</h1><p>Det tillfälliga lösenordet får bara användas för första inloggningen. Därefter använder du lösenordet du väljer här.</p></div><small>Kundexa · säker första inloggning</small></section>
-    <section className="auth-form-wrap"><div className="auth-form"><h2>Byt lösenord</h2><p>{passwordPolicyHint()}</p>{params.error ? <p className="form-error">{params.error}</p> : null}<form action={changePassword} className="form-stack">
+    <section className="auth-brand"><Logo /><div><h1>Skapa ditt personliga lösenord.</h1><p>Du har verifierat din Supabase-inbjudan. Välj nu lösenordet som du ska använda när du loggar in i Kundexa.</p></div><small>Kundexa · säker kontoaktivering</small></section>
+    <section className="auth-form-wrap"><div className="auth-form"><h2>Välj lösenord</h2><p>{passwordPolicyHint()}</p>{params.error ? <p className="form-error">{params.error}</p> : null}<form action={changePassword} className="form-stack">
       <Field label="Nytt lösenord" name="password" type="password" minLength={PASSWORD_MIN_LENGTH} maxLength={PASSWORD_MAX_LENGTH} autoComplete="new-password" required />
       <Field label="Bekräfta nytt lösenord" name="password_confirm" type="password" minLength={PASSWORD_MIN_LENGTH} maxLength={PASSWORD_MAX_LENGTH} autoComplete="new-password" required />
-      <button className="button button-primary" type="submit">Spara nytt lösenord</button>
+      <button className="button button-primary" type="submit">Aktivera konto</button>
     </form></div></section>
   </main>;
 }

@@ -20,13 +20,26 @@ api_url = "http://127.0.0.1"
 [auth]
 enabled = true
 site_url = "http://localhost:3000"
-additional_redirect_urls = ["http://localhost:3000/auth/callback"]
+additional_redirect_urls = ["http://localhost:3000/auth/callback", "http://localhost:3000/auth/confirm"]
 jwt_expiry = 3600
 enable_signup = false
 enable_anonymous_sign_ins = false
 
 [auth.email]
 enable_signup = false
+
+[auth.email.template.invite]
+subject = "Du är inbjuden till Kundexa"
+content_path = "./supabase/templates/invite.html"
+
+[auth.email.template.recovery]
+subject = "Återställ ditt Kundexa-lösenord"
+content_path = "./supabase/templates/recovery.html"
+
+[auth.email.notification.password_changed]
+enabled = true
+subject = "Ditt Kundexa-lösenord har ändrats"
+content_path = "./supabase/templates/password_changed_notification.html"
 
 [auth.sms]
 enable_signup = false

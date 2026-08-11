@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="sv">
+  <body style="margin:0;background:#f6f7f9;font-family:Arial,sans-serif;color:#111827">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:32px 16px">
+      <tr><td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border-radius:12px;padding:32px">
+          <tr><td>
+            <h1 style="margin:0 0 16px;font-size:24px">Du är inbjuden till Kundexa</h1>
+            <p style="line-height:1.6">Ett Kundexa-konto har skapats för {{ .Email }}.</p>
+            <p style="line-height:1.6">Klicka på knappen nedan för att verifiera inbjudan och välja ditt personliga lösenord.</p>
+            <p style="margin:28px 0">
+              <a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=invite&next=/change-password" style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:700">Aktivera mitt konto</a>
+            </p>
+            <p style="font-size:13px;line-height:1.6;color:#6b7280">Om du inte förväntade dig den här inbjudan kan du ignorera mailet.</p>
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>
+  </body>
+</html>

@@ -7,12 +7,10 @@ import { randomUUID } from "node:crypto";
 import { getAppContext } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { provisionUser } from "@/lib/users/provision-user";
-import { sendProvisioningNotification } from "@/lib/users/provisioning-notifications";
 
 const value = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
 const checked = (form: FormData, key: string) => form.get(key) === "on";
 const errorText = (error: { message?: string } | null | undefined) => encodeURIComponent((error?.message ?? "Åtgärden misslyckades").replaceAll("_", " "));
-
 
 export async function createTeam(form: FormData) {
   const context = await getAppContext();
@@ -51,16 +49,12 @@ export async function createUser(form: FormData) {
   const parsed = z.object({
     firstName: z.string().min(1).max(100), lastName: z.string().min(1).max(100), email: z.email(),
     role: z.enum(["owner", "admin", "team_lead", "sales", "contract_manager", "quality", "backoffice", "finance", "viewer"]),
-    primaryTeamId: z.union([z.uuid(), z.literal("")]), temporaryPassword: z.string().max(128), temporaryPasswordConfirm: z.string().max(128),
-    message: z.string().max(1000),
+    primaryTeamId: z.union([z.uuid(), z.literal("")]), message: z.string().max(1000),
   }).safeParse({
     firstName: value(form, "first_name"), lastName: value(form, "last_name"), email: value(form, "email").toLowerCase(),
-    role: value(form, "role") || "sales", primaryTeamId: value(form, "primary_team_id"),
-    temporaryPassword: String(form.get("temporary_password") ?? ""), temporaryPasswordConfirm: String(form.get("temporary_password_confirm") ?? ""),
-    message: value(form, "message"),
+    role: value(form, "role") || "sales", primaryTeamId: value(form, "primary_team_id"), message: value(form, "message"),
   });
-  if (!parsed.success) redirect("/app/users?error=Kontrollera namn, e-post, roll, team och lösenord");
-  if (parsed.data.temporaryPassword !== parsed.data.temporaryPasswordConfirm) redirect("/app/users?error=De tillfälliga lösenorden matchar inte");
+  if (!parsed.success) redirect("/app/users?error=Kontrollera namn, e-post, roll och team");
   if (context.role === "team_lead" && parsed.data.role !== "sales") redirect("/app/users?error=Teamledare får endast skapa säljare");
   if (context.role !== "owner" && parsed.data.role === "owner") redirect("/app/users?error=Endast tenantägaren får skapa en annan ägare");
   if (["sales", "team_lead"].includes(parsed.data.role) && !parsed.data.primaryTeamId) redirect("/app/users?error=Välj användarens primära team");
@@ -88,14 +82,13 @@ export async function createUser(form: FormData) {
       email: parsed.data.email,
       firstName: parsed.data.firstName,
       lastName: parsed.data.lastName,
-      temporaryPassword: parsed.data.temporaryPassword,
       invitationId,
       provisionedBy: context.userId,
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "auth_provisioning_failed";
     await supabase.rpc("fail_tenant_invitation", { p_invitation_id: invitationId, p_reason: reason });
-    redirect(`/app/users?error=${encodeURIComponent("Användaren kunde inte provisioneras. Försök igen; ett eventuellt skapat Auth-konto återanvänds säkert.")}`);
+    redirect(`/app/users?error=${encodeURIComponent("Användaren kunde inte bjudas in via Supabase Auth. Kontrollera Auth-mailinställningarna och försök igen.")}`);
   }
 
   const finalized = await supabase.rpc("finalize_tenant_invitation", { p_invitation_id: invitationId, p_invited_user_id: provisioned.user.id });
@@ -104,13 +97,11 @@ export async function createUser(form: FormData) {
     redirect(`/app/users?error=${errorText(finalized.error)}`);
   }
 
-  const notification = await sendProvisioningNotification({ email: parsed.data.email, tenantName: context.tenantName, created: provisioned.created });
-  if (!notification.sent) console.warn("user_provisioning_notification_not_sent", { tenantId: context.tenantId, userId: provisioned.user.id, reason: notification.reason });
   revalidatePath("/app/users");
   revalidatePath("/app/teams");
-  const resultMessage = provisioned.created
-    ? "Användaren skapades. Lämna det tillfälliga lösenordet via separat kanal; lösenordsbyte krävs vid första inloggningen."
-    : "Det befintliga Kundexa-kontot lades till utan att lösenordet ändrades.";
+  const resultMessage = provisioned.invited
+    ? "Användaren skapades och Supabase skickade aktiveringsmailet via Invite User-mallen."
+    : "Det befintliga Kundexa-kontot lades till utan att lösenord eller Auth-mail ändrades.";
   redirect(`/app/users?message=${encodeURIComponent(resultMessage)}`);
 }
 
