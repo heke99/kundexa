@@ -101,7 +101,7 @@ async function reuseExistingUser(user: User, input: ProvisionUserInput): Promise
  *
  * Supabase Auth owns identity and credentials. Tenant role/team authorization stays in
  * tenant_memberships/team_members and is never trusted from user-editable Auth metadata.
- * Existing active Auth users are reused and their password is never mutated by this flow.
+ * Existing Auth users are reused; active users never have their password mutated by this flow.
  */
 export async function provisionUser(input: ProvisionUserInput): Promise<ProvisionUserResult> {
   const email = input.email.trim().toLowerCase();
