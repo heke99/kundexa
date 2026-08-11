@@ -15,7 +15,15 @@ export async function signIn(formData: FormData) {
   if (!parsed.success) redirect("/login?error=Kontrollera e-post och lösenord");
   const supabase = await createClient();
   const { error } = await supabase.auth.signInWithPassword(parsed.data);
-  if (error) redirect(`/login?error=${encodeURIComponent("Inloggningen misslyckades")}`);
+  if (error) {
+    const reference = crypto.randomUUID();
+    console.warn("auth_sign_in_failed", {
+      reference,
+      code: error.code ?? null,
+      status: error.status ?? null,
+    });
+    redirect(`/login?error=${encodeURIComponent(`Inloggningen misslyckades. Referens: ${reference}`)}`);
+  }
 
   // A newly provisioned identity stays only an Auth identity + invited membership until
   // the temporary credential has been replaced. This prevents direct Data API/RLS access
