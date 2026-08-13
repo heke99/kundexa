@@ -78,3 +78,7 @@ Följande är fortfarande externa releasegates, inte lokalt bekräftade kodfel:
   device för den provideranvändare som ska allokeras.
 - Supabase Auth: "leaked password protection" är avstängd och kan inte slås på via MCP.
 - PostGIS-ägda advisorfynd (`spatial_ref_sys` utan RLS, extensions i `public`) lämnas orörda.
+- Remote-only migration: `20260813222943 secdef_service_only_and_bypass_hardening` är applicerad
+  i produktionsprojektet men saknas i repot. Den applicerades av en annan aktör 2026-08-13
+  22:29:43 UTC och ersätter `merge_master_entities`/`undo_master_entity_merge` med en
+  `service_role`-bypasskontroll. Den påverkar inte privilegiehärdningen i `202608130001`.

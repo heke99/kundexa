@@ -25,9 +25,14 @@ produktionswebb `https://www.kundexa.se`.
 
 ## Databas — migrationshistorik och schema
 
-- [x] Repots migrationer och applicerad historik är identiska
-  Evidens: `list_migrations` mot projektet ger exakt samma 66 versioner som
-  `supabase/migrations/`, senast `202608130002`.
+- [ ] Repots migrationer och applicerad historik är identiska
+  Läge: repots 66 versioner finns applicerade i exakt samma ordning, senast `202608130002`.
+  Men projektet har därutöver en 67:e rad som inte finns i repot:
+  `20260813222943 secdef_service_only_and_bypass_hardening`, applicerad 2026-08-13 22:29:43 UTC
+  under detta pass av någon annan än denna session. Den ersätter `merge_master_entities` och
+  `undo_master_entity_merge` med en `auth.role() is distinct from 'service_role'`-kontroll.
+  Se blockerare B5. Kontrollerat: den påverkar inte den här grenens härdning
+  (`create or replace` behåller ACL — anon-körbara definers är fortfarande 0).
 - [x] RLS är aktiverat på varje applikationsägd tabell i `public`
   Evidens: katalogfråga — endast `public.spatial_ref_sys` (PostGIS-ägd) saknar RLS.
 - [x] Inga SECURITY DEFINER-rutiner är körbara av `anon`
@@ -137,6 +142,19 @@ produktionswebb `https://www.kundexa.se`.
   applikationskod, och MCP-anslutningen exponerar inget verktyg för Auth-konfiguration.
 - Extern åtgärd: slå på "Leaked password protection" i Supabase Auth-inställningarna.
 - Verifiering efteråt: säkerhetsadvisorn ska inte längre rapportera varningen.
+
+### B5 — Remote-only migration som inte finns i repot
+
+- Saknas: `20260813222943 secdef_service_only_and_bypass_hardening` är applicerad i
+  produktionsprojektet men har ingen motsvarande fil i `supabase/migrations/`.
+- Varför denna gren inte löser det: ändringen applicerades av en annan aktör samtidigt som
+  detta pass pågick. Att importera någon annans oavslutade arbete i den här grenen skulle
+  blanda två arbetsflöden och riskera versionskonflikt när deras gren landar.
+- Extern åtgärd: den som applicerade ändringen checkar in den som
+  `supabase/migrations/20260813222943_secdef_service_only_and_bypass_hardening.sql` med exakt
+  samma innehåll som `supabase_migrations.schema_migrations.statements[1]`.
+- Verifiering efteråt: antalet filer i `supabase/migrations/` ska vara lika med antalet rader i
+  `supabase_migrations.schema_migrations`, och `npm run verify` ska replaya alla.
 
 ### B4 — PostGIS-ägda advisorfynd
 
