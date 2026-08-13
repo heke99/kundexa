@@ -9,14 +9,27 @@ Senast uppdaterad: 2026-08-13.
 ## 1. Databas: migrationer, schema och typer
 
 - [x] Repots migrationer motsvarar migrationshistoriken i det länkade projektet.
-  Evidens: `mcp Supabase list_migrations` mot `lhvifuxcqghtbiulzkrf` = 66 versioner,
-  `ls supabase/migrations` = 66 filer, identiska versionsnummer.
+  Evidens: `list_migrations` mot `lhvifuxcqghtbiulzkrf` = 67 versioner, `ls supabase/migrations`
+  = 67 filer, identiska versionsnummer.
+
+> **Operativ varning.** Under detta pass applicerades två migrationer direkt mot
+> produktionsprojektet av en annan aktör, utan motsvarande filer i repot och utan att
+> `statements` sparades i `supabase_migrations.schema_migrations`:
+> `202608130001_function_execute_least_privilege` och `202608130002_rls_auth_uid_initplan`.
+> Båda är återskapade i repot från observerat produktionstillstånd. Så länge fler än en aktör
+> applicerar migrationer mot samma projekt kan repot när som helst hamna efter produktion igen,
+> och versionsnummer kan kollidera. Den här sessionens egen migration fick versionen
+> `20260813222943` av `apply_migration` och filnamnet följer den faktiskt applicerade versionen.
 - [x] Schemadrift mellan migrationer och genererade typer är noll.
   Evidens: `node scripts/verify-sql.mjs` — "180 tables, zero column drift".
 - [x] Samtliga migrationer replayas rent från tom databas.
   Evidens: `node scripts/verify-sql.mjs` kör 66 migrationer plus runtime-vägar utan fel.
-- [x] Produktionsmigration som saknades i repot är återskapad och incheckad.
-  Evidens: `202608130001_function_execute_least_privilege.sql`; se avsnitt 3.
+- [x] Produktionsmigrationer som saknades i repot är återskapade och incheckade.
+  Evidens: `202608130001_function_execute_least_privilege.sql` (62 funktioner, 144 satser) och
+  `202608130002_rls_auth_uid_initplan.sql` (37 policies); båda genererade från live-tillstånd.
+- [x] RLS-uttryck anropar `auth.uid()` som InitPlan, inte per rad.
+  Evidens: live-query — 37 av 37 policies använder `(select auth.uid())`, noll bara `auth.uid()`;
+  stående invariant i `scripts/verify-sql.mjs`.
 
 ## 2. Verifieringskedjan
 

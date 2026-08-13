@@ -132,3 +132,16 @@ mot den riktiga instansen och inte bara mot PGlite.
 - `npm run verify` PASS i sin helhet (types:verify, typecheck, typecheck:edge, test, openapi, build).
 - RLS-predikathjälpare och triggerfunktioner är medvetet undantagna; motivering i migrationen
   och i `docs/PRODUCTION_READINESS.md`.
+
+### Samtidig aktör mot samma produktionsprojekt
+
+Under passet applicerades två migrationer direkt mot `lhvifuxcqghtbiulzkrf` av någon annan, utan
+filer i repot och utan sparade `statements`: `202608130001_function_execute_least_privilege` och
+`202608130002_rls_auth_uid_initplan` (wrappar `auth.uid()` som `(select auth.uid())` i 37 policies).
+Båda är återskapade i repot från live-tillstånd. Denna sessions egen migration fick versionen
+`20260813222943` av `apply_migration`, och filnamnet följer den faktiska versionen — inte det
+`202608130002` som ursprungligen valdes, eftersom den andra aktören hann ta det numret.
+
+Konsekvens att bevaka: så länge flera aktörer applicerar migrationer mot samma projekt kan repot
+hamna efter produktion igen och versionsnummer kollidera. Kontrollera alltid `list_migrations` mot
+`ls supabase/migrations` innan nya migrationer skapas.

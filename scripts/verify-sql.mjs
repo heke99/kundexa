@@ -1573,6 +1573,22 @@ if (mutableSearchPath.rows.length > 0) {
   throw new Error(`Functions with a mutable search_path: ${mutableSearchPath.rows.map((row) => row.proname).join(", ")}`);
 }
 
+// RLS expressions must call auth.uid() through an InitPlan. A bare auth.uid() is
+// re-evaluated per row; `(select auth.uid())` is evaluated once per statement.
+// auth.uid() is STABLE, so this is a performance property, not a semantic one.
+const bareAuthUid = await db.query(`
+  select c.relname, pol.polname
+  from pg_policy pol join pg_class c on c.oid = pol.polrelid join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'public'
+    and (pg_get_expr(pol.polqual, pol.polrelid) ~* '(?<!select )auth\\.uid\\(\\)'
+      or coalesce(pg_get_expr(pol.polwithcheck, pol.polrelid), '') ~* '(?<!select )auth\\.uid\\(\\)')
+  order by c.relname, pol.polname
+`);
+if (bareAuthUid.rows.length > 0) {
+  const names = bareAuthUid.rows.map((row) => `${row.relname}.${row.polname}`).join(", ");
+  throw new Error(`RLS policies call auth.uid() per row instead of (select auth.uid()): ${names}`);
+}
+
 // The merge guard must reject an unauthenticated caller rather than falling through
 // the historic `auth.uid() is null` service-context bypass.
 const mergeGuard = await db.query(`
