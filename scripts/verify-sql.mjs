@@ -43,7 +43,7 @@ await db.exec(`
   create function storage.foldername(name text) returns text[] language sql immutable as $$
     select regexp_split_to_array(name, '/')
   $$;
-  create function public.digest(value text, algorithm text) returns bytea language sql immutable as $$
+  create function public.digest(value text, algorithm text) returns bytea language sql immutable set search_path = public, pg_temp as $$
     select decode(md5(value), 'hex')
   $$;
 `);
@@ -136,6 +136,64 @@ if (
   || provisioningPrivilege.anon_member_update_v3
 ) {
   throw new Error(`Provisioning RPC privilege boundary failed: ${JSON.stringify(provisioningPrivilege)}`);
+}
+
+// No SECURITY DEFINER routine owned by Kundexa may be callable by `anon` through
+// PostgREST, and trigger routines need no client EXECUTE at all. Extension-owned
+// routines (PostGIS et al.) are not Kundexa's to re-grant.
+const definerExposure = await db.query(`
+  select p.proname as name, p.prorettype::regtype::text = 'trigger' as is_trigger
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public'
+    and p.prosecdef
+    and not exists (select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e')
+    and (
+      has_function_privilege('anon', p.oid, 'EXECUTE')
+      or (p.prorettype::regtype::text = 'trigger' and has_function_privilege('authenticated', p.oid, 'EXECUTE'))
+    )
+  order by 1
+`);
+if (definerExposure.rows.length > 0) {
+  throw new Error(
+    `SECURITY DEFINER routines are over-granted: ${definerExposure.rows.map((row) => `${row.name}${row.is_trigger ? " (trigger)" : ""}`).join(", ")}`,
+  );
+}
+const mutableSearchPath = await db.query(`
+  select p.proname as name
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public'
+    and p.prokind = 'f'
+    and not exists (select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e')
+    and (p.proconfig is null or not exists (
+      select 1 from unnest(p.proconfig) config where config like 'search_path=%'
+    ))
+  order by 1
+`);
+if (mutableSearchPath.rows.length > 0) {
+  throw new Error(`Routines without a pinned search_path: ${mutableSearchPath.rows.map((row) => row.name).join(", ")}`);
+}
+// RLS expressions must call auth.uid() through a scalar subquery so it is an
+// InitPlan evaluated once per statement instead of once per scanned row.
+const perRowAuthPolicies = await db.query(`
+  select c.relname as table_name, pol.polname as policy_name
+  from pg_policy pol
+  join pg_class c on c.oid = pol.polrelid
+  join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'public'
+    and (
+      coalesce(pg_get_expr(pol.polqual, pol.polrelid), '') like '%auth.uid()%'
+      or coalesce(pg_get_expr(pol.polwithcheck, pol.polrelid), '') like '%auth.uid()%'
+    )
+    and coalesce(pg_get_expr(pol.polqual, pol.polrelid), '') not like '%( SELECT auth.uid()%'
+    and coalesce(pg_get_expr(pol.polwithcheck, pol.polrelid), '') not like '%( SELECT auth.uid()%'
+  order by 1, 2
+`);
+if (perRowAuthPolicies.rows.length > 0) {
+  throw new Error(
+    `RLS policies re-evaluate auth.uid() per row: ${perRowAuthPolicies.rows.map((row) => `${row.table_name}.${row.policy_name}`).join(", ")}`,
+  );
 }
 
 console.log(`Executed ${migrations.length} migrations: ${counts.tables} public tables, ${counts.functions} public functions, ${counts.policies} RLS policies.`);
