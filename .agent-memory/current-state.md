@@ -108,3 +108,18 @@ by Kundexa.
   device is selected automatically, while multiple devices still require an explicit choice.
 - Directory sync repairs an existing seller mapping only when the allocated provider user has exactly one
   active device. Ambiguous multi-device users remain manual.
+
+## 2026-08-13 — Hosted advisor remediation och webhookmålskontroll
+
+- Migrationshistoriken i repot och i det länkade projektet `lhvifuxcqghtbiulzkrf` är
+  identisk: 66 versioner, senast `202608130002`.
+- `202608130001` tar bort `public`/`anon` EXECUTE från 62 äldre SECURITY DEFINER-rutiner och
+  alla klientgrants från 21 triggerrutiner, samt låser `search_path` på åtta rutiner.
+- `202608130002` skriver om 37 RLS-policies så `auth.uid()` blir en InitPlan och tar bort fem
+  duplicerade `(tenant_id,id)`-index.
+- `scripts/verify-sql.mjs` har tre nya permanenta grindar: över-grantade definers, mutabel
+  `search_path` och per-rad `auth.uid()`.
+- Rinkel-webhookregistrering gör nu en förkontroll av den publika basadressen och vägrar
+  registrera en adress som svarar med omdirigering eller inte går att nå.
+- Produktionswebben ligger på `https://www.kundexa.se`; `app.kundexa.se` finns inte i DNS.
+  De registrerade webhookmålen pekar på apexdomänen som svarar 308.

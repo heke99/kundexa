@@ -10,6 +10,7 @@ import { serverEnv } from "@/lib/env";
 import { invokeRinkelPlatformWorker } from "@/lib/workers/rinkel-platform-worker";
 import { toJson } from "@/lib/supabase/json";
 import { createPlatformRinkelClient, staleRinkelDeviceIds } from "@/lib/integrations/rinkel/client";
+import { probeWebhookDeliveryTarget } from "@/lib/integrations/rinkel/webhook-target";
 import { safeRinkelError } from "@/lib/integrations/rinkel/errors";
 import {
   RINKEL_CORE_WEBHOOK_EVENTS,
@@ -559,6 +560,25 @@ export async function configurePlatformRinkelWebhooks() {
   const configuredAt = new Date().toISOString();
   const allEvents = [...RINKEL_CORE_WEBHOOK_EVENTS, ...RINKEL_OPTIONAL_WEBHOOK_EVENTS];
   let successMessage = "";
+  // A redirecting or unreachable public base URL registers with the provider
+  // without complaint and then drops every delivery, so it must block
+  // registration rather than be discovered as missing call events later.
+  const targetProbe = await probeWebhookDeliveryTarget(base, { timeoutMs: env.RINKEL_REQUEST_TIMEOUT_MS });
+  if (!targetProbe.ok) {
+    await admin.from("platform_integrations").update({
+      webhook_status: "failed",
+      last_error_code: targetProbe.code,
+      last_error_message: targetProbe.message,
+      last_error_at: configuredAt,
+      last_error_operation: "webhook_registration",
+    }).eq("id", integration.id);
+    await platformAudit(context.userId, "rinkel.webhook_target_rejected", "platform_integration", integration.id, {
+      code: targetProbe.code,
+      status: targetProbe.status ?? null,
+      redirect_origin: targetProbe.location ?? null,
+    });
+    go("/app/platform/telephony", "error", targetProbe.message);
+  }
   try {
     const client = createPlatformRinkelClient(crypto.randomUUID());
     const existing = await client.listWebhooks();

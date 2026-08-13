@@ -210,3 +210,18 @@ and only performs destructive stale-device reconciliation when device inventory 
 provider devices to be allocated to a tenant. That created an allocation that could never pass
 `replace_rinkel_user_mapping_v3` or `/dial`. The forward-only replacement now raises
 `RINKEL_USER_DEVICE_MISSING` unless a synchronized active device exists.
+
+## FAILURE-0035 — Äldre SECURITY DEFINER-rutiner var körbara av anon — FIXED 2026-08-13
+62 rutiner skapade före revoke-konventionen behöll Supabases standardgrants, så de kunde anropas
+via `/rest/v1/rpc/...` utan inloggning. `202608130001` återkallar `public`/`anon` och tar bort alla
+klientgrants från triggerrutiner. `verify-sql.mjs` failar nu om något återfaller.
+
+## FAILURE-0036 — RLS utvärderade auth.uid() per rad — FIXED 2026-08-13
+37 policies anropade `auth.uid()` direkt i USING/WITH CHECK. `202608130002` lindar anropen i en
+skalär subquery så de blir InitPlan. Policynamn, permissiveness, kommando och rollista tas från
+katalogen och återskapas oförändrade.
+
+## FAILURE-0037 — Webhookregistrering accepterade en omdirigerande adress — FIXED 2026-08-13
+Registreringen kontrollerade providerkatalogen men aldrig om Kundexas egen publika adress svarar
+direkt. Produktionen registrerade `https://kundexa.se/...` som svarar 308, och inget event har
+mottagits. Registreringen gör nu en förkontroll och vägrar 3xx/onåbara mål.

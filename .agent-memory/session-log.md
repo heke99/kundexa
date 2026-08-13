@@ -111,3 +111,16 @@ riktig Rinkel-provider är fortfarande `NOT RUN` — se `open-blockers.md`.
 - Added a fail-closed device requirement to user allocation and richer UI diagnostics instead of the generic `enhet saknas` state.
 - `remediation-regression-tests`: PASS; static `verify.mjs`: PASS for 51 migrations; custom Rinkel runtime suite: 15/15 PASS.
 - Full dependency install, PGlite replay and linked Supabase proof remain external/environment-blocked and are not claimed complete.
+
+## 2026-08-13 — hosted advisor remediation, webhookmål och produktionskontroll
+
+- Körde hela `npm run verify` som baslinje (PASS) innan någon ändring gjordes.
+- Jämförde repots migrationer mot den länkade Supabase-instansen: ingen drift.
+- Läste hosted security- och performance-advisors och separerade Kundexa-ägda fynd från
+  PostGIS-ägda.
+- Lade två forward-only migrationer och applicerade dem mot projektet; registrerade dem i
+  `supabase_migrations.schema_migrations` med samma versioner som filerna.
+- Negativt testade den nya privilegiegrinden genom att tillfälligt ta bort migrationen.
+- Verifierade produktionens `/api/health`, `/api/ready` och webhookrutten; hittade att
+  apexdomänen 308-omdirigerar och att de registrerade webhookmålen använder den.
+- Implementerade och enhetstestade en förkontroll av webhookmålet i registreringsflödet.
