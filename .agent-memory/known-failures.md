@@ -210,3 +210,23 @@ and only performs destructive stale-device reconciliation when device inventory 
 provider devices to be allocated to a tenant. That created an allocation that could never pass
 `replace_rinkel_user_mapping_v3` or `/dial`. The forward-only replacement now raises
 `RINKEL_USER_DEVICE_MISSING` unless a synchronized active device exists.
+
+## FAILURE-0017 — anon-nåbar SECURITY DEFINER med auktoriseringsbypass
+
+Upptäckt 2026-08-13 mot live-projektet.
+
+`merge_master_entities(p_tenant_id,...)` var körbar av `anon` och dess enda admin-kontroll var
+`if not public.is_tenant_admin(p_tenant_id) and auth.uid() is not null then raise`. För `anon` är
+`auth.uid()` null, så kontrollen hoppades över helt. Bekräftat empiriskt: `set local role anon` nådde
+funktionskroppen och tog första affärsfelet (`merge_entities_must_differ`), vilket bevisar att
+grant-lagret släppte igenom anropet. Med två skilda entitets-id:n hade en oautentiserad anropare med
+enbart den publika anon-nyckeln kunnat slå ihop master-entiteter i valfri tenant.
+`undo_master_entity_merge` hade samma mönster.
+
+Grundorsak: PostgreSQL ger `EXECUTE` till `PUBLIC` som standard; migrationerna som skapade dessa
+rutiner saknade explicit `REVOKE`. Bypassen var skriven för service-role-anrop men skiljer inte
+service-kontext från frånvaro av session.
+
+Åtgärd: `202608130001` (återskapad) tog bort anon-grants; `202608130002` ersatte bypassen med
+`auth.role() <> 'service_role'` och begränsade service-only-rutiner till `service_role`.
+Regressionsskydd i `scripts/verify-sql.mjs`.

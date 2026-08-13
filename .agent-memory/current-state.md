@@ -108,3 +108,27 @@ by Kundexa.
   device is selected automatically, while multiple devices still require an explicit choice.
 - Directory sync repairs an existing seller mapping only when the allocated provider user has exactly one
   active device. Ambiguous multi-device users remain manual.
+
+## 2026-08-13 — SECURITY DEFINER execute-gränser och migrationsdrift
+
+Live Supabase (`lhvifuxcqghtbiulzkrf`) var ansluten i detta pass, så DB-arbetet är verifierat
+mot den riktiga instansen och inte bara mot PGlite.
+
+- Repot saknade en migration som fanns applicerad i produktion: `202608130001`
+  `function_execute_least_privilege`. `supabase_migrations.schema_migrations` hade version och
+  namn men `statements` var null. Filen är återskapad i repot från observerat produktionstillstånd
+  (62 applikationsägda funktioner, 144 satser) så att historiken åter är i synk. Den applicerades
+  av en annan aktör mitt under detta pass; repot var alltså tillfälligt efter produktion.
+- Kvarvarande hål efter den migrationen är åtgärdade i `202608130002`
+  `secdef_service_only_and_bypass_hardening` (applicerad på produktion i detta pass):
+  - `merge_master_entities` och `undo_master_entity_merge` hade
+    `if not is_tenant_admin(...) and auth.uid() is not null` — admin-kontrollen hoppades över för
+    varje sessionslös anropare. Ersatt med explicit `auth.role() <> 'service_role'`-kontroll.
+  - Sex service-only-rutiner med explicit tenant-/entitetsparameter hade kvar `authenticated`;
+    nu endast `service_role`.
+  - Åtta funktioner hade mutabel `search_path`; nu pinnade.
+- `scripts/verify-sql.mjs` har fått stående invarianter: ingen anon-körbar SECURITY DEFINER-RPC,
+  service-only-gränsen, ingen mutabel `search_path`, ingen återinförd `auth.uid()`-bypass.
+- `npm run verify` PASS i sin helhet (types:verify, typecheck, typecheck:edge, test, openapi, build).
+- RLS-predikathjälpare och triggerfunktioner är medvetet undantagna; motivering i migrationen
+  och i `docs/PRODUCTION_READINESS.md`.

@@ -1498,4 +1498,98 @@ if (columnDrift.length > 0) {
 }
 console.log(`Verified generated types match the migrated schema: ${schemaTables.size} tables, zero column drift.`);
 
+// SECURITY DEFINER execute-grant boundary.
+//
+// PostgreSQL grants EXECUTE to PUBLIC by default, so any SECURITY DEFINER routine
+// created without an explicit REVOKE becomes callable by the unauthenticated `anon`
+// role through PostgREST. This is a standing invariant rather than a name list, so a
+// newly added function that forgets its REVOKE fails the gate immediately.
+//
+// RLS predicate helpers (can_*, is_*, has_*, current_*) are exempt: they are evaluated
+// inside policies that apply to PUBLIC, so revoking EXECUTE would convert row filtering
+// into a hard permission error. They are read-only and yield null/false without a session.
+// Trigger-returning functions are exempt: PostgreSQL rejects a direct call and trigger
+// firing never consults EXECUTE privileges.
+const anonExecutable = await db.query(`
+  select p.proname, pg_get_function_identity_arguments(p.oid) as args
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+  left join pg_depend d on d.objid = p.oid and d.deptype = 'e'
+  where n.nspname = 'public'
+    and p.prosecdef
+    and d.objid is null
+    and p.prorettype <> 'trigger'::regtype
+    and has_function_privilege('anon', p.oid, 'EXECUTE')
+    and p.proname !~ '^(can|is|has|current)_'
+  order by p.proname
+`);
+if (anonExecutable.rows.length > 0) {
+  const names = anonExecutable.rows.map((row) => `${row.proname}(${row.args})`).join(", ");
+  throw new Error(`SECURITY DEFINER functions are executable by anon (add an explicit revoke): ${names}`);
+}
+
+// Service-only routines take explicit tenant/entity parameters instead of deriving
+// tenant from the session, so they must never be reachable from a browser session.
+const serviceOnlyPrivileges = await db.query(`
+  select
+    has_function_privilege('authenticated','public.merge_master_entities(uuid,uuid,uuid,uuid)','EXECUTE') as authenticated_merge,
+    has_function_privilege('anon','public.merge_master_entities(uuid,uuid,uuid,uuid)','EXECUTE') as anon_merge,
+    has_function_privilege('authenticated','public.undo_master_entity_merge(uuid,uuid)','EXECUTE') as authenticated_undo_merge,
+    has_function_privilege('service_role','public.undo_master_entity_merge(uuid,uuid)','EXECUTE') as service_undo_merge,
+    has_function_privilege('authenticated','public.rebuild_master_entity(uuid)','EXECUTE') as authenticated_rebuild,
+    has_function_privilege('service_role','public.rebuild_master_entity(uuid)','EXECUTE') as service_rebuild,
+    has_function_privilege('authenticated','public.recalculate_data_quality(uuid)','EXECUTE') as authenticated_quality,
+    has_function_privilege('authenticated','public.source_priority_for(uuid,text,text)','EXECUTE') as authenticated_source_priority,
+    has_function_privilege('authenticated','public.customer_has_legal_retention(uuid,uuid)','EXECUTE') as authenticated_legal_retention
+`);
+const serviceOnlyPrivilege = serviceOnlyPrivileges.rows[0];
+if (
+  !serviceOnlyPrivilege.authenticated_merge
+  || serviceOnlyPrivilege.anon_merge
+  || serviceOnlyPrivilege.authenticated_undo_merge
+  || !serviceOnlyPrivilege.service_undo_merge
+  || serviceOnlyPrivilege.authenticated_rebuild
+  || !serviceOnlyPrivilege.service_rebuild
+  || serviceOnlyPrivilege.authenticated_quality
+  || serviceOnlyPrivilege.authenticated_source_priority
+  || serviceOnlyPrivilege.authenticated_legal_retention
+) {
+  throw new Error(`Service-only RPC privilege boundary failed: ${JSON.stringify(serviceOnlyPrivilege)}`);
+}
+
+// Every SECURITY DEFINER routine must pin search_path.
+const mutableSearchPath = await db.query(`
+  select p.proname
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+  left join pg_depend d on d.objid = p.oid and d.deptype = 'e'
+  where n.nspname = 'public' and d.objid is null and p.prokind = 'f' and p.proconfig is null
+    -- public.digest is the harness shim for pgcrypto; on Supabase the real function is
+    -- extension-owned in the extensions schema and already excluded by pg_depend.
+    and p.proname <> 'digest'
+  order by p.proname
+`);
+if (mutableSearchPath.rows.length > 0) {
+  throw new Error(`Functions with a mutable search_path: ${mutableSearchPath.rows.map((row) => row.proname).join(", ")}`);
+}
+
+// The merge guard must reject an unauthenticated caller rather than falling through
+// the historic `auth.uid() is null` service-context bypass.
+const mergeGuard = await db.query(`
+  select public.merge_master_entities is not null as present,
+         pg_get_functiondef(p.oid) ~ 'auth\\.uid\\(\\) is not null' as has_legacy_bypass
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname in ('merge_master_entities','undo_master_entity_merge')
+`).catch(async () => db.query(`
+  select pg_get_functiondef(p.oid) ~ 'auth\\.uid\\(\\) is not null' as has_legacy_bypass
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname in ('merge_master_entities','undo_master_entity_merge')
+`));
+if (mergeGuard.rows.some((row) => row.has_legacy_bypass)) {
+  throw new Error("merge_master_entities/undo_master_entity_merge still carry the auth.uid() service-context bypass");
+}
+console.log(
+  `Verified SECURITY DEFINER execute boundary: no anon-executable RPCs, service-only routines restricted, ${mutableSearchPath.rows.length} functions with mutable search_path.`,
+);
+
 await db.close();
