@@ -46,6 +46,15 @@ produktionswebb `https://www.kundexa.se`.
   Evidens: `scripts/verify-sql.mjs` faller nu på över-grantade definers, mutabel
   `search_path` och per-rad `auth.uid()`. Negativt testat genom att tillfälligt ta bort
   `202608130001` — replayen failade som förväntat.
+- [x] Tenantisolering verifierad mot den riktiga databasen efter policyomskrivningen
+  Evidens: `set local role authenticated` med `request.jwt.claims` för en riktig användare.
+  Tenantägaren ser sin tenants enda kund; en användare med endast `invited`-medlemskap får
+  `current_tenant_id() = null` och ser 0 kunder, 0 tenants, 0 samtal och 0 avtal. Att
+  ägaren ser båda tenants beror på ett aktivt `platform_owner`-medlemskap, inte på RLS-läckage.
+- [x] `anon` kan inte längre läsa tenantdata via PostgREST
+  Evidens: samma test som `anon` faller på `permission denied for function is_tenant_member`.
+  Fail-closed är avsiktligt: publika sidor (avtalssignering) går via service role, inte via
+  anon-klienten.
 - [ ] Belastningstest och EXPLAIN-mätning mot produktionslik datavolym
   Orsak: produktionsdatabasen innehåller i praktiken ingen data ännu (2 tenants,
   3 profiler, 1 kund, 0 samtal, 0 avtal). Planmätning blir meningslös före verklig volym.
