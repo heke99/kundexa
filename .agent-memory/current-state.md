@@ -149,4 +149,11 @@ Detta pass hade för första gången läsaccess till det riktiga Supabase-projek
 - `scripts/verify-sql.mjs` kör hela kedjan end-to-end: tilldelning utan device, säljaren får numret,
   `manualReady=false` med `DEVICE_MISSING`, automatiskt val vid en device, avslag vid flera, avslag för
   icke-admin. Testet failar med `RINKEL_USER_DEVICE_MISSING` utan migrationen.
-- Migrationen är INTE applicerad mot det länkade Supabase-projektet i det här passet.
+- Migrationen är applicerad mot det länkade Supabase-projektet som version `20260814124751`
+  (filnamnet i repot är omdöpt till samma version så ledger och repo är i synk).
+- Live-verifierat i en transaktion som rullades tillbaka: `replace_rinkel_user_mapping_v3` med
+  `p_selected_device_id=null` går igenom för Gridex-ägaren, `telephony_status_for_current_user`
+  ger `userMapped=true`, `userHasNumberAccess=true`, `callerIdResolvable=true` och
+  `manualReady=false` med blockeraren `DEVICE_MISSING`. Inga produktionsrader ändrades.
+- Kvarstående externa blockerare för att faktiskt kunna ringa: ingen device på Rinkel-kontot,
+  och de fem webhookarna är fortfarande overifierade (`CORE_WEBHOOKS_NOT_VERIFIED`).

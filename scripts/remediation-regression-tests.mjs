@@ -81,7 +81,7 @@ const [
   read("scripts/bootstrap-platform-owner.mjs"),
   read("supabase/functions/_shared/rinkel.ts"),
   read("supabase/migrations/202608100002_rinkel_device_inventory_mapping_hardening.sql"),
-  read("supabase/migrations/20260814000000_rinkel_seller_number_assignment_without_device.sql"),
+  read("supabase/migrations/20260814124751_rinkel_seller_number_assignment_without_device.sql"),
   read("src/components/rinkel-user-mapping-form.tsx"),
   read("src/app/api/webhooks/rinkel/[secret]/[event]/route.ts"),
   read("supabase/migrations/202608100003_rinkel_webhook_live_verification_repair.sql"),
