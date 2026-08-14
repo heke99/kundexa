@@ -82,6 +82,43 @@ export function canonicalAppBaseUrl() {
   return value.replace(/\/$/, "");
 }
 
+/**
+ * The public base Rinkel is told to deliver webhooks to. An explicit
+ * RINKEL_WEBHOOK_PUBLIC_BASE_URL still wins, because the webhook host may
+ * legitimately differ from the app host, but when it is unset the value is
+ * inherited from NEXT_PUBLIC_APP_URL rather than from a hardcoded literal.
+ *
+ * Deriving the two independently is what let production drift apart: the app
+ * served links for one host while the five Rinkel subscriptions pointed at
+ * another, and nothing in the system noticed.
+ */
+export function resolveRinkelWebhookBaseUrl() {
+  const explicit = process.env.RINKEL_WEBHOOK_PUBLIC_BASE_URL;
+  if (explicit) return explicit;
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+  if (appUrl && isUsablePublicAppUrl(appUrl)) return appUrl.replace(/\/$/, "");
+  return "https://kundexa.se";
+}
+
+/**
+ * Whether outbound links and the registered webhook target share a host. A
+ * mismatch is not fatal on its own -- a redirecting apex still resolves in a
+ * browser -- but provider webhook POSTs are not guaranteed to follow redirects,
+ * so it must be observable from outside instead of silently degrading.
+ */
+export function publicHostAlignment() {
+  try {
+    // Read the single variable this needs rather than parsing the whole public
+    // schema: an unrelated missing Supabase variable must not make two hosts that
+    // do agree report as diverged.
+    const appHost = new URL(process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000").host;
+    const webhookHost = new URL(resolveRinkelWebhookBaseUrl()).host;
+    return { appHost, webhookHost, aligned: appHost === webhookHost };
+  } catch {
+    return { appHost: null, webhookHost: null, aligned: false };
+  }
+}
+
 export function publicEnv() {
   return publicSchema.parse({
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -152,7 +189,7 @@ export function serverEnv() {
     RESEND_WEBHOOK_SECRET: process.env.RESEND_WEBHOOK_SECRET,
     RINKEL_API_KEY: process.env.RINKEL_API_KEY,
     RINKEL_API_BASE_URL: process.env.RINKEL_API_BASE_URL ?? "https://api.rinkel.com/v1",
-    RINKEL_WEBHOOK_PUBLIC_BASE_URL: process.env.RINKEL_WEBHOOK_PUBLIC_BASE_URL ?? "https://kundexa.se",
+    RINKEL_WEBHOOK_PUBLIC_BASE_URL: resolveRinkelWebhookBaseUrl(),
     RINKEL_WEBHOOK_SECRET: process.env.RINKEL_WEBHOOK_SECRET,
     RINKEL_WEBHOOK_ALLOWED_IPS: process.env.RINKEL_WEBHOOK_ALLOWED_IPS ?? "82.199.77.220,188.122.73.177",
     RINKEL_REQUEST_TIMEOUT_MS: process.env.RINKEL_REQUEST_TIMEOUT_MS ?? "15000",

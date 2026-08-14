@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isPlatformRinkelRuntimeConfigured } from "@/lib/integrations/rinkel/client";
-import { isUsablePublicAppUrl, publicEnv } from "@/lib/env";
+import { isUsablePublicAppUrl, publicEnv, publicHostAlignment } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +18,9 @@ export async function GET() {
     appBaseUrl = null;
   }
   const appBaseUrlUsable = appBaseUrl !== null && isUsablePublicAppUrl(appBaseUrl);
+  // A registered webhook target on a different host than the app is delivered to
+  // only if the provider follows redirects, which is not guaranteed. Report it.
+  const { webhookHost, aligned: webhookHostAligned } = publicHostAlignment();
   try {
     const admin = createAdminClient();
     const { error } = await admin.from("tenants").select("id", { head: true, count: "exact" }).limit(1);
@@ -25,21 +28,21 @@ export async function GET() {
       return NextResponse.json({
         status: "not_ready",
         service: "kundexa-web",
-        checks: { database: false, telephonyRuntimeConfigured: isPlatformRinkelRuntimeConfigured(), appBaseUrl, appBaseUrlUsable },
+        checks: { database: false, telephonyRuntimeConfigured: isPlatformRinkelRuntimeConfigured(), appBaseUrl, appBaseUrlUsable, webhookHost, webhookHostAligned },
         durationMs: Date.now() - startedAt,
       }, { status: 503, headers: { "cache-control": "no-store" } });
     }
     return NextResponse.json({
       status: "ready",
       service: "kundexa-web",
-      checks: { database: true, telephonyRuntimeConfigured: isPlatformRinkelRuntimeConfigured(), appBaseUrl, appBaseUrlUsable },
+      checks: { database: true, telephonyRuntimeConfigured: isPlatformRinkelRuntimeConfigured(), appBaseUrl, appBaseUrlUsable, webhookHost, webhookHostAligned },
       durationMs: Date.now() - startedAt,
     }, { headers: { "cache-control": "no-store" } });
   } catch {
     return NextResponse.json({
       status: "not_ready",
       service: "kundexa-web",
-      checks: { database: false, telephonyRuntimeConfigured: false, appBaseUrl, appBaseUrlUsable },
+      checks: { database: false, telephonyRuntimeConfigured: false, appBaseUrl, appBaseUrlUsable, webhookHost, webhookHostAligned },
       durationMs: Date.now() - startedAt,
     }, { status: 503, headers: { "cache-control": "no-store" } });
   }
