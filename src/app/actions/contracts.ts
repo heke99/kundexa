@@ -7,7 +7,7 @@ import { getAppContext } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { encryptJson, randomToken, sha256, sha256Bytes } from "@/lib/crypto";
-import { serverEnv } from "@/lib/env";
+import { canonicalAppBaseUrl, serverEnv } from "@/lib/env";
 import { normalizePhone } from "@/lib/domain/phone";
 import { assertPermission } from "@/lib/permissions";
 import { renderStrictTemplate } from "@/lib/domain/template";
@@ -528,7 +528,7 @@ export async function sendContract(form: FormData) {
 
   const token = randomToken();
   const code = randomToken(4).slice(0, 4).toUpperCase();
-  const publicUrl = `${env.NEXT_PUBLIC_APP_URL}/accept/${token}`;
+  const publicUrl = `${canonicalAppBaseUrl()}/accept/${token}`;
   const expiresLabel = new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeStyle: "short", timeZone: ctx.tenantTimezone }).format(expiresAt!);
   const sellerSnapshot = (contract.seller_snapshot ?? {}) as Record<string, unknown>;
   const branding = (sellerSnapshot.branding ?? {}) as Record<string, unknown>;

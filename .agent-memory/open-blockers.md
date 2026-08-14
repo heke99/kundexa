@@ -68,3 +68,23 @@ Följande är fortfarande externa releasegates, inte lokalt bekräftade kodfel:
   with Rinkel rather than fabricating a device id.
 - Full `npm run verify` and PGlite SQL replay remain NOT RUN in this sandbox because the internal npm mirror
   does not provide the required project dependencies. Rinkel runtime contract tests and static verifier are PASS.
+
+## 2026-08-14 — externa åtgärder efter driftreconciliation
+
+Se `docs/PRODUCTION_READINESS.md` för fullständig formulering och verifieringssteg.
+
+- `kundexa.se` svarar `308 → https://www.kundexa.se/`. Primär domän måste bytas i Vercels
+  domäninställningar; MCP-integrationen exponerar inga domän- eller env-verktyg.
+- `NEXT_PUBLIC_APP_URL`, `APP_URL` och `RINKEL_WEBHOOK_PUBLIC_BASE_URL` går inte att läsa
+  härifrån. Om något av dem fortfarande är `https://app.kundexa.se` pekar varje utskickad
+  signeringslänk på en domän som inte finns i DNS. Måste sättas till `https://kundexa.se`.
+- Live dial/CDR/recording mot Rinkel och skarpt Resend-utskick kräver testnummer respektive
+  testmottagare och är fortsatt `NOT RUN`.
+- Rinkel-kontot har ingen device: leverantörens payload för `hekmat.h@gridex.se` har
+  `"deviceId": null`, `platform_rinkel_devices` är tom och `platform_rinkel_capabilities` visar
+  `dial=false`, `dial_endpoint_reachable=false`, `webhooks=false` trots `api_access=true`.
+  `POST /dial` kräver `deviceId`, så dialern kan inte ringa förrän en device är provisionerad och
+  abonnemanget bekräftat täcka dial och webhooks. Koden failar korrekt stängt.
+- De fem webhookarna är registrerade mot `https://kundexa.se/...`, men alla fem har
+  `last_error_code='RINKEL_INVALID_REQUEST'` och `test_received_at=null`. Eftersom apex i dag
+  308-redirectar till `www` möter varje leverans en redirect innan den når appen.
