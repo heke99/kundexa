@@ -106,3 +106,12 @@ Rinkel exposes both a user catalog endpoint and a user detail endpoint. Kundexa 
 only deactivates stored device rows when the provider response is explicitly authoritative for devices. Missing
 or incomplete device information is preserved as a diagnostic state, never converted into a guessed provider id.
 Platform allocation fails closed when no synchronized active device exists.
+
+## ADR-0019 — Device krävs för uppringning, inte för tilldelning
+
+Rinkels API har ingen device-katalog. Att sakna device är ett normalt providertillstånd, inte ett synkfel.
+Kundexa gatear därför device där providern gör det (`POST /dial` kräver `deviceId`) och inte i de
+administrativa stegen. `allocate_platform_rinkel_resource('user',...)` och `replace_rinkel_user_mapping_v3`
+tillåter en telefoni-användare utan device; mappningen sparas med `selected_device_id=null`, säljaren får
+numret och `dial_ready=false` loggas i auditen. Uppringning är blockerad tills en device har synkats.
+Kundexa hittar aldrig på ett device-id. ADR-0016 gäller fortsatt för synkens icke-destruktivitet.

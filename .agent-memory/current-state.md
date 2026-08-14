@@ -134,3 +134,19 @@ Detta pass hade för första gången läsaccess till det riktiga Supabase-projek
   `canonicalAppBaseUrl()` på de fyra länkbyggarna, inte i env-schemat, så en felkonfiguration
   stoppar det utskick som annars fått en trasig länk i stället för all requesthantering.
 - `GET /api/ready` rapporterar `appBaseUrl` och `appBaseUrlUsable` så värdet går att verifiera utifrån.
+
+## 2026-08-14 — Säljarens nummertilldelning frikopplad från device
+
+- Rinkel har inget device-API (verifierat mot `developers.rinkel.com` endpointlista). Skarpt konto har
+  `deviceId: null` och noll `platform_rinkel_devices`-rader, vilket tidigare låste hela tilldelningen.
+- Device är nu ett krav endast för uppringning. Tilldelning av telefoni-användare till bolag och
+  säljarmappning med standardnummer går att slutföra utan device.
+- `replace_rinkel_user_mapping_v3`: explicit device valideras mot rätt provider-användare, unik aktiv
+  device väljs automatiskt, flera devices ger `DEVICE_SELECTION_REQUIRED`, noll devices ger en sparad
+  mappning utan device.
+- UI:t visar "ingen telefonienhet ännu" i stället för "device-inventering ej verifierad" och blockerar
+  inte längre valet. Formuläret och plattformsadmin talar om att uppringning kräver device.
+- `scripts/verify-sql.mjs` kör hela kedjan end-to-end: tilldelning utan device, säljaren får numret,
+  `manualReady=false` med `DEVICE_MISSING`, automatiskt val vid en device, avslag vid flera, avslag för
+  icke-admin. Testet failar med `RINKEL_USER_DEVICE_MISSING` utan migrationen.
+- Migrationen är INTE applicerad mot det länkade Supabase-projektet i det här passet.

@@ -821,19 +821,18 @@ await db.exec(`
   select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000014',false);
   select set_config('request.jwt.claim.role','authenticated',false);
 `);
-let rejectedDeviceLessAllocation = false;
-try {
-  await db.query(`select public.allocate_platform_rinkel_resource(
-    'user',
-    '00000000-0000-0000-0000-000000000075',
-    '00000000-0000-0000-0000-000000000051',
-    'runtime device gate test'
-  )`);
-} catch (error) {
-  rejectedDeviceLessAllocation = String(error).includes('RINKEL_USER_DEVICE_MISSING');
-}
-if (!rejectedDeviceLessAllocation) {
-  throw new Error('Platform allocation accepted a Rinkel user without an active synchronized device.');
+// Rinkel exposes no device catalog; a provider user without a registered webphone
+// simply has no device id. Allocation is an administrative act and must succeed,
+// because dialing - not assignment - is what needs a device.
+const deviceLessAllocation = await db.query(`select public.allocate_platform_rinkel_resource(
+  'user',
+  '00000000-0000-0000-0000-000000000075',
+  '00000000-0000-0000-0000-000000000051',
+  'runtime device gate test'
+) as allocation_id`);
+const deviceLessAllocationId = String(deviceLessAllocation.rows[0].allocation_id ?? "");
+if (!deviceLessAllocationId) {
+  throw new Error('Platform allocation rejected a Rinkel user that has no synchronized device yet.');
 }
 await db.exec(`
   select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000074',false);
@@ -994,6 +993,143 @@ if (
   || historicalTenant.rows[0].allocation_id !== "00000000-0000-0000-0000-000000000058"
 ) throw new Error(`Historical Rinkel call moved with number allocation: ${JSON.stringify(historicalTenant.rows[0])}`);
 console.log("Executed central Rinkel catalog, two-tenant isolation, single-tenant number ownership, rejected cross-tenant allocation, atomic reservation, idempotent replay, provider finalization and immutable call history runtime paths.");
+
+// End-to-end: give a seller an outgoing number when the Rinkel account exposes no
+// device yet. Assignment must complete, the seller must actually receive the
+// number, and dialing must stay blocked with an honest device diagnostic until a
+// device is synchronized. A unique device is then adopted automatically, and an
+// ambiguous multi-device user still demands an explicit choice.
+await db.exec(`
+  select set_config('request.jwt.claim.role','service_role',false);
+  insert into auth.users(id,email) values('00000000-0000-0000-0000-000000000078','seller-c@example.test');
+  insert into public.tenant_memberships(tenant_id,user_id,role,status,joined_at,primary_team_id)
+    values('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000078','sales','active',now(),'00000000-0000-0000-0000-000000000076');
+  insert into public.team_members(tenant_id,team_id,user_id,role,is_primary)
+    values('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000076','00000000-0000-0000-0000-000000000078','member',true);
+  update public.profiles set active_tenant_id='00000000-0000-0000-0000-000000000051'
+    where id='00000000-0000-0000-0000-000000000078';
+  update public.platform_integrations set status='connected',webhook_status='verified',
+    last_error_code=null,last_error_message=null
+    where provider='rinkel' and disabled_at is null;
+  update public.telephony_policies set telephony_enabled=true,manual_dialer_enabled=true,
+    allowed_days='{1,2,3,4,5,6,7}',allowed_start_time='00:00',allowed_end_time='23:59:59'
+    where tenant_id='00000000-0000-0000-0000-000000000051';
+  select set_config('request.jwt.claim.role','authenticated',false);
+  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000074',false);
+`);
+const deviceLessMapping = await db.query(`select public.replace_rinkel_user_mapping_v3(
+  '00000000-0000-0000-0000-000000000078',
+  $1,
+  '00000000-0000-0000-0000-000000000059',
+  null
+) as mapping_id`, [deviceLessAllocationId]);
+const deviceLessMappingId = String(deviceLessMapping.rows[0].mapping_id ?? "");
+if (!deviceLessMappingId) {
+  throw new Error("Seller number assignment failed for a telephony user without a synchronized device.");
+}
+const deviceLessMappingRow = await db.query(`select selected_device_id,default_number_allocation_id,active
+  from public.rinkel_user_mappings_v2 where id=$1`, [deviceLessMappingId]);
+if (
+  deviceLessMappingRow.rows[0].selected_device_id !== null
+  || deviceLessMappingRow.rows[0].default_number_allocation_id !== "00000000-0000-0000-0000-000000000059"
+  || deviceLessMappingRow.rows[0].active !== true
+) {
+  throw new Error(`Device-less seller mapping was not stored as expected: ${JSON.stringify(deviceLessMappingRow.rows[0])}`);
+}
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000078',false)`);
+const deviceLessSellerNumbers = await db.query(`select public.get_current_user_rinkel_numbers() as numbers`);
+if (
+  deviceLessSellerNumbers.rows[0].numbers.length !== 1
+  || deviceLessSellerNumbers.rows[0].numbers[0].number !== "+46822222222"
+  || deviceLessSellerNumbers.rows[0].numbers[0].isDefault !== true
+) {
+  throw new Error(`Seller did not receive the assigned outgoing number: ${JSON.stringify(deviceLessSellerNumbers.rows[0])}`);
+}
+const deviceLessSellerStatus = await db.query(`select public.telephony_status_for_current_user() as status`);
+const deviceLessStatus = deviceLessSellerStatus.rows[0].status;
+if (
+  deviceLessStatus.userMapped !== true
+  || deviceLessStatus.manualReady !== false
+  || deviceLessStatus.userHasActiveDevice !== false
+  || !(deviceLessStatus.blockers ?? []).some((blocker) => blocker.code === "DEVICE_MISSING")
+) {
+  throw new Error(`Device-less seller was not blocked from dialing with an explicit device diagnostic: ${JSON.stringify(deviceLessStatus)}`);
+}
+// A single synchronized device is adopted without forcing the administrator to pick it.
+await db.exec(`
+  select set_config('request.jwt.claim.role','service_role',false);
+  insert into public.platform_rinkel_devices(
+    id,platform_integration_id,platform_rinkel_user_id,provider_device_id,display_name,provider_status,active
+  ) select '00000000-0000-0000-0000-000000000079',platform_integration_id,id,'device-late','Webphone','active',true
+    from public.platform_rinkel_users where id='00000000-0000-0000-0000-000000000075';
+  select set_config('request.jwt.claim.role','authenticated',false);
+  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000074',false);
+`);
+const adoptedDeviceMapping = await db.query(`select public.replace_rinkel_user_mapping_v3(
+  '00000000-0000-0000-0000-000000000078',
+  $1,
+  '00000000-0000-0000-0000-000000000059',
+  null
+) as mapping_id`, [deviceLessAllocationId]);
+const adoptedDeviceRow = await db.query(`select selected_device_id from public.rinkel_user_mappings_v2 where id=$1`,
+  [String(adoptedDeviceMapping.rows[0].mapping_id)]);
+if (adoptedDeviceRow.rows[0].selected_device_id !== "00000000-0000-0000-0000-000000000079") {
+  throw new Error(`A unique active device was not adopted automatically: ${JSON.stringify(adoptedDeviceRow.rows[0])}`);
+}
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000078',false)`);
+const dialReadyStatus = await db.query(`select public.telephony_status_for_current_user() as status`);
+if (dialReadyStatus.rows[0].status.userHasActiveDevice !== true || dialReadyStatus.rows[0].status.manualReady !== true) {
+  throw new Error(`Seller did not become dial-ready after the device was synchronized: ${JSON.stringify(dialReadyStatus.rows[0].status)}`);
+}
+// Two active devices remain ambiguous: the mapping must not guess.
+await db.exec(`
+  select set_config('request.jwt.claim.role','service_role',false);
+  insert into public.platform_rinkel_devices(
+    id,platform_integration_id,platform_rinkel_user_id,provider_device_id,display_name,provider_status,active
+  ) select '00000000-0000-0000-0000-000000000080',platform_integration_id,id,'device-late-2','Deskphone','active',true
+    from public.platform_rinkel_users where id='00000000-0000-0000-0000-000000000075';
+  select set_config('request.jwt.claim.role','authenticated',false);
+  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000074',false);
+`);
+let ambiguousDeviceRejected = false;
+try {
+  await db.query(`select public.replace_rinkel_user_mapping_v3(
+    '00000000-0000-0000-0000-000000000078',$1,'00000000-0000-0000-0000-000000000059',null
+  )`, [deviceLessAllocationId]);
+} catch (error) {
+  ambiguousDeviceRejected = String(error).includes("DEVICE_SELECTION_REQUIRED");
+}
+if (!ambiguousDeviceRejected) {
+  throw new Error("Seller mapping silently guessed a device for a multi-device telephony user.");
+}
+const ambiguousExplicitMapping = await db.query(`select public.replace_rinkel_user_mapping_v3(
+  '00000000-0000-0000-0000-000000000078',$1,'00000000-0000-0000-0000-000000000059',
+  '00000000-0000-0000-0000-000000000080'
+) as mapping_id`, [deviceLessAllocationId]);
+const ambiguousExplicitRow = await db.query(`select selected_device_id from public.rinkel_user_mappings_v2 where id=$1`,
+  [String(ambiguousExplicitMapping.rows[0].mapping_id)]);
+if (ambiguousExplicitRow.rows[0].selected_device_id !== "00000000-0000-0000-0000-000000000080") {
+  throw new Error(`Explicit device choice was not honoured: ${JSON.stringify(ambiguousExplicitRow.rows[0])}`);
+}
+const singleActiveMapping = await db.query(`select count(*)::int as count from public.rinkel_user_mappings_v2
+  where tenant_id='00000000-0000-0000-0000-000000000051'
+    and kundexa_user_id='00000000-0000-0000-0000-000000000078' and active`);
+if (Number(singleActiveMapping.rows[0].count) !== 1) {
+  throw new Error(`Repeated seller assignment left more than one active mapping: ${JSON.stringify(singleActiveMapping.rows[0])}`);
+}
+let sellerCannotAssignNumbers = false;
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000078',false)`);
+try {
+  await db.query(`select public.replace_rinkel_user_mapping_v3(
+    '00000000-0000-0000-0000-000000000078',$1,'00000000-0000-0000-0000-000000000059',null
+  )`, [deviceLessAllocationId]);
+} catch (error) {
+  sellerCannotAssignNumbers = String(error).includes("RINKEL_MAPPING_TENANT_ADMIN_REQUIRED");
+}
+if (!sellerCannotAssignNumbers) {
+  throw new Error("A seller was able to assign an outgoing number without tenant-admin permission.");
+}
+console.log("Executed end-to-end seller number assignment: device-less assignment, honest dial blocker, automatic unique-device adoption, ambiguous multi-device refusal and non-admin rejection.");
 
 // Performance/scraper operations runtime path: aggregated RPCs, atomic ingestion
 // quota reservation, admin run controls, dead-letter re-drive and duplicate-run guards.

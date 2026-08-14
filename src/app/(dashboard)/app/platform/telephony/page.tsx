@@ -247,10 +247,8 @@ export default async function PlatformTelephonyPage({
           ? `${activeDevices.length} aktiva enheter`
           : diagnostic.error
             ? `device-detaljer kunde inte hämtas (${diagnostic.error})`
-            : diagnostic.complete
-              ? "Rinkel rapporterar 0 aktiva enheter"
-              : "device-inventering saknas i providerdata";
-        return <div className="activity-line" key={user.id}><span className="activity-dot"><ShieldCheck size={14} /></span><div style={{ flex: 1 }}><strong>{user.display_name}</strong><p>{deviceMessage} · {allocation ? tenantById.get(allocation.tenant_id) ?? allocation.tenant_id : "ledig"}</p>{userDevices.map((device) => <p className="muted" key={device.id}>{device.display_name ?? device.provider_device_id} · {device.provider_status} · synk {time(device.last_synced_at)}</p>)}{!activeDevices.length ? <p className="form-error">Användaren kan inte mappas till en säljare förrän en riktig aktiv Rinkel-enhet har synkroniserats.</p> : null}</div><Badge className={user.active && activeDevices.length ? "badge-success" : "badge-warning"}>{user.active ? activeDevices.length ? "ringklar" : "saknar enhet" : "inaktiv"}</Badge>{allocation ? <form action={revokePlatformRinkelResource}><input type="hidden" name="resource_type" value="user" /><input type="hidden" name="allocation_id" value={allocation.id} /><input type="hidden" name="reason" value="Återkallad av plattformsadmin" /><button className="button button-ghost button-sm">Återkalla</button></form> : null}</div>;
+            : "ingen telefonienhet hos telefonitjänsten ännu";
+        return <div className="activity-line" key={user.id}><span className="activity-dot"><ShieldCheck size={14} /></span><div style={{ flex: 1 }}><strong>{user.display_name}</strong><p>{deviceMessage} · {allocation ? tenantById.get(allocation.tenant_id) ?? allocation.tenant_id : "ledig"}</p>{userDevices.map((device) => <p className="muted" key={device.id}>{device.display_name ?? device.provider_device_id} · {device.provider_status} · synk {time(device.last_synced_at)}</p>)}{!activeDevices.length ? <p className="muted">Användaren kan tilldelas ett bolag och mappas till en säljare redan nu. Uppringning kräver en aktiv synkroniserad enhet och är blockerad tills en sådan finns.</p> : null}</div><Badge className={user.active && activeDevices.length ? "badge-success" : "badge-warning"}>{user.active ? activeDevices.length ? "ringklar" : "saknar enhet" : "inaktiv"}</Badge>{allocation ? <form action={revokePlatformRinkelResource}><input type="hidden" name="resource_type" value="user" /><input type="hidden" name="allocation_id" value={allocation.id} /><input type="hidden" name="reason" value="Återkallad av plattformsadmin" /><button className="button button-ghost button-sm">Återkalla</button></form> : null}</div>;
       })}</CardContent></Card>
       <Card><CardHeader><h2>Telefonnummer och teamåtkomst</h2><Badge>{numbers.length}</Badge></CardHeader><CardContent>{numbers.map((number) => {
         const grants = teamGrantsByNumber.get(number.id) ?? [];
@@ -291,10 +289,8 @@ export default async function PlatformTelephonyPage({
             ? `${activeDeviceCount} aktiva enheter`
             : diagnostic.error
               ? `device-synkfel ${diagnostic.error}`
-              : diagnostic.complete
-                ? "0 enheter hos Rinkel"
-                : "device-inventering ej verifierad";
-          return <option key={user.id} value={user.id} disabled={!activeDeviceCount}>{user.display_name} · {suffix}</option>;
+              : "ingen telefonienhet ännu";
+          return <option key={user.id} value={user.id}>{user.display_name} · {suffix}</option>;
         })}</SelectField>
         <SelectField label="Bolag" name="tenant_id" required><option value="">Välj bolag</option>{tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.name}</option>)}</SelectField>
         <Field label="Anledning" name="reason" required />

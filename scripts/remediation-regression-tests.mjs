@@ -34,6 +34,7 @@ const [
   bootstrapPlatformOwner,
   rinkelClient,
   deviceMigration,
+  sellerNumberAssignmentMigration,
   rinkelMappingForm,
   rinkelWebhookRoute,
   rinkelWebhookRepairMigration,
@@ -80,6 +81,7 @@ const [
   read("scripts/bootstrap-platform-owner.mjs"),
   read("supabase/functions/_shared/rinkel.ts"),
   read("supabase/migrations/202608100002_rinkel_device_inventory_mapping_hardening.sql"),
+  read("supabase/migrations/20260814000000_rinkel_seller_number_assignment_without_device.sql"),
   read("src/components/rinkel-user-mapping-form.tsx"),
   read("src/app/api/webhooks/rinkel/[secret]/[event]/route.ts"),
   read("supabase/migrations/202608100003_rinkel_webhook_live_verification_repair.sql"),
@@ -193,7 +195,19 @@ assert.match(deviceMigration, /deviceInventoryComplete/);
 assert.match(deviceMigration, /activeDeviceCount/);
 assert.match(deviceMigration, /set search_path=''/);
 assert.match(rinkelMappingForm, /if \(nextDevices\.length === 1\) setSelectedDeviceId\(nextDevices\[0\]\.id\)/);
-assert.match(rinkelMappingForm, /device-inventering ej verifierad/);
+// Rinkel has no device catalog endpoint, so a provider user without a registered
+// webphone has no device id. Assigning a number to a seller must stay possible;
+// only dialing is allowed to require a synchronized device.
+assert.match(sellerNumberAssignmentMigration, /set search_path=''/);
+assert.match(sellerNumberAssignmentMigration, /DEVICE_SELECTION_REQUIRED/);
+assert.doesNotMatch(
+  sellerNumberAssignmentMigration.split("elsif p_resource_type='number'")[0],
+  /raise exception 'RINKEL_USER_DEVICE_MISSING'/,
+);
+assert.match(rinkelMappingForm, /disabled=\{!user\.active\}/);
+assert.match(rinkelMappingForm, /required=\{activeDevices\.length > 0\}/);
+assert.doesNotMatch(rinkelMappingForm, /device-inventering ej verifierad/);
+assert.match(rinkelActions, /p_selected_device_id: value\(form, "selected_device_id"\) \|\| null/);
 
 // The public Rinkel callback owns validation + one atomic ingest RPC. Durable
 // event/job/idempotency invariants belong to the latest forward-only migration.

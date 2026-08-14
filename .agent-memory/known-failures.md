@@ -210,3 +210,19 @@ and only performs destructive stale-device reconciliation when device inventory 
 provider devices to be allocated to a tenant. That created an allocation that could never pass
 `replace_rinkel_user_mapping_v3` or `/dial`. The forward-only replacement now raises
 `RINKEL_USER_DEVICE_MISSING` unless a synchronized active device exists.
+
+## FAILURE-0037 — Nummertilldelning till säljare var omöjlig för Rinkel-konton utan device — FIXED 2026-08-14
+
+Rinkel har inget device-API. `deviceId` finns bara på användarobjektet när kontot har en registrerad
+webphone/bordstelefon. För det skarpa kontot är `deviceId: null`, `platform_rinkel_devices` är tom och
+`_kundexa_sync.device_inventory_source='missing'`.
+
+FAILURE-0034 och device-grinden i `replace_rinkel_user_mapping_v3` gjorde därmed hela tilldelningskedjan
+omöjlig: plattformsadmin kunde inte tilldela telefoni-användaren till bolaget, och tenantadmin såg
+telefoni-användaren som disabled med texten "device-inventering ej verifierad" och kunde aldrig spara
+en mappning. Symptomet lästes som ett synkfel men var en produktbegränsning kodad som ett hårt krav.
+
+`20260814000000_rinkel_seller_number_assignment_without_device.sql` flyttar device-kravet dit Rinkel
+faktiskt har det: `POST /dial`. Tilldelning är öppen, `telephony_status_for_current_user` och
+reservationskedjan failar fortsatt stängt med `DEVICE_MISSING`. En unik aktiv device väljs automatiskt,
+flera aktiva devices kräver fortfarande explicit val (`DEVICE_SELECTION_REQUIRED`).

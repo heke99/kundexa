@@ -75,33 +75,31 @@ export function RinkelUserMappingForm({
       {users.map((user) => <option
         key={user.allocationId}
         value={user.allocationId}
-        disabled={!user.active || !user.hasDevice}
+        disabled={!user.active}
       >
         {user.displayName} · {user.hasDevice
           ? `${user.activeDeviceCount ?? user.devices.filter((device) => device.active).length} aktiva enheter`
-          : user.deviceInventoryError
-            ? `device-synkfel ${user.deviceInventoryError}`
-            : user.deviceInventoryComplete
-              ? "Rinkel rapporterar 0 aktiva enheter"
-              : "device-inventering ej verifierad"}{user.active ? "" : " · inaktiv"}
+          : "ingen telefonienhet ännu"}{user.active ? "" : " · inaktiv"}
       </option>)}
     </SelectField>
-    {selectedUser && activeDevices.length === 0 ? <p className="form-error">
-      {selectedUser.deviceInventoryError
-        ? `Rinkels user-detail kunde inte hämtas (${selectedUser.deviceInventoryError}). Synkronisera katalogen igen innan mappning.`
-        : selectedUser.deviceInventoryComplete
-          ? "Rinkel rapporterar ingen aktiv enhet för den här telefoni-användaren. Kontrollera användarens app/webphone/telefon i Rinkel och synkronisera katalogen igen."
-          : "Kundexa har ännu ingen verifierad device-inventering för användaren. Kör Synkronisera katalog i plattformsadmin först."}
+    {selectedUser && activeDevices.length === 0 ? <p className="notice warning">
+      Telefoni-användaren har ingen synkroniserad telefonienhet{selectedUser.deviceInventoryError
+        ? ` (senaste device-synk gav ${selectedUser.deviceInventoryError})`
+        : ""}. Numret kan ändå tilldelas nu. Säljaren kan ringa så snart användaren har loggat in i telefonitjänstens app eller webphone och katalogen har synkroniserats igen.
     </p> : null}
     <SelectField
       label="Aktiv telefonienhet"
       name="selected_device_id"
-      required
+      required={activeDevices.length > 0}
       value={selectedDeviceId}
       onChange={(event) => setSelectedDeviceId(event.target.value)}
       disabled={!selectedUserAllocationId || activeDevices.length === 0}
     >
-      <option value="">{selectedUserAllocationId ? "Välj enhet som hör till användaren" : "Välj först telefoni-användare"}</option>
+      <option value="">{!selectedUserAllocationId
+        ? "Välj först telefoni-användare"
+        : activeDevices.length === 0
+          ? "Ingen enhet tillgänglig ännu"
+          : "Välj enhet som hör till användaren"}</option>
       {activeDevices.map((device) => <option key={device.id} value={device.id}>
         {device.displayName ?? "Telefonienhet"} · {device.status}
       </option>)}
@@ -113,6 +111,9 @@ export function RinkelUserMappingForm({
       </option>)}
     </SelectField>
     <p className="muted">När mappningen sparas får säljaren automatiskt ringbehörighet till det valda standardnumret.</p>
-    <button className="button button-primary" disabled={!selectedUserAllocationId || !selectedDeviceId}>Spara mappning</button>
+    <button
+      className="button button-primary"
+      disabled={!selectedUserAllocationId || (activeDevices.length > 0 && !selectedDeviceId)}
+    >Spara mappning</button>
   </form>;
 }

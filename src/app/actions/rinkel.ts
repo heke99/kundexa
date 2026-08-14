@@ -77,11 +77,17 @@ function safePlatformError(error: unknown): SafePlatformError {
         PHONE_NUMBER_INACTIVE: "Telefonnumret är inaktivt eller saknas i katalogen.",
         TENANT_NOT_ACTIVE: "Ett valt bolag är inte aktivt.",
         DEVICE_MISSING: "Den valda telefonienheten är inaktiv eller hör inte till den valda telefoni-användaren.",
+        DEVICE_SELECTION_REQUIRED: "Telefoni-användaren har flera aktiva enheter. Välj vilken enhet säljaren ska ringa från.",
         RINKEL_USER_DEVICE_MISSING: "Rinkel-användaren saknar en synkroniserad aktiv telefonienhet. Synkronisera katalogen och kontrollera användarens device i Rinkel innan tilldelning.",
+        RINKEL_USER_INACTIVE: "Telefoni-användaren är inaktiv hos telefonitjänsten.",
+        RINKEL_USER_ALLOCATION_MISSING: "Den valda telefoni-användaren är inte aktivt tilldelad företaget.",
+        INVALID_RINKEL_RESOURCE_TYPE: "Resurstypen kan inte tilldelas.",
+        PLATFORM_ADMIN_REQUIRED: "Endast plattformsadmin får tilldela centrala telefoniresurser.",
         NUMBER_ALLOCATION_MISSING: "Det valda telefonnumret är inaktivt eller inte tilldelat företaget.",
         AUTHENTICATION_REQUIRED: "Du behöver logga in igen innan telefonimappningen kan sparas.",
         RINKEL_MAPPING_MEMBER_NOT_ACTIVE: "Säljaren är inte en aktiv medlem i företaget.",
         RINKEL_MAPPING_PERMISSION_REQUIRED: "Du saknar behörighet att ändra telefonimappningen.",
+        RINKEL_MAPPING_TENANT_ADMIN_REQUIRED: "Endast företagets ägare eller admin får spara telefonimappningen.",
         RINKEL_MAPPING_TEAM_PERMISSION_REQUIRED: "Teamledaren får bara mappa säljare i team som hen hanterar.",
       };
       return { code: internalCode, message: messages[internalCode] ?? "Telefoniåtgärden kunde inte slutföras.", retryable: false, outcomeUnknown: false };
@@ -814,15 +820,33 @@ export async function saveRinkelUserMapping(form: FormData) {
   const supabase = await createClient();
   // replace_rinkel_user_mapping_v2 established the transactional contract;
   // v3 keeps that contract and additionally persists the selected device.
-  const { error } = await supabase.rpc("replace_rinkel_user_mapping_v3", {
+  // The device is optional: Rinkel only exposes a device id once the user has a
+  // registered webphone or desk phone. The RPC resolves a unique device itself and
+  // stores no device when the provider exposes none, so the number assignment can
+  // always be completed while dialing stays gated on a real device.
+  const { data: mappingId, error } = await supabase.rpc("replace_rinkel_user_mapping_v3", {
     p_kundexa_user_id: value(form, "kundexa_user_id"),
     p_rinkel_user_allocation_id: value(form, "rinkel_user_allocation_id"),
     p_default_number_allocation_id: value(form, "default_number_allocation_id"),
-    p_selected_device_id: value(form, "selected_device_id"),
+    p_selected_device_id: value(form, "selected_device_id") || null,
   });
   if (error) go("/app/integrations", "error", safePlatformError(error).message);
+  // The RPC resolves the device itself, so the stored mapping - not the submitted
+  // form value - decides whether the seller is dial-ready.
+  const { data: savedMapping } = await createAdminClient()
+    .from("rinkel_user_mappings_v2")
+    .select("selected_device_id")
+    .eq("id", String(mappingId))
+    .maybeSingle();
   revalidatePath("/app/integrations");
-  go("/app/integrations", "message", "Telefonimappningen är sparad.");
+  revalidatePath("/app/dialer");
+  go(
+    "/app/integrations",
+    "message",
+    savedMapping?.selected_device_id
+      ? "Telefonimappningen är sparad."
+      : "Telefonimappningen är sparad. Säljaren har numret, men kan ringa först när en telefonienhet har synkroniserats från telefonitjänsten.",
+  );
 }
 
 
