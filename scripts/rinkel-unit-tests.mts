@@ -241,7 +241,10 @@ Deno.test("preserves stored devices when Rinkel device inventory is incomplete",
   equal(stale[0], "removed-device", "only absent authoritative device should stale");
 });
 
-Deno.test("supports scalar and snake_case Rinkel device identifiers without treating them as complete inventory", () => {
+// Rinkel's documented user schema has no `devices[]`: GET /users and GET /users/:id
+// both expose exactly one nullable `deviceId`. The scalar is therefore the complete
+// per-user inventory, and a payload that omits the key entirely is the only unknown.
+Deno.test("supports scalar and snake_case Rinkel device identifiers as complete single-device inventory", () => {
   const user = normalizeRinkelUser({
     user_id: "u-snake",
     full_name: "Snake User",
@@ -250,7 +253,39 @@ Deno.test("supports scalar and snake_case Rinkel device identifiers without trea
   equal(user.id, "u-snake", "snake user id");
   equal(user.deviceId, "device-snake", "snake device id");
   equal(user.devices[0].id, "device-snake", "snake synthesized device");
-  assert(!user.deviceInventoryComplete, "scalar device is usable but not complete inventory");
+  assert(user.deviceInventoryComplete, "a present scalar device key is authoritative");
+  equal(user.deviceInventorySource, "scalar_device", "scalar inventory source");
+});
+
+Deno.test("an explicit null deviceId authoritatively means the Rinkel user has no device", () => {
+  const user = normalizeRinkelUser({ id: "u-none", fullName: "No Device", deviceId: null });
+  equal(user.deviceId, null, "no dialable device");
+  equal(user.devices.length, 0, "no synthesized device");
+  assert(user.deviceInventoryComplete, "an explicit null is an authoritative answer");
+  equal(
+    staleRinkelDeviceIds(user, ["previously-registered"]).length,
+    1,
+    "a device Rinkel no longer reports must be deactivated",
+  );
+});
+
+Deno.test("a replaced Rinkel deviceId retires the previously stored device", () => {
+  const user = normalizeRinkelUser({ id: "u-swap", fullName: "Swap", deviceId: "device-new" });
+  const stale = staleRinkelDeviceIds(user, ["device-old", "device-new"]);
+  equal(stale.length, 1, "exactly one retired device");
+  equal(stale[0], "device-old", "only the replaced device is retired");
+});
+
+Deno.test("a failed user-detail fetch never deactivates stored devices", () => {
+  const user = {
+    ...normalizeRinkelUser({ id: "u-err", fullName: "Err", deviceId: null }),
+    deviceInventoryError: "RINKEL_NETWORK_ERROR" as const,
+  };
+  equal(
+    staleRinkelDeviceIds(user, ["known-device"]).length,
+    0,
+    "an errored inventory must not be treated as authoritative",
+  );
 });
 
 

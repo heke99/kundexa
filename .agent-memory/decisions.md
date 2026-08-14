@@ -115,3 +115,11 @@ administrativa stegen. `allocate_platform_rinkel_resource('user',...)` och `repl
 tillåter en telefoni-användare utan device; mappningen sparas med `selected_device_id=null`, säljaren får
 numret och `dial_ready=false` loggas i auditen. Uppringning är blockerad tills en device har synkats.
 Kundexa hittar aldrig på ett device-id. ADR-0016 gäller fortsatt för synkens icke-destruktivitet.
+
+## ADR-0020 — Rinkels skalära deviceId är den fullständiga device-inventeringen
+
+Verifierat mot Rinkels OpenAPI-spec: `POST /dial` har `required: ["deviceId","to","numberId"]` och
+användarobjektet har ett nullbart `deviceId` men inget `devices[]`. Kundexa behandlar därför en närvarande
+skalär device-nyckel som auktoritativ, `null` inkluderat. Arrayformen behålls och vinner om providern
+lägger till den, så ADR-0016:s icke-destruktivitet gäller nu bara det som faktiskt är okänt: en payload
+utan nyckeln, eller ett user-detail-anrop som misslyckades.

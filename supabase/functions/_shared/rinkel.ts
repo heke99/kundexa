@@ -543,6 +543,13 @@ export function normalizeRinkelUser(value: unknown): RinkelUser {
   if (hasDeviceArray && !Array.isArray(item.devices)) {
     throw new RinkelError("RINKEL_SCHEMA_ERROR", "Rinkel-användarens device-lista är ogiltig.");
   }
+  // Rinkel's user schema carries no `devices[]` at all: both GET /users and
+  // GET /users/:id expose exactly one nullable `deviceId` per user. A present
+  // scalar key is therefore the user's complete device inventory - including
+  // when its value is null, which authoritatively means "no device". The array
+  // form stays supported and takes precedence should Rinkel ever add it.
+  const scalarDeviceKey = ["deviceId", "defaultDeviceId", "device_id", "default_device_id"]
+    .find((key) => Object.prototype.hasOwnProperty.call(item, key));
   const legacyDeviceId = string(
     item.deviceId ?? item.defaultDeviceId ?? item.device_id ?? item.default_device_id,
     "deviceId",
@@ -562,14 +569,14 @@ export function normalizeRinkelUser(value: unknown): RinkelUser {
   }
   const deviceInventorySource = hasDeviceArray
     ? "embedded_devices"
-    : legacyDeviceId
+    : scalarDeviceKey
       ? "scalar_device"
       : "missing";
   return {
     id: string(item.id ?? item.userId ?? item.user_id, "id")!,
     deviceId: devices.find((device) => device.active)?.id ?? (hasDeviceArray ? null : legacyDeviceId),
     devices,
-    deviceInventoryComplete: hasDeviceArray,
+    deviceInventoryComplete: hasDeviceArray || Boolean(scalarDeviceKey),
     deviceInventorySource,
     deviceInventoryError: null,
     email: string(item.email, "email", true),
@@ -580,7 +587,9 @@ export function normalizeRinkelUser(value: unknown): RinkelUser {
 }
 
 export function staleRinkelDeviceIds(user: RinkelUser, storedProviderDeviceIds: string[]): string[] {
-  if (!user.deviceInventoryComplete) return [];
+  // A failed user-detail fetch leaves the catalog payload as the only source, which
+  // is never authoritative enough to deactivate stored devices.
+  if (!user.deviceInventoryComplete || user.deviceInventoryError) return [];
   const live = new Set(user.devices.map((device) => device.id));
   return storedProviderDeviceIds.filter((deviceId) => !live.has(deviceId));
 }

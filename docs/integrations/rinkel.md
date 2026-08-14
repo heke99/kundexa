@@ -39,6 +39,10 @@ Lyckad operation rensar endast det relevanta aktuella integrationsfelet. Histori
 
 `platform_rinkel_users`, `platform_rinkel_devices` och `platform_rinkel_numbers` är centrala resurser. `rinkel_user_allocations` och `rinkel_number_allocations` historiserar tenantägarskap. `rinkel_number_grants` bestämmer faktisk åtkomst. `rinkel_user_mappings_v2.selected_device_id` pekar på den aktiva, synkroniserade device som säljaren ska använda.
 
+Rinkel har ingen device-endpoint. Både `GET /users` och `GET /users/:id` exponerar exakt ett nullbart `deviceId` per användare ("The unique id of the device associated with the user"); något `devices[]` finns inte i providerns schema. Det skalära fältet är därför användarens fullständiga device-inventering — även när värdet är `null`, vilket auktoritativt betyder att användaren saknar device. Endast en payload som helt saknar nyckeln är okänd, och då rör synken aldrig lagrade devices. Arrayformen stöds fortsatt och vinner om Rinkel någon gång lägger till den. Kundexa hittar aldrig på ett device-id.
+
+Device krävs där Rinkel kräver det: `POST /dial` har `required: ["deviceId","to","numberId"]`. Tilldelning av telefoni-användare till bolag och säljarens nummermappning fungerar därför utan device — mappningen sparas med `selected_device_id=null` och säljaren får sin nummeråtkomst, medan uppringning är blockerad med `DEVICE_MISSING` tills en device har synkats. När en unik aktiv device dyker upp adopteras den automatiskt av katalogsynkens mappningsreparation. Flera aktiva devices kräver ett explicit val (`DEVICE_SELECTION_REQUIRED`).
+
 En säljare kan inte ringa när vald device har försvunnit eller blivit inaktiv. Tenantklienter läser endast tenantfiltrerade DTO:er via RPC och ser aldrig andra tenants resurser eller rå providerpayload.
 
 ## Caller-ID-resolver

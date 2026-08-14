@@ -157,3 +157,17 @@ Detta pass hade för första gången läsaccess till det riktiga Supabase-projek
   `manualReady=false` med blockeraren `DEVICE_MISSING`. Inga produktionsrader ändrades.
 - Kvarstående externa blockerare för att faktiskt kunna ringa: ingen device på Rinkel-kontot,
   och de fem webhookarna är fortfarande overifierade (`CORE_WEBHOOKS_NOT_VERIFIED`).
+
+## 2026-08-14 — Device-inventeringen följer Rinkels verkliga schema
+
+- Rinkels OpenAPI-spec hämtad från `developers.rinkel.com` (ligger i lazy-laddade JS-chunkar, inte i
+  serverrenderad HTML). `POST /dial`: `required: ["deviceId","to","numberId"]`. Användarobjektet:
+  ett nullbart `deviceId`, inget `devices[]`.
+- `deviceInventoryComplete` bygger nu på att den skalära nyckeln finns, inte på ett fält Rinkel aldrig
+  skickar. Retirerade devices avaktiveras därmed på riktigt vid katalogsynk.
+- `staleRinkelDeviceIds` failar stängt vid `deviceInventoryError`.
+- Konsekvens för det skarpa kontot: när `deviceId` fylls i och katalogen synkas adopteras enheten
+  automatiskt av `repairUniqueRinkelDeviceMappings`, som repointar en mappning med
+  `selected_device_id=null` när användaren har exakt en aktiv device.
+- Inloggning för Rinkel-kontot är `https://my.rinkel.com` (verifierat som den enda app-länken på
+  rinkel.com). Vilken åtgärd som får providern att fylla i `deviceId` är INTE verifierad.

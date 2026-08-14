@@ -226,3 +226,19 @@ en mappning. Symptomet lästes som ett synkfel men var en produktbegränsning ko
 faktiskt har det: `POST /dial`. Tilldelning är öppen, `telephony_status_for_current_user` och
 reservationskedjan failar fortsatt stängt med `DEVICE_MISSING`. En unik aktiv device väljs automatiskt,
 flera aktiva devices kräver fortfarande explicit val (`DEVICE_SELECTION_REQUIRED`).
+
+## FAILURE-0038 — Utgången Rinkel-device kunde aldrig retireras — FIXED 2026-08-14
+
+`deviceInventoryComplete` var definierad som `hasDeviceArray`, alltså "payloaden har nyckeln `devices`".
+Rinkels användarschema har inget `devices[]` över huvud taget — verifierat mot providerns egen OpenAPI-spec
+för `GET /users` och `GET /users/:id`, som båda exponerar ett enda nullbart `deviceId`.
+
+Flaggan kunde därmed aldrig bli sann mot skarp Rinkel. Följden var att `staleRinkelDeviceIds` alltid
+returnerade tomt: en device som Rinkel slutat rapportera avaktiverades aldrig. Byte av `deviceId` från A
+till B lämnade A kvar som aktiv rad, vilket gav användaren två aktiva devices — onödig
+`DEVICE_SELECTION_REQUIRED` vid mappning, och risk att en mappning pekade på en död enhet.
+
+Fixen gör en närvarande skalär device-nyckel auktoritativ, inklusive `deviceId: null` som betyder
+"ingen device". Endast en payload som helt saknar nyckeln är okänd. `staleRinkelDeviceIds` returnerar
+dessutom tomt när `deviceInventoryError` är satt, så ett misslyckat user-detail-anrop aldrig kan
+avaktivera lagrade devices.

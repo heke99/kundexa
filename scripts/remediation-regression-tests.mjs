@@ -184,8 +184,11 @@ assert.match(rinkelActions, /status: "test_pending"[\s\S]*test_requested_at: tes
 assert.match(rinkelActions, /const coreWebhooksVerified = verifiedCoreCount === RINKEL_CORE_WEBHOOK_EVENTS\.length[\s\S]*webhooks: coreWebhooksVerified[\s\S]*core_webhooks_verified: coreWebhooksVerified/);
 assert.match(rinkelClient, /async listUsersWithDeviceDetails\(\)/);
 assert.match(rinkelClient, /async getUser\(userId: string, fallback\?: RinkelUser\)/);
-assert.match(rinkelClient, /deviceInventoryComplete: hasDeviceArray/);
-assert.match(rinkelClient, /if \(!user\.deviceInventoryComplete\) return \[\]/);
+// Rinkel's user schema exposes one nullable scalar deviceId and no devices[], so a
+// present scalar key is the authoritative per-user inventory. Anchoring completeness
+// on devices[] alone made it unreachable and left retired devices active forever.
+assert.match(rinkelClient, /deviceInventoryComplete: hasDeviceArray \|\| Boolean\(scalarDeviceKey\)/);
+assert.match(rinkelClient, /if \(!user\.deviceInventoryComplete \|\| user\.deviceInventoryError\) return \[\]/);
 assert.match(rinkelActions, /client\.listUsersWithDeviceDetails\(\)/);
 assert.match(rinkelActions, /staleRinkelDeviceIds/);
 assert.match(rinkelActions, /repairUniqueRinkelDeviceMappings/);
