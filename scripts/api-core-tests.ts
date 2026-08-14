@@ -1,7 +1,56 @@
 import assert from "node:assert/strict";
 import { buildIlikeOrFilter, sanitizeFilterTerm } from "../src/lib/postgrest-filter";
+import { publicHostAlignment, resolveRinkelWebhookBaseUrl } from "../src/lib/env";
+
+function withEnv(values: Record<string, string | undefined>, run: () => void) {
+  const previous = new Map(Object.keys(values).map((key) => [key, process.env[key]]));
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  try {
+    run();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
 
 async function main() {
+// The webhook target inherits the app host when it is not set explicitly. Deriving
+// the two independently is what let production serve links for www.kundexa.se while
+// all five Rinkel subscriptions pointed at the redirecting apex.
+withEnv({ RINKEL_WEBHOOK_PUBLIC_BASE_URL: undefined, NEXT_PUBLIC_APP_URL: "https://kundexa.se" }, () => {
+  assert.equal(resolveRinkelWebhookBaseUrl(), "https://kundexa.se");
+  assert.equal(publicHostAlignment().aligned, true);
+});
+
+// A trailing slash on the app URL must not produce a double slash in webhook paths.
+withEnv({ RINKEL_WEBHOOK_PUBLIC_BASE_URL: undefined, NEXT_PUBLIC_APP_URL: "https://kundexa.se/" }, () => {
+  assert.equal(resolveRinkelWebhookBaseUrl(), "https://kundexa.se");
+});
+
+// An explicit override still wins, because the webhook host may legitimately differ.
+withEnv({ RINKEL_WEBHOOK_PUBLIC_BASE_URL: "https://hooks.kundexa.se", NEXT_PUBLIC_APP_URL: "https://kundexa.se" }, () => {
+  assert.equal(resolveRinkelWebhookBaseUrl(), "https://hooks.kundexa.se");
+  assert.equal(publicHostAlignment().aligned, false);
+});
+
+// The live production mismatch is reported rather than silently accepted.
+withEnv({ RINKEL_WEBHOOK_PUBLIC_BASE_URL: "https://kundexa.se", NEXT_PUBLIC_APP_URL: "https://www.kundexa.se" }, () => {
+  const alignment = publicHostAlignment();
+  assert.equal(alignment.appHost, "www.kundexa.se");
+  assert.equal(alignment.webhookHost, "kundexa.se");
+  assert.equal(alignment.aligned, false);
+});
+
+// An unusable app URL must not silently become the webhook target.
+withEnv({ RINKEL_WEBHOOK_PUBLIC_BASE_URL: undefined, NEXT_PUBLIC_APP_URL: "http://localhost:3000", VERCEL_ENV: "production" }, () => {
+  assert.equal(resolveRinkelWebhookBaseUrl(), "https://kundexa.se");
+});
+
 // Reserved PostgREST grammar characters must never survive into an `or=(...)` value.
 for (const reserved of ["(", ")", ",", ".", ":", "*", "\\", '"', "'", "%", "_"]) {
   const sanitized = sanitizeFilterTerm(`Nordic${reserved}AB`);
