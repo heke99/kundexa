@@ -15,8 +15,12 @@ Produkten körs på **kundexa.se**. `app.kundexa.se` är utfasat och finns inte 
 
 - [x] Ingen kodväg, env-mall eller aktuell driftdokumentation refererar `app.kundexa.se`
       Evidens: `grep -rn "app\.kundexa\.se" src supabase scripts docs .env.example` ger noll träffar.
-- [x] `RINKEL_WEBHOOK_PUBLIC_BASE_URL` defaultar till `https://kundexa.se`
-      Evidens: `src/lib/env.ts`.
+- [x] Webhookvärden kan inte glida isär från appvärden
+      Evidens: `resolveRinkelWebhookBaseUrl()` i `src/lib/env.ts` ärver `NEXT_PUBLIC_APP_URL`
+      när `RINKEL_WEBHOOK_PUBLIC_BASE_URL` är osatt; explicit override vinner fortfarande.
+      Testat i `scripts/api-core-tests.ts` (arv, trailing slash, override, oanvändbar app-URL).
+      Tidigare föll den tillbaka på literalen `"https://kundexa.se"`, vilket är hur
+      produktion kunde servera länkar för `www` medan webhookarna pekade på apex.
 - [x] `NEXT_PUBLIC_APP_URL` kan inte längre tyst falla tillbaka på `http://localhost:3000`
       i en deployad runtime
       Evidens: `canonicalAppBaseUrl()` i `src/lib/env.ts`, använd av samtliga fyra ställen
@@ -90,11 +94,15 @@ ingen Rinkel-credential per tenant.
 - [x] Nyckeln når aldrig webbläsaren
       Evidens: endast `serverEnv()`; ingen `NEXT_PUBLIC_`-variant; redaktion av
       `x-rinkel-api-key` i felutskrifter.
-- [x] Alla fem webhookar är registrerade hos Rinkel mot rätt domän
+- [x] Alla fem webhookar är registrerade hos Rinkel
       Evidens: `platform_rinkel_webhook_subscriptions` — fem rader, `status='registered'`,
-      `provider_active=true`, mot `https://kundexa.se/api/webhooks/rinkel/.../<event>`.
-      Detta bekräftar samtidigt att `RINKEL_WEBHOOK_PUBLIC_BASE_URL` i produktion redan är
-      `https://kundexa.se`.
+      `provider_active=true`, mot `https://kundexa.se/api/webhooks/rinkel/.../<event>`,
+      registrerade `2026-08-10`.
+- [ ] Webhookvärden matchar den värd appen faktiskt serveras på
+      Evidens: `GET /api/ready` i production ger `"appBaseUrl":"https://www.kundexa.se"`,
+      `"webhookHost":"kundexa.se"`, `"webhookHostAligned":false`. Prenumerationerna pekar
+      alltså på apex, som svarar `308`, medan appen ligger på `www`. En webhookavsändare som
+      inte följer redirect tappar eventet. Se *Externa åtgärder*.
 - [ ] **Rinkel-kontot har ingen device — dial är blockerat.**
       Evidens: `platform_rinkel_devices` har noll rader, och leverantörens egen payload för
       användaren (`hekmat.h@gridex.se`, `6a6b1c70faafaa92a04a7d6b`) har `"deviceId": null` och
@@ -159,17 +167,21 @@ webhookavsändare som inte följer redirect tappar eventet.
 
 ### 2. Sätt bas-URL:erna till `https://kundexa.se`
 
-- **Vad saknas:** `RINKEL_WEBHOOK_PUBLIC_BASE_URL` är bekräftat korrekt — de registrerade
-  webhookadresserna i `platform_rinkel_webhook_subscriptions` pekar på `https://kundexa.se`.
-  `NEXT_PUBLIC_APP_URL` (Vercel) och `APP_URL` (Supabase Edge Secrets) styr
-  acceptans-/signeringslänkarna som skickas till kunder, och deras faktiska värden går inte
-  att läsa härifrån. Om något av dem fortfarande är `https://app.kundexa.se` pekar varje
-  utskickad signeringslänk på en domän som inte finns i DNS.
+- **Vad saknas:** värdena är nu avlästa mot körande production i stället för antagna.
+  `GET /api/ready` svarar `"appBaseUrl":"https://www.kundexa.se"` och
+  `"webhookHost":"kundexa.se"`, alltså `"webhookHostAligned":false`. Appen bygger länkar för
+  `www` medan de fem Rinkel-prenumerationerna pekar på apex. Att `webhookHost` stannar på
+  apex trots att app-URL:en är `www` visar att `RINKEL_WEBHOOK_PUBLIC_BASE_URL` är satt
+  explicit i Vercel — hade den varit osatt hade den ärvt app-URL:en efter PR #6.
+  Ingen av dem är `https://app.kundexa.se`, så den domänen är utfasad även i miljön.
 - **Varför kod inte löser det:** det är miljövariabler i Vercel och Supabase, inte i repot.
-- **Åtgärd:** sätt båda till `https://kundexa.se` i Vercel Production/Preview och via
-  `supabase secrets set` för Edge Functions, och deploya om.
+- **Åtgärd:** sätt `NEXT_PUBLIC_APP_URL` till `https://kundexa.se` i Vercel
+  Production/Preview och `APP_URL` via `supabase secrets set`. Ta samtidigt bort den
+  explicita `RINKEL_WEBHOOK_PUBLIC_BASE_URL` — utan den ärver webhookvärden app-URL:en och
+  kan inte glida isär igen. Deploya om och registrera om webhookarna.
 - **Verifiering efteråt:** `curl -s https://kundexa.se/api/ready` ska visa
-  `"appBaseUrl":"https://kundexa.se"` och `"appBaseUrlUsable":true`.
+  `"appBaseUrl":"https://kundexa.se"`, `"appBaseUrlUsable":true` och
+  `"webhookHostAligned":true`.
 
 ### 3. Provisionera en Rinkel-device för säljaranvändaren
 
