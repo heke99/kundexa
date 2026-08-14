@@ -189,7 +189,7 @@ Deno.test("sends webhook test URL in the documented request body", async () => {
       return Promise.resolve(new Response(null, { status: 204 }));
     }) as typeof fetch,
   });
-  const webhookUrl = "https://app.kundexa.se/api/webhooks/rinkel/test-secret/callEnd";
+  const webhookUrl = "https://kundexa.se/api/webhooks/rinkel/test-secret/callEnd";
   await client.testWebhook("callEnd", webhookUrl);
   assert(capturedUrl.endsWith("/v1/webhooks/callEnd/test"), "webhook test endpoint");
   equal(capturedMethod, "POST", "webhook test method");

@@ -44,7 +44,7 @@ Utskicksflödet är:
 Kundexa genererar en unik opaque URL:
 
 ```text
-https://app.kundexa.se/api/webhooks/resend/<TENANTENS_OPAQUE_TOKEN>
+https://kundexa.se/api/webhooks/resend/<TENANTENS_OPAQUE_TOKEN>
 ```
 
 Skapa webhooken i Resend och aktivera:
@@ -66,7 +66,7 @@ Kopiera signing secret till Kundexa och testa integrationen igen. Route-handlern
 ### Next.js/Vercel
 
 ```env
-NEXT_PUBLIC_APP_URL=https://app.kundexa.se
+NEXT_PUBLIC_APP_URL=https://kundexa.se
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
@@ -83,7 +83,7 @@ RESEND_WEBHOOK_SECRET=
 ### Supabase Edge Functions
 
 ```env
-APP_URL=https://app.kundexa.se
+APP_URL=https://kundexa.se
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 KUNDEXA_ENCRYPTION_KEY=
@@ -98,7 +98,7 @@ Sätt secrets:
 
 ```bash
 npx supabase@2.109.1 secrets set \
-  APP_URL="https://app.kundexa.se" \
+  APP_URL="https://kundexa.se" \
   KUNDEXA_ENCRYPTION_KEY="<SAMMA_SOM_WEBBAPPEN>" \
   CRON_SECRET="<LÅNG_SLUMPMÄSSIG_HEMLIGHET>" \
   RESEND_API_KEY="<PLATTFORMSNYCKEL_OM_GLOBAL_FALLBACK_ANVÄNDS>" \
@@ -148,7 +148,7 @@ Verifiera efter deploy:
 ```bash
 curl -i \
   -H "Authorization: Bearer $CRON_SECRET" \
-  https://app.kundexa.se/api/cron/process-outbox
+  https://kundexa.se/api/cron/process-outbox
 ```
 
 Ett alternativ är Supabase `pg_cron`/`pg_net`, men kör aldrig två schedulers samtidigt.

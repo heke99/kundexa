@@ -30,11 +30,37 @@ const ipAllowlistSchema = z.string().default("82.199.77.220,188.122.73.177").tra
   return addresses;
 });
 
-const publicSchema = z.object({
+function isDeployedRuntime() {
+  // VERCEL_ENV/NODE_ENV are server-only, so this is false in the browser and the
+  // deployment guards below apply exactly where the value is actually used to
+  // build outbound links.
+  const deployment = process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? "development";
+  return ["production", "preview", "staging"].includes(deployment);
+}
+
+const publicObject = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
   NEXT_PUBLIC_APP_URL: z.string().url().default("http://localhost:3000"),
 });
+
+function refinePublicAppUrl(env: { NEXT_PUBLIC_APP_URL: string }, context: z.RefinementCtx) {
+  // NEXT_PUBLIC_APP_URL is what customers receive in acceptance/signing links and
+  // what the Resend webhook address is derived from. A missing value used to fall
+  // back to http://localhost:3000 in every environment, which would silently send
+  // unreachable signing links. In a deployed runtime it must be a public HTTPS host.
+  if (!isDeployedRuntime()) return;
+  const appUrl = new URL(env.NEXT_PUBLIC_APP_URL);
+  if (appUrl.protocol !== "https:" || isUnsafePublicHostname(appUrl.hostname)) {
+    context.addIssue({
+      code: "custom",
+      path: ["NEXT_PUBLIC_APP_URL"],
+      message: "NEXT_PUBLIC_APP_URL måste vara en publik HTTPS-adress i staging/production (t.ex. https://kundexa.se).",
+    });
+  }
+}
+
+const publicSchema = publicObject.superRefine(refinePublicAppUrl);
 
 export function publicEnv() {
   return publicSchema.parse({
@@ -44,7 +70,7 @@ export function publicEnv() {
   });
 }
 
-const serverSchema = publicSchema.extend({
+const serverSchema = publicObject.extend({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   KUNDEXA_ENCRYPTION_KEY: z.string().min(20),
   KUNDEXA_WEBHOOK_PEPPER: z.string().min(20),
@@ -56,7 +82,7 @@ const serverSchema = publicSchema.extend({
   RESEND_WEBHOOK_SECRET: z.string().min(1).optional(),
   RINKEL_API_KEY: z.string().min(1).optional(),
   RINKEL_API_BASE_URL: z.string().url().default("https://api.rinkel.com/v1"),
-  RINKEL_WEBHOOK_PUBLIC_BASE_URL: z.string().url().default("https://app.kundexa.se"),
+  RINKEL_WEBHOOK_PUBLIC_BASE_URL: z.string().url().default("https://kundexa.se"),
   RINKEL_WEBHOOK_SECRET: z.string().min(40).max(128).optional(),
   RINKEL_WEBHOOK_ALLOWED_IPS: ipAllowlistSchema,
   RINKEL_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(15000),
@@ -64,14 +90,14 @@ const serverSchema = publicSchema.extend({
   RINKEL_TRUST_X_REAL_IP: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
   RINKEL_RECONCILIATION_ENABLED: z.enum(["true", "false"]).default("true").transform((value) => value === "true"),
 }).superRefine((env, context) => {
+  refinePublicAppUrl(env, context);
   if (env.RESEND_API_KEY && !env.DEFAULT_EMAIL_FROM_ADDRESS) {
     context.addIssue({ code: "custom", path: ["DEFAULT_EMAIL_FROM_ADDRESS"], message: "Plattformshanterad Resend kräver en verifierad avsändaradress." });
   }
   if (env.RESEND_API_KEY && !env.DEFAULT_EMAIL_FROM_NAME) {
     context.addIssue({ code: "custom", path: ["DEFAULT_EMAIL_FROM_NAME"], message: "Plattformshanterad Resend kräver ett avsändarnamn." });
   }
-  const deployment = process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? "development";
-  if (["production", "preview", "staging"].includes(deployment)) {
+  if (isDeployedRuntime()) {
     const webhookUrl = new URL(env.RINKEL_WEBHOOK_PUBLIC_BASE_URL);
     if (webhookUrl.protocol !== "https:" || isUnsafePublicHostname(webhookUrl.hostname)) {
       context.addIssue({
@@ -107,7 +133,7 @@ export function serverEnv() {
     RESEND_WEBHOOK_SECRET: process.env.RESEND_WEBHOOK_SECRET,
     RINKEL_API_KEY: process.env.RINKEL_API_KEY,
     RINKEL_API_BASE_URL: process.env.RINKEL_API_BASE_URL ?? "https://api.rinkel.com/v1",
-    RINKEL_WEBHOOK_PUBLIC_BASE_URL: process.env.RINKEL_WEBHOOK_PUBLIC_BASE_URL ?? "https://app.kundexa.se",
+    RINKEL_WEBHOOK_PUBLIC_BASE_URL: process.env.RINKEL_WEBHOOK_PUBLIC_BASE_URL ?? "https://kundexa.se",
     RINKEL_WEBHOOK_SECRET: process.env.RINKEL_WEBHOOK_SECRET,
     RINKEL_WEBHOOK_ALLOWED_IPS: process.env.RINKEL_WEBHOOK_ALLOWED_IPS ?? "82.199.77.220,188.122.73.177",
     RINKEL_REQUEST_TIMEOUT_MS: process.env.RINKEL_REQUEST_TIMEOUT_MS ?? "15000",

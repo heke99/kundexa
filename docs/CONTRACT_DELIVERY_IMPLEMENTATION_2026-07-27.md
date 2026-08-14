@@ -365,7 +365,7 @@ Kör aldrig `db reset` mot produktion.
 ```bash
 cd /Users/hekmath/Desktop/Projects/kundexa
 
-npx supabase@2.109.1 secrets set   APP_URL="https://app.kundexa.se"   KUNDEXA_ENCRYPTION_KEY="<SAMMA_32-BYTE_BASE64_NYCKEL_SOM_WEBBAPPEN>"   CRON_SECRET="<LÅNG_SLUMPMÄSSIG_HEMLIGHET>"   RESEND_API_KEY="<PLATFORMSNYCKEL_OM_GLOBAL_FALLBACK_ANVÄNDS>"   DEFAULT_EMAIL_FROM_NAME="Kundexa"   DEFAULT_EMAIL_FROM_ADDRESS="avtal@utskick.kundexa.se"   --project-ref "<SUPABASE_PROJECT_REF>"
+npx supabase@2.109.1 secrets set   APP_URL="https://kundexa.se"   KUNDEXA_ENCRYPTION_KEY="<SAMMA_32-BYTE_BASE64_NYCKEL_SOM_WEBBAPPEN>"   CRON_SECRET="<LÅNG_SLUMPMÄSSIG_HEMLIGHET>"   RESEND_API_KEY="<PLATFORMSNYCKEL_OM_GLOBAL_FALLBACK_ANVÄNDS>"   DEFAULT_EMAIL_FROM_NAME="Kundexa"   DEFAULT_EMAIL_FROM_ADDRESS="avtal@utskick.kundexa.se"   --project-ref "<SUPABASE_PROJECT_REF>"
 
 npm run functions:deploy -- --project-ref "<SUPABASE_PROJECT_REF>"
 ```
@@ -375,7 +375,7 @@ npm run functions:deploy -- --project-ref "<SUPABASE_PROJECT_REF>"
 Webb/Vercel:
 
 ```env
-NEXT_PUBLIC_APP_URL=https://app.kundexa.se
+NEXT_PUBLIC_APP_URL=https://kundexa.se
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
@@ -391,7 +391,7 @@ SUPABASE_PROJECT_REF=
 Edge Functions:
 
 ```env
-APP_URL=https://app.kundexa.se
+APP_URL=https://kundexa.se
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 KUNDEXA_ENCRYPTION_KEY=

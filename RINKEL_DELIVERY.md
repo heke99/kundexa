@@ -90,7 +90,7 @@ Samma logiska `RINKEL_API_KEY` sätts i Vercel och i Supabase Edge Secrets när 
 ```dotenv
 RINKEL_API_KEY=
 RINKEL_API_BASE_URL=https://api.rinkel.com/v1
-RINKEL_WEBHOOK_PUBLIC_BASE_URL=https://app.kundexa.se
+RINKEL_WEBHOOK_PUBLIC_BASE_URL=https://kundexa.se
 RINKEL_WEBHOOK_SECRET=
 RINKEL_REQUEST_TIMEOUT_MS=15000
 RINKEL_ENFORCE_WEBHOOK_IP_ALLOWLIST=true

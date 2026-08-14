@@ -138,7 +138,45 @@ if (
   throw new Error(`Provisioning RPC privilege boundary failed: ${JSON.stringify(provisioningPrivilege)}`);
 }
 
+// Postgres grants EXECUTE to PUBLIC by default and `anon` inherits PUBLIC, so a
+// SECURITY DEFINER function that no migration explicitly revoked is reachable
+// unauthenticated through PostgREST with the definer's privileges. This gate
+// fails the build rather than letting such a function reach a database again.
+const anonDefinerFunctions = await db.query(`
+  select p.oid::regprocedure::text as signature
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public'
+    and p.prosecdef
+    and not exists (select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e')
+    and has_function_privilege('anon', p.oid, 'execute')
+  order by 1
+`);
+if (anonDefinerFunctions.rows.length > 0) {
+  throw new Error(
+    `SECURITY DEFINER functions executable by anon: ${anonDefinerFunctions.rows.map((row) => row.signature).join(", ")}`,
+  );
+}
+
+// A bare auth.uid() inside an RLS qual is re-evaluated per candidate row because
+// the function is STABLE, not IMMUTABLE. `(select auth.uid())` becomes a
+// once-per-statement InitPlan instead.
+const bareAuthUidPolicies = await db.query(`
+  select tablename || '.' || policyname as policy
+  from pg_policies
+  where schemaname = 'public'
+    and (coalesce(qual, '') ~ 'auth\\.uid\\(\\)' or coalesce(with_check, '') ~ 'auth\\.uid\\(\\)')
+    and (coalesce(qual, '') || coalesce(with_check, '')) !~* 'select\\s+auth\\.uid\\(\\)'
+  order by 1
+`);
+if (bareAuthUidPolicies.rows.length > 0) {
+  throw new Error(
+    `RLS policies calling auth.uid() per row: ${bareAuthUidPolicies.rows.map((row) => row.policy).join(", ")}`,
+  );
+}
+
 console.log(`Executed ${migrations.length} migrations: ${counts.tables} public tables, ${counts.functions} public functions, ${counts.policies} RLS policies.`);
+console.log(`Privilege boundary verified: zero anon-executable SECURITY DEFINER functions, zero per-row auth.uid() policies.`);
 
 // Execute the canonical data path, not only DDL parsing: due scheduling -> lease ->
 // raw-before-parse -> source facts/master resolution -> licensed search -> segment snapshot.
