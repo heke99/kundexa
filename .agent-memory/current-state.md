@@ -108,3 +108,29 @@ by Kundexa.
   device is selected automatically, while multiple devices still require an explicit choice.
 - Directory sync repairs an existing seller mapping only when the allocated provider user has exactly one
   active device. Ambiguous multi-device users remain manual.
+
+## 2026-08-14 — migrationsdrift mot live och kanonisk domän
+
+Detta pass hade för första gången läsaccess till det riktiga Supabase-projektet
+(`lhvifuxcqghtbiulzkrf`) och Vercel-projektet `kundexa`, så flera punkter som tidigare stod som
+`NOT RUN` kunde faktiskt mätas.
+
+- Live hade tre migrationer som saknades i repot: `202608130001_function_execute_least_privilege`,
+  `202608130002_rls_auth_uid_initplan` och `20260813222943_secdef_service_only_and_bypass_hardening`.
+  De två första låg dessutom i `supabase_migrations.schema_migrations` utan `statements`.
+  Samtliga är nu backfillade med samma versionsnummer, så `db push` hoppar över dem i produktion.
+- Den verkliga defekten bakom `202608130001`: Postgres ger EXECUTE till PUBLIC som default och
+  `anon` ärver PUBLIC. 62 SECURITY DEFINER-funktioner som ingen migration uttryckligen återkallat
+  var därmed anropbara oautentiserat via PostgREST med definierarens rättigheter, förbi RLS.
+  Produktionen var redan lagad; repot var det inte.
+- Efter backfill reproducerar repots PGlite-replay produktionens policydefinitioner exakt
+  (md5 över alla 301 `public`-policyer identisk) med noll anon-körbara definer-funktioner.
+- Båda invarianterna är nu byggrindar i `scripts/verify-sql.mjs`, inte engångsfixar. Gaten fångade
+  direkt ett försök att bredda `service_role` till de avsiktligt nekade oskopade segment-/
+  kampanj-RPC:erna.
+- `app.kundexa.se` finns inte i DNS. Den är borttagen ur kod, env-mall och driftdokumentation;
+  kanonisk domän är `kundexa.se`.
+- `NEXT_PUBLIC_APP_URL` föll tyst tillbaka på `http://localhost:3000`. Kontrollen ligger nu i
+  `canonicalAppBaseUrl()` på de fyra länkbyggarna, inte i env-schemat, så en felkonfiguration
+  stoppar det utskick som annars fått en trasig länk i stället för all requesthantering.
+- `GET /api/ready` rapporterar `appBaseUrl` och `appBaseUrlUsable` så värdet går att verifiera utifrån.

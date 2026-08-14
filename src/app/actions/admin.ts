@@ -7,7 +7,7 @@ import { createTeam as createManagedTeam, inviteUser as inviteTenantUser } from 
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { decryptJson, encryptJson, randomToken, sha256 } from "@/lib/crypto";
-import { serverEnv } from "@/lib/env";
+import { canonicalAppBaseUrl, serverEnv } from "@/lib/env";
 import { readJsonObject, toJson, toJsonObject } from "@/lib/supabase/json";
 import type { RuntimeDatabase } from "@/lib/supabase/runtime-database.types";
 import { getScraperAdapter, identityFieldMapping, validateScraperFilter } from "../../../supabase/functions/_shared/providers";
@@ -139,7 +139,7 @@ export async function saveEmailIntegration(form: FormData) {
     after_data: { account_mode: accountMode, from_address: fromAddress, reply_to: replyTo || null, sending_domain: sendingDomain || null, api_key_changed: Boolean(apiKey), webhook_secret_changed: Boolean(webhookSigningSecret), status: "pending" },
   });
   revalidatePath("/app/integrations");
-  redirect(`/app/integrations?message=${encodeURIComponent("Resend sparades som väntande. Kör Testa anslutning innan avtalsutskick.")}&resendWebhook=${encodeURIComponent(`${env.NEXT_PUBLIC_APP_URL}/api/webhooks/resend/${pathToken}`)}`);
+  redirect(`/app/integrations?message=${encodeURIComponent("Resend sparades som väntande. Kör Testa anslutning innan avtalsutskick.")}&resendWebhook=${encodeURIComponent(`${canonicalAppBaseUrl()}/api/webhooks/resend/${pathToken}`)}`);
 }
 
 export async function testResendIntegration(form: FormData) {
@@ -198,7 +198,7 @@ export async function generateResendWebhookAddress(form: FormData) {
   if (error) throw error;
   await admin.from("audit_logs").insert({ tenant_id: context.tenantId, actor_user_id: context.userId, action: "integration.resend_webhook_rotated", entity_type: "tenant_integration", entity_id: integration.id });
   revalidatePath("/app/integrations");
-  redirect(`/app/integrations?message=${encodeURIComponent("Ny webhookadress skapad. Integrationen måste testas igen.")}&resendWebhook=${encodeURIComponent(`${env.NEXT_PUBLIC_APP_URL}/api/webhooks/resend/${token}`)}`);
+  redirect(`/app/integrations?message=${encodeURIComponent("Ny webhookadress skapad. Integrationen måste testas igen.")}&resendWebhook=${encodeURIComponent(`${canonicalAppBaseUrl()}/api/webhooks/resend/${token}`)}`);
 }
 
 export async function saveContractReminderPolicy(form: FormData) {

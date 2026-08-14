@@ -4,7 +4,7 @@ import { getAppContext } from "@/lib/auth";
 import { assertPermission } from "@/lib/permissions";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { encryptJson, randomToken, sha256 } from "@/lib/crypto";
-import { publicEnv, serverEnv } from "@/lib/env";
+import { canonicalAppBaseUrl, serverEnv } from "@/lib/env";
 
 const projectSchema = z.object({
   projectName: z.string().trim().min(2).max(160),
@@ -89,7 +89,7 @@ export async function POST(request: Request) {
     if (projectResult.error || !projectResult.data) throw new Error(projectResult.error?.message ?? "parsehub_project_create_failed");
 
     await admin.from("audit_logs").insert({ tenant_id: ctx.tenantId, actor_user_id: ctx.userId, action: "parsehub.project_configured", entity_type: "parsehub_project", entity_id: projectResult.data.id, after_data: { projectName: input.projectName, sourceWebsite: input.sourceWebsite, importProfileId: input.importProfileId } });
-    const base = publicEnv().NEXT_PUBLIC_APP_URL.replace(/\/$/, "");
+    const base = canonicalAppBaseUrl();
     return NextResponse.json({
       id: projectResult.data.id,
       webhookUrl: `${base}/api/v1/integrations/parsehub/webhook?project=${encodeURIComponent(projectResult.data.id)}&secret=${encodeURIComponent(webhookSecret)}`,

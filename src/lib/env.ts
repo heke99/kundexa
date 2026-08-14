@@ -44,23 +44,43 @@ const publicObject = z.object({
   NEXT_PUBLIC_APP_URL: z.string().url().default("http://localhost:3000"),
 });
 
-function refinePublicAppUrl(env: { NEXT_PUBLIC_APP_URL: string }, context: z.RefinementCtx) {
-  // NEXT_PUBLIC_APP_URL is what customers receive in acceptance/signing links and
-  // what the Resend webhook address is derived from. A missing value used to fall
-  // back to http://localhost:3000 in every environment, which would silently send
-  // unreachable signing links. In a deployed runtime it must be a public HTTPS host.
-  if (!isDeployedRuntime()) return;
-  const appUrl = new URL(env.NEXT_PUBLIC_APP_URL);
-  if (appUrl.protocol !== "https:" || isUnsafePublicHostname(appUrl.hostname)) {
-    context.addIssue({
-      code: "custom",
-      path: ["NEXT_PUBLIC_APP_URL"],
-      message: "NEXT_PUBLIC_APP_URL måste vara en publik HTTPS-adress i staging/production (t.ex. https://kundexa.se).",
-    });
+const publicSchema = publicObject;
+
+/**
+ * True when NEXT_PUBLIC_APP_URL is usable as the public base for links that leave
+ * the system. In a deployed runtime that means a public HTTPS host; locally any
+ * parseable URL is fine.
+ */
+export function isUsablePublicAppUrl(value: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
   }
+  if (!isDeployedRuntime()) return true;
+  return parsed.protocol === "https:" && !isUnsafePublicHostname(parsed.hostname);
 }
 
-const publicSchema = publicObject.superRefine(refinePublicAppUrl);
+/**
+ * The base URL customers actually receive: acceptance/signing links, the Resend
+ * webhook address and provider callbacks. An unset NEXT_PUBLIC_APP_URL falls back
+ * to http://localhost:3000, so in a deployed runtime a misconfiguration would
+ * otherwise produce links that silently go nowhere.
+ *
+ * This throws rather than returning a broken base, but only on the paths that
+ * build an outbound artefact -- reading it must never take down request handling
+ * that has nothing to do with links.
+ */
+export function canonicalAppBaseUrl() {
+  const value = publicEnv().NEXT_PUBLIC_APP_URL;
+  if (!isUsablePublicAppUrl(value)) {
+    throw new Error(
+      "NEXT_PUBLIC_APP_URL måste vara en publik HTTPS-adress i staging/production (t.ex. https://kundexa.se).",
+    );
+  }
+  return value.replace(/\/$/, "");
+}
 
 export function publicEnv() {
   return publicSchema.parse({
@@ -90,7 +110,6 @@ const serverSchema = publicObject.extend({
   RINKEL_TRUST_X_REAL_IP: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
   RINKEL_RECONCILIATION_ENABLED: z.enum(["true", "false"]).default("true").transform((value) => value === "true"),
 }).superRefine((env, context) => {
-  refinePublicAppUrl(env, context);
   if (env.RESEND_API_KEY && !env.DEFAULT_EMAIL_FROM_ADDRESS) {
     context.addIssue({ code: "custom", path: ["DEFAULT_EMAIL_FROM_ADDRESS"], message: "Plattformshanterad Resend kräver en verifierad avsändaradress." });
   }

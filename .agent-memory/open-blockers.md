@@ -68,3 +68,15 @@ Följande är fortfarande externa releasegates, inte lokalt bekräftade kodfel:
   with Rinkel rather than fabricating a device id.
 - Full `npm run verify` and PGlite SQL replay remain NOT RUN in this sandbox because the internal npm mirror
   does not provide the required project dependencies. Rinkel runtime contract tests and static verifier are PASS.
+
+## 2026-08-14 — externa åtgärder efter driftreconciliation
+
+Se `docs/PRODUCTION_READINESS.md` för fullständig formulering och verifieringssteg.
+
+- `kundexa.se` svarar `308 → https://www.kundexa.se/`. Primär domän måste bytas i Vercels
+  domäninställningar; MCP-integrationen exponerar inga domän- eller env-verktyg.
+- `NEXT_PUBLIC_APP_URL`, `APP_URL` och `RINKEL_WEBHOOK_PUBLIC_BASE_URL` går inte att läsa
+  härifrån. Om något av dem fortfarande är `https://app.kundexa.se` pekar varje utskickad
+  signeringslänk på en domän som inte finns i DNS. Måste sättas till `https://kundexa.se`.
+- Live dial/CDR/recording mot Rinkel och skarpt Resend-utskick kräver testnummer respektive
+  testmottagare och är fortsatt `NOT RUN`.

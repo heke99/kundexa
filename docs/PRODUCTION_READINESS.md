@@ -19,9 +19,15 @@ Produkten körs på **kundexa.se**. `app.kundexa.se` är utfasat och finns inte 
       Evidens: `src/lib/env.ts`.
 - [x] `NEXT_PUBLIC_APP_URL` kan inte längre tyst falla tillbaka på `http://localhost:3000`
       i en deployad runtime
-      Evidens: `refinePublicAppUrl` i `src/lib/env.ts`; körs både i `publicEnv()` och `serverEnv()`.
+      Evidens: `canonicalAppBaseUrl()` i `src/lib/env.ts`, använd av samtliga fyra ställen
+      som bygger en utgående adress: acceptanslänken i `src/app/actions/contracts.ts` och
+      `src/lib/contracts/api-service.ts`, Resend-webhookadressen i `src/app/actions/admin.ts`
+      och ParseHub-callbacken i `src/app/api/v1/integrations/parsehub/projects/route.ts`.
+      Kontrollen sitter medvetet på länkbyggarna och inte i env-schemat: en felkonfiguration
+      ska stoppa det utskick som annars hade fått en trasig länk, inte all requesthantering
+      som inte har med länkar att göra.
 - [x] Den faktiskt konfigurerade bas-URL:en är observerbar utifrån
-      Evidens: `checks.appBaseUrl` i `GET /api/ready`.
+      Evidens: `checks.appBaseUrl` och `checks.appBaseUrlUsable` i `GET /api/ready`.
 - [ ] `kundexa.se` serveras direkt i stället för att 308-omdirigera till `www.kundexa.se`
       Kräver Vercel-dashboard, se *Externa åtgärder*.
 - [ ] `NEXT_PUBLIC_APP_URL`, `APP_URL` och `RINKEL_WEBHOOK_PUBLIC_BASE_URL` är satta till
