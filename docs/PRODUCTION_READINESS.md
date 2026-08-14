@@ -90,7 +90,26 @@ ingen Rinkel-credential per tenant.
 - [x] Nyckeln når aldrig webbläsaren
       Evidens: endast `serverEnv()`; ingen `NEXT_PUBLIC_`-variant; redaktion av
       `x-rinkel-api-key` i felutskrifter.
-- [ ] Live dial, device-mappning, CDR-reparation och recording mot riktigt Rinkel-konto
+- [x] Alla fem webhookar är registrerade hos Rinkel mot rätt domän
+      Evidens: `platform_rinkel_webhook_subscriptions` — fem rader, `status='registered'`,
+      `provider_active=true`, mot `https://kundexa.se/api/webhooks/rinkel/.../<event>`.
+      Detta bekräftar samtidigt att `RINKEL_WEBHOOK_PUBLIC_BASE_URL` i produktion redan är
+      `https://kundexa.se`.
+- [ ] **Rinkel-kontot har ingen device — dial är blockerat.**
+      Evidens: `platform_rinkel_devices` har noll rader, och leverantörens egen payload för
+      användaren (`hekmat.h@gridex.se`, `6a6b1c70faafaa92a04a7d6b`) har `"deviceId": null` och
+      `"deskPhoneAccount": null`. `platform_rinkel_capabilities` visar `api_access=true`,
+      `users_catalog=true`, `numbers_catalog=true`, `webhooks_registration=true` men
+      `dial=false`, `dial_configured=false`, `dial_endpoint_reachable=false`, `webhooks=false`,
+      `recordings=false`, `transcription=false`.
+      `POST /dial` kräver `deviceId`. Koden failar korrekt stängt i stället för att hitta på ett
+      device-id, så detta är en kontokapabilitet, inte en kodbugg. Se *Externa åtgärder*.
+- [ ] Webhooktestet mot leverantören har aldrig gått igenom
+      Evidens: samtliga fem prenumerationer har `last_error_code='RINKEL_INVALID_REQUEST'`,
+      `test_received_at=null`, `last_verified_at=null`, `received_count=0`. Noll webhookevent har
+      någonsin tagits emot (`platform_rinkel_webhook_events` är tom), vilket är väntat eftersom
+      noll samtal ringts, men det betyder också att kedjan aldrig är liveverifierad.
+- [ ] Live dial, CDR-reparation och recording mot riktigt Rinkel-konto
       Se *Externa åtgärder*.
 
 ## 5. Resend
@@ -134,24 +153,45 @@ Detta kan inte lösas med kod- eller databasaccess härifrån.
 - **Verifiering efteråt:** `curl -sI https://kundexa.se/api/health` ska ge `200`, och
   `curl -sI https://www.kundexa.se/` ska ge `308` mot `https://kundexa.se/`.
 
+Redirecten är inte kosmetisk. De fem Rinkel-webhookarna är registrerade mot
+`https://kundexa.se/...`, så varje inkommande webhookleverans möter i dag en 308. En
+webhookavsändare som inte följer redirect tappar eventet.
+
 ### 2. Sätt bas-URL:erna till `https://kundexa.se`
 
-- **Vad saknas:** `NEXT_PUBLIC_APP_URL` och `APP_URL` styr acceptans-/signeringslänkarna som
-  skickas till kunder, och `RINKEL_WEBHOOK_PUBLIC_BASE_URL` styr webhookadressen som
-  registreras hos Rinkel. Deras faktiska värden i Vercel Production och Supabase Edge
-  Secrets går inte att läsa härifrån. Om något av dem fortfarande är `https://app.kundexa.se`
-  pekar varje utskickad signeringslänk på en domän som inte finns i DNS.
+- **Vad saknas:** `RINKEL_WEBHOOK_PUBLIC_BASE_URL` är bekräftat korrekt — de registrerade
+  webhookadresserna i `platform_rinkel_webhook_subscriptions` pekar på `https://kundexa.se`.
+  `NEXT_PUBLIC_APP_URL` (Vercel) och `APP_URL` (Supabase Edge Secrets) styr
+  acceptans-/signeringslänkarna som skickas till kunder, och deras faktiska värden går inte
+  att läsa härifrån. Om något av dem fortfarande är `https://app.kundexa.se` pekar varje
+  utskickad signeringslänk på en domän som inte finns i DNS.
 - **Varför kod inte löser det:** det är miljövariabler i Vercel och Supabase, inte i repot.
-- **Åtgärd:** sätt alla tre till `https://kundexa.se` i Vercel Production/Preview och i
+- **Åtgärd:** sätt båda till `https://kundexa.se` i Vercel Production/Preview och via
   `supabase secrets set` för Edge Functions, och deploya om.
 - **Verifiering efteråt:** `curl -s https://kundexa.se/api/ready` ska visa
-  `"appBaseUrl":"https://kundexa.se"`. Registrera därefter om Rinkel-webhookarna så de
-  pekar på den nya basadressen.
+  `"appBaseUrl":"https://kundexa.se"` och `"appBaseUrlUsable":true`.
 
-### 3. Live-verifiering av Rinkel och Resend
+### 3. Provisionera en Rinkel-device för säljaranvändaren
 
-- **Vad saknas:** riktigt dial, device-inventering, CDR-reparation, recording-access och ett
-  skarpt Resend-utskick mot verifierad avsändardomän.
+- **Vad saknas:** `POST /dial` kräver `deviceId`, och Rinkels egen payload för användaren
+  `hekmat.h@gridex.se` innehåller `"deviceId": null` och `"deskPhoneAccount": null`. Kontot har
+  alltså ingen device. `platform_rinkel_capabilities` bekräftar `dial=false`,
+  `dial_endpoint_reachable=false` och `webhooks=false` trots `api_access=true`.
+- **Varför kod inte löser det:** Kundexa kan inte skapa en device åt Rinkel, och att hitta på ett
+  device-id skulle bara flytta felet till ett provider-400. Koden failar medvetet stängt med en
+  device-inventeringsdiagnostik i stället.
+- **Åtgärd:** aktivera en device för användaren i My Rinkel (webphone, desk phone eller mobil-app)
+  och bekräfta med Rinkel att abonnemanget täcker `/dial` och webhookfunktionen — deras publika
+  villkor anger webhooks endast för Expert-abonnemanget, vilket är förenligt med att
+  webhooktestet svarar `RINKEL_INVALID_REQUEST`.
+- **Verifiering efteråt:** kör den centrala katalogsynken; `platform_rinkel_devices` ska få minst
+  en aktiv rad och `platform_rinkel_capabilities.dial` ska bli `true`. Därefter går
+  `docs/RINKEL_STAGING_PROTOCOL.md` att köra.
+
+### 4. Live-verifiering av Rinkel och Resend
+
+- **Vad saknas:** riktigt dial, CDR-reparation, recording-access och ett skarpt Resend-utskick
+  mot verifierad avsändardomän.
 - **Varför kod inte löser det:** kräver leverantörskonto, ett säkert testnummer och en
   testmottagare. Utan ett uttryckligen anvisat testmål går det inte att köra utan att
   riskera samtal eller e-post till riktiga kunder.
@@ -160,3 +200,10 @@ Detta kan inte lösas med kod- eller databasaccess härifrån.
 - **Verifiering efteråt:** `platform_rinkel_webhook_events` och `email_delivery_events` ska
   innehålla de förväntade eventen, och `provider_webhook_events` ska inte ha rader i
   `failed`.
+
+## Produktionsdata vid granskningen
+
+Produktionen är i praktiken förlansering, vilket gör förändringarna ovan lågrisk att rulla ut:
+2 tenants, 4 medlemskap, 2 team, 1 kund, 0 samtal, 0 avtal, 0 e-postmeddelanden. Noll rader i
+`outbox_jobs` med `failed`/`dead_letter`, noll `provider_webhook_events` med `failed`, och noll
+profiler utan tenantmedlemskap.

@@ -80,3 +80,11 @@ Se `docs/PRODUCTION_READINESS.md` för fullständig formulering och verifierings
   signeringslänk på en domän som inte finns i DNS. Måste sättas till `https://kundexa.se`.
 - Live dial/CDR/recording mot Rinkel och skarpt Resend-utskick kräver testnummer respektive
   testmottagare och är fortsatt `NOT RUN`.
+- Rinkel-kontot har ingen device: leverantörens payload för `hekmat.h@gridex.se` har
+  `"deviceId": null`, `platform_rinkel_devices` är tom och `platform_rinkel_capabilities` visar
+  `dial=false`, `dial_endpoint_reachable=false`, `webhooks=false` trots `api_access=true`.
+  `POST /dial` kräver `deviceId`, så dialern kan inte ringa förrän en device är provisionerad och
+  abonnemanget bekräftat täcka dial och webhooks. Koden failar korrekt stängt.
+- De fem webhookarna är registrerade mot `https://kundexa.se/...`, men alla fem har
+  `last_error_code='RINKEL_INVALID_REQUEST'` och `test_received_at=null`. Eftersom apex i dag
+  308-redirectar till `www` möter varje leverans en redirect innan den når appen.
