@@ -175,8 +175,35 @@ if (bareAuthUidPolicies.rows.length > 0) {
   );
 }
 
+// Supabase installs pgcrypto in `extensions`, so a SECURITY DEFINER function that
+// calls it needs that schema on its fixed search_path. This harness defines its own
+// `public.digest`, so a missing search_path entry runs fine here and fails only on
+// the hosted project — which is how a `create or replace` silently reverted the
+// hardening on the call-reservation path and broke every outbound call. Assert the
+// invariant against proconfig so replay catches it instead of production.
+const pgcryptoSearchPath = await db.query(`
+  select p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' as fn
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public'
+    and p.prosecdef
+    and pg_get_functiondef(p.oid) ~ '(digest|hmac|gen_salt|crypt|pgp_sym_)\\('
+    and not exists (
+      select 1 from unnest(coalesce(p.proconfig, array[]::text[])) c
+      where c like 'search_path=%' and c like '%extensions%'
+    )
+  order by 1
+`);
+if (pgcryptoSearchPath.rows.length > 0) {
+  throw new Error(
+    `SECURITY DEFINER functions using pgcrypto without 'extensions' on their search_path: ${
+      pgcryptoSearchPath.rows.map((row) => row.fn).join(", ")
+    }`,
+  );
+}
+
 console.log(`Executed ${migrations.length} migrations: ${counts.tables} public tables, ${counts.functions} public functions, ${counts.policies} RLS policies.`);
-console.log(`Privilege boundary verified: zero anon-executable SECURITY DEFINER functions, zero per-row auth.uid() policies.`);
+console.log(`Privilege boundary verified: zero anon-executable SECURITY DEFINER functions, zero per-row auth.uid() policies, zero pgcrypto callers without the extensions search path.`);
 
 // Execute the canonical data path, not only DDL parsing: due scheduling -> lease ->
 // raw-before-parse -> source facts/master resolution -> licensed search -> segment snapshot.
@@ -1162,6 +1189,11 @@ console.log("Executed one-click Rinkel number assignment runtime paths: scalar p
 // silently pass.
 await db.exec(`
   select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
+  -- Pin the contact-hours window so these probes do not depend on the wall clock.
+  insert into public.tenant_settings(tenant_id,compliance)
+  values('00000000-0000-0000-0000-000000000001',
+    '{"allowed_call_isodow":[1,2,3,4,5,6,7],"call_start_local":"00:00","call_end_local":"23:59"}'::jsonb)
+  on conflict(tenant_id) do update set compliance=excluded.compliance;
   insert into public.customers(
     id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by
   ) values(
@@ -1198,6 +1230,132 @@ if (withConsent.rows[0].policy.allowed !== false || withConsent.rows[0].policy.r
   throw new Error(`NIX control did not stand on its own: ${JSON.stringify(withConsent.rows[0].policy)}`);
 }
 console.log("Executed contact-policy legal-basis runtime path: missing consent refused, recorded consent accepted, NIX control independent.");
+
+// NIX screening mode. A tenant that sources pre-screened numbers must be able to
+// call them, while a number known to be listed stays refused in every mode.
+const setCompliance = (patch) => db.exec(`
+  update public.tenant_settings
+  set compliance = compliance || '${patch}'::jsonb
+  where tenant_id='00000000-0000-0000-0000-000000000001';
+`);
+const policyFor = async (customerId) => (await db.query(
+  `select public.evaluate_contact_policy_for_tenant(
+     '00000000-0000-0000-0000-000000000001',$1,'call','direct_marketing') as policy`,
+  [customerId],
+)).rows[0].policy;
+
+await setCompliance('{"nix_screening_mode":"pre_screened_source"}');
+const preScreened = await policyFor("00000000-0000-0000-0000-000000000080");
+if (preScreened.allowed !== true) {
+  throw new Error(`A pre-screened source must not require an in-app NIX result: ${JSON.stringify(preScreened)}`);
+}
+
+// The legal-basis gate still stands on its own for a card with no basis at all.
+await db.exec(`
+  insert into public.customers(
+    id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by
+  ) values(
+    '00000000-0000-0000-0000-000000000082','00000000-0000-0000-0000-000000000001','person','prospect',
+    'Screening Probe','+46700000182',null,null,'00000000-0000-0000-0000-000000000002'
+  );
+`);
+const withoutBasis = await policyFor("00000000-0000-0000-0000-000000000082");
+if (withoutBasis.reason !== "legal_basis_required") {
+  throw new Error(`Relaxing NIX must not relax the legal-basis gate: ${JSON.stringify(withoutBasis)}`);
+}
+
+// A tenant-wide documented basis satisfies it without touching every card.
+await setCompliance('{"default_marketing_legal_basis":"berättigat intresse, tvättad källa"}');
+const withTenantBasis = await policyFor("00000000-0000-0000-0000-000000000082");
+if (withTenantBasis.allowed !== true) {
+  throw new Error(`A tenant-wide legal basis was not accepted: ${JSON.stringify(withTenantBasis)}`);
+}
+
+// A recorded listing refuses the call even in the relaxed mode.
+await db.exec(`
+  insert into public.nix_checks(tenant_id,customer_id,phone_e164,source,result,checked_at,valid_until)
+  values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000082','+46700000182',
+    'seller_reported','listed',now(),now()+interval '1 year');
+`);
+const listedInRelaxedMode = await policyFor("00000000-0000-0000-0000-000000000082");
+if (listedInRelaxedMode.allowed !== false || listedInRelaxedMode.reason !== "nix_listed") {
+  throw new Error(`A known listing must refuse the call in every mode: ${JSON.stringify(listedInRelaxedMode)}`);
+}
+
+// A seller report is durable and keyed on the number: a different card created
+// later for the same number is refused too.
+await db.exec(`
+  insert into public.customers(
+    id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by
+  ) values(
+    '00000000-0000-0000-0000-000000000083','00000000-0000-0000-0000-000000000001','person','prospect',
+    'Seller Report Probe','+46700000183',null,'berättigat intresse','00000000-0000-0000-0000-000000000002'
+  );
+  select public.apply_call_block_disposition(
+    '00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000083',
+    'nix_listed',null,'00000000-0000-0000-0000-000000000002','verify-runtime');
+  insert into public.customers(
+    id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by
+  ) values(
+    '00000000-0000-0000-0000-000000000084','00000000-0000-0000-0000-000000000001','person','prospect',
+    'Same Number Later','+46700000183',null,'berättigat intresse','00000000-0000-0000-0000-000000000002'
+  );
+`);
+const reported = await db.query(`select
+  (select count(*)::int from public.nix_checks
+    where phone_e164='+46700000183' and result='listed' and source='seller_reported') as nix_rows,
+  (select count(*)::int from public.compliance_blocks
+    where phone_e164='+46700000183' and active and 'call'=any(channels)) as blocks,
+  (select do_not_call from public.customers where id='00000000-0000-0000-0000-000000000083') as blocked`);
+if (Number(reported.rows[0].nix_rows) !== 1 || Number(reported.rows[0].blocks) !== 1 || reported.rows[0].blocked !== true) {
+  throw new Error(`Seller-reported NIX did not record durable evidence: ${JSON.stringify(reported.rows[0])}`);
+}
+const laterCard = await policyFor("00000000-0000-0000-0000-000000000084");
+if (laterCard.allowed !== false) {
+  throw new Error(`A number reported as listed was callable again on a new card: ${JSON.stringify(laterCard)}`);
+}
+
+// The reservation path carries its own NIX control keyed on the dialled number.
+// It must agree with the contact policy: a company is never subject to the consumer
+// register, and a private individual follows the tenant's screening mode.
+const exactPolicyFor = async (customerId, phone) => (await db.query(
+  `select public.evaluate_exact_call_policy(
+     '00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000002',
+     $1,null,$2,null,null,null,null) as policy`,
+  [customerId, phone],
+)).rows[0].policy;
+
+await db.exec(`
+  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
+  insert into public.customers(
+    id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by
+  ) values(
+    '00000000-0000-0000-0000-000000000085','00000000-0000-0000-0000-000000000001','company','prospect',
+    'Företagsprospekt AB','+46700000185',null,null,'00000000-0000-0000-0000-000000000002'
+  );
+`);
+await setCompliance('{"nix_screening_mode":"provider_check"}');
+const companyUnderStrictMode = await exactPolicyFor("00000000-0000-0000-0000-000000000085", "+46700000185");
+if (companyUnderStrictMode.allowed !== true) {
+  throw new Error(`A company must not need a consumer-register result: ${JSON.stringify(companyUnderStrictMode)}`);
+}
+const personUnderStrictMode = await exactPolicyFor("00000000-0000-0000-0000-000000000080", "+46700000180");
+if (personUnderStrictMode.reason !== "nix_check_required" && personUnderStrictMode.reason !== "target_nix_check_required") {
+  throw new Error(`A private individual must still be screened in the default mode: ${JSON.stringify(personUnderStrictMode)}`);
+}
+await setCompliance('{"nix_screening_mode":"pre_screened_source"}');
+const personUnderPreScreened = await exactPolicyFor("00000000-0000-0000-0000-000000000080", "+46700000180");
+if (personUnderPreScreened.allowed !== true) {
+  throw new Error(`The reservation path ignored the screening mode: ${JSON.stringify(personUnderPreScreened)}`);
+}
+
+// Restore the strict default so later probes see unchanged behaviour.
+await setCompliance('{"nix_screening_mode":"provider_check"}');
+const strictAgain = await policyFor("00000000-0000-0000-0000-000000000080");
+if (strictAgain.reason !== "nix_check_required") {
+  throw new Error(`The strict default did not survive the round trip: ${JSON.stringify(strictAgain)}`);
+}
+console.log("Executed NIX screening runtime path: pre-screened source callable, tenant-wide legal basis accepted, known listing refused in every mode, seller report durable per number.");
 
 // Creating a customer goes through PostgREST's `.insert().select()`, which is
 // `INSERT ... RETURNING`. SELECT policies apply to RETURNING, so a policy that

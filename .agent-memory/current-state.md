@@ -211,3 +211,27 @@ rättslig grund plus giltig NIX-kontroll, vilket är juridik och inte ett formul
   formulär på kortet är tillagda, inklusive `legal_basis` som är det som låser upp B2C-samtal.
 
 `.span-2` användes av compliance- och kundformulären men saknades i CSS; nu definierad.
+
+## 2026-09-07 — NIX som säljarrapporterat undantag, och två blockerare till
+
+Tenanten köper NIX-tvättade nummerkällor. Modellen som krävde en egen `nix_checks`-rad före varje
+B2C-samtal gjorde varje sådant samtal omöjligt. `tenant_settings.compliance` styr nu:
+
+- `nix_screening_mode`: `provider_check` (default, oförändrat) eller `pre_screened_source`.
+- `default_marketing_legal_basis`: en rättslig grund som gäller kunder utan egen grund på kortet.
+
+En **registrerad** notering som inte är `not_listed` spärrar samtalet i båda lägena; läget styr bara
+om ett *okontrollerat* nummer får ringas. Säljarens `nix_listed`-utfall skriver `nix_checks`,
+`customers.do_not_call` och en `compliance_blocks`-rad på numret, så spärren följer numret även till
+ett kundkort som skapas senare. `apply_call_block_disposition` är den enda definitionen och delas av
+manuell dialer och listdialer.
+
+Två blockerare hittades genom att torrköra den riktiga reservations-RPC:n mot produktionsdata:
+
+- **FAILURE-0040**: pgcrypto-search_path hade tyst reverterats; varje utgående samtal hade fallit på
+  `digest(text, unknown) does not exist`. PGlite maskerade det via sin egen `public.digest`. Ny
+  invariant i `verify-sql.mjs` kontrollerar `proconfig` direkt.
+- **FAILURE-0041**: reservationens NIX-grind gällde även företag, till skillnad från contact policy.
+
+Efter fixarna reserverar `rinkel_reserve_platform_outbound_call_v2` ett riktigt samtal mot Gridex
+produktion (device `6a9e8624…`, nummer `6a6b1c70…`); verifieringen rullades tillbaka.

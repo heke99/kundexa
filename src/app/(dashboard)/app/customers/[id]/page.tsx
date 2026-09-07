@@ -28,7 +28,9 @@ export default async function CustomerDetail({ params, searchParams }: { params:
   if (!customer) notFound();
   return <>
     <Link href="/app/customers" className="muted back-link"><ArrowLeft size={15} /> Till kunder</Link>
-    <PageHeader title={customer.display_name} description={`${customer.customer_type === "company" ? "Företag" : "Privatperson"} · ${customer.lifecycle}`} action={<div className="toolbar-right"><Link className="button button-secondary" href={`/app/dialer?customer=${customer.id}`}><Phone size={16} /> Ring</Link><Link className="button button-secondary" href={`/app/contracts?customer=${customer.id}`}><FileSignature size={16} /> Skapa avtal</Link></div>} />
+    <PageHeader title={customer.display_name} description={`${customer.customer_type === "company" ? "Företag" : "Privatperson"} · ${customer.lifecycle}`} action={<div className="toolbar-right">{customer.phone_e164 && !customer.do_not_call
+      ? <Link className="button button-primary" href={`/app/dialer?customer=${customer.id}`}><Phone size={16} /> Ring {customer.phone_e164}</Link>
+      : <span className="badge badge-warning">{customer.do_not_call ? "Spärrad för samtal" : "Telefonnummer saknas"}</span>}<Link className="button button-secondary" href={`/app/contracts?customer=${customer.id}`}><FileSignature size={16} /> Skapa avtal</Link></div>} />
     {query.error ? <p className="form-error">{query.error}</p> : null}
     {query.message ? <div className="notice" style={{ marginBottom: 16 }}>{query.message}</div> : null}
     {query.callback ? <div className="notice" style={{ marginBottom: 16 }}>Återkomsten är skapad och syns i säljarens eller teamets återkomstkö.</div> : null}
@@ -40,11 +42,13 @@ export default async function CustomerDetail({ params, searchParams }: { params:
           <CardHeader><h2>Kunduppgifter</h2><Badge>{customer.organization_number || customer.personal_identity_number ? "Identifierad" : "Ofullständig"}</Badge></CardHeader>
           <CardContent>
             <p className="muted" style={{ marginBottom: 14 }}>
-              Kortet behöver bara namn och telefonnummer för att kunna ringas. Fyll i resten här inför registrering av kunden.
+              Namn och telefonnummer räcker för att ringa. Adress, e-post, företagsnamn och organisations- eller
+              personnummer behövs först när kunden ska registreras.
             </p>
             <form action={updateCustomerDetails} className="form-grid">
               <input type="hidden" name="customer_id" value={customer.id} />
-              <Field label="Namn / företagsnamn" name="display_name" defaultValue={customer.display_name} required />
+              <Field label="Namn" name="display_name" defaultValue={customer.display_name} required hint="Visas som kundkortets rubrik." />
+              <Field label="Företagsnamn" name="company_name" defaultValue={customer.company_name ?? ""} />
               <SelectField label="Kundtyp" name="customer_type" defaultValue={customer.customer_type}>
                 <option value="company">Företag</option>
                 <option value="person">Privatperson</option>

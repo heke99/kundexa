@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
-import { configureNixProvider, createDataSubjectRequest, createLegalHold, executeDataSubjectErasure, executeDataSubjectRestriction, exportDataSubjectRequest, queueCustomerNixCheck, releaseLegalHold, setNixProviderStatus, verifyDataSubjectIdentity } from "@/app/actions/admin";
+import { configureNixProvider, saveComplianceScreeningPolicy, createDataSubjectRequest, createLegalHold, executeDataSubjectErasure, executeDataSubjectRestriction, exportDataSubjectRequest, queueCustomerNixCheck, releaseLegalHold, setNixProviderStatus, verifyDataSubjectIdentity } from "@/app/actions/admin";
 
 type SearchParams = Promise<{ message?: string; error?: string }>;
 
@@ -15,7 +15,7 @@ export default async function CompliancePage({ searchParams }: { searchParams: S
   const admin = isAdmin(context.role);
   const params = await searchParams;
   const s = await createClient();
-  const [blocks, configurations, jobs, checks, candidates, requests, holds] = await Promise.all([
+  const [blocks, configurations, jobs, checks, candidates, requests, holds, settings] = await Promise.all([
     s.from("compliance_blocks").select("*,customers(display_name)").eq("active", true).order("created_at", { ascending: false }).limit(100),
     s.from("nix_provider_configurations").select("id,name,status,method,endpoint_template,allowed_domains,validity_days,updated_at").order("updated_at", { ascending: false }),
     s.from("nix_check_jobs").select("id,status,phone_e164,attempts,last_error,created_at,completed_at,customers(display_name)").order("created_at", { ascending: false }).limit(100),
@@ -23,12 +23,45 @@ export default async function CompliancePage({ searchParams }: { searchParams: S
     s.from("campaign_contact_candidates").select("campaign_id,customer_id,status,policy_reason,evaluated_at,campaigns(name),customers(display_name)").order("updated_at", { ascending: false }).limit(100),
     s.from("data_subject_requests").select("id,request_type,subject_reference,status,due_at,identity_verified_at,result_storage_path,processing_notes,created_at,customers(display_name)").order("created_at", { ascending: false }).limit(100),
     s.from("legal_holds").select("id,customer_id,reason,scope,active,starts_at,ends_at,customers(display_name)").eq("active", true).order("created_at", { ascending: false }).limit(100),
+    s.from("tenant_settings").select("compliance").maybeSingle(),
   ]);
+  const compliance = (settings.data?.compliance ?? {}) as Record<string, unknown>;
+  const screeningMode = typeof compliance.nix_screening_mode === "string" ? compliance.nix_screening_mode : "provider_check";
+  const defaultLegalBasis = typeof compliance.default_marketing_legal_basis === "string" ? compliance.default_marketing_legal_basis : "";
   const data = blocks.data ?? [];
   return <>
     <PageHeader title="Spärrar och compliance" description="Central kontroll före samtal, SMS, e-post, kampanjtilldelning, automation och export." />
     {params.message ? <p className="notice success">{params.message}</p> : null}
     {params.error ? <p className="notice danger">{params.error}</p> : null}
+
+    {admin ? <Card>
+      <CardHeader>
+        <h2><ShieldCheck size={17} /> Screeningpolicy</h2>
+        <Badge className={screeningMode === "pre_screened_source" ? "badge-info" : "badge-success"}>
+          {screeningMode === "pre_screened_source" ? "Tvättad källa" : "Kontroll i Kundexa"}
+        </Badge>
+      </CardHeader>
+      <CardContent>
+        <form action={saveComplianceScreeningPolicy} className="form-grid">
+          <label className="span-2">NIX-kontroll
+            <select name="nix_screening_mode" defaultValue={screeningMode}>
+              <option value="provider_check">Kundexa kontrollerar varje privatnummer mot NIX-leverantören</option>
+              <option value="pre_screened_source">Numren är NIX-tvättade före import — säljaren rapporterar undantag</option>
+            </select>
+          </label>
+          <label className="span-2">Rättslig grund för marknadsföring
+            <input name="default_marketing_legal_basis" defaultValue={defaultLegalBasis} maxLength={500}
+              placeholder="t.ex. berättigat intresse, NIX-tvättad inköpt källa" />
+          </label>
+          <p className="muted span-2">
+            Gäller privatpersoner. Ett nummer som är känt NIX-registrerat spärras i båda lägena — läget styr bara
+            om ett <em>okontrollerat</em> nummer får ringas. Den rättsliga grunden här gäller kunder som saknar egen
+            grund på kortet; ett registrerat samtycke väger alltid tyngre. Krävs för läget &quot;tvättad källa&quot;.
+          </p>
+          <div className="span-2"><button className="button" type="submit">Spara screeningpolicy</button></div>
+        </form>
+      </CardContent>
+    </Card> : null}
 
     {admin ? <Card>
       <CardHeader><h2><ShieldCheck size={17} /> NIX-leverantör</h2><Badge>{configurations.data?.length ?? 0}</Badge></CardHeader>
