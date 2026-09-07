@@ -33,7 +33,7 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
       <div className="phone-panel"><RinkelDialer customers={selectedCustomer ? [selectedCustomer] : []} initialCustomer={selectedCustomer?.id} callbackActivityId={params.callback} callerIdOptions={(callerIdData ?? []) as Array<{ allocationId: string; number: string; displayName: string | null; isDefault?: boolean; accessSource?: "user" | "team" | "tenant" }>} /></div>
       <div className="grid">
         <Card><CardHeader><h2><Plus size={17} /> Ring ett nytt nummer</h2></CardHeader><CardContent>
-          <p className="muted">Numret matchas först mot befintliga kundkort. Finns ingen träff skapas ett enda nytt prospekt, som öppnas direkt i dialern.</p>
+          <p className="muted">Numret matchas först mot befintliga kundkort. Finns en träff öppnas det kundkortet, annars skapas ett enda nytt prospekt och dess kundkort öppnas. Därifrån ringer du direkt.</p>
           <form action={createManualProspect} className="form-grid">
             <Field label="Namn eller nummer" name="display_name" placeholder="Nytt prospekt" />
             <Field label="Telefonnummer" name="phone" type="tel" required placeholder="070 123 45 67" />
@@ -48,8 +48,8 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
             <button className="button button-secondary" style={{ alignSelf: "end" }}>Matcha och öppna</button>
             <p className="muted span-2">
               Bara namn och nummer behövs för att ringa. Organisationsnummer, personnummer, e-post och adress fylls i på
-              kundkortet efteråt, inför registrering. Marknadsföringssamtal till en privatperson kräver dessutom rättslig
-              grund och en giltig NIX-kontroll; företagssamtal gör inte det.
+              kundkortet efteråt, inför registrering. Är numret nixat trycker du &quot;Nixat nummer&quot; efter samtalet, så
+              spärras det permanent.
             </p>
           </form>
         </CardContent></Card>
