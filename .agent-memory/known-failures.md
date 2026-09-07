@@ -271,3 +271,43 @@ stand on its own. Fixed in `202609070002` by coalescing the permission status. R
 still fires independently.
 
 Found while diagnosing a seller-visible `DIAL_PERMISSION_DENIED`, not by the compliance surface itself.
+
+## FAILURE-0038 — Creating a customer was impossible: RLS policy re-queried its own table — FIXED 2026-09-07
+
+`customers_scoped_select` guarded reads with `can_access_customer(id)`, and that function establishes
+access by selecting the row back out of `public.customers`. `contracts_scoped_select` /
+`can_access_contract` had the same shape.
+
+PostgreSQL applies SELECT policies to `INSERT ... RETURNING`, and a STABLE function evaluates against
+the statement's snapshot, in which the row being inserted does not yet exist. The lookup inside the
+policy therefore found nothing and the insert failed with
+
+    new row violates row-level security policy for table "customers"
+
+even for the tenant owner who was also the creator and the assignee. Proven by isolating the clause:
+the same INSERT without RETURNING succeeded, and `can_access_customer` on the new id returned true in
+the next statement. Every application write goes through PostgREST's `.insert().select()`, which always
+adds RETURNING, so the "Ny kund" form could never create a customer.
+
+Fixed in `202609070003`: the policies now evaluate the candidate row's own columns via
+`can_access_customer_row` / `can_access_contract_row`, and the id-based functions delegate to the same
+helpers so the two forms cannot drift. Authorization rules are unchanged.
+
+The dialer's own creation path was unaffected because it goes through the SECURITY DEFINER RPC
+`create_or_match_manual_prospect`, which is why prospects could be created there but not from the
+customer list.
+
+Only these two tables had the self-referential shape; every other policy referencing `can_access_*`
+passes a foreign key to an already-existing row.
+
+## FAILURE-0039 — The customer card was read-only — FIXED 2026-09-07
+
+`/app/customers/[id]` rendered `organization_number`, `personal_identity_number`, `email`, address and
+`legal_basis`, but no update action existed anywhere in the codebase, so nothing could be filled in
+after creation. That made the intended flow — create a minimal card to call, complete it before
+registering the customer — impossible, and in particular made `legal_basis` unsettable, which is what
+marketing calls to private individuals depend on.
+
+Added `updateCustomerDetails` plus a completion form on the card. The identity field is one input; the
+checksum decides whether it is stored as an organisation number or a personal identity number, and a
+company is refused a personal identity number.

@@ -1199,6 +1199,59 @@ if (withConsent.rows[0].policy.allowed !== false || withConsent.rows[0].policy.r
 }
 console.log("Executed contact-policy legal-basis runtime path: missing consent refused, recorded consent accepted, NIX control independent.");
 
+// Creating a customer goes through PostgREST's `.insert().select()`, which is
+// `INSERT ... RETURNING`. SELECT policies apply to RETURNING, so a policy that
+// establishes access by selecting the row back out of its own table can never
+// pass: a STABLE function cannot see the row the statement is still inserting.
+//
+// RLS is only enforced for a non-superuser, and `set local role` lives for one
+// transaction, so the whole probe runs inside a single DO block.
+// Supabase grants table privileges to `authenticated`; this harness creates the
+// role bare, so grant what the probe needs before enforcing RLS on it.
+await db.exec(`
+  grant usage on schema public to authenticated;
+  grant select, insert, update on public.customers to authenticated;
+`);
+await db.query(`
+do $probe$
+declare
+  v_id uuid;
+  v_foreign_visible integer;
+  v_owner_visible integer;
+begin
+  perform set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',true);
+  perform set_config('request.jwt.claim.role','authenticated',true);
+  set local role authenticated;
+
+  insert into public.customers(
+    tenant_id,customer_type,display_name,phone_e164,lifecycle,created_by,assigned_user_id
+  ) values(
+    '00000000-0000-0000-0000-000000000001','company','Returning Probe','+46700000181','prospect',
+    '00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000002'
+  ) returning id into v_id;
+  if v_id is null then
+    raise exception 'INSERT ... RETURNING on customers was blocked by the select policy';
+  end if;
+
+  select count(*) into v_owner_visible from public.customers where id=v_id;
+  if v_owner_visible <> 1 then
+    raise exception 'The creating tenant owner could not read the customer back';
+  end if;
+
+  -- A seller with no claim on the row must still be refused.
+  perform set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000020',true);
+  select count(*) into v_foreign_visible from public.customers where id=v_id;
+  if v_foreign_visible <> 0 then
+    raise exception 'An unrelated seller could read a customer they have no claim on';
+  end if;
+
+  reset role;
+end
+$probe$;
+`);
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
+console.log("Executed customer/contract RLS runtime path: INSERT ... RETURNING permitted for the creator, unrelated seller still refused.");
+
 // Performance/scraper operations runtime path: aggregated RPCs, atomic ingestion
 // quota reservation, admin run controls, dead-letter re-drive and duplicate-run guards.
 await db.exec(`

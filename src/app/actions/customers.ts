@@ -5,11 +5,112 @@ import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { getAppContext } from "@/lib/auth";
 import { normalizePhone } from "@/lib/domain/phone";
+import { normalizeOrganizationNumber } from "@/lib/imports/organization-number";
 import { zonedLocalDateTimeToIso } from "@/lib/domain/time";
 import { assertPermission } from "@/lib/permissions";
 
 const value=(fd:FormData,key:string)=>String(fd.get(key)??"").trim();
 export async function createCustomer(fd:FormData){const ctx=await getAppContext(); assertPermission(ctx.role,"customers.write"); const schema=z.object({type:z.enum(["person","company"]),displayName:z.string().min(2),email:z.union([z.email(),z.literal("")]),phone:z.string().optional(),city:z.string().optional(),lifecycle:z.enum(["prospect","lead","customer"])}); const parsed=schema.safeParse({type:value(fd,"customer_type"),displayName:value(fd,"display_name"),email:value(fd,"email"),phone:value(fd,"phone"),city:value(fd,"city"),lifecycle:value(fd,"lifecycle")}); if(!parsed.success) redirect('/app/customers?error=Kontrollera kunduppgifterna'); let phone:string|null=null; if(parsed.data.phone){try{phone=normalizePhone(parsed.data.phone)}catch{redirect('/app/customers?error=Ogiltigt telefonnummer')}} const supabase=await createClient(); const {data:status}=await supabase.from('customer_statuses').select('id').eq('key','new').single(); const {data,error}=await supabase.from('customers').insert({tenant_id:ctx.tenantId,customer_type:parsed.data.type,display_name:parsed.data.displayName,email:parsed.data.email||null,phone_e164:phone,city:parsed.data.city||null,lifecycle:parsed.data.lifecycle,status_id:status?.id,created_by:ctx.userId,assigned_user_id:ctx.userId}).select('id').single(); if(error) redirect(`/app/customers?error=${encodeURIComponent(error.message)}`); await supabase.from('audit_logs').insert({tenant_id:ctx.tenantId,actor_user_id:ctx.userId,action:'customer.created',entity_type:'customer',entity_id:data.id,after_data:{display_name:parsed.data.displayName}}); revalidatePath('/app/customers'); redirect(`/app/customers/${data.id}`)}
+// Registering a customer needs identity and contact details, but calling one does
+// not: the card is created with a name and a number, and everything else is filled
+// in here afterwards. Only fields present in the submission are written, so a
+// partially filled form never clears data the seller did not touch.
+export async function updateCustomerDetails(fd: FormData) {
+  const ctx = await getAppContext();
+  assertPermission(ctx.role, "customers.write");
+  const customerId = value(fd, "customer_id");
+  if (!customerId) redirect("/app/customers?error=Kundens id saknas");
+  // Explicitly typed so TypeScript treats it as never-returning and narrows after each guard.
+  const fail: (message: string) => never = (message) => redirect(`/app/customers/${customerId}?error=${encodeURIComponent(message)}`);
+
+  const schema = z.object({
+    displayName: z.string().min(2, "Namnet måste vara minst två tecken"),
+    customerType: z.enum(["person", "company"]),
+    lifecycle: z.enum(["prospect", "lead", "customer", "former_customer"]),
+    email: z.union([z.email("Ogiltig e-postadress"), z.literal("")]),
+  });
+  const parsed = schema.safeParse({
+    displayName: value(fd, "display_name"),
+    customerType: value(fd, "customer_type"),
+    lifecycle: value(fd, "lifecycle"),
+    email: value(fd, "email"),
+  });
+  if (!parsed.success) fail(parsed.error.issues[0]?.message ?? "Kontrollera kunduppgifterna");
+  const details = parsed.data;
+
+  const optionalText = (field: string) => value(fd, field) || null;
+  const optionalPhone = (field: string) => {
+    const raw = value(fd, field);
+    if (!raw) return null;
+    try { return normalizePhone(raw); }
+    catch { return fail(`Ogiltigt telefonnummer: ${raw}`); }
+  };
+
+  // A personal identity number is never stored in the organisation-number field
+  // and vice versa; the checksum decides which of the two it is.
+  const identity = value(fd, "identity_number");
+  let organizationNumber: string | null = null;
+  let personalIdentityNumber: string | null = null;
+  if (identity) {
+    const normalized = normalizeOrganizationNumber(identity, { allowPerson: details.customerType === "person" });
+    if (!normalized.valid || !normalized.canonical) {
+      fail(details.customerType === "person"
+        ? "Person- eller organisationsnumret är ogiltigt."
+        : "Organisationsnumret är ogiltigt. Sätt kundtypen till privatperson först om det är ett personnummer.");
+    }
+    if (details.customerType === "company" && normalized.kind !== "company") {
+      fail("Ett företag måste ha ett organisationsnummer, inte ett personnummer.");
+    }
+    if (normalized.kind === "person") personalIdentityNumber = normalized.canonical;
+    else organizationNumber = normalized.canonical;
+  }
+
+  const update = {
+    display_name: details.displayName,
+    customer_type: details.customerType,
+    lifecycle: details.lifecycle,
+    email: details.email || null,
+    phone_e164: optionalPhone("phone"),
+    alternate_phone_e164: optionalPhone("alternate_phone"),
+    organization_number: organizationNumber,
+    personal_identity_number: personalIdentityNumber,
+    address_line1: optionalText("address_line1"),
+    postal_code: optionalText("postal_code"),
+    city: optionalText("city"),
+    industry: optionalText("industry"),
+    website: optionalText("website"),
+    legal_basis: optionalText("legal_basis"),
+  };
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.from("customers")
+    .update(update)
+    .eq("id", customerId)
+    .select("id")
+    .maybeSingle();
+  if (error) fail(error.message);
+  if (!data) fail("Kunden kunde inte uppdateras. Kontrollera att du har åtkomst till kundkortet.");
+
+  const { error: auditError } = await supabase.from("audit_logs").insert({
+    tenant_id: ctx.tenantId,
+    actor_user_id: ctx.userId,
+    action: "customer.details_updated",
+    entity_type: "customer",
+    entity_id: customerId,
+    after_data: {
+      customer_type: details.customerType,
+      lifecycle: details.lifecycle,
+      has_identity_number: Boolean(identity),
+      has_legal_basis: Boolean(update.legal_basis),
+    },
+  });
+  if (auditError) fail("Uppgifterna sparades men auditloggen kunde inte skrivas.");
+
+  revalidatePath(`/app/customers/${customerId}`);
+  revalidatePath("/app/customers");
+  redirect(`/app/customers/${customerId}?message=${encodeURIComponent("Kunduppgifterna är sparade.")}`);
+}
+
 export async function addNote(fd:FormData){const ctx=await getAppContext(); assertPermission(ctx.role,"customers.write"); const customerId=value(fd,'customer_id'); const body=value(fd,'body'); if(!body)return; const visibility=value(fd,'visibility')||'team'; const noteType=value(fd,'note_type')||'general'; const supabase=await createClient(); const {error}=await supabase.from('notes').insert({tenant_id:ctx.tenantId,customer_id:customerId,body,visibility,note_type:noteType,is_pinned:fd.get('is_pinned')==='on',created_by:ctx.userId}); if(error)redirect(`/app/customers/${customerId}?error=${encodeURIComponent(error.message)}`); revalidatePath(`/app/customers/${customerId}`)}
 export async function updateNote(fd:FormData){const ctx=await getAppContext();assertPermission(ctx.role,"customers.write");const customerId=value(fd,"customer_id");const noteId=value(fd,"note_id");const body=value(fd,"body");if(!body)redirect(`/app/customers/${customerId}?error=Anteckningen får inte vara tom`);const supabase=await createClient();const {error}=await supabase.from("notes").update({body,visibility:value(fd,"visibility")||"team",is_pinned:fd.get("is_pinned")==="on"}).eq("id",noteId).eq("customer_id",customerId);if(error)redirect(`/app/customers/${customerId}?error=${encodeURIComponent(error.message)}`);revalidatePath(`/app/customers/${customerId}`);redirect(`/app/customers/${customerId}?note=updated`)}
 export async function archiveNote(fd:FormData){const ctx=await getAppContext();assertPermission(ctx.role,"customers.write");const customerId=value(fd,"customer_id");const noteId=value(fd,"note_id");const supabase=await createClient();const {error}=await supabase.from("notes").update({archived_at:new Date().toISOString()}).eq("id",noteId).eq("customer_id",customerId);if(error)redirect(`/app/customers/${customerId}?error=${encodeURIComponent(error.message)}`);revalidatePath(`/app/customers/${customerId}`);redirect(`/app/customers/${customerId}?note=archived`)}

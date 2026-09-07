@@ -199,3 +199,15 @@ Två faktiska kodfel åtgärdades:
 Kundkortet kräver redan bara namn och typ vid skapande — organisationsnummer, personnummer, e-post och
 ort är valfria och kan fyllas i efteråt. Det som faktiskt krävs för att *ringa* en privatperson är
 rättslig grund plus giltig NIX-kontroll, vilket är juridik och inte ett formulärkrav.
+
+## 2026-09-07 — kundkortet: två blockerande fel
+
+- **FAILURE-0038**: `customers_scoped_select` anropade `can_access_customer(id)`, som läser tillbaka
+  raden ur samma tabell. SELECT-policyer gäller för `INSERT ... RETURNING`, och en `STABLE`-funktion
+  ser inte raden satsen håller på att skapa. Ingen kund kunde skapas från "Ny kund". Dialerns
+  skapande fungerade eftersom det går via SECURITY DEFINER-RPC:n `create_or_match_manual_prospect`.
+  Policyerna för `customers` och `contracts` utvärderar nu radens egna kolumner.
+- **FAILURE-0039**: kundkortet saknade helt uppdateringsfunktion. `updateCustomerDetails` och ett
+  formulär på kortet är tillagda, inklusive `legal_basis` som är det som låser upp B2C-samtal.
+
+`.span-2` användes av compliance- och kundformulären men saknades i CSS; nu definierad.
