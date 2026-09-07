@@ -48,6 +48,12 @@ function publicTelephonyMessage(message: string) {
     .replace(/leverantör/gi, "telefonitjänst");
 }
 
+// Rinkel refuses a dial to the seller's own line, and the assigned caller-ID
+// number would loop back to the same trunk. The reservation refuses both before
+// any call row exists; say which number is the problem rather than "reservation
+// failed".
+const selfDialMessage = "Numret är säljarens eget telefonnummer eller det utgående numret. Telefonitjänsten kan inte ringa den egna linjen — ange kundens nummer i stället.";
+
 // The reservation raises `exact_call_policy_denied:<reason>`. Report which rule
 // actually stopped the call: "spärr- och samtyckesreglerna" is true but tells the
 // seller nothing about what to do next.
@@ -80,6 +86,7 @@ function callPolicyFailure(reason: string) {
     TARGET_PHONE_CONTACT_MISMATCH: { code: "CALL_TARGET_INVALID", message: "Telefonnumret hör inte till den valda kontaktpersonen.", status: 422 },
     CUSTOMER_ACCESS_DENIED: { code: "DIAL_PERMISSION_DENIED", message: "Du har inte åtkomst till den här kunden.", status: 403 },
     CALL_ROLE_NOT_PERMITTED: { code: "DIAL_PERMISSION_DENIED", message: "Din roll får inte ringa utgående samtal.", status: 403 },
+    SELF_DIAL_NOT_ALLOWED: { code: "SELF_DIAL_NOT_ALLOWED", message: selfDialMessage, status: 422 },
     LIST_CLAIM_NOT_OPERATIONAL: { code: "LEAD_RESERVATION_CONFLICT", message: "Leadreservationen är inte längre aktiv för den här säljaren.", status: 409 },
     CALLBACK_NOT_AVAILABLE: { code: "LEAD_RESERVATION_CONFLICT", message: "Återuppringningen är inte längre tillgänglig för dig.", status: 409 },
   };
@@ -106,6 +113,9 @@ function reservationFailure(rawMessage: string, databaseCode?: string | null) {
   // substring match further down.
   const policyReason = /EXACT_CALL_POLICY_DENIED:([A-Z0-9_]+)/.exec(normalized)?.[1];
   if (policyReason) return callPolicyFailure(policyReason);
+  if (normalized.includes("SELF_DIAL_NOT_ALLOWED")) {
+    return { code: "SELF_DIAL_NOT_ALLOWED", message: selfDialMessage, status: 422 };
+  }
   if (normalized.includes("RINKEL_PLATFORM_NOT_CONFIGURED") || normalized.includes("RINKEL_API_NOT_VERIFIED")) {
     return { code: "RINKEL_API_NOT_VERIFIED", message: "Telefoni är inte konfigurerad och verifierad av plattformsadministratören.", status: 409 };
   }
@@ -328,11 +338,14 @@ export async function POST(request: Request) {
         : safe.code === "RINKEL_AUTHENTICATION_ERROR" || safe.code === "RINKEL_FORBIDDEN" ? 502
           : safe.code === "RINKEL_RATE_LIMITED" ? 429
             : safe.code === "RINKEL_UPSTREAM_ERROR" || safe.code === "RINKEL_NETWORK_ERROR" || safe.code === "RINKEL_TIMEOUT" ? 503
-              : 409;
+              : safe.code === "RINKEL_DIALING_SELF" || safe.code === "RINKEL_DESTINATION_REJECTED" ? 422
+                : 409;
     console.error("dial_start_failed", {
       correlationId,
       callId: reserved?.callId ?? null,
       errorCode: safe.code,
+      // Redacted provider body; kept out of the seller-facing message.
+      providerDetail: providerFailure?.providerDetail ?? null,
       outcomeUnknown,
     });
     return apiJson(correlationId, {

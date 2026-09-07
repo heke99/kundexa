@@ -25,6 +25,8 @@ export type RinkelErrorCode =
   | "RINKEL_UPSTREAM_ERROR"
   | "RINKEL_SCHEMA_ERROR"
   | "RINKEL_INVALID_RESPONSE"
+  | "RINKEL_DIALING_SELF"
+  | "RINKEL_DESTINATION_REJECTED"
   | "RINKEL_UNKNOWN_ERROR";
 
 export class RinkelError extends Error {
@@ -34,6 +36,9 @@ export class RinkelError extends Error {
     public readonly status: number | null = null,
     public readonly retryable = false,
     public readonly outcomeUnknown = false,
+    // Redacted provider text kept for server logs only. Never surfaced to a
+    // seller: Rinkel's raw body is English JSON and means nothing in the UI.
+    public readonly providerDetail: string | null = null,
   ) {
     super(message);
     this.name = "RinkelError";
@@ -186,9 +191,46 @@ function safeProviderMessage(value: string) {
     .slice(0, 300);
 }
 
+// Rinkel reports validation failures as `{"errors":[{"id":"to","code":"..."}]}`.
+// Read the codes out so a rejected destination becomes an actionable message,
+// and so the raw provider body never reaches the seller.
+function providerErrorCodes(providerText: string): string[] {
+  try {
+    const parsed = JSON.parse(providerText) as unknown;
+    const errors = (parsed as JsonObject | null)?.errors;
+    if (!Array.isArray(errors)) return [];
+    return errors
+      .map((entry) => (entry as JsonObject | null)?.code)
+      .filter((code): code is string => typeof code === "string" && /^[A-Z0-9_]{1,64}$/.test(code));
+  } catch {
+    return [];
+  }
+}
+
 function errorForStatus(status: number, path: string, providerText: string): RinkelError {
   const message = safeProviderMessage(providerText || `HTTP ${status}`);
-  if (status === 400) return new RinkelError("RINKEL_INVALID_REQUEST", message, status);
+  if (status === 400) {
+    const codes = providerErrorCodes(providerText);
+    if (codes.includes("DIALING_SELF")) {
+      return new RinkelError(
+        "RINKEL_DIALING_SELF",
+        "Numret är säljarens eget nummer hos telefonitjänsten. Ett samtal kan inte ringas till den egna linjen.",
+        status, false, false, message,
+      );
+    }
+    if (codes.length) {
+      return new RinkelError(
+        "RINKEL_DESTINATION_REJECTED",
+        `Telefonitjänsten nekade samtalet (${codes.join(", ")}).`,
+        status, false, false, message,
+      );
+    }
+    return new RinkelError(
+      "RINKEL_INVALID_REQUEST",
+      "Telefonitjänsten avvisade samtalsunderlaget.",
+      status, false, false, message,
+    );
+  }
   if (status === 401) return new RinkelError("RINKEL_AUTHENTICATION_ERROR", "Rinkel API-nyckeln nekades.", status);
   if (status === 403) {
     const plan = path.startsWith("/webhooks");
@@ -200,7 +242,11 @@ function errorForStatus(status: number, path: string, providerText: string): Rin
   if (status === 404) return new RinkelError("RINKEL_NUMBER_NOT_FOUND", "Rinkel-resursen kunde inte hittas.", status);
   if (status === 429) return new RinkelError("RINKEL_RATE_LIMITED", "Rinkels anropsgräns är tillfälligt nådd.", status, true);
   if (status >= 500) return new RinkelError("RINKEL_UPSTREAM_ERROR", "Rinkel har ett tillfälligt serverfel.", status, true);
-  return new RinkelError("RINKEL_UNKNOWN_ERROR", message, status);
+  return new RinkelError(
+    "RINKEL_UNKNOWN_ERROR",
+    "Telefonitjänsten svarade med ett fel som Kundexa inte kunde tolka.",
+    status, false, false, message,
+  );
 }
 
 function joinUrl(baseUrl: string, path: string) {
@@ -756,14 +802,27 @@ export function assertRinkelTemporaryAudioUrl(value: string) {
   }
 }
 
-export function safeRinkelError(error: unknown): { code: RinkelErrorCode; message: string; retryable: boolean; outcomeUnknown: boolean } {
+export function safeRinkelError(error: unknown): {
+  code: RinkelErrorCode;
+  message: string;
+  retryable: boolean;
+  outcomeUnknown: boolean;
+  providerDetail: string | null;
+} {
   if (error instanceof RinkelError) {
-    return { code: error.code, message: error.message, retryable: error.retryable, outcomeUnknown: error.outcomeUnknown };
+    return {
+      code: error.code,
+      message: error.message,
+      retryable: error.retryable,
+      outcomeUnknown: error.outcomeUnknown,
+      providerDetail: error.providerDetail,
+    };
   }
   return {
     code: "RINKEL_UNKNOWN_ERROR",
     message: "Ett oväntat Rinkel-fel inträffade.",
     retryable: false,
     outcomeUnknown: false,
+    providerDetail: null,
   };
 }
