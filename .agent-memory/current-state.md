@@ -177,3 +177,25 @@ Dessutom hade live `get_tenant_rinkel_resources` med `is_tenant_admin` medan rep
 
 Efter applicering är alla nio berörda funktioner identiska i produktion och i PGlite-replayen
 (md5 över `pg_get_functiondef` matchar för samtliga).
+
+## 2026-09-07 — samtalsspärr: diagnos och två kodfel
+
+En manuell uppringning nekades med "Numret får inte ringas enligt spärr- och samtyckesreglerna".
+Den verkliga orsaken var `nix_check_required`: kunden är `customer_type='person'` och `lifecycle`
+`prospect`, vilket ger syftet `direct_marketing`, och svensk NIX-kontroll krävs då innan samtal.
+Tenanten har noll rader i `nix_provider_configurations`, så ingen kontroll kan utföras och varje
+B2C-marknadsföringssamtal är blockerat. Det är korrekt regelefterlevnad, inte en bugg.
+
+Två faktiska kodfel åtgärdades:
+
+1. **FAILURE-0037** — legal-basis-grinden i `evaluate_contact_policy_for_tenant` föll aldrig ut för
+   kunder helt utan `contact_permissions`-rad, på grund av trevärd logik. `202609070002`.
+2. **Felmeddelandet var oanvändbart.** `/api/v1/calls` mappade allt policyavslag till en generisk
+   text. Reservations-RPC:n reser `exact_call_policy_denied:<reason>`; routen tolkar nu den koden och
+   svarar med vad som faktiskt stoppade samtalet och vad säljaren ska göra
+   (`NIX_CHECK_REQUIRED`, `LEGAL_BASIS_REQUIRED`, `OUTSIDE_CONTACT_HOURS`, `COMPLIANCE_BLOCK` m.fl.).
+   Kontrollen ligger först i `reservationFailure` så att den inte skuggas av en bredare substrängmatch.
+
+Kundkortet kräver redan bara namn och typ vid skapande — organisationsnummer, personnummer, e-post och
+ort är valfria och kan fyllas i efteråt. Det som faktiskt krävs för att *ringa* en privatperson är
+rättslig grund plus giltig NIX-kontroll, vilket är juridik och inte ett formulärkrav.

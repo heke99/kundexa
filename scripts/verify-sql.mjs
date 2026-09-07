@@ -1156,6 +1156,49 @@ if (!rejectedNonPlatformAssignment) {
 await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
 console.log("Executed one-click Rinkel number assignment runtime paths: scalar provider device resolution, seller/organisation/team scope, idempotent re-assignment, actionable device blocker and platform authorization.");
 
+// A private individual with no legal basis AND no contact-permission row must be
+// refused. `v_permission_status` is null in that case, and before the fix the
+// three-valued `false or null` made the legal-basis guard evaluate to null and
+// silently pass.
+await db.exec(`
+  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
+  insert into public.customers(
+    id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by
+  ) values(
+    '00000000-0000-0000-0000-000000000080','00000000-0000-0000-0000-000000000001','person','prospect',
+    'Legal Basis Probe','+46700000180',null,null,'00000000-0000-0000-0000-000000000002'
+  );
+  insert into public.tenant_features(tenant_id,feature_key,enabled)
+    values('00000000-0000-0000-0000-000000000001','outbound_calls',true)
+    on conflict(tenant_id,feature_key) do update set enabled=true;
+`);
+const noPermissionRow = await db.query(`select public.evaluate_contact_policy_for_tenant(
+  '00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000080','call','direct_marketing'
+) as policy`);
+if (
+  noPermissionRow.rows[0].policy.allowed !== false
+  || noPermissionRow.rows[0].policy.reason !== "legal_basis_required"
+) {
+  throw new Error(`Legal basis gate did not fire without a contact-permission row: ${JSON.stringify(noPermissionRow.rows[0].policy)}`);
+}
+// A recorded consent is a legal basis, so the same customer becomes permissible
+// up to the independent NIX control.
+await db.exec(`
+  insert into public.contact_permissions(tenant_id,customer_id,channel,purpose,status,source,valid_from,created_by)
+  values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000080','call','direct_marketing','allowed','verify-runtime',now(),'00000000-0000-0000-0000-000000000002');
+`);
+const withConsent = await db.query(`select public.evaluate_contact_policy_for_tenant(
+  '00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000080','call','direct_marketing'
+) as policy`);
+if (withConsent.rows[0].policy.reason === "legal_basis_required") {
+  throw new Error(`Recorded consent was not accepted as a legal basis: ${JSON.stringify(withConsent.rows[0].policy)}`);
+}
+// The NIX control is independent and must still refuse a private individual.
+if (withConsent.rows[0].policy.allowed !== false || withConsent.rows[0].policy.reason !== "nix_check_required") {
+  throw new Error(`NIX control did not stand on its own: ${JSON.stringify(withConsent.rows[0].policy)}`);
+}
+console.log("Executed contact-policy legal-basis runtime path: missing consent refused, recorded consent accepted, NIX control independent.");
+
 // Performance/scraper operations runtime path: aggregated RPCs, atomic ingestion
 // quota reservation, admin run controls, dead-letter re-drive and duplicate-run guards.
 await db.exec(`

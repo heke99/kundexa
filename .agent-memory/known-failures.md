@@ -244,3 +244,30 @@ this session's first draft would have silently overwritten it (losing single-dev
 Production also had `get_tenant_rinkel_resources` guarded by `is_tenant_admin` while the repo had the looser
 `is_tenant_member`. The stricter live behaviour is correct (the projection exposes the whole company's telephony
 inventory) and the repo was aligned to it.
+
+## FAILURE-0037 — The marketing legal-basis gate never fired without a consent row — FIXED 2026-09-07
+
+`evaluate_contact_policy_for_tenant` computed
+
+```sql
+v_has_legal_basis := <legal_basis present> or v_permission_status='allowed';
+```
+
+`v_permission_status` is null whenever the customer has no `contact_permissions` row. In three-valued
+logic `false or null` is null, so `not v_has_legal_basis` was null and
+
+```sql
+if v_customer.customer_type='person' and not v_has_legal_basis then
+```
+
+evaluated to null rather than true and did not fire. A private individual with no recorded legal basis
+and no consent record — exactly the case the gate exists to stop — passed the check. The gate only ever
+fired when a permission row existed with a status other than `allowed`, which is the narrower case.
+
+No unlawful call resulted, because the NIX control that follows independently refuses a private
+individual without a valid screening result. The two are separate controls and the legal-basis one must
+stand on its own. Fixed in `202609070002` by coalescing the permission status. Regression coverage in
+`verify-sql.mjs` asserts refusal without a consent row, acceptance with one, and that the NIX control
+still fires independently.
+
+Found while diagnosing a seller-visible `DIAL_PERMISSION_DENIED`, not by the compliance surface itself.

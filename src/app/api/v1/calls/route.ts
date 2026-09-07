@@ -48,6 +48,52 @@ function publicTelephonyMessage(message: string) {
     .replace(/leverantör/gi, "telefonitjänst");
 }
 
+// The reservation raises `exact_call_policy_denied:<reason>`. Report which rule
+// actually stopped the call: "spärr- och samtyckesreglerna" is true but tells the
+// seller nothing about what to do next.
+function callPolicyFailure(reason: string) {
+  const failures: Record<string, { code: string; message: string; status: number }> = {
+    NIX_CHECK_REQUIRED: {
+      code: "NIX_CHECK_REQUIRED",
+      message: "Privatpersoner måste NIX-kontrolleras innan ett marknadsföringssamtal. Ingen giltig kontroll finns för numret. Konfigurera en NIX-leverantör under Regelefterlevnad och kör kontrollen, eller markera kunden som företag om det är ett B2B-samtal.",
+      status: 409,
+    },
+    TARGET_NIX_CHECK_REQUIRED: {
+      code: "NIX_CHECK_REQUIRED",
+      message: "Privatpersoner måste NIX-kontrolleras innan ett marknadsföringssamtal. Ingen giltig kontroll finns för numret. Konfigurera en NIX-leverantör under Regelefterlevnad och kör kontrollen, eller markera kunden som företag om det är ett B2B-samtal.",
+      status: 409,
+    },
+    NIX_LISTED: { code: "NIX_LISTED", message: "Numret är spärrat i NIX-registret och får inte ringas i marknadsföringssyfte.", status: 409 },
+    TARGET_NIX_LISTED: { code: "NIX_LISTED", message: "Numret är spärrat i NIX-registret och får inte ringas i marknadsföringssyfte.", status: 409 },
+    LEGAL_BASIS_REQUIRED: {
+      code: "LEGAL_BASIS_REQUIRED",
+      message: "Privatkunden saknar rättslig grund för marknadsföring. Ange rättslig grund på kundkortet eller registrera ett samtycke innan samtalet.",
+      status: 409,
+    },
+    MARKETING_NOT_ALLOWED: { code: "MARKETING_NOT_ALLOWED", message: "Kunden har markerats som att marknadsföring inte är tillåten.", status: 409 },
+    CUSTOMER_DO_NOT_CALL: { code: "CUSTOMER_DO_NOT_CALL", message: "Kunden är spärrad för samtal på kundkortet.", status: 409 },
+    CUSTOMER_CHANNEL_BLOCK: { code: "CUSTOMER_DO_NOT_CALL", message: "Kunden är spärrad för samtal på kundkortet.", status: 409 },
+    COMPLIANCE_BLOCK: { code: "COMPLIANCE_BLOCK", message: "En aktiv regelefterlevnadsspärr gäller för kunden eller numret.", status: 409 },
+    OUTSIDE_CONTACT_HOURS: { code: "OUTSIDE_CONTACT_HOURS", message: "Marknadsföringssamtal är inte tillåtna vid den här tidpunkten enligt företagets kontakttider.", status: 409 },
+    FEATURE_DISABLED: { code: "OUTBOUND_CALLS_DISABLED", message: "Utgående samtal är inte aktiverat för företaget.", status: 409 },
+    TARGET_PHONE_CUSTOMER_MISMATCH: { code: "CALL_TARGET_INVALID", message: "Telefonnumret hör inte till kundkortet.", status: 422 },
+    TARGET_PHONE_CONTACT_MISMATCH: { code: "CALL_TARGET_INVALID", message: "Telefonnumret hör inte till den valda kontaktpersonen.", status: 422 },
+    CUSTOMER_ACCESS_DENIED: { code: "DIAL_PERMISSION_DENIED", message: "Du har inte åtkomst till den här kunden.", status: 403 },
+    CALL_ROLE_NOT_PERMITTED: { code: "DIAL_PERMISSION_DENIED", message: "Din roll får inte ringa utgående samtal.", status: 403 },
+    LIST_CLAIM_NOT_OPERATIONAL: { code: "LEAD_RESERVATION_CONFLICT", message: "Leadreservationen är inte längre aktiv för den här säljaren.", status: 409 },
+    CALLBACK_NOT_AVAILABLE: { code: "LEAD_RESERVATION_CONFLICT", message: "Återuppringningen är inte längre tillgänglig för dig.", status: 409 },
+  };
+  const known = failures[reason];
+  if (known) return known;
+  if (reason.startsWith("CONTACT_PERMISSION_")) {
+    return { code: "CONTACT_PERMISSION_DENIED", message: "Kunden har invänt mot eller nekat kontakt i det här syftet.", status: 409 };
+  }
+  if (reason.startsWith("NIX_") || reason.startsWith("TARGET_NIX_")) {
+    return { code: "NIX_BLOCKED", message: "NIX-kontrollen tillåter inte marknadsföringssamtal till numret.", status: 409 };
+  }
+  return { code: "DIAL_PERMISSION_DENIED", message: "Numret får inte ringas enligt spärr- och samtyckesreglerna.", status: 409 };
+}
+
 function reservationFailure(rawMessage: string, databaseCode?: string | null) {
   const normalized = rawMessage.toUpperCase();
   if (["42P01", "42703", "PGRST204"].includes(databaseCode ?? "")) {
@@ -56,6 +102,10 @@ function reservationFailure(rawMessage: string, databaseCode?: string | null) {
   if (databaseCode === "42501" || databaseCode === "PGRST301") {
     return { code: "DATABASE_PERMISSION_ERROR", message: "Databasen nekade samtalsåtgärden.", status: 403 };
   }
+  // Most specific first: the policy reason must not be shadowed by a broader
+  // substring match further down.
+  const policyReason = /EXACT_CALL_POLICY_DENIED:([A-Z0-9_]+)/.exec(normalized)?.[1];
+  if (policyReason) return callPolicyFailure(policyReason);
   if (normalized.includes("RINKEL_PLATFORM_NOT_CONFIGURED") || normalized.includes("RINKEL_API_NOT_VERIFIED")) {
     return { code: "RINKEL_API_NOT_VERIFIED", message: "Telefoni är inte konfigurerad och verifierad av plattformsadministratören.", status: 409 };
   }
