@@ -111,3 +111,22 @@ riktig Rinkel-provider är fortfarande `NOT RUN` — se `open-blockers.md`.
 - Added a fail-closed device requirement to user allocation and richer UI diagnostics instead of the generic `enhet saknas` state.
 - `remediation-regression-tests`: PASS; static `verify.mjs`: PASS for 51 migrations; custom Rinkel runtime suite: 15/15 PASS.
 - Full dependency install, PGlite replay and linked Supabase proof remain external/environment-blocked and are not claimed complete.
+
+## 2026-09-07
+
+Uppdrag: ta reda på varför det inte går att ringa ut och göra nummertilldelning till ett klick.
+
+Diagnos gjord mot primär evidens: Rinkels publicerade API-schema (inget device-endpoint,
+`deviceId` nullbar skalär, `POST /dial` kräver `deviceId`) och det länkade produktionsprojektets
+faktiska rader. Grundorsak: Kundexas devicemodell motsade leverantörens kontrakt och gjorde en
+device till villkor för administration i stället för för samtal.
+
+Åtgärdat i kod, applicerat på produktionsdatabasen efter användarens godkännande, verifierat med
+full `npm run verify` samt md5-jämförelse av alla berörda funktionsdefinitioner mellan produktion
+och PGlite-replayen. Torrkörning av tilldelningen mot produktionsdata (rullad tillbaka) visar att
+hela kedjan utom leverantörens device är klar.
+
+Upptäckte och backfillade en andra odokumenterad produktionsmigration, samt en strängare
+`is_tenant_admin`-guard i live som repot saknade.
+
+Kvar: extern åtgärd hos Rinkel (logga in på en enhet), därefter livetest av dial/CDR/recording.

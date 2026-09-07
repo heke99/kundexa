@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, Ban, CalendarPlus, ClipboardList, FileSignature, Mail, MessageSquareText, Phone, StickyNote } from "@/components/icons";
-import { addActivity, addNote, archiveNote, blockCustomer, scheduleCallback, updateNote } from "@/app/actions/customers";
+import { addActivity, addNote, archiveNote, blockCustomer, scheduleCallback, updateCustomerDetails, updateNote } from "@/app/actions/customers";
 import { getAppContext } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/ui/page-header";
@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
 import { formatCurrency, formatDate, initials } from "@/lib/utils";
 
-export default async function CustomerDetail({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; callback?: string; note?: string }> }) {
+export default async function CustomerDetail({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; message?: string; callback?: string; note?: string }> }) {
   const { id } = await params;
   const query = await searchParams;
   const context = await getAppContext();
@@ -30,11 +30,57 @@ export default async function CustomerDetail({ params, searchParams }: { params:
     <Link href="/app/customers" className="muted back-link"><ArrowLeft size={15} /> Till kunder</Link>
     <PageHeader title={customer.display_name} description={`${customer.customer_type === "company" ? "Företag" : "Privatperson"} · ${customer.lifecycle}`} action={<div className="toolbar-right"><Link className="button button-secondary" href={`/app/dialer?customer=${customer.id}`}><Phone size={16} /> Ring</Link><Link className="button button-secondary" href={`/app/contracts?customer=${customer.id}`}><FileSignature size={16} /> Skapa avtal</Link></div>} />
     {query.error ? <p className="form-error">{query.error}</p> : null}
+    {query.message ? <div className="notice" style={{ marginBottom: 16 }}>{query.message}</div> : null}
     {query.callback ? <div className="notice" style={{ marginBottom: 16 }}>Återkomsten är skapad och syns i säljarens eller teamets återkomstkö.</div> : null}
     {query.note ? <div className="notice" style={{ marginBottom: 16 }}>Anteckningen är {query.note === "archived" ? "arkiverad med revisionsspåret bevarat" : "uppdaterad och tidigare version historikförd"}.</div> : null}
     <div className="split-layout">
       <div className="grid">
         <Card><CardHeader><div className="detail-title"><span className="avatar">{initials(customer.display_name)}</span><div><h2>{customer.display_name}</h2><span className="muted">{customer.organization_number ?? customer.personal_identity_number ?? "Identifiering saknas"}</span></div></div><Badge className={customer.do_not_call ? "badge-danger" : "badge-success"}>{customer.do_not_call ? "Spärrad" : "Kontakt tillåten"}</Badge></CardHeader><CardContent><dl className="key-value"><dt>Telefon</dt><dd>{customer.phone_e164 ?? "—"}</dd><dt>E-post</dt><dd>{customer.email ?? "—"}</dd><dt>Adress</dt><dd>{[customer.address_line1, customer.postal_code, customer.city].filter(Boolean).join(", ") || "—"}</dd><dt>Bransch / SNI</dt><dd>{[customer.industry, customer.sni_code].filter(Boolean).join(" · ") || "—"}</dd><dt>Ansvarig</dt><dd>{customer.assigned_user_id ? "Tilldelad användare" : "Ej tilldelad"}</dd><dt>Datakälla</dt><dd>{customer.source_name ?? "Manuellt skapad"}</dd><dt>Rättslig grund</dt><dd>{customer.legal_basis ?? "Ej dokumenterad"}</dd><dt>Ringförsök</dt><dd>{customer.call_attempts}</dd></dl></CardContent></Card>
+        <Card>
+          <CardHeader><h2>Kunduppgifter</h2><Badge>{customer.organization_number || customer.personal_identity_number ? "Identifierad" : "Ofullständig"}</Badge></CardHeader>
+          <CardContent>
+            <p className="muted" style={{ marginBottom: 14 }}>
+              Kortet behöver bara namn och telefonnummer för att kunna ringas. Fyll i resten här inför registrering av kunden.
+            </p>
+            <form action={updateCustomerDetails} className="form-grid">
+              <input type="hidden" name="customer_id" value={customer.id} />
+              <Field label="Namn / företagsnamn" name="display_name" defaultValue={customer.display_name} required />
+              <SelectField label="Kundtyp" name="customer_type" defaultValue={customer.customer_type}>
+                <option value="company">Företag</option>
+                <option value="person">Privatperson</option>
+              </SelectField>
+              <Field
+                label="Organisationsnummer / personnummer"
+                name="identity_number"
+                defaultValue={customer.organization_number ?? customer.personal_identity_number ?? ""}
+                placeholder="556016-0680"
+                hint="Kontrollsiffran avgör om det sparas som organisationsnummer eller personnummer."
+              />
+              <SelectField label="Livscykel" name="lifecycle" defaultValue={customer.lifecycle}>
+                <option value="prospect">Prospekt</option>
+                <option value="lead">Lead</option>
+                <option value="customer">Kund</option>
+                <option value="former_customer">Tidigare kund</option>
+              </SelectField>
+              <Field label="Telefon" name="phone" type="tel" defaultValue={customer.phone_e164 ?? ""} />
+              <Field label="Alternativt telefonnummer" name="alternate_phone" type="tel" defaultValue={customer.alternate_phone_e164 ?? ""} />
+              <Field label="E-post" name="email" type="email" defaultValue={customer.email ?? ""} />
+              <Field label="Webbplats" name="website" defaultValue={customer.website ?? ""} />
+              <Field label="Adress" name="address_line1" defaultValue={customer.address_line1 ?? ""} />
+              <Field label="Postnummer" name="postal_code" defaultValue={customer.postal_code ?? ""} />
+              <Field label="Ort" name="city" defaultValue={customer.city ?? ""} />
+              <Field label="Bransch" name="industry" defaultValue={customer.industry ?? ""} />
+              <Field
+                label="Rättslig grund för marknadsföring"
+                name="legal_basis"
+                defaultValue={customer.legal_basis ?? ""}
+                placeholder="t.ex. berättigat intresse, samtycke"
+                hint="Krävs för marknadsföringssamtal till privatpersoner. Påverkar inte företagskunder."
+              />
+              <div className="span-2"><button className="button button-primary">Spara kunduppgifter</button></div>
+            </form>
+          </CardContent>
+        </Card>
         <Card><CardHeader><h2>Historik</h2><Badge>{(activities?.length ?? 0) + (calls?.length ?? 0)} händelser</Badge></CardHeader><CardContent>{calls?.map((call) => <div className="activity-line" key={call.id}><span className="activity-dot"><Phone size={14} /></span><div><strong>{call.direction === "outbound" ? "Utgående samtal" : "Inkommande samtal"}</strong><p>{call.disposition ?? call.status} · {call.duration_seconds ?? 0} sek</p></div><time>{formatDate(call.created_at)}</time></div>)}{activities?.map((activity) => <div className="activity-line" key={activity.id}><span className="activity-dot"><CalendarPlus size={14} /></span><div><strong>{activity.title}</strong><p>{activity.description ?? activity.status}{activity.callback_scope ? ` · ${activity.callback_scope}` : ""}</p></div><time>{formatDate(activity.due_at ?? activity.created_at)}</time></div>)}</CardContent></Card>
         <Card><CardHeader><h2>Order, avtal och affärer</h2></CardHeader><CardContent>{orders?.map((order) => <div className="activity-line" key={order.id}><span className="activity-dot"><ClipboardList size={14} /></span><div><strong>{order.order_number}</strong><p>{order.status} · {formatCurrency(Number(order.total), order.currency)}</p></div><time>{formatDate(order.created_at)}</time></div>)}{contracts?.map((contract) => <div className="activity-line" key={contract.id}><span className="activity-dot"><FileSignature size={14} /></span><div><Link href={`/app/contracts/${contract.id}`}><strong>{contract.contract_number} · {contract.title}</strong></Link><p>{contract.status}</p></div><time>{formatCurrency(Number(contract.value), contract.currency)}</time></div>)}{deals?.map((deal) => <div className="activity-line" key={deal.id}><span className="activity-dot"><FileSignature size={14} /></span><div><strong>{deal.name}</strong><p>{deal.status} · {deal.probability}%</p></div><time>{formatCurrency(Number(deal.value), deal.currency)}</time></div>)}</CardContent></Card>
       </div>

@@ -117,3 +117,21 @@
 - Blocked platform allocation of a Rinkel user with no synchronized active device.
 - Added deterministic repair/auto-selection when exactly one active device exists; ambiguous multi-device users remain explicit.
 - Added SQL/runtime regression coverage for device-less allocation rejection and tenant projection diagnostics.
+
+## 2026-09-07 — Rinkel outbound activation
+
+- Backfilled production drift `20260814124751_rinkel_seller_number_assignment_without_device` verbatim.
+- Added `202609070001_rinkel_one_click_number_assignment.sql`: `rinkel_effective_provider_device`,
+  live device resolution in `rinkel_reserve_platform_outbound_call_v2` and
+  `telephony_status_for_current_user`, `rinkel_link_seller_to_provider_user`,
+  `assign_platform_rinkel_number` (tenant/team/user scope), `assign_platform_rinkel_number_to_teams`
+  delegating to it, `get_tenant_rinkel_resources` using the same resolution, and repair of stale
+  `selected_device_id` plus the denormalized `dial_configured` capability.
+- Applied to the linked Supabase project and regenerated `database.types.ts` from it.
+- App: single `PlatformNumberAssignmentForm` replaces the team-only form; `assignPlatformPhoneNumber`
+  server action; seller mapping form no longer requires a device; dialer, calls API and telephony
+  status now report `PROVIDER_DEVICE_MISSING` with the actual remedy.
+- Provider client: device staleness keyed on a successful detail fetch; `external_device_id` follows
+  provider truth including removal; sync messaging describes the real provider state.
+- Tests: new runtime block in `verify-sql.mjs`, updated Deno unit test, updated `verify.mjs` and
+  `remediation-regression-tests.mjs` assertions.

@@ -106,3 +106,39 @@ Rinkel exposes both a user catalog endpoint and a user detail endpoint. Kundexa 
 only deactivates stored device rows when the provider response is explicitly authoritative for devices. Missing
 or incomplete device information is preserved as a diagnostic state, never converted into a guessed provider id.
 Platform allocation fails closed when no synchronized active device exists.
+
+## ADR-0017 — The Rinkel device is a provider scalar, not a Kundexa inventory
+
+Supersedes the assignment half of ADR-0016. Rinkel's public API has no devices endpoint at all:
+`GET /users/:id` returns `deviceId` as a single nullable string ("The unique id of the device associated with the
+user") and `POST /dial` requires `deviceId`, `to` and `numberId`. A provider user only gets a `deviceId` once a
+person signs in on a Rinkel webphone, mobile app or desk phone.
+
+Kundexa therefore treats the device as a derived property of the synchronized provider user rather than an owned
+inventory that must exist before administration can proceed:
+
+- Allocation and seller mapping never require a device. `rinkel_user_mappings_v2.selected_device_id` is an optional
+  preference that only disambiguates a multi-device user.
+- `rinkel_effective_provider_device()` resolves the device at dial time: explicit active choice, then any active
+  synchronized device, then the scalar `external_device_id`. It invents nothing and returns no row when the
+  provider reports none.
+- Dialing and readiness still fail closed, with `PROVIDER_DEVICE_MISSING` naming the actual remedy.
+
+ADR-0016's non-destructive rule is kept but re-anchored: a *successful* `GET /users/:id` is authoritative for that
+user's single device, including reporting that it has none. Only a failed detail fetch preserves stored devices.
+
+Rationale: the previous model made the provider's normal empty state indistinguishable from a sync defect, and let
+an administrative prerequisite depend on an end-user action at the provider. That made number assignment
+impossible for exactly the accounts that had not started calling yet.
+
+## ADR-0018 — One RPC assigns a number to an organisation, a team or a seller
+
+`assign_platform_rinkel_number` is the single platform assignment path. `rinkel_number_grants` and
+`resolve_rinkel_caller_id` already supported tenant-wide, team and per-user grants; only the write path was
+team-only. The RPC performs every step that "assigned" implies — allocation, scoped dial grant, scope default
+caller id, telephony activation, provider-user allocation and seller mapping — and returns a readiness report
+instead of a bare success. It is idempotent per scope, so re-assigning never produces competing defaults.
+
+Seller-to-provider linking is deterministic and refuses to guess: an explicit provider user (seller scope, one
+seller), then an unambiguous case-insensitive email match, then a single free provider user when exactly one
+seller in the company still lacks a mapping. Anything else is reported in `unresolved_reasons`.

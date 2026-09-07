@@ -48,3 +48,11 @@
 .number-assignment-row:last-child {
   border-bottom: 0;
 }
+
+/* Used by multi-column forms to let a field or a submit row span the full grid.
+   Referenced by the compliance and customer forms; previously undefined, so
+   those elements silently occupied a single column. */
+.form-grid > .span-2,
+.form-stack > .span-2 {
+  grid-column: 1 / -1;
+}

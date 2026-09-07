@@ -37,9 +37,22 @@ Lyckad operation rensar endast det relevanta aktuella integrationsfelet. Histori
 
 ## Användare, devices och nummer
 
-`platform_rinkel_users`, `platform_rinkel_devices` och `platform_rinkel_numbers` är centrala resurser. `rinkel_user_allocations` och `rinkel_number_allocations` historiserar tenantägarskap. `rinkel_number_grants` bestämmer faktisk åtkomst. `rinkel_user_mappings_v2.selected_device_id` pekar på den aktiva, synkroniserade device som säljaren ska använda.
+`platform_rinkel_users`, `platform_rinkel_devices` och `platform_rinkel_numbers` är centrala resurser. `rinkel_user_allocations` och `rinkel_number_allocations` historiserar tenantägarskap. `rinkel_number_grants` bestämmer faktisk åtkomst.
 
-En säljare kan inte ringa när vald device har försvunnit eller blivit inaktiv. Tenantklienter läser endast tenantfiltrerade DTO:er via RPC och ser aldrig andra tenants resurser eller rå providerpayload.
+### Devicemodellen speglar leverantörens faktiska kontrakt
+
+Rinkel har **inget device-endpoint**. `GET /users/:id` bär enheten som det nullbara skalära fältet `deviceId` ("The unique id of the device associated with the user") och `POST /dial` kräver `deviceId`, `to` och `numberId`. Ett konto vars användare aldrig loggat in i Rinkels webbtelefon eller mobilapp har därför `deviceId: null` — det är ett normalt leverantörstillstånd, inte ett synkfel.
+
+Kundexa modellerar detta så här:
+
+- `platform_rinkel_devices` är en synkad projektion av den skalära `deviceId`, inte ett eget inventarium.
+- `rinkel_user_mappings_v2.selected_device_id` är en **valfri preferens**, inte ett krav. Den används bara för att bryta en flerdeviceambiguitet.
+- `rinkel_effective_provider_device(user, selected)` löser device vid ringtillfället: explicit vald aktiv device → någon aktiv synkad device → `platform_rinkel_users.external_device_id`. Saknas allt returneras ingen rad.
+- En lyckad `GET /users/:id` är auktoritativ för användarens enda device, även när den rapporterar noll. Endast ett misslyckat detaljanrop (`deviceInventoryError`) bevarar tidigare synkade devices.
+
+Följden är att **tilldelning aldrig blockeras av en saknad device**. Säljaren kan tilldelas nummer och mappas direkt, och blir ringklar automatiskt så snart leverantören rapporterar en device och katalogen synkas om — utan att någon behöver göra om tilldelningen. Ringvägen och readiness failar fortfarande stängt med `PROVIDER_DEVICE_MISSING`, som säger exakt vad användaren ska göra: logga in i Rinkels webbtelefon eller app.
+
+Tenantklienter läser endast tenantfiltrerade DTO:er via RPC och ser aldrig andra tenants resurser eller rå providerpayload.
 
 ## Caller-ID-resolver
 
@@ -185,3 +198,18 @@ Genererade Supabase-typer får inte handredigeras. `types:verify` förblir rött
 ## Liveverifiering
 
 Markera aldrig verklig Rinkel-funktion som verifierad utifrån mockar. Följ `docs/RINKEL_STAGING_PROTOCOL.md` exakt: central API/katalog → webhook read-back → tenant/team/user/device/nummermapping → besvarat verkligt outbound-test → verkligt inbound-test → 4/4 → CDR/recording/recovery/tvåtenanttest → först därefter auto-dial.
+
+## Nummertilldelning i ett steg
+
+`assign_platform_rinkel_number(number, scope, tenant, teams, users, rinkel_user, activate_telephony, reason)` är plattformens enda tilldelningsväg. `scope` är `tenant`, `team` eller `user`, och RPC:n utför allt som krävs för att målet ska kunna ringa:
+
+1. allokerar numret till bolaget (återanvänder en befintlig aktiv allokering),
+2. skapar eller återaktiverar `dial`-granten på exakt den scopenivå som valdes och gör den till standard,
+3. sätter scopets standard-caller-ID (`telephony_policies.default_number_allocation_id` för bolag, `teams.rinkel_number_allocation_id` för team),
+4. aktiverar `telephony_policies.telephony_enabled` och featureflaggan `outbound_calls`,
+5. allokerar Rinkel-användare och skapar säljarmappning för varje säljare som scopet når,
+6. returnerar en rapport med `dial_ready_seller_count`, `provider_device_missing_count` och `unresolved_reasons`.
+
+Säljare kopplas till Rinkel-användare i denna ordning: explicit vald `rinkel_user_id` (endast vid `user`-scope och exakt en säljare) → entydig e-postmatchning → en enda ledig Rinkel-användare när exakt en säljare i bolaget saknar mappning. Allt annat rapporteras som ouppklarat i stället för att gissas.
+
+Åtgärden är idempotent: en upprepad tilldelning skapar varken dubbla allokeringar eller konkurrerande standardgrants. `assign_platform_rinkel_number_to_teams` finns kvar med oförändrad signatur och delegerar till samma väg.

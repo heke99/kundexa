@@ -134,3 +134,80 @@ Detta pass hade för första gången läsaccess till det riktiga Supabase-projek
   `canonicalAppBaseUrl()` på de fyra länkbyggarna, inte i env-schemat, så en felkonfiguration
   stoppar det utskick som annars fått en trasig länk i stället för all requesthantering.
 - `GET /api/ready` rapporterar `appBaseUrl` och `appBaseUrlUsable` så värdet går att verifiera utifrån.
+
+## 2026-09-07 — Rinkel: devicemodell och nummertilldelning i ett steg
+
+Det gick inte att ringa ut. Tre orsaker, varav två var kodfel och en är extern.
+
+1. **Devicemodellen var fel mot leverantören.** Rinkel har inget device-endpoint.
+   `GET /users/:id` bär enheten som det nullbara skalära fältet `deviceId`, och `POST /dial`
+   kräver `deviceId`, `to` och `numberId` (verifierat mot developers.rinkel.com). Kundexa
+   modellerade device som ett eget inventarium och gjorde en synkad devicerad till hårt villkor
+   för allokering, säljarmappning, dial och readiness. Ett konto med `deviceId: null` kunde
+   därför inte ens tilldelas. Device är nu en **preferens**, inte ett krav:
+   `rinkel_effective_provider_device()` löser device vid ringtillfället från explicit val →
+   aktiv synkad device → `platform_rinkel_users.external_device_id`. En säljare som mappats
+   innan enheten fanns blir ringklar automatiskt vid nästa katalogsynk, utan omtilldelning.
+2. **Tilldelning var flerstegs och endast teambaserad.** `assign_platform_rinkel_number`
+   ersätter det: ett anrop, scope `tenant`/`team`/`user`, som allokerar numret, skapar
+   dial-granten på rätt nivå, sätter scopets standard-caller-ID, aktiverar telefoni och
+   `outbound_calls`, allokerar Rinkel-användare och skapar säljarmappningar.
+   `assign_platform_rinkel_number_to_teams` behåller sin signatur och delegerar dit.
+3. **Externt och kvarstående:** Rinkel-kontot har fortfarande ingen registrerad device
+   (`external_device_id is null`, `platform_rinkel_devices` tom). Utgående samtal kan inte gå
+   förrän användaren loggat in i Rinkels webbtelefon/app och katalogen synkats om. Koden failar
+   stängt med `PROVIDER_DEVICE_MISSING` som säger exakt det.
+
+Sidoeffekter som också åtgärdats: `staleRinkelDeviceIds` avaktiverar nu devices utifrån ett
+lyckat detaljanrop i stället för en `devices[]`-array som Rinkel aldrig skickar;
+`external_device_id` följer leverantörens sanning inklusive borttagning; säljarmappningsformuläret
+tillåter mappning utan device; dialer-, calls-API- och statusmeddelanden pekar på rätt åtgärd.
+
+### Migrationsdrift mot live (andra gången)
+
+Produktionen hade `20260814124751_rinkel_seller_number_assignment_without_device` som saknades i
+repot. Den innehöll en tidigare, partiell version av samma diagnos (device-gate borttagen ur
+`allocate_platform_rinkel_resource` och `replace_rinkel_user_mapping_v3`, med autoval vid exakt en
+device och `DEVICE_SELECTION_REQUIRED` vid flera). Den är nu backfillad **verbatim** — repofilen
+har samma md5 som `supabase_migrations.schema_migrations.statements[1]` — och den nya migrationen
+`202609070001` är ombyggd så att den bygger *ovanpå* den i stället för att skriva över den.
+
+Dessutom hade live `get_tenant_rinkel_resources` med `is_tenant_admin` medan repot hade
+`is_tenant_member`. Livevarianten är strängare och behållen; repot är anpassat till den.
+
+Efter applicering är alla nio berörda funktioner identiska i produktion och i PGlite-replayen
+(md5 över `pg_get_functiondef` matchar för samtliga).
+
+## 2026-09-07 — samtalsspärr: diagnos och två kodfel
+
+En manuell uppringning nekades med "Numret får inte ringas enligt spärr- och samtyckesreglerna".
+Den verkliga orsaken var `nix_check_required`: kunden är `customer_type='person'` och `lifecycle`
+`prospect`, vilket ger syftet `direct_marketing`, och svensk NIX-kontroll krävs då innan samtal.
+Tenanten har noll rader i `nix_provider_configurations`, så ingen kontroll kan utföras och varje
+B2C-marknadsföringssamtal är blockerat. Det är korrekt regelefterlevnad, inte en bugg.
+
+Två faktiska kodfel åtgärdades:
+
+1. **FAILURE-0037** — legal-basis-grinden i `evaluate_contact_policy_for_tenant` föll aldrig ut för
+   kunder helt utan `contact_permissions`-rad, på grund av trevärd logik. `202609070002`.
+2. **Felmeddelandet var oanvändbart.** `/api/v1/calls` mappade allt policyavslag till en generisk
+   text. Reservations-RPC:n reser `exact_call_policy_denied:<reason>`; routen tolkar nu den koden och
+   svarar med vad som faktiskt stoppade samtalet och vad säljaren ska göra
+   (`NIX_CHECK_REQUIRED`, `LEGAL_BASIS_REQUIRED`, `OUTSIDE_CONTACT_HOURS`, `COMPLIANCE_BLOCK` m.fl.).
+   Kontrollen ligger först i `reservationFailure` så att den inte skuggas av en bredare substrängmatch.
+
+Kundkortet kräver redan bara namn och typ vid skapande — organisationsnummer, personnummer, e-post och
+ort är valfria och kan fyllas i efteråt. Det som faktiskt krävs för att *ringa* en privatperson är
+rättslig grund plus giltig NIX-kontroll, vilket är juridik och inte ett formulärkrav.
+
+## 2026-09-07 — kundkortet: två blockerande fel
+
+- **FAILURE-0038**: `customers_scoped_select` anropade `can_access_customer(id)`, som läser tillbaka
+  raden ur samma tabell. SELECT-policyer gäller för `INSERT ... RETURNING`, och en `STABLE`-funktion
+  ser inte raden satsen håller på att skapa. Ingen kund kunde skapas från "Ny kund". Dialerns
+  skapande fungerade eftersom det går via SECURITY DEFINER-RPC:n `create_or_match_manual_prospect`.
+  Policyerna för `customers` och `contracts` utvärderar nu radens egna kolumner.
+- **FAILURE-0039**: kundkortet saknade helt uppdateringsfunktion. `updateCustomerDetails` och ett
+  formulär på kortet är tillagda, inklusive `legal_basis` som är det som låser upp B2C-samtal.
+
+`.span-2` användes av compliance- och kundformulären men saknades i CSS; nu definierad.

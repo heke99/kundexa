@@ -81,3 +81,18 @@ kräver en riktig Supabase-staging eller riktig Rinkel-provider är fortfarande 
 | PGlite SQL runtime replay | NOT RUN | Internal mirror lacks `@electric-sql/pglite` |
 | Linked Supabase migration/query | NOT RUN | Connector permission denied; must run from user's linked CLI/environment |
 | Real Rinkel device inventory + dial | NOT RUN | Requires provider account and real device allocation |
+
+## 2026-09-07 — Rinkel device resolution and one-click number assignment
+
+| Check | Result | Notes |
+| --- | --- | --- |
+| `npm ci` | PASS | 150 packages; no mirror blocker in this environment |
+| `npm run verify` (full chain) | PASS | types:verify, typecheck, typecheck:edge, all test suites, openapi:verify and production build |
+| PGlite SQL replay | PASS | 69 migrations, 180 tables, 337 functions, 309 RLS policies; zero anon-executable definer functions |
+| New Rinkel runtime path | PASS | Scalar device resolution, seller/organisation/team scope, idempotent re-assignment, `PROVIDER_DEVICE_MISSING` blocker and platform authorization negative test |
+| `deno test scripts/rinkel-unit-tests.mts` | PASS 15/15 | Device staleness now keyed on a successful detail fetch |
+| Rinkel API contract | VERIFIED | `POST /dial` requires `deviceId`/`to`/`numberId`; `GET /users/:id` exposes `deviceId` as nullable; no devices endpoint exists (developers.rinkel.com OpenAPI payloads) |
+| Applied to linked Supabase project | PASS | `202609070001` applied to `lhvifuxcqghtbiulzkrf`; all nine affected functions have identical `md5(pg_get_functiondef())` in production and in the PGlite replay |
+| Generated types regenerated from live | PASS | `assign_platform_rinkel_number`, `rinkel_effective_provider_device`, `rinkel_link_seller_to_provider_user` present; zero column drift |
+| Production dry run of assignment | PASS (rolled back) | Real Gridex data: `linked_seller_count=1`, `unresolved_seller_count=0`, `telephony_activated_tenant_count=1`, `provider_device_missing_count=1` |
+| Real outbound Rinkel call | BLOCKED EXTERNALLY | Provider reports no device for the account; requires a Rinkel webphone/app sign-in first |

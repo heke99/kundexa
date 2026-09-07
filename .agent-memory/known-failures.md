@@ -210,3 +210,104 @@ and only performs destructive stale-device reconciliation when device inventory 
 provider devices to be allocated to a tenant. That created an allocation that could never pass
 `replace_rinkel_user_mapping_v3` or `/dial`. The forward-only replacement now raises
 `RINKEL_USER_DEVICE_MISSING` unless a synchronized active device exists.
+
+## FAILURE-0035 — Outbound calling was impossible because the device model contradicted the provider — FIXED 2026-09-07
+
+Reverses FAILURE-0034's remedy, which treated a symptom as the rule. Rinkel has no devices endpoint; `deviceId` is
+a nullable scalar on the user object that only appears after that user signs in on a Rinkel device. Requiring a
+synchronized device row before allocation (`RINKEL_USER_DEVICE_MISSING`) and before seller mapping made assignment
+impossible for the live account, whose provider payload reports `"deviceId": null`.
+
+Three compounding effects, all fixed in `202609070001`:
+
+1. `rinkel_reserve_platform_outbound_call_v2` and `telephony_status_for_current_user` inner-joined
+   `platform_rinkel_devices` on the mapping's frozen `selected_device_id`. A seller mapped before the device
+   existed stayed permanently undialable, and a replaced device left the mapping pointing at a removed row.
+   Both now resolve through `rinkel_effective_provider_device`.
+2. `staleRinkelDeviceIds` keyed staleness on a `devices[]` array that Rinkel never sends, so
+   `deviceInventoryComplete` was always false and stale device rows were never deactivated. It now keys on whether
+   the detail fetch succeeded.
+3. Platform assignment was team-only and multi-step, and its auto-mapping required both an exact email match and
+   exactly one active device — neither held for the live account.
+
+Remaining and external: the Rinkel account still has no registered device, so a real outbound call is still not
+possible until someone signs in on a Rinkel device. The code now fails closed with `PROVIDER_DEVICE_MISSING`.
+
+## FAILURE-0036 — Second undocumented production migration drift — FIXED 2026-09-07
+
+Production carried `20260814124751_rinkel_seller_number_assignment_without_device`, absent from the repository,
+containing an earlier partial fix for FAILURE-0035. Replaying the repo would not have reproduced production, and
+this session's first draft would have silently overwritten it (losing single-device auto-selection and
+`DEVICE_SELECTION_REQUIRED`). Backfilled verbatim — the repo file's md5 equals the live
+`schema_migrations.statements[1]` — and the new migration was rebased on top of it.
+
+Production also had `get_tenant_rinkel_resources` guarded by `is_tenant_admin` while the repo had the looser
+`is_tenant_member`. The stricter live behaviour is correct (the projection exposes the whole company's telephony
+inventory) and the repo was aligned to it.
+
+## FAILURE-0037 — The marketing legal-basis gate never fired without a consent row — FIXED 2026-09-07
+
+`evaluate_contact_policy_for_tenant` computed
+
+```sql
+v_has_legal_basis := <legal_basis present> or v_permission_status='allowed';
+```
+
+`v_permission_status` is null whenever the customer has no `contact_permissions` row. In three-valued
+logic `false or null` is null, so `not v_has_legal_basis` was null and
+
+```sql
+if v_customer.customer_type='person' and not v_has_legal_basis then
+```
+
+evaluated to null rather than true and did not fire. A private individual with no recorded legal basis
+and no consent record — exactly the case the gate exists to stop — passed the check. The gate only ever
+fired when a permission row existed with a status other than `allowed`, which is the narrower case.
+
+No unlawful call resulted, because the NIX control that follows independently refuses a private
+individual without a valid screening result. The two are separate controls and the legal-basis one must
+stand on its own. Fixed in `202609070002` by coalescing the permission status. Regression coverage in
+`verify-sql.mjs` asserts refusal without a consent row, acceptance with one, and that the NIX control
+still fires independently.
+
+Found while diagnosing a seller-visible `DIAL_PERMISSION_DENIED`, not by the compliance surface itself.
+
+## FAILURE-0038 — Creating a customer was impossible: RLS policy re-queried its own table — FIXED 2026-09-07
+
+`customers_scoped_select` guarded reads with `can_access_customer(id)`, and that function establishes
+access by selecting the row back out of `public.customers`. `contracts_scoped_select` /
+`can_access_contract` had the same shape.
+
+PostgreSQL applies SELECT policies to `INSERT ... RETURNING`, and a STABLE function evaluates against
+the statement's snapshot, in which the row being inserted does not yet exist. The lookup inside the
+policy therefore found nothing and the insert failed with
+
+    new row violates row-level security policy for table "customers"
+
+even for the tenant owner who was also the creator and the assignee. Proven by isolating the clause:
+the same INSERT without RETURNING succeeded, and `can_access_customer` on the new id returned true in
+the next statement. Every application write goes through PostgREST's `.insert().select()`, which always
+adds RETURNING, so the "Ny kund" form could never create a customer.
+
+Fixed in `202609070003`: the policies now evaluate the candidate row's own columns via
+`can_access_customer_row` / `can_access_contract_row`, and the id-based functions delegate to the same
+helpers so the two forms cannot drift. Authorization rules are unchanged.
+
+The dialer's own creation path was unaffected because it goes through the SECURITY DEFINER RPC
+`create_or_match_manual_prospect`, which is why prospects could be created there but not from the
+customer list.
+
+Only these two tables had the self-referential shape; every other policy referencing `can_access_*`
+passes a foreign key to an already-existing row.
+
+## FAILURE-0039 — The customer card was read-only — FIXED 2026-09-07
+
+`/app/customers/[id]` rendered `organization_number`, `personal_identity_number`, `email`, address and
+`legal_basis`, but no update action existed anywhere in the codebase, so nothing could be filled in
+after creation. That made the intended flow — create a minimal card to call, complete it before
+registering the customer — impossible, and in particular made `legal_basis` unsettable, which is what
+marketing calls to private individuals depend on.
+
+Added `updateCustomerDetails` plus a completion form on the card. The identity field is one input; the
+checksum decides whether it is stored as an organisation number or a personal identity number, and a
+company is refused a personal identity number.

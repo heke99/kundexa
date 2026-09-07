@@ -821,20 +821,28 @@ await db.exec(`
   select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000014',false);
   select set_config('request.jwt.claim.role','authenticated',false);
 `);
-let rejectedDeviceLessAllocation = false;
-try {
-  await db.query(`select public.allocate_platform_rinkel_resource(
-    'user',
-    '00000000-0000-0000-0000-000000000075',
-    '00000000-0000-0000-0000-000000000051',
-    'runtime device gate test'
-  )`);
-} catch (error) {
-  rejectedDeviceLessAllocation = String(error).includes('RINKEL_USER_DEVICE_MISSING');
+// Rinkel reports a seller device only after that seller has signed in on one, and
+// exposes no devices endpoint. Allocation must therefore succeed without a device
+// row; the missing device is a readiness state reported to the operator instead.
+const deviceLessAllocation = await db.query(`select public.allocate_platform_rinkel_resource(
+  'user',
+  '00000000-0000-0000-0000-000000000075',
+  '00000000-0000-0000-0000-000000000051',
+  'deferred device allocation'
+) as allocation_id`);
+if (!deviceLessAllocation.rows[0].allocation_id) {
+  throw new Error('Platform allocation rejected a Rinkel user whose device is not yet registered.');
 }
-if (!rejectedDeviceLessAllocation) {
-  throw new Error('Platform allocation accepted a Rinkel user without an active synchronized device.');
+const deviceLessResolution = await db.query(`select count(*)::int as count
+  from public.rinkel_effective_provider_device('00000000-0000-0000-0000-000000000075',null)`);
+if (Number(deviceLessResolution.rows[0].count) !== 0) {
+  throw new Error('Device resolution invented a device for a provider user that reports none.');
 }
+await db.exec(`
+  update public.rinkel_user_allocations set status='revoked',valid_to=now()
+  where rinkel_user_id='00000000-0000-0000-0000-000000000075'
+    and tenant_id='00000000-0000-0000-0000-000000000051';
+`);
 await db.exec(`
   select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000074',false);
   select set_config('request.jwt.claim.role','authenticated',false);
@@ -994,6 +1002,255 @@ if (
   || historicalTenant.rows[0].allocation_id !== "00000000-0000-0000-0000-000000000058"
 ) throw new Error(`Historical Rinkel call moved with number allocation: ${JSON.stringify(historicalTenant.rows[0])}`);
 console.log("Executed central Rinkel catalog, two-tenant isolation, single-tenant number ownership, rejected cross-tenant allocation, atomic reservation, idempotent replay, provider finalization and immutable call history runtime paths.");
+
+// One-click Rinkel number assignment: organisation, team and individual seller.
+// Rinkel reports the seller device as a nullable scalar on the provider user and
+// has no devices endpoint, so a provider user whose device is known only from
+// that scalar must still become dialable without any device inventory row.
+await db.exec(`
+  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000014',false);
+  select set_config('request.jwt.claim.role','authenticated',false);
+  insert into auth.users(id,email) values('00000000-0000-0000-0000-000000000078','oneclick.seller@example.com');
+  insert into public.tenant_memberships(tenant_id,user_id,role,status,joined_at,primary_team_id)
+    values('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000078','sales','active',now(),'00000000-0000-0000-0000-000000000076');
+  update public.profiles set full_name='One Click Seller',
+    active_tenant_id='00000000-0000-0000-0000-000000000051'
+    where id='00000000-0000-0000-0000-000000000078';
+  insert into public.team_members(tenant_id,team_id,user_id,role,is_primary)
+    values('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000076','00000000-0000-0000-0000-000000000078','member',true);
+  insert into public.platform_rinkel_users(
+    id,platform_integration_id,external_user_id,external_device_id,display_name,email
+  ) select '00000000-0000-0000-0000-000000000077',id,'platform-user-scalar','device-scalar','Platform User Scalar','scalar.user@provider.example'
+    from public.platform_integrations where provider='rinkel' and disabled_at is null;
+  insert into public.platform_rinkel_numbers(
+    id,platform_integration_id,external_number_id,phone_number_e164,display_name
+  ) select '00000000-0000-0000-0000-000000000079',id,'platform-number-c','+46833333333','Platform Number C'
+    from public.platform_integrations where provider='rinkel' and disabled_at is null;
+  update public.telephony_policies set telephony_enabled=false
+    where tenant_id='00000000-0000-0000-0000-000000000051';
+`);
+const scalarDevice = await db.query(`select provider_device_id,device_row_id
+  from public.rinkel_effective_provider_device('00000000-0000-0000-0000-000000000077',null)`);
+if (scalarDevice.rows[0]?.provider_device_id !== "device-scalar" || scalarDevice.rows[0]?.device_row_id !== null) {
+  throw new Error(`Scalar provider device was not resolved: ${JSON.stringify(scalarDevice.rows)}`);
+}
+const sellerAssignment = await db.query(`select public.assign_platform_rinkel_number(
+  '00000000-0000-0000-0000-000000000079','user','00000000-0000-0000-0000-000000000051',
+  null,array['00000000-0000-0000-0000-000000000078']::uuid[],
+  '00000000-0000-0000-0000-000000000077',true,'one click seller assignment'
+) as report`);
+const sellerReport = sellerAssignment.rows[0].report;
+if (
+  sellerReport.linked_seller_count !== 1
+  || sellerReport.dial_ready_seller_count !== 1
+  || sellerReport.unresolved_seller_count !== 0
+  || sellerReport.telephony_activated_tenant_count !== 1
+) {
+  throw new Error(`One-click seller assignment did not activate the seller: ${JSON.stringify(sellerReport)}`);
+}
+const sellerGrant = await db.query(`select count(*)::int as count
+  from public.rinkel_number_grants grant_row
+  join public.rinkel_number_allocations allocation on allocation.id=grant_row.number_allocation_id
+  where grant_row.tenant_id='00000000-0000-0000-0000-000000000051'
+    and grant_row.user_id='00000000-0000-0000-0000-000000000078'
+    and grant_row.team_id is null
+    and grant_row.active and grant_row.is_default and grant_row.access_level='dial'
+    and allocation.rinkel_number_id='00000000-0000-0000-0000-000000000079'
+    and allocation.status='active' and allocation.valid_to is null`);
+if (Number(sellerGrant.rows[0].count) !== 1) {
+  throw new Error(`One-click seller assignment did not create exactly one default dial grant: ${JSON.stringify(sellerGrant.rows)}`);
+}
+const sellerMapping = await db.query(`select selected_device_id
+  from public.rinkel_user_mappings_v2
+  where tenant_id='00000000-0000-0000-0000-000000000051'
+    and kundexa_user_id='00000000-0000-0000-0000-000000000078' and active`);
+if (sellerMapping.rows.length !== 1 || sellerMapping.rows[0].selected_device_id !== null) {
+  throw new Error(`One-click seller mapping did not defer the device: ${JSON.stringify(sellerMapping.rows)}`);
+}
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000078',false)`);
+const sellerReady = await db.query(`select public.telephony_status_for_current_user() as status`);
+if (!sellerReady.rows[0].status.manualReady || !sellerReady.rows[0].status.userHasDevice) {
+  throw new Error(`Seller was not dial ready after one-click assignment: ${JSON.stringify(sellerReady.rows[0].status)}`);
+}
+// Removing the provider device must produce an actionable blocker, never a silent
+// fallback to some other seller's device.
+await db.exec(`update public.platform_rinkel_users set external_device_id=null
+  where id='00000000-0000-0000-0000-000000000077'`);
+const sellerWithoutDevice = await db.query(`select public.telephony_status_for_current_user() as status`);
+if (
+  sellerWithoutDevice.rows[0].status.manualReady
+  || sellerWithoutDevice.rows[0].status.userHasDevice
+  || !sellerWithoutDevice.rows[0].status.blockers.some((blocker) => blocker.code === "PROVIDER_DEVICE_MISSING")
+) {
+  throw new Error(`Missing provider device was not reported: ${JSON.stringify(sellerWithoutDevice.rows[0].status)}`);
+}
+await db.exec(`
+  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000014',false);
+  update public.platform_rinkel_users set external_device_id='device-scalar'
+    where id='00000000-0000-0000-0000-000000000077';
+`);
+// Re-running the same assignment is idempotent, and widening it to the whole
+// organisation adds the tenant-wide grant without duplicating the seller link.
+const repeatedAssignment = await db.query(`select public.assign_platform_rinkel_number(
+  '00000000-0000-0000-0000-000000000079','user','00000000-0000-0000-0000-000000000051',
+  null,array['00000000-0000-0000-0000-000000000078']::uuid[],
+  '00000000-0000-0000-0000-000000000077',true,'repeat'
+) as report`);
+if (
+  repeatedAssignment.rows[0].report.linked_seller_count !== 0
+  || repeatedAssignment.rows[0].report.already_linked_seller_count !== 1
+) {
+  throw new Error(`Repeated assignment was not idempotent: ${JSON.stringify(repeatedAssignment.rows[0].report)}`);
+}
+const tenantAssignment = await db.query(`select public.assign_platform_rinkel_number(
+  '00000000-0000-0000-0000-000000000079','tenant','00000000-0000-0000-0000-000000000051',
+  null,null,null,true,'one click organisation assignment'
+) as report`);
+if (tenantAssignment.rows[0].report.seller_count < 2) {
+  throw new Error(`Organisation assignment did not reach every active member: ${JSON.stringify(tenantAssignment.rows[0].report)}`);
+}
+const tenantWideGrant = await db.query(`select count(*)::int as count
+  from public.rinkel_number_grants grant_row
+  join public.rinkel_number_allocations allocation on allocation.id=grant_row.number_allocation_id
+  where grant_row.tenant_id='00000000-0000-0000-0000-000000000051'
+    and grant_row.team_id is null and grant_row.user_id is null
+    and grant_row.active and grant_row.is_default
+    and allocation.rinkel_number_id='00000000-0000-0000-0000-000000000079'`);
+if (Number(tenantWideGrant.rows[0].count) !== 1) {
+  throw new Error(`Organisation assignment did not create one tenant-wide default grant: ${JSON.stringify(tenantWideGrant.rows)}`);
+}
+const tenantDefault = await db.query(`select default_number_allocation_id is not null as set
+  from public.telephony_policies where tenant_id='00000000-0000-0000-0000-000000000051'`);
+if (!tenantDefault.rows[0].set) {
+  throw new Error("Organisation assignment did not set the tenant default caller id.");
+}
+const teamAssignment = await db.query(`select public.assign_platform_rinkel_number_to_teams(
+  '00000000-0000-0000-0000-000000000079',
+  array['00000000-0000-0000-0000-000000000076']::uuid[],
+  'one click team assignment'
+) as report`);
+if (teamAssignment.rows[0].report.scope !== "team" || teamAssignment.rows[0].report.tenant_count !== 1) {
+  throw new Error(`Team assignment did not delegate to the shared path: ${JSON.stringify(teamAssignment.rows[0].report)}`);
+}
+const teamAllocation = await db.query(`select count(*)::int as count
+  from public.teams team
+  join public.rinkel_number_allocations allocation on allocation.id=team.rinkel_number_allocation_id
+  where team.id='00000000-0000-0000-0000-000000000076'
+    and allocation.rinkel_number_id='00000000-0000-0000-0000-000000000079'`);
+if (Number(teamAllocation.rows[0].count) !== 1) {
+  throw new Error(`Team assignment did not set the team caller id: ${JSON.stringify(teamAllocation.rows)}`);
+}
+let rejectedNonPlatformAssignment = false;
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000078',false)`);
+try {
+  await db.query(`select public.assign_platform_rinkel_number(
+    '00000000-0000-0000-0000-000000000079','tenant','00000000-0000-0000-0000-000000000051',
+    null,null,null,true,'escalation attempt'
+  )`);
+} catch (error) {
+  rejectedNonPlatformAssignment = String(error).includes("PLATFORM_ADMIN_REQUIRED");
+}
+if (!rejectedNonPlatformAssignment) {
+  throw new Error("A tenant seller was allowed to assign a central Rinkel number.");
+}
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
+console.log("Executed one-click Rinkel number assignment runtime paths: scalar provider device resolution, seller/organisation/team scope, idempotent re-assignment, actionable device blocker and platform authorization.");
+
+// A private individual with no legal basis AND no contact-permission row must be
+// refused. `v_permission_status` is null in that case, and before the fix the
+// three-valued `false or null` made the legal-basis guard evaluate to null and
+// silently pass.
+await db.exec(`
+  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
+  insert into public.customers(
+    id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by
+  ) values(
+    '00000000-0000-0000-0000-000000000080','00000000-0000-0000-0000-000000000001','person','prospect',
+    'Legal Basis Probe','+46700000180',null,null,'00000000-0000-0000-0000-000000000002'
+  );
+  insert into public.tenant_features(tenant_id,feature_key,enabled)
+    values('00000000-0000-0000-0000-000000000001','outbound_calls',true)
+    on conflict(tenant_id,feature_key) do update set enabled=true;
+`);
+const noPermissionRow = await db.query(`select public.evaluate_contact_policy_for_tenant(
+  '00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000080','call','direct_marketing'
+) as policy`);
+if (
+  noPermissionRow.rows[0].policy.allowed !== false
+  || noPermissionRow.rows[0].policy.reason !== "legal_basis_required"
+) {
+  throw new Error(`Legal basis gate did not fire without a contact-permission row: ${JSON.stringify(noPermissionRow.rows[0].policy)}`);
+}
+// A recorded consent is a legal basis, so the same customer becomes permissible
+// up to the independent NIX control.
+await db.exec(`
+  insert into public.contact_permissions(tenant_id,customer_id,channel,purpose,status,source,valid_from,created_by)
+  values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000080','call','direct_marketing','allowed','verify-runtime',now(),'00000000-0000-0000-0000-000000000002');
+`);
+const withConsent = await db.query(`select public.evaluate_contact_policy_for_tenant(
+  '00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000080','call','direct_marketing'
+) as policy`);
+if (withConsent.rows[0].policy.reason === "legal_basis_required") {
+  throw new Error(`Recorded consent was not accepted as a legal basis: ${JSON.stringify(withConsent.rows[0].policy)}`);
+}
+// The NIX control is independent and must still refuse a private individual.
+if (withConsent.rows[0].policy.allowed !== false || withConsent.rows[0].policy.reason !== "nix_check_required") {
+  throw new Error(`NIX control did not stand on its own: ${JSON.stringify(withConsent.rows[0].policy)}`);
+}
+console.log("Executed contact-policy legal-basis runtime path: missing consent refused, recorded consent accepted, NIX control independent.");
+
+// Creating a customer goes through PostgREST's `.insert().select()`, which is
+// `INSERT ... RETURNING`. SELECT policies apply to RETURNING, so a policy that
+// establishes access by selecting the row back out of its own table can never
+// pass: a STABLE function cannot see the row the statement is still inserting.
+//
+// RLS is only enforced for a non-superuser, and `set local role` lives for one
+// transaction, so the whole probe runs inside a single DO block.
+// Supabase grants table privileges to `authenticated`; this harness creates the
+// role bare, so grant what the probe needs before enforcing RLS on it.
+await db.exec(`
+  grant usage on schema public to authenticated;
+  grant select, insert, update on public.customers to authenticated;
+`);
+await db.query(`
+do $probe$
+declare
+  v_id uuid;
+  v_foreign_visible integer;
+  v_owner_visible integer;
+begin
+  perform set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',true);
+  perform set_config('request.jwt.claim.role','authenticated',true);
+  set local role authenticated;
+
+  insert into public.customers(
+    tenant_id,customer_type,display_name,phone_e164,lifecycle,created_by,assigned_user_id
+  ) values(
+    '00000000-0000-0000-0000-000000000001','company','Returning Probe','+46700000181','prospect',
+    '00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000002'
+  ) returning id into v_id;
+  if v_id is null then
+    raise exception 'INSERT ... RETURNING on customers was blocked by the select policy';
+  end if;
+
+  select count(*) into v_owner_visible from public.customers where id=v_id;
+  if v_owner_visible <> 1 then
+    raise exception 'The creating tenant owner could not read the customer back';
+  end if;
+
+  -- A seller with no claim on the row must still be refused.
+  perform set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000020',true);
+  select count(*) into v_foreign_visible from public.customers where id=v_id;
+  if v_foreign_visible <> 0 then
+    raise exception 'An unrelated seller could read a customer they have no claim on';
+  end if;
+
+  reset role;
+end
+$probe$;
+`);
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
+console.log("Executed customer/contract RLS runtime path: INSERT ... RETURNING permitted for the creator, unrelated seller still refused.");
 
 // Performance/scraper operations runtime path: aggregated RPCs, atomic ingestion
 // quota reservation, admin run controls, dead-letter re-drive and duplicate-run guards.
