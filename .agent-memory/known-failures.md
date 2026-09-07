@@ -343,3 +343,23 @@ honour the tenant screening mode.
 
 This also invalidated advice given earlier in the session that marking a customer as a company would
 make it callable — it would not have, because of this second gate.
+
+## FAILURE-0042 — En egen verifiering rullade tillbaka den fix den verifierade — FIXED 2026-09-07
+
+**Symptom:** Användaren fick "Samtalet kunde inte reserveras säkert. Referens:
+fcdeb9dc-…" efter att FAILURE-0040 rapporterats som åtgärdad.
+
+**Rotorsak:** `alter function … set search_path = public, extensions` kördes i
+SAMMA `execute_sql`-anrop som ett verifierande DO-block vars sista sats var
+`raise exception 'RESERVE_OK'`. Hela anropet är en transaktion, så
+rollbacken tog med sig ALTER-satserna. `RESERVE_OK` var sant inuti
+transaktionen och falskt efteråt: `proconfig` var tillbaka på
+`["search_path=public"]` och varje reservation föll på
+`42883 function digest(text, unknown) does not exist`.
+
+**Åtgärd:** ALTER-satserna applicerades ensamma, i ett eget anrop. Verifiering
+skedde därefter i ett separat anrop.
+
+**Regel:** En verifiering som avslutas med `raise exception` (eller på annat
+sätt rullar tillbaka) får aldrig dela transaktion med den ändring den
+verifierar. Applicera först, verifiera sedan — i skilda anrop.
