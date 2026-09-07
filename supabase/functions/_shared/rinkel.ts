@@ -579,8 +579,14 @@ export function normalizeRinkelUser(value: unknown): RinkelUser {
   };
 }
 
+/**
+ * Rinkel has no devices endpoint. `GET /users/:id` is the authoritative device
+ * record and carries at most one device as the nullable scalar `deviceId`, so a
+ * successful detail fetch tells us exactly which device the user has — including
+ * that it has none. Only a failed detail fetch is inconclusive.
+ */
 export function staleRinkelDeviceIds(user: RinkelUser, storedProviderDeviceIds: string[]): string[] {
-  if (!user.deviceInventoryComplete) return [];
+  if (user.deviceInventoryError) return [];
   const live = new Set(user.devices.map((device) => device.id));
   return storedProviderDeviceIds.filter((deviceId) => !live.has(deviceId));
 }

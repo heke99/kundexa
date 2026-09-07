@@ -75,33 +75,34 @@ export function RinkelUserMappingForm({
       {users.map((user) => <option
         key={user.allocationId}
         value={user.allocationId}
-        disabled={!user.active || !user.hasDevice}
+        disabled={!user.active}
       >
         {user.displayName} · {user.hasDevice
-          ? `${user.activeDeviceCount ?? user.devices.filter((device) => device.active).length} aktiva enheter`
+          ? `${user.activeDeviceCount ?? user.devices.filter((device) => device.active).length} registrerade enheter`
           : user.deviceInventoryError
-            ? `device-synkfel ${user.deviceInventoryError}`
-            : user.deviceInventoryComplete
-              ? "Rinkel rapporterar 0 aktiva enheter"
-              : "device-inventering ej verifierad"}{user.active ? "" : " · inaktiv"}
+            ? `enhetsuppgifter kunde inte läsas (${user.deviceInventoryError})`
+            : "ingen registrerad enhet ännu"}{user.active ? "" : " · inaktiv"}
       </option>)}
     </SelectField>
-    {selectedUser && activeDevices.length === 0 ? <p className="form-error">
+    {selectedUser && activeDevices.length === 0 ? <p className="notice warning">
       {selectedUser.deviceInventoryError
-        ? `Rinkels user-detail kunde inte hämtas (${selectedUser.deviceInventoryError}). Synkronisera katalogen igen innan mappning.`
-        : selectedUser.deviceInventoryComplete
-          ? "Rinkel rapporterar ingen aktiv enhet för den här telefoni-användaren. Kontrollera användarens app/webphone/telefon i Rinkel och synkronisera katalogen igen."
-          : "Kundexa har ännu ingen verifierad device-inventering för användaren. Kör Synkronisera katalog i plattformsadmin först."}
+        ? `Enhetsuppgifterna hos telefonileverantören kunde inte läsas (${selectedUser.deviceInventoryError}). Mappningen kan sparas ändå; be plattformsadministratören synkronisera katalogen igen.`
+        : "Telefonileverantören rapporterar ingen registrerad enhet för den här användaren ännu. Du kan spara mappningen nu — säljaren blir ringklar automatiskt så snart hen loggat in i leverantörens webbtelefon eller app och katalogen synkats om."}
     </p> : null}
     <SelectField
-      label="Aktiv telefonienhet"
+      label="Telefonienhet"
       name="selected_device_id"
-      required
       value={selectedDeviceId}
       onChange={(event) => setSelectedDeviceId(event.target.value)}
       disabled={!selectedUserAllocationId || activeDevices.length === 0}
     >
-      <option value="">{selectedUserAllocationId ? "Välj enhet som hör till användaren" : "Välj först telefoni-användare"}</option>
+      <option value="">
+        {!selectedUserAllocationId
+          ? "Välj först telefoni-användare"
+          : activeDevices.length
+            ? "Använd leverantörens aktuella enhet"
+            : "Ingen registrerad enhet ännu"}
+      </option>
       {activeDevices.map((device) => <option key={device.id} value={device.id}>
         {device.displayName ?? "Telefonienhet"} · {device.status}
       </option>)}
@@ -112,7 +113,10 @@ export function RinkelUserMappingForm({
         {number.displayName ? `${number.displayName} · ` : ""}{number.number}{number.active ? "" : " · inaktivt"}
       </option>)}
     </SelectField>
-    <p className="muted">När mappningen sparas får säljaren automatiskt ringbehörighet till det valda standardnumret.</p>
-    <button className="button button-primary" disabled={!selectedUserAllocationId || !selectedDeviceId}>Spara mappning</button>
+    <p className="muted">
+      När mappningen sparas får säljaren automatiskt ringbehörighet till det valda standardnumret. Lämna enheten tom
+      för att alltid använda den enhet telefonileverantören rapporterar just nu.
+    </p>
+    <button className="button button-primary" disabled={!selectedUserAllocationId}>Spara mappning</button>
   </form>;
 }

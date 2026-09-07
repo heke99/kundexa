@@ -183,7 +183,7 @@ assert.match(rinkelActions, /const coreWebhooksVerified = verifiedCoreCount === 
 assert.match(rinkelClient, /async listUsersWithDeviceDetails\(\)/);
 assert.match(rinkelClient, /async getUser\(userId: string, fallback\?: RinkelUser\)/);
 assert.match(rinkelClient, /deviceInventoryComplete: hasDeviceArray/);
-assert.match(rinkelClient, /if \(!user\.deviceInventoryComplete\) return \[\]/);
+assert.match(rinkelClient, /if \(user\.deviceInventoryError\) return \[\]/);
 assert.match(rinkelActions, /client\.listUsersWithDeviceDetails\(\)/);
 assert.match(rinkelActions, /staleRinkelDeviceIds/);
 assert.match(rinkelActions, /repairUniqueRinkelDeviceMappings/);
@@ -193,7 +193,7 @@ assert.match(deviceMigration, /deviceInventoryComplete/);
 assert.match(deviceMigration, /activeDeviceCount/);
 assert.match(deviceMigration, /set search_path=''/);
 assert.match(rinkelMappingForm, /if \(nextDevices\.length === 1\) setSelectedDeviceId\(nextDevices\[0\]\.id\)/);
-assert.match(rinkelMappingForm, /device-inventering ej verifierad/);
+assert.match(rinkelMappingForm, /ingen registrerad enhet ännu/);
 
 // The public Rinkel callback owns validation + one atomic ingest RPC. Durable
 // event/job/idempotency invariants belong to the latest forward-only migration.

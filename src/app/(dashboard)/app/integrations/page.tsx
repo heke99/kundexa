@@ -112,8 +112,12 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
           const profile = member && (Array.isArray(member.profiles) ? member.profiles[0] : member.profiles);
           const user = rinkelResources.users.find((item) => item.allocationId === mapping.userAllocationId);
           const number = rinkelResources.numbers.find((item) => item.allocationId === mapping.numberAllocationId);
-          const device = user?.devices.find((item) => item.id === mapping.selectedDeviceId);
-          return <div className="activity-line" key={mapping.id}><span className="activity-dot"><Phone size={13} /></span><div><strong>{profile?.full_name ?? mapping.kundexaUserId}</strong><p>{user?.displayName ?? "Telefoni-användare saknas"} · {device?.displayName ?? "Telefonienhet"} · {number?.number ?? "nummer saknas"}</p></div><Badge className="badge-success">Aktiv</Badge></div>;
+          const device = user?.devices.find((item) => item.id === mapping.selectedDeviceId)
+            ?? user?.devices.find((item) => item.active);
+          const deviceLabel = device
+            ? device.displayName ?? "Telefonienhet"
+            : "väntar på registrerad enhet";
+          return <div className="activity-line" key={mapping.id}><span className="activity-dot"><Phone size={13} /></span><div><strong>{profile?.full_name ?? mapping.kundexaUserId}</strong><p>{user?.displayName ?? "Telefoni-användare saknas"} · {deviceLabel} · {number?.number ?? "nummer saknas"}</p></div><Badge className={device ? "badge-success" : "badge-warning"}>{device ? "Ringklar" : "Väntar på enhet"}</Badge></div>;
         })}</div>
       </CardContent></Card>
 

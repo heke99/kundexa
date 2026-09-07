@@ -88,3 +88,24 @@ Se `docs/PRODUCTION_READINESS.md` för fullständig formulering och verifierings
 - De fem webhookarna är registrerade mot `https://kundexa.se/...`, men alla fem har
   `last_error_code='RINKEL_INVALID_REQUEST'` och `test_received_at=null`. Eftersom apex i dag
   308-redirectar till `www` möter varje leverans en redirect innan den når appen.
+
+## 2026-09-07 — efter Rinkel-devicefixen
+
+Löst i kod och applicerat på det länkade produktionsprojektet (`202609070001`):
+
+- Tilldelning blockeras inte längre av en device som leverantören inte registrerat.
+- Nummertilldelning till bolag, team eller enskild säljare är ett steg.
+- Säljarmappning, telefoniaktivering och caller-ID-standard sker i samma transaktion.
+
+Kvarstående, och det är den enda saken som hindrar ett riktigt utgående samtal:
+
+- **Rinkel-kontot har ingen registrerad device.** `platform_rinkel_users.external_device_id`
+  är `null` för `hekmat.h@gridex.se` och `platform_rinkel_devices` är tom. Rinkel har inget
+  device-endpoint, så Kundexa kan inte skapa en device — den uppstår när användaren loggar in i
+  Rinkels webbtelefon eller mobilapp. Åtgärd: logga in som den användaren i Rinkel, kör därefter
+  `Synkronisera katalog` i `/app/platform/telephony` och kontrollera att användaren visas som
+  "ringklar". Ingen omtilldelning behövs — mappningen plockar upp enheten automatiskt.
+- Verifiera först därefter: riktigt dial, `callStart`/`callEnd`, CDR-reparation och recording.
+  `callStart` och `callInsights` har fortfarande `test_received_at=null`; `incomingCall`,
+  `outgoingCall` och `callEnd` har däremot tagits emot med HTTP 200, så webhookvägen in i appen
+  fungerar numera (motsäger den äldre noteringen om apex-redirecten ovan).

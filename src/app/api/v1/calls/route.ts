@@ -60,7 +60,11 @@ function reservationFailure(rawMessage: string, databaseCode?: string | null) {
     return { code: "RINKEL_API_NOT_VERIFIED", message: "Telefoni är inte konfigurerad och verifierad av plattformsadministratören.", status: 409 };
   }
   if (normalized.includes("DIAL_CONFIGURATION_INCOMPLETE")) {
-    return { code: "DIAL_CONFIGURATION_INCOMPLETE", message: "Användar-, enhets- eller nummerkonfigurationen för telefoni är inte komplett.", status: 409 };
+    return {
+      code: "DIAL_CONFIGURATION_INCOMPLETE",
+      message: "Telefonin saknar en registrerad enhet eller ett utgående nummer för säljaren. Kontrollera att säljaren är inloggad i telefonitjänstens webbtelefon eller app och att katalogen är synkroniserad.",
+      status: 409,
+    };
   }
   if (normalized.includes("NUMBER_ALLOCATION") || normalized.includes("DIAL_PERMISSION_DENIED") || normalized.includes("NUMBER_GRANT")) {
     return { code: normalized.includes("DIAL_PERMISSION_DENIED") ? "DIAL_PERMISSION_DENIED" : "NUMBER_ALLOCATION_MISSING", message: "Du saknar åtkomst till ett aktivt utgående telefonnummer.", status: 409 };
@@ -69,7 +73,11 @@ function reservationFailure(rawMessage: string, databaseCode?: string | null) {
     return { code: "USER_MAPPING_MISSING", message: "Säljaren saknar en aktiv telefonimappning.", status: 409 };
   }
   if (normalized.includes("DEVICE")) {
-    return { code: "DEVICE_MISSING", message: "Säljaren saknar en aktiv vald telefonienhet.", status: 409 };
+    return {
+      code: "PROVIDER_DEVICE_MISSING",
+      message: "Telefonitjänsten har ingen registrerad enhet för säljaren. Logga in i telefonitjänstens webbtelefon eller app och låt plattformsadministratören synkronisera katalogen.",
+      status: 409,
+    };
   }
   if (normalized.includes("TELEPHONY_DISABLED")) return { code: "TELEPHONY_DISABLED", message: "Telefoni är pausad för företaget.", status: 409 };
   if (normalized.includes("MANUAL_DIALER_DISABLED")) return { code: "MANUAL_DIALER_DISABLED", message: "Manuell uppringning är avstängd för företaget.", status: 409 };

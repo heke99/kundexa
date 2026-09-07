@@ -226,10 +226,21 @@ Deno.test("hydrates Rinkel user device inventory from the documented user detail
   assert(users[0].deviceInventoryComplete, "detail devices[] must be authoritative");
 });
 
-Deno.test("preserves stored devices when Rinkel device inventory is incomplete", () => {
-  const incomplete = normalizeRinkelUser({ id: "u1", fullName: "Ada" });
-  assert(!incomplete.deviceInventoryComplete, "summary without devices must remain incomplete");
-  equal(staleRinkelDeviceIds(incomplete, ["known-device"] ).length, 0, "incomplete inventory must not stale devices");
+Deno.test("device staleness follows the provider detail record, not a fictional devices array", () => {
+  // Rinkel has no devices endpoint. `GET /users/:id` reports at most one device
+  // as the scalar `deviceId`, so a successful detail fetch is authoritative even
+  // when it carries no `devices` array.
+  const scalarOnly = normalizeRinkelUser({ id: "u1", fullName: "Ada", deviceId: "current-device" });
+  const scalarStale = staleRinkelDeviceIds(scalarOnly, ["current-device", "replaced-device"]);
+  equal(scalarStale.length, 1, "scalar detail must stale a device the provider no longer reports");
+  equal(scalarStale[0], "replaced-device", "only the absent device should stale");
+
+  const noDevice = normalizeRinkelUser({ id: "u1", fullName: "Ada", deviceId: null });
+  equal(staleRinkelDeviceIds(noDevice, ["removed-device"]).length, 1, "a provider reporting no device must stale stored devices");
+
+  // A failed detail fetch is the only inconclusive case; stored devices are kept.
+  const unreadable = { ...noDevice, deviceInventoryError: "RINKEL_TIMEOUT" as const };
+  equal(staleRinkelDeviceIds(unreadable, ["known-device"]).length, 0, "an unreadable detail must not stale devices");
 
   const authoritative = normalizeRinkelUser({
     id: "u1",

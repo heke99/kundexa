@@ -77,7 +77,16 @@ function safePlatformError(error: unknown): SafePlatformError {
         PHONE_NUMBER_INACTIVE: "Telefonnumret är inaktivt eller saknas i katalogen.",
         TENANT_NOT_ACTIVE: "Ett valt bolag är inte aktivt.",
         DEVICE_MISSING: "Den valda telefonienheten är inaktiv eller hör inte till den valda telefoni-användaren.",
-        RINKEL_USER_DEVICE_MISSING: "Rinkel-användaren saknar en synkroniserad aktiv telefonienhet. Synkronisera katalogen och kontrollera användarens device i Rinkel innan tilldelning.",
+        RINKEL_USER_DEVICE_MISSING: "Telefoni-användaren saknar en registrerad enhet hos leverantören. Säljaren måste logga in i leverantörens webbtelefon eller app, därefter synkroniseras katalogen.",
+        PLATFORM_ADMIN_REQUIRED: "Åtgärden kräver en plattformsadministratör.",
+        INVALID_ASSIGNMENT_SCOPE: "Välj om numret ska tilldelas ett bolag, ett team eller en säljare.",
+        TENANT_SELECTION_REQUIRED: "Välj ett bolag.",
+        SELLER_SELECTION_REQUIRED: "Välj minst en säljare.",
+        ACTIVE_SELLER_SELECTION_INVALID: "En eller flera valda säljare är inte aktiva medlemmar i ett aktivt bolag.",
+        ASSIGNMENT_TARGET_NOT_FOUND: "Tilldelningen hade inget giltigt mål.",
+        EXPLICIT_PROVIDER_USER_REQUIRES_SINGLE_SELLER: "En vald telefoni-användare kan bara kopplas till exakt en säljare.",
+        EXPLICIT_PROVIDER_USER_REQUIRES_SELLER_SCOPE: "En telefoni-användare kan bara väljas när numret tilldelas en enskild säljare.",
+        RINKEL_USER_ALLOCATION_MISSING: "Telefoni-användaren är inte tilldelad det här bolaget.",
         NUMBER_ALLOCATION_MISSING: "Det valda telefonnumret är inaktivt eller inte tilldelat företaget.",
         AUTHENTICATION_REQUIRED: "Du behöver logga in igen innan telefonimappningen kan sparas.",
         RINKEL_MAPPING_MEMBER_NOT_ACTIVE: "Säljaren är inte en aktiv medlem i företaget.",
@@ -299,8 +308,8 @@ export async function testPlatformRinkelConnection() {
       details: {
         user_count: users.length,
         device_count: users.reduce((sum, user) => sum + user.devices.length, 0),
-        device_inventory_complete_users: users.filter((user) => user.deviceInventoryComplete).length,
-        device_inventory_incomplete_users: users.filter((user) => !user.deviceInventoryComplete).length,
+        users_with_provider_device: users.filter((user) => user.active && Boolean(user.deviceId)).length,
+        users_without_provider_device: users.filter((user) => user.active && !user.deviceId && !user.deviceInventoryError).length,
         device_inventory_errors: users.filter((user) => user.deviceInventoryError).map((user) => ({
           user_id: user.id, error_code: user.deviceInventoryError,
         })),
@@ -312,8 +321,8 @@ export async function testPlatformRinkelConnection() {
     await platformAudit(context.userId, "rinkel.connection_test_succeeded", "platform_integration", integration.id, {
       user_count: users.length,
       device_count: users.reduce((sum, user) => sum + user.devices.length, 0),
-      device_inventory_complete_users: users.filter((user) => user.deviceInventoryComplete).length,
-      device_inventory_incomplete_users: users.filter((user) => !user.deviceInventoryComplete).length,
+      users_with_provider_device: users.filter((user) => user.active && Boolean(user.deviceId)).length,
+      users_without_provider_device: users.filter((user) => user.active && !user.deviceId && !user.deviceInventoryError).length,
       number_count: numbers.length,
       webhook_registration_access: webhookRegistration,
       dial_configured: dialConfigured,
@@ -373,11 +382,14 @@ export async function syncPlatformRinkelDirectory() {
         active: user.active,
         raw_provider_data: rinkelUserProviderPayload(user),
         last_synced_at: syncedAt,
-        ...(user.deviceId || user.deviceInventoryComplete
-          ? { external_device_id: user.deviceId }
-          : existingUser?.external_device_id
+        // A successful `GET /users/:id` is authoritative for this user's single
+        // device, including reporting that it now has none. Only an unreadable
+        // detail response preserves the previously synchronized device id.
+        ...(user.deviceInventoryError
+          ? existingUser?.external_device_id
             ? { external_device_id: existingUser.external_device_id }
-            : {}),
+            : {}
+          : { external_device_id: user.deviceId }),
       };
       const { data: storedUser, error } = await admin.from("platform_rinkel_users").upsert(
         providerUserWrite,
@@ -507,8 +519,8 @@ export async function syncPlatformRinkelDirectory() {
         active_devices: activeDeviceCount,
         numbers: numbers.length,
         active_numbers: activeNumberCount,
-        device_inventory_complete_users: users.filter((user) => user.deviceInventoryComplete).length,
-        device_inventory_incomplete_users: users.filter((user) => !user.deviceInventoryComplete).length,
+        users_with_provider_device: users.filter((user) => user.active && Boolean(user.deviceId)).length,
+        users_without_provider_device: users.filter((user) => user.active && !user.deviceId && !user.deviceInventoryError).length,
         device_inventory_errors: users.filter((user) => user.deviceInventoryError).map((user) => ({
           user_id: user.id, error_code: user.deviceInventoryError,
         })),
@@ -526,15 +538,19 @@ export async function syncPlatformRinkelDirectory() {
       active_users: activeUserCount,
       active_devices: activeDeviceCount,
       active_numbers: activeNumberCount,
-      device_inventory_complete_users: users.filter((user) => user.deviceInventoryComplete).length,
-      device_inventory_incomplete_users: users.filter((user) => !user.deviceInventoryComplete).length,
+      users_with_provider_device: users.filter((user) => user.active && Boolean(user.deviceId)).length,
+      users_without_provider_device: users.filter((user) => user.active && !user.deviceId && !user.deviceInventoryError).length,
       repaired_mappings: repairedMappingCount,
       dial_configured: dialConfigured,
     });
     revalidatePath("/app/platform/telephony");
     revalidatePath("/app/integrations");
-    const incompleteUsers = users.filter((user) => !user.deviceInventoryComplete).length;
-    successMessage = `Katalogen synkroniserades: ${users.length} användare, ${activeDeviceCount} aktiva enheter och ${numbers.length} nummer.${repairedMappingCount ? ` ${repairedMappingCount} befintliga säljarmappningar reparerades automatiskt.` : ""}${incompleteUsers ? ` ${incompleteUsers} användare saknar komplett device-inventering från Rinkel och befintliga devices bevarades.` : ""}`;
+    // Rinkel exposes no devices endpoint and reports at most one device per user
+    // as the nullable scalar `deviceId`. A user without one has simply not signed
+    // in on a Rinkel device yet; say that instead of blaming the payload shape.
+    const usersWithoutDevice = users.filter((user) => user.active && !user.deviceId && !user.deviceInventoryError).length;
+    const unreadableUsers = users.filter((user) => user.deviceInventoryError).length;
+    successMessage = `Katalogen synkroniserades: ${users.length} användare, ${activeDeviceCount} registrerade enheter och ${numbers.length} nummer.${repairedMappingCount ? ` ${repairedMappingCount} befintliga säljarmappningar reparerades automatiskt.` : ""}${usersWithoutDevice ? ` ${usersWithoutDevice} aktiva användare saknar registrerad enhet hos Rinkel; de kan tilldelas men kan ringa först när de loggat in i Rinkels webbtelefon eller app och katalogen synkats igen.` : ""}${unreadableUsers ? ` ${unreadableUsers} användare kunde inte läsas i detalj och deras befintliga enheter bevarades.` : ""}`;
   } catch (error) {
     const safe = safePlatformError(error);
     await admin.from("platform_integrations").update({
@@ -744,37 +760,88 @@ export async function allocatePlatformRinkelResource(form: FormData) {
   go("/app/platform/telephony", "message", "Resursen är tilldelad.");
 }
 
-export async function assignPlatformPhoneNumberToTeams(form: FormData) {
+type AssignmentReport = {
+  scope?: unknown;
+  target_count?: unknown;
+  tenant_count?: unknown;
+  telephony_activated_tenant_count?: unknown;
+  seller_count?: unknown;
+  linked_seller_count?: unknown;
+  already_linked_seller_count?: unknown;
+  unresolved_seller_count?: unknown;
+  unresolved_reasons?: unknown;
+  dial_ready_seller_count?: unknown;
+  provider_device_missing_count?: unknown;
+};
+
+const assignmentBlockerMessages: Record<string, string> = {
+  no_provider_user: "saknar en entydig telefoni-användare",
+  ambiguous_provider_user: "matchar flera telefoni-användare",
+  provider_user_taken: "delar telefoni-användare med en redan mappad säljare",
+  no_seller_email: "saknar e-postadress",
+};
+
+function count(value: unknown) {
+  return Number.isFinite(Number(value)) ? Number(value) : 0;
+}
+
+function assignmentSummary(report: AssignmentReport) {
+  const sellers = count(report.seller_count);
+  const ready = count(report.dial_ready_seller_count);
+  const linked = count(report.linked_seller_count);
+  const unresolved = count(report.unresolved_seller_count);
+  const withoutDevice = count(report.provider_device_missing_count);
+  const reasons = report.unresolved_reasons && typeof report.unresolved_reasons === "object" && !Array.isArray(report.unresolved_reasons)
+    ? Object.entries(report.unresolved_reasons as Record<string, unknown>)
+      .map(([reason, total]) => `${count(total)} ${assignmentBlockerMessages[reason] ?? reason}`)
+      .join(", ")
+    : "";
+
+  return [
+    `Telefonnumret är tilldelat och telefoni är aktiverad för ${count(report.tenant_count)} bolag.`,
+    sellers ? `${ready}/${sellers} säljare är ringklara${linked ? `, varav ${linked} aktiverades nu` : ""}.` : "Ingen aktiv säljare omfattas ännu av tilldelningen.",
+    withoutDevice
+      ? `${withoutDevice} säljare väntar på en registrerad enhet hos telefonitjänsten: säljaren måste logga in i telefonitjänstens webbtelefon eller app, därefter kör du "Synkronisera katalog".`
+      : "",
+    unresolved ? `${unresolved} säljare kunde inte kopplas automatiskt${reasons ? ` (${reasons})` : ""}. Tilldela numret per säljare och välj telefoni-användare manuellt.` : "",
+  ].filter(Boolean).join(" ");
+}
+
+export async function assignPlatformPhoneNumber(form: FormData) {
   await platformAdminContext();
   const numberId = value(form, "number_id");
-  const teamIds = [...new Set(form.getAll("team_ids").map((item) => String(item).trim()).filter(Boolean))];
+  const scope = value(form, "scope");
+  const reason = value(form, "reason");
   if (!numberId) go("/app/platform/telephony", "error", "Välj ett telefonnummer.");
-  if (!teamIds.length) go("/app/platform/telephony", "error", "Välj minst ett aktivt team.");
+  if (!["tenant", "team", "user"].includes(scope)) go("/app/platform/telephony", "error", "Välj vem numret ska tilldelas.");
+
+  const list = (key: string) => [...new Set(form.getAll(key).map((item) => String(item).trim()).filter(Boolean))];
+  const teamIds = list("team_ids");
+  const userIds = list("user_ids");
+  const tenantId = value(form, "tenant_id") || null;
+  const rinkelUserId = value(form, "rinkel_user_id") || null;
+
+  if (scope === "tenant" && !tenantId) go("/app/platform/telephony", "error", "Välj ett bolag.");
+  if (scope === "team" && !teamIds.length) go("/app/platform/telephony", "error", "Välj minst ett aktivt team.");
+  if (scope === "user" && !userIds.length) go("/app/platform/telephony", "error", "Välj minst en säljare.");
 
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc("assign_platform_rinkel_number_to_teams", {
+  const { data, error } = await supabase.rpc("assign_platform_rinkel_number", {
     p_number_id: numberId,
-    p_team_ids: teamIds,
-    p_reason: value(form, "reason") || "Tilldelad till team i plattformsadministrationen",
+    p_scope: scope,
+    p_tenant_id: scope === "team" ? null : tenantId,
+    p_team_ids: scope === "team" ? teamIds : null,
+    p_user_ids: scope === "user" ? userIds : null,
+    p_rinkel_user_id: scope === "user" && userIds.length === 1 ? rinkelUserId : null,
+    p_activate_telephony: form.get("activate_telephony") === "false" ? false : true,
+    p_reason: reason || null,
   });
   if (error) go("/app/platform/telephony", "error", safePlatformError(error).message);
-
-  const result = (data ?? {}) as Record<string, unknown>;
-  const members = Number(result.member_count ?? 0);
-  const ready = Number(result.ready_member_count ?? 0);
-  const autoMapped = Number(result.auto_mapped_member_count ?? 0);
-  const unresolved = Math.max(0, members - ready);
-  const readiness = members
-    ? ` ${ready}/${members} teammedlemmar är ringklara${autoMapped ? `, varav ${autoMapped} mappades automatiskt` : ""}.`
-    : " Teamen saknar aktiva medlemmar.";
-  const unresolvedMessage = unresolved
-    ? ` ${unresolved} medlem behöver en entydig telefoni-användare och aktiv enhet.`
-    : "";
 
   revalidatePath("/app/platform/telephony");
   revalidatePath("/app/integrations");
   revalidatePath("/app/dialer");
-  go("/app/platform/telephony", "message", `Telefonnumret är tilldelat till ${teamIds.length} team.${readiness}${unresolvedMessage}`);
+  go("/app/platform/telephony", "message", assignmentSummary((data ?? {}) as AssignmentReport));
 }
 
 export async function revokePlatformPhoneNumberTeamGrant(form: FormData) {
@@ -818,7 +885,7 @@ export async function saveRinkelUserMapping(form: FormData) {
     p_kundexa_user_id: value(form, "kundexa_user_id"),
     p_rinkel_user_allocation_id: value(form, "rinkel_user_allocation_id"),
     p_default_number_allocation_id: value(form, "default_number_allocation_id"),
-    p_selected_device_id: value(form, "selected_device_id"),
+    p_selected_device_id: value(form, "selected_device_id") || null,
   });
   if (error) go("/app/integrations", "error", safePlatformError(error).message);
   revalidatePath("/app/integrations");

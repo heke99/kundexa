@@ -134,3 +134,46 @@ Detta pass hade för första gången läsaccess till det riktiga Supabase-projek
   `canonicalAppBaseUrl()` på de fyra länkbyggarna, inte i env-schemat, så en felkonfiguration
   stoppar det utskick som annars fått en trasig länk i stället för all requesthantering.
 - `GET /api/ready` rapporterar `appBaseUrl` och `appBaseUrlUsable` så värdet går att verifiera utifrån.
+
+## 2026-09-07 — Rinkel: devicemodell och nummertilldelning i ett steg
+
+Det gick inte att ringa ut. Tre orsaker, varav två var kodfel och en är extern.
+
+1. **Devicemodellen var fel mot leverantören.** Rinkel har inget device-endpoint.
+   `GET /users/:id` bär enheten som det nullbara skalära fältet `deviceId`, och `POST /dial`
+   kräver `deviceId`, `to` och `numberId` (verifierat mot developers.rinkel.com). Kundexa
+   modellerade device som ett eget inventarium och gjorde en synkad devicerad till hårt villkor
+   för allokering, säljarmappning, dial och readiness. Ett konto med `deviceId: null` kunde
+   därför inte ens tilldelas. Device är nu en **preferens**, inte ett krav:
+   `rinkel_effective_provider_device()` löser device vid ringtillfället från explicit val →
+   aktiv synkad device → `platform_rinkel_users.external_device_id`. En säljare som mappats
+   innan enheten fanns blir ringklar automatiskt vid nästa katalogsynk, utan omtilldelning.
+2. **Tilldelning var flerstegs och endast teambaserad.** `assign_platform_rinkel_number`
+   ersätter det: ett anrop, scope `tenant`/`team`/`user`, som allokerar numret, skapar
+   dial-granten på rätt nivå, sätter scopets standard-caller-ID, aktiverar telefoni och
+   `outbound_calls`, allokerar Rinkel-användare och skapar säljarmappningar.
+   `assign_platform_rinkel_number_to_teams` behåller sin signatur och delegerar dit.
+3. **Externt och kvarstående:** Rinkel-kontot har fortfarande ingen registrerad device
+   (`external_device_id is null`, `platform_rinkel_devices` tom). Utgående samtal kan inte gå
+   förrän användaren loggat in i Rinkels webbtelefon/app och katalogen synkats om. Koden failar
+   stängt med `PROVIDER_DEVICE_MISSING` som säger exakt det.
+
+Sidoeffekter som också åtgärdats: `staleRinkelDeviceIds` avaktiverar nu devices utifrån ett
+lyckat detaljanrop i stället för en `devices[]`-array som Rinkel aldrig skickar;
+`external_device_id` följer leverantörens sanning inklusive borttagning; säljarmappningsformuläret
+tillåter mappning utan device; dialer-, calls-API- och statusmeddelanden pekar på rätt åtgärd.
+
+### Migrationsdrift mot live (andra gången)
+
+Produktionen hade `20260814124751_rinkel_seller_number_assignment_without_device` som saknades i
+repot. Den innehöll en tidigare, partiell version av samma diagnos (device-gate borttagen ur
+`allocate_platform_rinkel_resource` och `replace_rinkel_user_mapping_v3`, med autoval vid exakt en
+device och `DEVICE_SELECTION_REQUIRED` vid flera). Den är nu backfillad **verbatim** — repofilen
+har samma md5 som `supabase_migrations.schema_migrations.statements[1]` — och den nya migrationen
+`202609070001` är ombyggd så att den bygger *ovanpå* den i stället för att skriva över den.
+
+Dessutom hade live `get_tenant_rinkel_resources` med `is_tenant_admin` medan repot hade
+`is_tenant_member`. Livevarianten är strängare och behållen; repot är anpassat till den.
+
+Efter applicering är alla nio berörda funktioner identiska i produktion och i PGlite-replayen
+(md5 över `pg_get_functiondef` matchar för samtliga).

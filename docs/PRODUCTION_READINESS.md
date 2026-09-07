@@ -103,7 +103,15 @@ ingen Rinkel-credential per tenant.
       `"webhookHost":"kundexa.se"`, `"webhookHostAligned":false`. Prenumerationerna pekar
       alltså på apex, som svarar `308`, medan appen ligger på `www`. En webhookavsändare som
       inte följer redirect tappar eventet. Se *Externa åtgärder*.
-- [ ] **Rinkel-kontot har ingen device — dial är blockerat.**
+- [ ] **Rinkel-kontot har ingen device — dial är blockerat (men tilldelning är det inte längre).**
+      Uppdatering `2026-09-07`: den saknade device blockerade tidigare även *tilldelning*, vilket
+      var en kodbugg. Rinkel har inget device-endpoint och `deviceId: null` är ett normalt
+      leverantörstillstånd, så tilldelning och säljarmappning är nu öppna och device löses vid
+      ringtillfället via `rinkel_effective_provider_device`. En torrkörning av
+      `assign_platform_rinkel_number` mot produktionsdata (rullad tillbaka) ger
+      `linked_seller_count=1`, `unresolved_seller_count=0`,
+      `telephony_activated_tenant_count=1` och `provider_device_missing_count=1`: hela kedjan
+      utom device är alltså klar. Endast punkten nedan återstår, och den är extern.
       Evidens: `platform_rinkel_devices` har noll rader, och leverantörens egen payload för
       användaren (`hekmat.h@gridex.se`, `6a6b1c70faafaa92a04a7d6b`) har `"deviceId": null` och
       `"deskPhoneAccount": null`. `platform_rinkel_capabilities` visar `api_access=true`,

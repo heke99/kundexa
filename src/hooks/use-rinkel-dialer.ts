@@ -60,7 +60,9 @@ function telephonyStatusMessage(data: StatusResponse) {
     case "RINKEL_USER_MAPPING_MISSING":
       return "Du saknar en telefonimappning";
     case "RINKEL_DEVICE_MISSING":
-      return "Din telefonienhet saknas";
+    case "DEVICE_MISSING":
+    case "PROVIDER_DEVICE_MISSING":
+      return "Logga in i telefonitjänstens webbtelefon eller app – ingen enhet är registrerad för dig";
     case "RINKEL_NUMBER_ACCESS_DENIED":
       return "Du saknar åtkomst till ett utgående nummer";
     case "CALLER_ID_UNRESOLVABLE":
@@ -74,7 +76,7 @@ function telephonyStatusMessage(data: StatusResponse) {
   if (!data.tenantEnabled) return "Telefoni är pausad för företaget";
   if (!data.tenantHasNumber) return "Inget telefonnummer har tilldelats företaget eller ditt team";
   if (!data.userMapped) return "Du saknar en telefonimappning";
-  if (!data.userHasDevice) return "Din telefonienhet saknas";
+  if (!data.userHasDevice) return "Logga in i telefonitjänstens webbtelefon eller app – ingen enhet är registrerad för dig";
   if (!data.userHasNumberAccess) return "Du saknar åtkomst till ett utgående nummer";
   if (data.callerIdResolvable === false) return "Ditt tilldelade utgående nummer kunde inte väljas";
   return "Telefoni är inte redo";

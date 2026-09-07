@@ -210,3 +210,37 @@ and only performs destructive stale-device reconciliation when device inventory 
 provider devices to be allocated to a tenant. That created an allocation that could never pass
 `replace_rinkel_user_mapping_v3` or `/dial`. The forward-only replacement now raises
 `RINKEL_USER_DEVICE_MISSING` unless a synchronized active device exists.
+
+## FAILURE-0035 — Outbound calling was impossible because the device model contradicted the provider — FIXED 2026-09-07
+
+Reverses FAILURE-0034's remedy, which treated a symptom as the rule. Rinkel has no devices endpoint; `deviceId` is
+a nullable scalar on the user object that only appears after that user signs in on a Rinkel device. Requiring a
+synchronized device row before allocation (`RINKEL_USER_DEVICE_MISSING`) and before seller mapping made assignment
+impossible for the live account, whose provider payload reports `"deviceId": null`.
+
+Three compounding effects, all fixed in `202609070001`:
+
+1. `rinkel_reserve_platform_outbound_call_v2` and `telephony_status_for_current_user` inner-joined
+   `platform_rinkel_devices` on the mapping's frozen `selected_device_id`. A seller mapped before the device
+   existed stayed permanently undialable, and a replaced device left the mapping pointing at a removed row.
+   Both now resolve through `rinkel_effective_provider_device`.
+2. `staleRinkelDeviceIds` keyed staleness on a `devices[]` array that Rinkel never sends, so
+   `deviceInventoryComplete` was always false and stale device rows were never deactivated. It now keys on whether
+   the detail fetch succeeded.
+3. Platform assignment was team-only and multi-step, and its auto-mapping required both an exact email match and
+   exactly one active device — neither held for the live account.
+
+Remaining and external: the Rinkel account still has no registered device, so a real outbound call is still not
+possible until someone signs in on a Rinkel device. The code now fails closed with `PROVIDER_DEVICE_MISSING`.
+
+## FAILURE-0036 — Second undocumented production migration drift — FIXED 2026-09-07
+
+Production carried `20260814124751_rinkel_seller_number_assignment_without_device`, absent from the repository,
+containing an earlier partial fix for FAILURE-0035. Replaying the repo would not have reproduced production, and
+this session's first draft would have silently overwritten it (losing single-device auto-selection and
+`DEVICE_SELECTION_REQUIRED`). Backfilled verbatim — the repo file's md5 equals the live
+`schema_migrations.statements[1]` — and the new migration was rebased on top of it.
+
+Production also had `get_tenant_rinkel_resources` guarded by `is_tenant_admin` while the repo had the looser
+`is_tenant_member`. The stricter live behaviour is correct (the projection exposes the whole company's telephony
+inventory) and the repo was aligned to it.

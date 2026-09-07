@@ -57,3 +57,20 @@ infrastruktur.
 4. Confirm the intended Rinkel user shows one or more active devices before allocating that user to a tenant.
 5. Open the tenant `/app/integrations`; map Kundexa seller -> allocated Rinkel user -> active device -> allocated number.
 6. Make one real manual `/dial` call. If provider responds `Device or number not found`, inspect the synchronized provider ids rather than changing ids manually.
+
+## 2026-09-07 — aktivera utringning
+
+1. Logga in i Rinkels webbtelefon eller mobilapp som `hekmat.h@gridex.se`. Det är det enda som
+   skapar ett `deviceId` på leverantörens användarobjekt.
+2. Öppna `/app/platform/telephony` och kör `Synkronisera katalog`. Användaren ska gå från
+   "väntar på enhet" till "ringklar".
+3. Tilldela numret i kortet **Tilldela telefonnummer**: välj nummer, välj bolag/team/säljare,
+   klicka `Tilldela och aktivera`. Kvittensen säger hur många säljare som blev ringklara och vad
+   som ev. saknas.
+4. Om säljarens Kundexa-adress skiljer sig från adressen hos Rinkel (som i dag:
+   `hekmat.h@div3rsa.com` mot `hekmat.h@gridex.se`), välj säljarscope och peka ut telefoni-
+   användaren explicit i formuläret.
+5. Ring ett riktigt samtal och verifiera kedjan call attempt → `outgoingCall` → `callStart` →
+   `callEnd` → CDR → recording.
+6. Undersök varför `callStart` och `callInsights` aldrig kvitterats medan de tre andra
+   webhookarna svarar 200.
