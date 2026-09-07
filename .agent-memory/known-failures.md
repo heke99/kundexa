@@ -311,3 +311,35 @@ marketing calls to private individuals depend on.
 Added `updateCustomerDetails` plus a completion form on the card. The identity field is one input; the
 checksum decides whether it is stored as an organisation number or a personal identity number, and a
 company is refused a personal identity number.
+
+## FAILURE-0040 — pgcrypto search-path hardening silently reverted; every outbound call failed — FIXED 2026-09-07
+
+`202608080002` set `search_path = public, extensions` on `rinkel_reserve_platform_outbound_call_v2`
+because Supabase installs pgcrypto in `extensions`. `202608100006` later redefined that function with
+`set search_path=public`. A `create or replace` replaces the whole SET clause, so the hardening was
+lost. The reservation hashes its idempotency key with `digest()`, so on the hosted project every
+outbound call failed at the call insert with
+
+    function digest(text, unknown) does not exist
+
+`finalize_signing_envelope` carried the same defect and would have failed when finalising a signed
+contract. Both are restored in `202609070004`.
+
+The PGlite harness defines its own `public.digest`, so replaying the migrations could never reproduce
+this — the bug only existed where pgcrypto lives outside `public`. `verify-sql.mjs` now asserts the
+invariant against `proconfig` directly: any SECURITY DEFINER function whose body calls a pgcrypto
+function must carry `extensions` on its fixed search_path. That check is independent of the shim, so a
+future redefinition fails replay instead of production.
+
+Found by dry-running the real reservation RPC against production data, not by any existing test.
+
+## FAILURE-0041 — The reservation NIX gate applied to companies — FIXED 2026-09-07
+
+`evaluate_exact_call_policy` refused any direct-marketing call whose dialled number had no valid
+`nix_checks` row, with no customer-type condition, while `evaluate_contact_policy_for_tenant` scoped the
+same control to `customer_type='person'`. NIX-Telefon registers private subscriptions, so a business
+call was being refused for a missing consumer-register result. The two policies now agree, and both
+honour the tenant screening mode.
+
+This also invalidated advice given earlier in the session that marking a customer as a company would
+make it callable — it would not have, because of this second gate.

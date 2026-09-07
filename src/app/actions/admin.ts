@@ -770,6 +770,52 @@ export async function configureNixProvider(form: FormData) {
   redirect("/app/compliance?message=NIX-leverantören är sparad och aktiverad");
 }
 
+// How a tenant satisfies the NIX obligation is an operational choice: screen in
+// Kundexa, or source numbers that are already screened and let sellers report the
+// listings they meet. Both settings default to the strict behaviour and only move
+// when an administrator sets them here.
+export async function saveComplianceScreeningPolicy(form: FormData) {
+  const context = await adminContext();
+  const mode = value(form, "nix_screening_mode");
+  if (!["provider_check", "pre_screened_source"].includes(mode)) {
+    redirect("/app/compliance?error=Ogiltigt NIX-läge");
+  }
+  const defaultLegalBasis = value(form, "default_marketing_legal_basis").slice(0, 500);
+  if (mode === "pre_screened_source" && !defaultLegalBasis) {
+    redirect("/app/compliance?error=Ange den rättsliga grund som gäller för den tvättade källan innan läget aktiveras");
+  }
+
+  const admin = createAdminClient();
+  const { data: existing, error: readError } = await admin.from("tenant_settings")
+    .select("compliance").eq("tenant_id", context.tenantId).maybeSingle();
+  if (readError) redirect(`/app/compliance?error=${encodeURIComponent(readError.message)}`);
+  const current = (existing?.compliance ?? {}) as Record<string, unknown>;
+
+  const { error } = await admin.from("tenant_settings").upsert({
+    tenant_id: context.tenantId,
+    compliance: toJson({
+      ...current,
+      nix_screening_mode: mode,
+      default_marketing_legal_basis: defaultLegalBasis || null,
+    }),
+  }, { onConflict: "tenant_id" });
+  if (error) redirect(`/app/compliance?error=${encodeURIComponent(error.message)}`);
+
+  const { error: auditError } = await admin.from("audit_logs").insert({
+    tenant_id: context.tenantId,
+    actor_user_id: context.userId,
+    action: "compliance.screening_policy_updated",
+    entity_type: "tenant_settings",
+    entity_id: context.tenantId,
+    before_data: { nix_screening_mode: typeof current.nix_screening_mode === "string" ? current.nix_screening_mode : "provider_check" },
+    after_data: { nix_screening_mode: mode, has_default_legal_basis: Boolean(defaultLegalBasis) },
+  });
+  if (auditError) redirect("/app/compliance?error=Inställningen sparades men auditloggen kunde inte skrivas");
+
+  revalidatePath("/app/compliance");
+  redirect("/app/compliance?message=Screeningpolicyn är sparad");
+}
+
 export async function setNixProviderStatus(form: FormData) {
   const context = await adminContext();
   const id = value(form, "id");

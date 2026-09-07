@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 
 const schema = z.object({
   callId: z.uuid(),
-  disposition: z.enum(["no_answer", "busy", "voicemail", "callback", "interested", "not_interested", "wrong_number", "do_not_call"]),
+  disposition: z.enum(["no_answer", "busy", "voicemail", "callback", "interested", "not_interested", "wrong_number", "do_not_call", "nix_listed"]),
   notes: z.string().max(10000).nullable().optional(),
   callbackScope: z.enum(["personal", "global"]).nullable().optional(),
   callbackDueAt: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/).nullable().optional(),

@@ -201,7 +201,12 @@ export function RinkelDialer({
         <option value="voicemail">Telefonsvarare</option>
         <option value="wrong_number">Fel nummer</option>
         <option value="do_not_call">Ring inte igen</option>
+        <option value="nix_listed">Nixat nummer</option>
       </select></label>
+      {disposition === "nix_listed" ? <p className="notice warning">
+        Numret registreras som NIX-spärrat och blockeras permanent för utgående samtal — även om
+        kunden läggs upp på nytt senare.
+      </p> : null}
       <label className="field"><span>Anteckning</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
       {disposition === "callback" ? <>
         <label className="field"><span>Återkomsttyp</span><select value={callbackScope} onChange={(event) => setCallbackScope(event.target.value as "personal" | "global")}>
