@@ -363,3 +363,24 @@ skedde därefter i ett separat anrop.
 **Regel:** En verifiering som avslutas med `raise exception` (eller på annat
 sätt rullar tillbaka) får aldrig dela transaktion med den ändring den
 verifierar. Applicera först, verifiera sedan — i skilda anrop.
+
+## FAILURE-0043 — Självuppringning nådde Rinkel och läckte rått felsvar — FIXED 2026-09-07
+
+**Symptom:** Säljaren fick `{"errors":[{"id":"to","code":"DIALING_SELF"}]}` som
+felmeddelande i UI, och samtalet lämnade ett `failed`-radpar efter sig.
+
+**Rotorsak, två delar:**
+1. Kundexa kände inte till säljarens egen linje. Rinkel vägrar `POST /dial` när
+   `to` är användarens eget nummer, men det upptäcktes först efter att
+   `calls` + `rinkel_call_attempts_v2` redan skapats och `dial_requested` satts.
+2. `errorForStatus` skickade vidare Rinkels råa svarstext som `RinkelError.message`
+   vid HTTP 400, och `message` går rakt ut till säljaren.
+
+**Åtgärd:** `rinkel_reserve_platform_outbound_call_v2` avvisar nu både säljarens
+egen linje (`platform_rinkel_users.raw_provider_data->'phoneNumber'->>'e164'`) och
+det tilldelade caller-ID-numret med `SELF_DIAL_NOT_ALLOWED`, före all radskapande.
+Rinkel-klienten tolkar `errors[].code` och ger svenska meddelanden; den råa
+svarstexten flyttades till `RinkelError.providerDetail`, som bara loggas.
+
+**Regel:** Ett providerfel som når säljaren måste vara på svenska och beskriva
+åtgärden. Rått svarsinnehåll hör hemma i serverloggen, aldrig i UI.

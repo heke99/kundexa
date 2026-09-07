@@ -987,6 +987,48 @@ await db.exec(`
   set status='connected',last_error_code=null,last_error_message=null
   where provider='rinkel' and disabled_at is null;
 `);
+// Rinkel refuses a dial whose destination is the seller's own line, and the
+// assigned caller-id number would loop back to the same trunk. Both must be
+// refused during reservation so no call row, attempt or list state is produced
+// for a destination the provider will never accept.
+await db.exec(`
+  update public.platform_rinkel_users
+  set raw_provider_data=jsonb_build_object('phoneNumber',jsonb_build_object('e164','+46709999999'))
+  where id='00000000-0000-0000-0000-000000000052';
+  update public.customers set alternate_phone_e164='+46811111111'
+  where id='00000000-0000-0000-0000-000000000025';
+`);
+const callsBeforeSelfDial = await db.query(`select count(*)::int as count from public.calls`);
+for (const [target, key] of [["+46811111111", "self-dial-caller-id"], ["+46709999999", "self-dial-own-line"]]) {
+  if (target === "+46709999999") {
+    await db.exec(`update public.customers set alternate_phone_e164='+46709999999'
+      where id='00000000-0000-0000-0000-000000000025'`);
+  }
+  let refused = false;
+  try {
+    await db.query(`
+      select public.rinkel_reserve_platform_outbound_call(
+        '00000000-0000-0000-0000-000000000025',null,'${target}',null,null,null,
+        gen_random_uuid(),'${key}','customer_service'
+      )
+    `);
+  } catch (error) {
+    refused = String(error).includes("SELF_DIAL_NOT_ALLOWED");
+  }
+  if (!refused) throw new Error(`Reservation allowed a self-dial to ${target}.`);
+}
+const callsAfterSelfDial = await db.query(`select count(*)::int as count from public.calls`);
+if (callsAfterSelfDial.rows[0].count !== callsBeforeSelfDial.rows[0].count) {
+  throw new Error("A refused self-dial still created a call row.");
+}
+await db.exec(`
+  update public.platform_rinkel_users set raw_provider_data='{}'::jsonb
+  where id='00000000-0000-0000-0000-000000000052';
+  update public.customers set alternate_phone_e164=null
+  where id='00000000-0000-0000-0000-000000000025';
+`);
+console.log("Executed self-dial guard runtime path: caller-id number and seller's own provider line both refused before any call row exists.");
+
 const centralReservation = await db.query(`
   select public.rinkel_reserve_platform_outbound_call(
     '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
