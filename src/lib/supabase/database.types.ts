@@ -15033,6 +15033,10 @@ export type Database = {
         }
         Returns: string
       }
+      report_customer_nix_listing: {
+        Args: { p_customer_id: string; p_notes?: string }
+        Returns: Json
+      }
       report_sales_overview: { Args: { p_since?: string }; Returns: Json }
       requeue_platform_rinkel_job: {
         Args: { p_job_id: string; p_reason: string }

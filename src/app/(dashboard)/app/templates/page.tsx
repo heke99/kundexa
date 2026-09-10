@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
+import { ContractTemplateDocumentUpload } from "@/components/contract-template-document-upload";
 import { formatDate } from "@/lib/utils";
 
 type TemplateVersion = {
@@ -68,12 +69,14 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Pr
             </SelectField>
             <TextareaField label="Beskrivning" name="description" />
             <Field label="Dynamisk avtalstitel" name="title_template" defaultValue="{{contract.title}}" required />
+            <ContractTemplateDocumentUpload target="body_template" label="Ladda upp avtalet (.docx)" />
             <TextareaField label="Avtalstext" name="body_template" defaultValue={"Avtal mellan {{seller.legal_name}}, organisationsnummer {{seller.organization_number}}, och {{customer.display_name}}. Avtalet avser {{product.name}}. Månadspris: {{price.recurring_fee}} {{price.currency}}. Startavgift: {{price.setup_fee}} {{price.currency}}."} required />
+            <ContractTemplateDocumentUpload target="terms_template" label="Ladda upp villkoren (.docx)" />
             <TextareaField label="Fullständiga villkor" name="terms_template" defaultValue={"Bindningstid: {{price.binding_months}} månader. Uppsägningstid: {{price.notice_months}} månader. Betalningsvillkor: {{price.payment_terms_days}} dagar. Avtalet upprättades {{today}}. Här ska tenantens juridiskt granskade fullständiga villkor anges innan versionen godkänns."} required />
             <button className="button button-primary" disabled={!legalEntities?.length}>Spara som nytt utkast</button>
           </form>
           <div className="notice" style={{ marginTop: 16 }}>
-            Tillåtna variabler: <code>{"{{seller.*}}"}</code>, <code>{"{{customer.*}}"}</code>, <code>{"{{product.*}}"}</code>, <code>{"{{price.*}}"}</code>, <code>{"{{contract.*}}"}</code> och <code>{"{{today}}"}</code>. Avtal skapas inte om ett obligatoriskt värde saknas.
+            Ladda upp avtalet från Word och markera sedan var kundens uppgifter ska in — systemet fyller i dem från kundkortet när säljaren skickar avtalet, och vägrar skapa avtalet om ett värde saknas. Tillåtna variabler: <code>{"{{seller.*}}"}</code>, <code>{"{{customer.*}}"}</code>, <code>{"{{product.*}}"}</code>, <code>{"{{price.*}}"}</code>, <code>{"{{contract.*}}"}</code> och <code>{"{{today}}"}</code>. Avtal skapas inte om ett obligatoriskt värde saknas.
           </div>
         </CardContent>
       </Card>

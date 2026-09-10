@@ -121,3 +121,37 @@ export async function blockCustomer(fd:FormData){const ctx=await getAppContext()
 export async function scheduleCallback(fd:FormData){const ctx=await getAppContext();assertPermission(ctx.role,"callbacks.create");const customerId=value(fd,'customer_id');const due=value(fd,'due_at');const scope=value(fd,'scope');if(!customerId||!due)redirect(`/app/customers/${customerId}?error=Tid för återkomst krävs`);let iso:string;try{iso=zonedLocalDateTimeToIso(due,ctx.tenantTimezone)}catch{redirect(`/app/customers/${customerId}?error=Ogiltig tid för tenantens tidszon`)}const supabase=await createClient();const {error}=await supabase.rpc('schedule_customer_callback',{p_customer_id:customerId,p_list_id:value(fd,'list_id')||null,p_scope:scope,p_due_at:iso,p_title:value(fd,'title')||'Återkomst',p_description:value(fd,'description')});if(error)redirect(`/app/customers/${customerId}?error=${encodeURIComponent(error.message)}`);revalidatePath(`/app/customers/${customerId}`);revalidatePath('/app/callbacks');redirect(`/app/customers/${customerId}?callback=created`)}
 
 export async function createManualProspect(fd:FormData){const ctx=await getAppContext();assertPermission(ctx.role,"customers.write");let phone:string;try{phone=normalizePhone(value(fd,'phone'))}catch{redirect('/app/dialer?error=Ogiltigt telefonnummer')}const supabase=await createClient();const {data,error}=await supabase.rpc('create_or_match_manual_prospect',{p_display_name:value(fd,'display_name')||phone,p_phone_e164:phone,p_customer_type:value(fd,'customer_type')==='company'?'company':'person'});if(error)redirect(`/app/dialer?error=${encodeURIComponent(error.message)}`);const result=data as {customerId?:string};if(!result.customerId)redirect('/app/dialer?error=Prospektet kunde inte skapas');revalidatePath('/app/prospects');redirect(`/app/customers/${result.customerId}`)}
+
+// A seller learns a number is NIX-listed in ways that are not a finished call —
+// the customer says so on an inbound call, it arrives by email, a colleague
+// passes it on. The report therefore belongs on the customer card and not only
+// in the dialer's after-work, and it goes through the same RPC either way so the
+// two surfaces record identical evidence.
+export async function reportCustomerNix(fd: FormData) {
+  const ctx = await getAppContext();
+  assertPermission(ctx.role, "customers.write");
+  const customerId = value(fd, "customer_id");
+  if (!z.uuid().safeParse(customerId).success) redirect("/app/customers?error=Ogiltigt kundkort");
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("report_customer_nix_listing", {
+    p_customer_id: customerId,
+    p_notes: value(fd, "notes") || null,
+  });
+  if (error) {
+    // The database speaks in codes; the seller needs to know what to do next.
+    const message = error.message.includes("customer_has_no_phone_number")
+      ? "Kundkortet saknar telefonnummer, så det finns inget nummer att spärra."
+      : error.message.includes("customer_write_permission_required")
+        ? "Du saknar behörighet att spärra den här kunden."
+        : error.message;
+    redirect(`/app/customers/${customerId}?error=${encodeURIComponent(message)}`);
+  }
+  const result = (data ?? {}) as { status?: string; blockedNumbers?: number };
+  revalidatePath(`/app/customers/${customerId}`);
+  revalidatePath("/app/compliance");
+  redirect(`/app/customers/${customerId}?message=${encodeURIComponent(
+    result.status === "already_reported"
+      ? "Numret är redan registrerat som NIX-spärrat."
+      : `Numret är registrerat som NIX och ${result.blockedNumbers ?? 1} nummer är spärrade för utgående samtal.`,
+  )}`);
+}

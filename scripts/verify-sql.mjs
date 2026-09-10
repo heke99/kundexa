@@ -2513,6 +2513,168 @@ await db.query(`select public.release_list_member_claim($1,'end')`, [autoSession
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
 console.log("Executed the automatic dialer loop: an unanswered call records its outcome and schedules a retry, the next prospect is claimed automatically, and an answered call stops for the seller's outcome.");
 
+// The customer card is its own entry point for a NIX report. A seller learns a
+// number is listed in ways that are not a finished call, so the report must not
+// depend on one — and it must land in exactly the same place as the dialer's
+// report, or the two surfaces drift apart.
+await db.exec(`
+  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
+  update public.profiles set active_tenant_id='00000000-0000-0000-0000-000000000001'
+    where id='00000000-0000-0000-0000-000000000002';
+  insert into public.customers(
+    id,tenant_id,customer_type,lifecycle,display_name,phone_e164,alternate_phone_e164,
+    marketing_allowed,legal_basis,created_by
+  ) values(
+    '00000000-0000-0000-0000-000000000090','00000000-0000-0000-0000-000000000001','person','prospect',
+    'Kortrapporterad NIX','+46700000190','+46700000191',null,'berättigat intresse',
+    '00000000-0000-0000-0000-000000000002'
+  );
+`);
+
+const cardReport = await db.query(
+  `select public.report_customer_nix_listing('00000000-0000-0000-0000-000000000090','Kunden uppgav NIX i inkommande samtal') as result`,
+);
+if (cardReport.rows[0].result.status !== "reported") {
+  throw new Error(`The customer card could not file a NIX report: ${JSON.stringify(cardReport.rows[0].result)}`);
+}
+
+// Both numbers on the card are blocked, the card is flagged, and the register
+// carries a phone-keyed result — the same evidence the dialer produces.
+const cardEvidence = await db.query(`select
+  (select do_not_call from public.customers where id='00000000-0000-0000-0000-000000000090') as blocked,
+  (select count(*)::int from public.compliance_blocks
+    where customer_id='00000000-0000-0000-0000-000000000090' and source='seller_reported_nix' and active) as blocks,
+  (select count(*)::int from public.nix_checks
+    where phone_e164='+46700000190' and result='listed' and source='seller_reported') as nix_rows,
+  (select evidence->>'surface' from public.nix_checks where phone_e164='+46700000190') as surface,
+  (select count(*)::int from public.audit_logs where action='customer.nix_reported') as audited`);
+const evidence = cardEvidence.rows[0];
+if (evidence.blocked !== true || Number(evidence.blocks) !== 2 || Number(evidence.nix_rows) !== 1
+  || evidence.surface !== "customer_card" || Number(evidence.audited) !== 1) {
+  throw new Error(`A NIX report from the customer card left incomplete evidence: ${JSON.stringify(evidence)}`);
+}
+
+// Reporting the same card twice must not grow the register with duplicates.
+const secondReport = await db.query(
+  `select public.report_customer_nix_listing('00000000-0000-0000-0000-000000000090',null) as result`,
+);
+const afterSecond = await db.query(`select count(*)::int as nix_rows from public.nix_checks
+  where phone_e164='+46700000190' and result='listed'`);
+if (secondReport.rows[0].result.status !== "already_reported" || Number(afterSecond.rows[0].nix_rows) !== 1) {
+  throw new Error(`A repeated report duplicated the screening result: ${JSON.stringify(secondReport.rows[0].result)}`);
+}
+
+// The point of a phone-keyed report: the number stays refused even in the relaxed
+// mode the pre-screened source runs in, and even on a card created afterwards.
+await setCompliance('{"nix_screening_mode":"pre_screened_source"}');
+await db.exec(`
+  insert into public.customers(
+    id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by
+  ) values(
+    '00000000-0000-0000-0000-000000000091','00000000-0000-0000-0000-000000000001','person','prospect',
+    'Samma nummer senare','+46700000190',null,'berättigat intresse','00000000-0000-0000-0000-000000000002'
+  );
+`);
+const laterCardAfterCardReport = await policyFor("00000000-0000-0000-0000-000000000091");
+if (laterCardAfterCardReport.allowed !== false) {
+  throw new Error(`A card-reported number was callable on a later card: ${JSON.stringify(laterCardAfterCardReport)}`);
+}
+await setCompliance('{"nix_screening_mode":"provider_check"}');
+
+// A card with no number at all cannot be reported: there would be nothing to block.
+await db.exec(`
+  insert into public.customers(id,tenant_id,customer_type,lifecycle,display_name,created_by)
+  values('00000000-0000-0000-0000-000000000092','00000000-0000-0000-0000-000000000001','person','prospect',
+    'Utan nummer','00000000-0000-0000-0000-000000000002');
+`);
+let numberlessRefused = false;
+try {
+  await db.query(`select public.report_customer_nix_listing('00000000-0000-0000-0000-000000000092',null)`);
+} catch (error) {
+  numberlessRefused = String(error.message).includes("customer_has_no_phone_number");
+}
+if (!numberlessRefused) throw new Error("A customer card without a phone number accepted a NIX report");
+console.log("Executed the customer-card NIX report: both numbers blocked with register evidence, a repeat is a no-op, the number stays refused on a later card, and a card without a number is refused.");
+
+// A team leader authors contract templates; releasing one stays with an owner.
+await db.exec(`
+  insert into auth.users(id,email) values('00000000-0000-0000-0000-000000000093','lead@example.test');
+  -- A trigger on auth.users already created the profile row. The membership has
+  -- to exist before that profile may point at the tenant, because
+  -- profiles_validate_active_tenant refuses an active tenant the user is not in.
+  -- An operational role must belong to a team, so the leader joins the runtime
+  -- sales team the earlier fixtures already created.
+  insert into public.tenant_memberships(tenant_id,user_id,role,status,joined_at,primary_team_id)
+    values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000093','team_lead','active',now(),
+      '00000000-0000-0000-0000-000000000026');
+  insert into public.team_members(tenant_id,team_id,user_id,role,is_primary)
+    values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000026',
+      '00000000-0000-0000-0000-000000000093','manager',true);
+  update public.profiles set active_tenant_id='00000000-0000-0000-0000-000000000001'
+    where id='00000000-0000-0000-0000-000000000093';
+  insert into public.tenant_legal_entities(id,tenant_id,legal_name,organization_number,active,is_default)
+    values('00000000-0000-0000-0000-000000000094','00000000-0000-0000-0000-000000000001','Kundexa Verify AB','5560000000',true,true)
+  on conflict do nothing;
+  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000093',false);
+`);
+const legalEntity = await db.query(
+  `select id from public.tenant_legal_entities where tenant_id='00000000-0000-0000-0000-000000000001' and active limit 1`,
+);
+const teamLeadVersion = await db.query(
+  `select public.create_contract_template_version(
+     null,'Teamledarens avtal','Abonnemang','B2C','Skapad av teamledare',$1,
+     'Avtal för {{customer.display_name}}',
+     'Kund: {{customer.display_name}}, org/pnr: {{customer.organization_number}}, adress: {{customer.address_line1}}, {{customer.postal_code}} {{customer.city}}. Säljare: {{seller.legal_name}}.',
+     'Villkoren gäller från {{today}} och avtalet löper med {{price.binding_months}} månaders bindningstid.',
+     '[]'::jsonb,'{}'::jsonb,'{}'::jsonb) as version_id`,
+  [legalEntity.rows[0].id],
+);
+const versionId = teamLeadVersion.rows[0].version_id;
+const draft = await db.query(`select status from public.contract_template_versions where id=$1`, [versionId]);
+if (draft.rows[0].status !== "draft") {
+  throw new Error(`A team leader's template version was not created as a draft: ${JSON.stringify(draft.rows[0])}`);
+}
+
+// The same team leader must not be able to release it.
+let approvalRefused = false;
+try {
+  await db.query(`select public.approve_contract_template_version($1)`, [versionId]);
+} catch (error) {
+  approvalRefused = String(error.message).includes("contract_template_approval_permission_required");
+}
+if (!approvalRefused) throw new Error("A team leader was able to approve their own contract template");
+
+// The owner releases it, and only then is it selectable for a new contract.
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);`);
+await db.query(`select public.approve_contract_template_version($1)`, [versionId]);
+const approved = await db.query(
+  `select v.status, t.current_version_id = v.id as is_current
+   from public.contract_template_versions v
+   join public.contract_templates t on t.id=v.template_id
+   where v.id=$1`,
+  [versionId],
+);
+if (approved.rows[0].status !== "approved" || approved.rows[0].is_current !== true) {
+  throw new Error(`The owner's approval did not release the template: ${JSON.stringify(approved.rows[0])}`);
+}
+
+// A seller still may not author one.
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000020',false);`);
+let sellerRefused = false;
+try {
+  await db.query(
+    `select public.create_contract_template_version(
+       null,'Säljarens avtal','Abonnemang','B2C','',$1,'T','Kropp som är tillräckligt lång för validering','Villkor som är tillräckligt långa',
+       '[]'::jsonb,'{}'::jsonb,'{}'::jsonb)`,
+    [legalEntity.rows[0].id],
+  );
+} catch (error) {
+  sellerRefused = String(error.message).includes("contract_template_permission_required");
+}
+if (!sellerRefused) throw new Error("A seller was able to author a contract template");
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);`);
+console.log("Executed contract template authorship: a team leader creates a draft, cannot release it, an owner approves it into the current version, and a seller is refused.");
+
 // Generated-type drift. `types:verify` only asserts that a hand-maintained list of names is
 // present, so a table or column added by a migration and never regenerated into
 // database.types.ts passes it unnoticed and only surfaces as a runtime error. The migrated

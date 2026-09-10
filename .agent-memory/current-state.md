@@ -491,3 +491,49 @@ Sista genomgången 2026-09-10
   Kontrollerat särskilt: alla fem kanoniska MIME-typer i
   `canonicalImportMimeTypes` (FAILURE-0048) finns i `imports`-bucketens
   tillåtna lista, så fixen kan inte få uppladdningen avvisad.
+
+NIX från kundkortet och teamledarens avtalsmallar (2026-09-10)
+---------------------------------------------------------------
+
+Tre av kraven visade sig redan finnas byggda, och det är värt att veta vilka:
+
+- `nix_screening_mode = 'pre_screened_source'` gör precis det verksamheten gör:
+  numret antas rent, och den som får veta att det är NIX-registrerat rapporterar
+  det. **Rättelse mot vad jag tidigare skrivit:** läget är inte osatt. Den tenant
+  som används, Gridex, har det redan satt tillsammans med en dokumenterad rättslig
+  grund ("Berättigat intresse – NIX-tvättad inköpt källa"). Tenanten Trustcall har
+  noll medlemmar och noll kunder och står kvar på det strikta standardläget, vilket
+  är rätt för en oanvänd tenant. Ingenting behövde ändras.
+- Kundkortet länkar redan till nytt avtal med kunden förvald, och den sidan listar
+  varje godkänd mallversion att välja mellan.
+- Kunduppgifterna vävs redan in i avtalet av `renderStrictTemplate`, och strikt:
+  saknas ett fält som mallen kräver skapas inget avtal, och felet namnger fälten.
+
+Det som saknades och nu är byggt:
+
+1. **NIX går att rapportera från kundkortet.** Tidigare kunde det bara filas som
+   samtalsdisposition i dialern, vilket betyder att fallen där man får veta det på
+   annat sätt — kunden säger det i ett inkommande samtal, det kommer per mejl, en
+   kollega för det vidare — antingen aldrig registrerades eller registrerades som
+   ett påhittat samtal. Den nya RPC:n `report_customer_nix_listing` delegerar till
+   `apply_call_block_disposition`, alltså samma definition som dialern använder, så
+   de två ytorna kan inte glida isär. En upprepad rapport är ett medvetet no-op i
+   stället för en dubblett i registret.
+2. **Teamledare får skapa avtalsmallar.** Godkännandet flyttades medvetet inte:
+   `approve_contract_template_version` ligger kvar hos owner och admin, eftersom en
+   mallversion är juridiskt bindande text som når varje kund teamet skickar till.
+   En teamledare som också är owner passerar båda kontrollerna, så en liten
+   organisation bromsas inte av uppdelningen. Grinden finns i tre lager: databasens
+   RPC, serveråtgärden och sidans knapp.
+3. **Avtalet laddas upp i stället för att skrivas av.** `extractDocumentText` läser
+   .docx utan något nytt beroende — en .docx är en ZIP, så den läser
+   centralkatalogen och packar upp `word/document.xml` med `zlib` — och tar även
+   .txt, .md och .html.
+
+   **PDF avvisas medvetet.** En PDF lagrar glyfer och positioner, inte stycken.
+   Text som dras ur en PDF kommer tillbaka med trasiga radbrytningar, delade ord
+   och förlorad ordning i flerkolumnslayout, och en avtalsmall som är subtilt
+   förvanskad är sämre än ingen import alls, eftersom skadan är lätt att missa.
+   Avvisningen säger vad man ska göra i stället. Den som ändå vill ha en färdig
+   PDF signerad kan fortfarande använda `uploadContractPdf` per avtal — men då
+   vävs inga kunduppgifter in, för det går inte i en låst fil.

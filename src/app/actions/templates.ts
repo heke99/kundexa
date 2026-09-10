@@ -11,7 +11,7 @@ const value = (form: FormData, key: string) => String(form.get(key) ?? "").trim(
 
 export async function createContractTemplateVersion(form: FormData) {
   const ctx = await getAppContext();
-  if (!["owner", "admin", "contract_manager"].includes(ctx.role)) redirect("/app/templates?error=Du saknar behörighet att skapa avtalsmallar");
+  if (!["owner", "admin", "contract_manager", "team_lead"].includes(ctx.role)) redirect("/app/templates?error=Du saknar behörighet att skapa avtalsmallar");
 
   const parsed = z.object({
     templateId: z.union([z.uuid(), z.literal("")]),

@@ -3,6 +3,14 @@
     "classification": "internal",
     "reason": "Session-only tenant API-key administration"
   },
+  "/calls": {
+    "classification": "internal",
+    "reason": "Session-bound Rinkel dial/list workflow relies on auth.uid() and the current user device mapping"
+  },
+  "/calls/complete": {
+    "classification": "internal",
+    "reason": "Interactive after-call compatibility endpoint"
+  },
   "/calls/{id}/recording": {
     "classification": "internal",
     "reason": "Session-bound playback policy and short-lived redirect; not API-key compatible"
@@ -11,13 +19,15 @@
     "classification": "internal",
     "reason": "Session-bound user operation against the current call scope"
   },
-  "/calls/complete": {
+  "/contract-templates/extract-text": {
     "classification": "internal",
-    "reason": "Interactive after-call compatibility endpoint"
+    "reason": "Session-only authoring helper that reads an uploaded document into the template form and stores nothing"
   },
-  "/calls": {
-    "classification": "internal",
-    "reason": "Session-bound Rinkel dial/list workflow relies on auth.uid() and the current user device mapping"
+  "/contracts": {
+    "classification": "public"
+  },
+  "/contracts/{id}": {
+    "classification": "public"
   },
   "/contracts/{id}/deliveries": {
     "classification": "public"
@@ -34,19 +44,13 @@
   "/contracts/{id}/reminders": {
     "classification": "public"
   },
-  "/contracts/{id}": {
-    "classification": "public"
-  },
   "/contracts/{id}/send": {
     "classification": "public"
   },
-  "/contracts": {
+  "/customers": {
     "classification": "public"
   },
   "/customers/{id}": {
-    "classification": "public"
-  },
-  "/customers": {
     "classification": "public"
   },
   "/dialer/complete": {
@@ -68,10 +72,10 @@
   "/directory/discover": {
     "classification": "public"
   },
-  "/directory/entities/{id}/refresh": {
+  "/directory/entities/{id}": {
     "classification": "public"
   },
-  "/directory/entities/{id}": {
+  "/directory/entities/{id}/refresh": {
     "classification": "public"
   },
   "/directory/search": {
@@ -111,16 +115,16 @@
     "classification": "internal",
     "reason": "Platform-owner import surface"
   },
-  "/segments/{id}/campaign": {
-    "classification": "public"
-  },
-  "/segments/{id}/refresh": {
+  "/segments": {
     "classification": "public"
   },
   "/segments/preview": {
     "classification": "public"
   },
-  "/segments": {
+  "/segments/{id}/campaign": {
+    "classification": "public"
+  },
+  "/segments/{id}/refresh": {
     "classification": "public"
   },
   "/telephony/status": {
