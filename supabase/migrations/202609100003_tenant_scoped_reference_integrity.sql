@@ -31,12 +31,15 @@ begin
     'rinkel_number_allocations','rinkel_user_allocations','rinkel_user_mappings_v2',
     'rinkel_call_attempts_v2','import_rows','provider_webhook_events'
   ] loop
+    -- A unique *index* over the same columns already satisfies a composite foreign key, and
+    -- some of these tables carry one from an earlier migration. Adding a constraint on top
+    -- would leave two identical unique indexes on a hot table, paid for on every write.
     if not exists(
-      select 1 from pg_constraint c join pg_class r on r.oid=c.conrelid
+      select 1 from pg_index x join pg_class r on r.oid=x.indrelid
       join pg_namespace n on n.oid=r.relnamespace and n.nspname='public'
-      where r.relname=v_table and c.contype in ('u','p')
+      where r.relname=v_table and x.indisunique and x.indimmediate
         and (select array_agg(a.attname::text order by a.attname)
-             from pg_attribute a where a.attrelid=r.oid and a.attnum=any(c.conkey))='{id,tenant_id}'
+             from pg_attribute a where a.attrelid=r.oid and a.attnum=any(x.indkey::int2[]))='{id,tenant_id}'
     ) then
       execute format('alter table public.%I add constraint %I unique(tenant_id,id)', v_table, v_table||'_tenant_id_key');
     end if;
