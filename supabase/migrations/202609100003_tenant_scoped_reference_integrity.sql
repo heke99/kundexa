@@ -21,12 +21,28 @@ begin;
 
 -- Composite keys need `unique(tenant_id,id)` on the parent. Every table below already has
 -- `id` as its primary key, so this only adds the tenant-qualified lookup.
-alter table public.rinkel_number_allocations add constraint rinkel_number_allocations_tenant_id_key unique(tenant_id,id);
-alter table public.rinkel_user_allocations add constraint rinkel_user_allocations_tenant_id_key unique(tenant_id,id);
-alter table public.rinkel_user_mappings_v2 add constraint rinkel_user_mappings_v2_tenant_id_key unique(tenant_id,id);
-alter table public.rinkel_call_attempts_v2 add constraint rinkel_call_attempts_v2_tenant_id_key unique(tenant_id,id);
-alter table public.import_rows add constraint import_rows_tenant_id_key unique(tenant_id,id);
-alter table public.provider_webhook_events add constraint provider_webhook_events_tenant_id_key unique(tenant_id,id);
+--
+-- Postgres has no `add constraint if not exists`, and a migration that cannot be re-run is a
+-- trap for any environment where part of it already landed, so each add is guarded.
+do $migration$
+declare v_table text;
+begin
+  foreach v_table in array array[
+    'rinkel_number_allocations','rinkel_user_allocations','rinkel_user_mappings_v2',
+    'rinkel_call_attempts_v2','import_rows','provider_webhook_events'
+  ] loop
+    if not exists(
+      select 1 from pg_constraint c join pg_class r on r.oid=c.conrelid
+      join pg_namespace n on n.oid=r.relnamespace and n.nspname='public'
+      where r.relname=v_table and c.contype in ('u','p')
+        and (select array_agg(a.attname::text order by a.attname)
+             from pg_attribute a where a.attrelid=r.oid and a.attnum=any(c.conkey))='{id,tenant_id}'
+    ) then
+      execute format('alter table public.%I add constraint %I unique(tenant_id,id)', v_table, v_table||'_tenant_id_key');
+    end if;
+  end loop;
+end
+$migration$;
 
 do $migration$
 declare
@@ -79,10 +95,16 @@ begin
       then format('set null (%I)', v.col)
       else v.on_delete
     end;
-    execute format(
-      'alter table public.%I add constraint %I foreign key (tenant_id,%I) references public.%I(tenant_id,id) on delete %s',
-      v.child, v.child||'_'||v.col||'_tenant_fk', v.col, v.parent, v_action
-    );
+    if not exists(
+      select 1 from pg_constraint c join pg_class r on r.oid=c.conrelid
+      join pg_namespace n on n.oid=r.relnamespace and n.nspname='public'
+      where r.relname=v.child and c.conname=v.child||'_'||v.col||'_tenant_fk'
+    ) then
+      execute format(
+        'alter table public.%I add constraint %I foreign key (tenant_id,%I) references public.%I(tenant_id,id) on delete %s',
+        v.child, v.child||'_'||v.col||'_tenant_fk', v.col, v.parent, v_action
+      );
+    end if;
   end loop;
 end
 $migration$;

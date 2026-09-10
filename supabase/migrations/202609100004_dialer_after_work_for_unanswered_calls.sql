@@ -49,6 +49,9 @@ begin
   select pg_get_functiondef('public.complete_dialer_work(uuid,text,text,text,timestamptz,boolean,uuid,numeric,numeric,text)'::regprocedure)
   into v_definition;
   if position(v_anchor in v_definition)=0 then
+    -- Already patched by an earlier run of this migration: the gate is the shared
+    -- terminal-status check. Anything else means the function is not what we expect.
+    if position('is_terminal_call_status' in v_definition)>0 then return; end if;
     raise exception 'complete_dialer_work_finished_gate_anchor_missing';
   end if;
   v_definition:=replace(

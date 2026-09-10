@@ -26,6 +26,8 @@ declare
 begin
   select pg_get_functiondef('public.assert_contract_sendable_v2(uuid,uuid,text)'::regprocedure) into v_definition;
   if position(v_anchor in v_definition)=0 then
+    -- Already patched by an earlier run: 'expired' is accepted.
+    if position($already$'ready','sent','delivered','opened','expired'$already$ in v_definition)>0 then return; end if;
     raise exception 'assert_contract_sendable_status_anchor_missing';
   end if;
   v_definition:=replace(
@@ -78,6 +80,8 @@ declare
 begin
   select pg_get_functiondef('public.enqueue_due_contract_reminders(integer)'::regprocedure) into v_definition;
   if position(v_anchor in v_definition)=0 then
+    -- Already patched by an earlier run: the sweep delegates to the guarded function.
+    if position('expire_contracts_without_pending_acceptance' in v_definition)>0 then return; end if;
     raise exception 'enqueue_due_contract_reminders_expiry_anchor_missing';
   end if;
   v_definition:=replace(

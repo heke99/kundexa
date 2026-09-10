@@ -603,3 +603,26 @@ ett nyss omskickat avtal till `expired`.
 
 **Regel:** Skilj på att en länk tar slut och att motparten har bestämt sig. Bara det
 andra är terminalt.
+
+## FAILURE-0054 — maintenance-worker svarade 401 på varje körning — FIXED 2026-09-10
+
+**Symptom:** `platform_worker_heartbeats` visade `maintenance-worker` med
+`last_success_at = null` och `EDGE_WORKER_HTTP_401` på varje körning. Den hade
+alltså **aldrig** lyckats i produktion.
+
+**Rotorsak:** Funktionen var deployad med `verify_jwt=true` medan `invokeScheduledEdgeWorker`
+bara skickar `x-cron-secret` (funktionen gör sin egen autentisering mot den hemligheten).
+Övriga sju Edge Functions har `verify_jwt=false`, vilket `scripts/deploy-functions.mjs`
+sätter med `--no-verify-jwt`. Avvikelsen uppstod sannolikt vid en deploy via ett verktyg
+vars standardvärde är `true`.
+
+**Konsekvens:** Retention/gallring, segmentuppdatering, dynamiska listor,
+geografinormalisering, utgångna plattformsallokeringar och prunning av
+`rate_limit_counters` har aldrig körts i produktion. `rate_limit_counters` växer obegränsat
+utan prunningen.
+
+**Åtgärd:** Omdeployad med `verify_jwt=false`.
+
+**Regel:** `verify_jwt` är en del av funktionens kontrakt, inte en deploy-detalj. En funktion
+som autentiserar med egen hemlighet måste deployas med `--no-verify-jwt`, och heartbeat med
+`last_success_at = null` ska larma — den skiljer "har aldrig fungerat" från "fungerade nyss".
