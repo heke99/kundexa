@@ -637,11 +637,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "call_correlation_conflicts_event_id_fkey"
-            columns: ["event_id"]
+            foreignKeyName: "call_correlation_conflicts_event_id_tenant_fk"
+            columns: ["tenant_id", "event_id"]
             isOneToOne: false
             referencedRelation: "provider_webhook_events"
-            referencedColumns: ["id"]
+            referencedColumns: ["tenant_id", "id"]
           },
           {
             foreignKeyName: "call_correlation_conflicts_tenant_id_connection_id_fkey"
@@ -3577,11 +3577,11 @@ export type Database = {
             referencedColumns: ["tenant_id", "id"]
           },
           {
-            foreignKeyName: "customer_lists_source_platform_allocation_fk"
-            columns: ["source_platform_allocation_id"]
+            foreignKeyName: "customer_lists_source_platform_allocation_id_tenant_fk"
+            columns: ["tenant_id", "source_platform_allocation_id"]
             isOneToOne: false
             referencedRelation: "platform_list_allocations"
-            referencedColumns: ["id"]
+            referencedColumns: ["tenant_id", "id"]
           },
           {
             foreignKeyName: "customer_lists_source_platform_list_fk"
@@ -5544,11 +5544,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "import_change_sets_import_row_id_fkey"
-            columns: ["import_row_id"]
+            foreignKeyName: "import_change_sets_import_row_id_tenant_fk"
+            columns: ["tenant_id", "import_row_id"]
             isOneToOne: false
             referencedRelation: "import_rows"
-            referencedColumns: ["id"]
+            referencedColumns: ["tenant_id", "id"]
           },
           {
             foreignKeyName: "import_change_sets_tenant_id_fkey"
@@ -5674,11 +5674,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "import_merge_conflicts_import_row_id_fkey"
-            columns: ["import_row_id"]
+            foreignKeyName: "import_merge_conflicts_import_row_id_tenant_fk"
+            columns: ["tenant_id", "import_row_id"]
             isOneToOne: false
             referencedRelation: "import_rows"
-            referencedColumns: ["id"]
+            referencedColumns: ["tenant_id", "id"]
           },
           {
             foreignKeyName: "import_merge_conflicts_tenant_id_contact_person_id_fkey"
@@ -6496,11 +6496,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "legal_holds_customer_id_fkey"
-            columns: ["customer_id"]
+            foreignKeyName: "legal_holds_customer_id_tenant_fk"
+            columns: ["tenant_id", "customer_id"]
             isOneToOne: false
             referencedRelation: "customers"
-            referencedColumns: ["id"]
+            referencedColumns: ["tenant_id", "id"]
           },
           {
             foreignKeyName: "legal_holds_master_entity_id_fkey"
@@ -7985,11 +7985,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "platform_list_allocation_entries_allocation_id_fkey"
-            columns: ["allocation_id"]
+            foreignKeyName: "platform_list_allocation_entries_allocation_id_tenant_fk"
+            columns: ["tenant_id", "allocation_id"]
             isOneToOne: false
             referencedRelation: "platform_list_allocations"
-            referencedColumns: ["id"]
+            referencedColumns: ["tenant_id", "id"]
           },
           {
             foreignKeyName: "platform_list_allocation_entries_platform_entry_id_fkey"
@@ -10093,25 +10093,25 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "rinkel_call_attempts_v2_caller_id_allocation_id_fkey"
-            columns: ["caller_id_allocation_id"]
+            foreignKeyName: "rinkel_call_attempts_v2_caller_id_allocation_id_tenant_fk"
+            columns: ["tenant_id", "caller_id_allocation_id"]
             isOneToOne: false
             referencedRelation: "rinkel_number_allocations"
-            referencedColumns: ["id"]
+            referencedColumns: ["tenant_id", "id"]
           },
           {
-            foreignKeyName: "rinkel_call_attempts_v2_mapping_id_fkey"
-            columns: ["mapping_id"]
+            foreignKeyName: "rinkel_call_attempts_v2_mapping_id_tenant_fk"
+            columns: ["tenant_id", "mapping_id"]
             isOneToOne: false
             referencedRelation: "rinkel_user_mappings_v2"
-            referencedColumns: ["id"]
+            referencedColumns: ["tenant_id", "id"]
           },
           {
-            foreignKeyName: "rinkel_call_attempts_v2_number_allocation_id_fkey"
-            columns: ["number_allocation_id"]
+            foreignKeyName: "rinkel_call_attempts_v2_number_allocation_id_tenant_fk"
+            columns: ["tenant_id", "number_allocation_id"]
             isOneToOne: false
             referencedRelation: "rinkel_number_allocations"
-            referencedColumns: ["id"]
+            referencedColumns: ["tenant_id", "id"]
           },
           {
             foreignKeyName: "rinkel_call_attempts_v2_platform_integration_id_fkey"
@@ -10163,11 +10163,11 @@ export type Database = {
             referencedColumns: ["tenant_id", "user_id"]
           },
           {
-            foreignKeyName: "rinkel_call_attempts_v2_user_allocation_id_fkey"
-            columns: ["user_allocation_id"]
+            foreignKeyName: "rinkel_call_attempts_v2_user_allocation_id_tenant_fk"
+            columns: ["tenant_id", "user_allocation_id"]
             isOneToOne: false
             referencedRelation: "rinkel_user_allocations"
-            referencedColumns: ["id"]
+            referencedColumns: ["tenant_id", "id"]
           },
         ]
       }
@@ -10324,11 +10324,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "rinkel_number_grants_number_allocation_id_fkey"
-            columns: ["number_allocation_id"]
+            foreignKeyName: "rinkel_number_grants_number_allocation_id_tenant_fk"
+            columns: ["tenant_id", "number_allocation_id"]
             isOneToOne: false
             referencedRelation: "rinkel_number_allocations"
-            referencedColumns: ["id"]
+            referencedColumns: ["tenant_id", "id"]
           },
           {
             foreignKeyName: "rinkel_number_grants_tenant_id_fkey"
@@ -10597,18 +10597,18 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "rinkel_user_mappings_v2_default_number_allocation_id_fkey"
-            columns: ["default_number_allocation_id"]
+            foreignKeyName: "rinkel_user_mappings_v2_default_number_allocation_id_tenant_fk"
+            columns: ["tenant_id", "default_number_allocation_id"]
             isOneToOne: false
             referencedRelation: "rinkel_number_allocations"
-            referencedColumns: ["id"]
+            referencedColumns: ["tenant_id", "id"]
           },
           {
-            foreignKeyName: "rinkel_user_mappings_v2_rinkel_user_allocation_id_fkey"
-            columns: ["rinkel_user_allocation_id"]
+            foreignKeyName: "rinkel_user_mappings_v2_rinkel_user_allocation_id_tenant_fk"
+            columns: ["tenant_id", "rinkel_user_allocation_id"]
             isOneToOne: false
             referencedRelation: "rinkel_user_allocations"
-            referencedColumns: ["id"]
+            referencedColumns: ["tenant_id", "id"]
           },
           {
             foreignKeyName: "rinkel_user_mappings_v2_selected_device_id_fkey"
@@ -13191,6 +13191,17 @@ export type Database = {
         }
         Returns: Json
       }
+      apply_call_block_disposition: {
+        Args: {
+          p_actor_id: string
+          p_customer_id: string
+          p_disposition: string
+          p_notes: string
+          p_surface: string
+          p_tenant_id: string
+        }
+        Returns: undefined
+      }
       apply_geographic_derived_value: {
         Args: {
           p_confidence?: number
@@ -13261,7 +13272,25 @@ export type Database = {
       call_status_rank: { Args: { p_status: string }; Returns: number }
       can_access_call: { Args: { p_call_id: string }; Returns: boolean }
       can_access_contract: { Args: { p_contract_id: string }; Returns: boolean }
+      can_access_contract_row: {
+        Args: {
+          p_customer_id: string
+          p_owner_user_id: string
+          p_tenant_id: string
+        }
+        Returns: boolean
+      }
       can_access_customer: { Args: { p_customer_id: string }; Returns: boolean }
+      can_access_customer_row: {
+        Args: {
+          p_assigned_team_id: string
+          p_assigned_user_id: string
+          p_created_by: string
+          p_customer_id: string
+          p_tenant_id: string
+        }
+        Returns: boolean
+      }
       can_access_master_entity: {
         Args: {
           p_entity: Database["public"]["Tables"]["master_entities"]["Row"]
@@ -14230,6 +14259,10 @@ export type Database = {
         Args: { p_actor?: string; p_request_id: string }
         Returns: Json
       }
+      expire_contracts_without_pending_acceptance: {
+        Args: never
+        Returns: number
+      }
       extend_contract_acceptance_expiry_api_v2: {
         Args: {
           p_actor_user_id: string
@@ -14457,6 +14490,7 @@ export type Database = {
       }
       is_tenant_admin: { Args: { p_tenant_id?: string }; Returns: boolean }
       is_tenant_member: { Args: { p_tenant_id: string }; Returns: boolean }
+      is_terminal_call_status: { Args: { p_status: string }; Returns: boolean }
       list_current_user_tenants: {
         Args: never
         Returns: {
@@ -15127,6 +15161,10 @@ export type Database = {
           p_user_id: string
         }
         Returns: string
+      }
+      rinkel_release_stale_call_attempts: {
+        Args: { p_limit?: number; p_max_age?: string }
+        Returns: Json
       }
       rinkel_reserve_outbound_call: {
         Args: {
