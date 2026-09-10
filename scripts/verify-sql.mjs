@@ -46,6 +46,11 @@ await db.exec(`
   create function public.digest(value text, algorithm text) returns bytea language sql immutable as $$
     select decode(md5(value), 'hex')
   $$;
+  -- pgcrypto is present in hosted Supabase; PGlite has neither the extension nor these two
+  -- functions, so the callable surface the migrations use is stubbed for the runtime replay.
+  create function public.gen_random_bytes(count integer) returns bytea language sql volatile as $$
+    select decode(md5(random()::text || clock_timestamp()::text), 'hex')
+  $$;
 `);
 
 const migrationDir = join(root, "supabase/migrations");
@@ -650,112 +655,10 @@ const manualState = await db.query(`select a.status,c.disposition,c.callback_act
 if (manualState.rows[0].status !== 'completed' || manualState.rows[0].disposition !== 'interested' || Number(manualState.rows[0].notes) !== 1) throw new Error(`Manual callback after-work failed: ${JSON.stringify(manualState.rows[0])}`);
 console.log("Executed prospecting/list assignment, atomic claim, contact-person target selection, NIX gating, canonical calls, caller-ID/recording policy, order after-work and personal/global callback runtime paths.");
 
-// Rinkel runtime path: tenant-owned connection, seller mapping, transactional
-// reservation, idempotent replay, provider finalization and one-device lock.
-if (false) {
-await db.exec(`
-  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
-  select set_config('request.jwt.claim.role','authenticated',false);
-  update public.telephony_policies set allowed_days='{1,2,3,4,5,6,7}',allowed_start_time='00:00',allowed_end_time='23:59:59'
-    where tenant_id='00000000-0000-0000-0000-000000000001';
-  insert into public.customers(id,tenant_id,customer_type,display_name,phone_e164,lifecycle,marketing_allowed,legal_basis,created_by)
-  values('00000000-0000-0000-0000-000000000040','00000000-0000-0000-0000-000000000001','company','Rinkel Runtime AB','+46704444444','customer',true,'contract','00000000-0000-0000-0000-000000000002');
-  insert into public.tenant_integrations(id,tenant_id,provider_type,provider,name,credentials_ciphertext,status,created_by)
-  values('00000000-0000-0000-0000-000000000041','00000000-0000-0000-0000-000000000001','telephony','rinkel','Rinkel Runtime','encrypted-test-value','connected','00000000-0000-0000-0000-000000000002');
-  insert into public.rinkel_users(id,tenant_id,connection_id,external_user_id,external_device_id,display_name)
-  values('00000000-0000-0000-0000-000000000042','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000041','rinkel-user-runtime','rinkel-device-runtime','Runtime Owner');
-  insert into public.rinkel_numbers(id,tenant_id,connection_id,external_number_id,phone_number_e164,display_name,active)
-  values('00000000-0000-0000-0000-000000000043','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000041','rinkel-number-runtime','+46855554444','Runtime number',true);
-  select public.replace_rinkel_user_mapping(
-    '00000000-0000-0000-0000-000000000002',
-    '00000000-0000-0000-0000-000000000042',
-    '00000000-0000-0000-0000-000000000043'
-  );
-`);
-const rinkelAutomaticList = await db.query(`select public.create_managed_customer_list('Rinkel Webhook Gate','Runtime webhook health gate','static',$1,'automatic',100,'00:00','23:59:59',3,60,0,'both',true,false,'Runtime') as id`, [runtimeTeamId]);
-const rinkelAutomaticListId = String(rinkelAutomaticList.rows[0].id);
-await db.query(`select public.update_customer_list_configuration($1,'Rinkel Webhook Gate','Runtime webhook health gate','active','automatic',100,'00:00','23:59:59',3,60,0,'both',true,false,true,'Runtime','Europe/Stockholm','{1,2,3,4,5,6,7}',null,false,null,null)`, [rinkelAutomaticListId]);
-await db.query(`select public.add_customers_to_list($1,array['00000000-0000-0000-0000-000000000040']::uuid[])`, [rinkelAutomaticListId]);
-const rinkelAutomaticSession = await db.query(`select public.start_dialer_session($1) as id`, [rinkelAutomaticListId]);
-const rinkelAutomaticSessionId = String(rinkelAutomaticSession.rows[0].id);
-const rinkelAutomaticClaim = await db.query(`select public.claim_next_list_member($1,$2) as claim`, [rinkelAutomaticListId, rinkelAutomaticSessionId]);
-const rinkelAutomaticMemberId = String(rinkelAutomaticClaim.rows[0].claim.memberId);
-let unhealthyAutomaticBlocked = false;
-try {
-  await db.query(`
-    select public.rinkel_reserve_outbound_call(
-      '00000000-0000-0000-0000-000000000040',null,'+46704444444',$1,$2,null,
-      '00000000-0000-0000-0000-000000000047','rinkel-runtime-auto-blocked','customer_service'
-    )
-  `, [rinkelAutomaticSessionId, rinkelAutomaticMemberId]);
-} catch (error) {
-  unhealthyAutomaticBlocked = String(error).includes("automatic_dialer_requires_healthy_rinkel_webhooks");
-}
-if (!unhealthyAutomaticBlocked) throw new Error("Automatic Rinkel dialer bypassed the database webhook health gate");
-await db.exec(`
-  insert into public.rinkel_capabilities(tenant_id,connection_id,api_access,dial,webhooks)
-  values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000041',true,true,true);
-  update public.tenant_integrations set webhook_status='active'
-  where id='00000000-0000-0000-0000-000000000041';
-`);
-const healthyAutomatic = await db.query(`
-  select public.rinkel_reserve_outbound_call(
-    '00000000-0000-0000-0000-000000000040',null,'+46704444444',$1,$2,null,
-    '00000000-0000-0000-0000-000000000048','rinkel-runtime-auto-healthy','customer_service'
-  ) as result
-`, [rinkelAutomaticSessionId, rinkelAutomaticMemberId]);
-if (!healthyAutomatic.rows[0].result.callId) throw new Error(`Healthy automatic Rinkel reservation failed: ${JSON.stringify(healthyAutomatic.rows[0])}`);
-await db.query(`update public.calls set status='completed',ended_at=now() where id=$1`, [healthyAutomatic.rows[0].result.callId]);
-await db.query(`update public.call_attempts set status='completed' where id=$1`, [healthyAutomatic.rows[0].result.attemptId]);
-const rinkelFirst = await db.query(`
-  select public.rinkel_reserve_outbound_call(
-    '00000000-0000-0000-0000-000000000040',null,'+46704444444',null,null,null,
-    '00000000-0000-0000-0000-000000000044','rinkel-runtime-1','customer_service'
-  ) as result
-`);
-const rinkelFirstResult = rinkelFirst.rows[0].result;
-if (rinkelFirstResult.idempotentReplay !== false || !rinkelFirstResult.callId || !rinkelFirstResult.attemptId) {
-  throw new Error(`Rinkel reservation failed: ${JSON.stringify(rinkelFirstResult)}`);
-}
-const rinkelReplay = await db.query(`
-  select public.rinkel_reserve_outbound_call(
-    '00000000-0000-0000-0000-000000000040',null,'+46704444444',null,null,null,
-    '00000000-0000-0000-0000-000000000044','rinkel-runtime-1','customer_service'
-  ) as result
-`);
-if (rinkelReplay.rows[0].result.idempotentReplay !== true || rinkelReplay.rows[0].result.callId !== rinkelFirstResult.callId) {
-  throw new Error(`Rinkel idempotent replay failed: ${JSON.stringify(rinkelReplay.rows[0])}`);
-}
-let rinkelConcurrentBlocked = false;
-try {
-  await db.query(`
-    select public.rinkel_reserve_outbound_call(
-      '00000000-0000-0000-0000-000000000040',null,'+46704444444',null,null,null,
-      '00000000-0000-0000-0000-000000000045','rinkel-runtime-2','customer_service'
-    )
-  `);
-} catch (error) {
-  rinkelConcurrentBlocked = String(error).includes("active_call_already_exists");
-}
-if (!rinkelConcurrentBlocked) throw new Error("Rinkel one-device active-call lock failed");
-await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
-await db.query(`select public.rinkel_finalize_dial_request($1,$2,'accepted',null,null)`, [rinkelFirstResult.callId, rinkelFirstResult.attemptId]);
-const finalizedRinkel = await db.query(`select c.status call_status,a.status attempt_status from public.calls c join public.call_attempts a on a.call_id=c.id where c.id=$1`, [rinkelFirstResult.callId]);
-if (finalizedRinkel.rows[0].call_status !== "dial_requested" || finalizedRinkel.rows[0].attempt_status !== "awaiting_provider_event") {
-  throw new Error(`Rinkel dial finalization failed: ${JSON.stringify(finalizedRinkel.rows[0])}`);
-}
-await db.query(`update public.calls set status='completed',ended_at=now() where id=$1`, [rinkelFirstResult.callId]);
-await db.query(`update public.call_attempts set status='completed' where id=$1`, [rinkelFirstResult.attemptId]);
-await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
-const rinkelNext = await db.query(`
-  select public.rinkel_reserve_outbound_call(
-    '00000000-0000-0000-0000-000000000040',null,'+46704444444',null,null,null,
-    '00000000-0000-0000-0000-000000000046','rinkel-runtime-3','customer_service'
-  ) as result
-`);
-if (!rinkelNext.rows[0].result.callId) throw new Error(`Rinkel lock release failed: ${JSON.stringify(rinkelNext.rows[0])}`);
-console.log("Executed Rinkel tenant mapping, automatic webhook health gate, atomic reservation, idempotent replay, provider finalization and one-device lock runtime paths.");
-}
+// The tenant-owned Rinkel path this suite used to exercise here was replaced by the central
+// platform integration; `rinkel_reserve_outbound_call` is no longer reachable from the
+// application, and its runtime section had been switched off with `if (false)` while still
+// printing nothing. The central path below is the one the application calls.
 
 // Central Rinkel platform path: one provider inventory, historical tenant
 // allocations, tenant-filtered projections and central dial reservation.
@@ -2100,6 +2003,201 @@ if (String(creatorTenantUnchanged.rows[0].active_tenant_id) !== '00000000-0000-0
 }
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
 console.log("Executed worker liveness, bounded seller dial lock and tenant-bound automatic ParseHub commit runtime paths.");
+
+// A tenant boundary is enforced by the schema, not only by the callers that happen to be
+// correct today. Any foreign key between two tenant-owned tables must be composite on
+// (tenant_id, id), so a row can never reference another tenant's row.
+const crossTenantKeys = await db.query(`
+  select rel.relname as child, att.attname as child_column, parent.relname as parent
+  from pg_constraint con
+  join pg_class rel on rel.oid=con.conrelid
+  join pg_namespace n on n.oid=rel.relnamespace and n.nspname='public'
+  join pg_class parent on parent.oid=con.confrelid
+  join pg_attribute att on att.attrelid=rel.oid and att.attnum=con.conkey[1]
+  where con.contype='f' and array_length(con.conkey,1)=1
+    and exists(select 1 from pg_attribute a where a.attrelid=rel.oid and a.attname='tenant_id' and a.attnum>0 and not a.attisdropped and a.attnotnull)
+    and exists(select 1 from pg_attribute a where a.attrelid=parent.oid and a.attname='tenant_id' and a.attnum>0 and not a.attisdropped)
+  order by 1,2
+`);
+if (crossTenantKeys.rows.length > 0) {
+  throw new Error(`Single-column foreign keys between tenant-owned tables let a row point at another tenant: ${crossTenantKeys.rows.map((row) => `${row.child}.${row.child_column} -> ${row.parent}`).join(", ")}`);
+}
+
+// And prove the composite key actually refuses the cross-tenant write, rather than only
+// looking right in the catalog.
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+let crossTenantWriteRefused = false;
+try {
+  await db.query(`
+    insert into public.legal_holds(tenant_id,customer_id,scope,reason,active,starts_at,created_by)
+    values('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000094',array['calls'],'cross tenant probe',true,now(),null)
+  `);
+} catch (error) {
+  crossTenantWriteRefused = /foreign key|violates/i.test(error instanceof Error ? error.message : String(error));
+}
+if (!crossTenantWriteRefused) {
+  throw new Error("A legal hold in one tenant accepted another tenant's customer id.");
+}
+console.log("Verified tenant-scoped reference integrity: every tenant-to-tenant foreign key is composite and a cross-tenant reference is refused.");
+
+// The seller's whole journey, executed against the migrated schema: register the call that
+// grounds a contract, draft it, send it, let the customer accept on the public page, and
+// activate it once the evidence package exists. These are the exact RPCs the application
+// calls; before this section the contract path was only checked by matching source text.
+const JT = '00000000-0000-0000-0000-000000000001';
+const JOWNER = '00000000-0000-0000-0000-000000000002';
+const JCUSTOMER = '00000000-0000-0000-0000-0000000000c1';
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.exec(`
+  insert into public.customers(id,tenant_id,customer_type,lifecycle,display_name,phone_e164,email,marketing_allowed,legal_basis,created_by)
+  values('${JCUSTOMER}','${JT}','company','prospect','Journey Kund AB','+46705550001','journey@example.test',true,'legitimate_interest','${JOWNER}')
+  on conflict(id) do nothing;
+  insert into public.tenant_legal_entities(id,tenant_id,legal_name,organization_number,address_line1,postal_code,city,country_code,email,phone_e164,active)
+  values('00000000-0000-0000-0000-0000000000c2','${JT}','Kundexa Journey AB','5560160680','Gatan 1','21115','Malmö','SE','avtal@example.test','+46401234567',true)
+  on conflict(id) do nothing;
+  insert into public.contract_templates(id,tenant_id,name,contract_type,audience,active,legal_entity_id)
+  values('00000000-0000-0000-0000-0000000000c3','${JT}','Journey-mall','service','B2B',true,'00000000-0000-0000-0000-0000000000c2')
+  on conflict(id) do nothing;
+  insert into public.contract_template_versions(id,tenant_id,template_id,version,status,title_template,body_template,terms_template,created_by)
+  values('00000000-0000-0000-0000-0000000000c4','${JT}','00000000-0000-0000-0000-0000000000c3',1,'draft','Journeyavtal','Brödtext','Villkor','${JOWNER}')
+  on conflict(id) do nothing;
+  insert into public.tenant_features(tenant_id,feature_key,enabled) values
+    ('${JT}','outbound_email',true),('${JT}','contract_delivery_email',true)
+  on conflict(tenant_id,feature_key) do update set enabled=true;
+  insert into public.tenant_integrations(tenant_id,name,provider_type,provider,status,configuration,credentials_ciphertext)
+  values('${JT}','Resend','email','resend','active','{"from_address":"avtal@example.test","account_mode":"tenant_owned"}','cipher')
+  on conflict do nothing;
+`);
+await db.exec(`
+  select set_config('request.jwt.claim.role','authenticated',false);
+  select set_config('request.jwt.claim.sub','${JOWNER}',false);
+`);
+await db.exec(`
+  update public.contract_template_versions set status='approved',approved_by='${JOWNER}',approved_at=now()
+    where id='00000000-0000-0000-0000-0000000000c4';
+  update public.contract_templates set current_version_id='00000000-0000-0000-0000-0000000000c4'
+    where id='00000000-0000-0000-0000-0000000000c3';
+`);
+
+const journeyCall = await db.query(`select public.register_external_manual_call(
+  '${JCUSTOMER}','+46705550001','outbound',now()-interval '20 minutes',now()-interval '10 minutes',
+  'interested','Journey-samtal',null) as id`);
+const journeyCallId = String(journeyCall.rows[0].id);
+
+const journeyContract = await db.query(`select public.create_contract_draft_v3(
+  'KX-JOURNEY-1','${JCUSTOMER}',null,null,'00000000-0000-0000-0000-0000000000c3','00000000-0000-0000-0000-0000000000c4',
+  '00000000-0000-0000-0000-0000000000c2','Journeyavtal','Brödtext','Villkor','{"currency":"SEK"}'::jsonb,'journey-doc-hash',
+  'telephone','{"legal_name":"Kundexa Journey AB"}'::jsonb,'{"display_name":"Journey Kund AB"}'::jsonb,
+  '${JOWNER}',null,null,null,null,null,1000,'SEK',now()+interval '7 days') as id`);
+const journeyContractId = String(journeyContract.rows[0].id);
+await db.query(`update public.contracts set source_call_id=$1,source_type='external_manual_call',prepared_at=now(),status='ready' where id=$2`, [journeyCallId, journeyContractId]);
+const journeyDocument = await db.query(`
+  insert into public.contract_documents(tenant_id,contract_id,contract_version_id,document_type,file_name,storage_path,mime_type,size_bytes,sha256)
+  select '${JT}',id,active_version_id,'generated_pdf','journey.pdf','${JT}/'||id::text||'/journey.pdf','application/pdf',4096,'journey-canonical-sha'
+  from public.contracts where id=$1 returning id`, [journeyContractId]);
+const journeyDocumentId = String(journeyDocument.rows[0].id);
+
+const journeyDelivery = await db.query(`select public.prepare_contract_delivery_v2(
+  $1,'email','Journey Kund AB','journey@example.test',null,'journey-token-hash','journey-token-cipher','ABCD',
+  now()+interval '7 days',$2,null,null,'avtal@example.test','Ditt avtal','text','<p>html</p>','[]'::jsonb,null,null) as result`,
+  [journeyContractId, journeyDocumentId]);
+const journeySent = await db.query(`
+  select c.status,c.first_sent_at is not null as sent,c.acceptance_generation,
+    (select count(*)::int from public.contract_acceptance_requests r where r.contract_id=c.id and r.status='pending') pending,
+    (select count(*)::int from public.contract_recipients cr where cr.contract_id=c.id) recipients,
+    (select count(*)::int from public.email_messages m where m.contract_id=c.id) emails,
+    (select count(*)::int from public.contract_reminders cr2 where cr2.contract_id=c.id and cr2.status='scheduled') reminders,
+    (select locked_at is not null from public.contract_versions v where v.id=c.active_version_id) version_locked
+  from public.contracts c where c.id=$1`, [journeyContractId]);
+const sentState = journeySent.rows[0];
+if (sentState.status !== 'sent' || !sentState.sent || Number(sentState.pending) !== 1
+  || Number(sentState.recipients) !== 1 || Number(sentState.emails) !== 1
+  || Number(sentState.reminders) < 1 || sentState.version_locked !== true) {
+  throw new Error(`Sending a contract did not lock the version and queue the delivery: ${JSON.stringify(sentState)}`);
+}
+if (!journeyDelivery.rows[0].result.acceptance_request_id) {
+  throw new Error(`Contract delivery returned no acceptance request: ${JSON.stringify(journeyDelivery.rows[0].result)}`);
+}
+
+// The public acceptance page runs as service role, which is the only role allowed to record
+// a decision, and it must bind the acceptance to the exact document it showed.
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+const journeyRequest = await db.query(`select id from public.contract_acceptance_requests where contract_id=$1 and status='pending'`, [journeyContractId]);
+const journeyAcceptance = await db.query(`select public.record_contract_acceptance_v3(
+  $1,'web','accepted_via_web','WEB_ACCEPT','WEB_ACCEPT','Journey Testsson',null,'127.0.0.1','probe',null,
+  'Jag accepterar','{}'::jsonb) as id`, [String(journeyRequest.rows[0].id)]);
+const journeyAcceptanceId = String(journeyAcceptance.rows[0].id);
+const accepted = await db.query(`
+  select c.status,c.accepted_at is not null as accepted,
+    (select count(*)::int from public.contract_recipients cr where cr.contract_id=c.id and cr.status='signed') signed_recipients,
+    (select count(*)::int from public.outbox_jobs j where j.aggregate_id=c.id and j.job_type='evidence.generate') evidence_jobs,
+    (select count(*)::int from public.outbox_jobs j where j.aggregate_id=c.id and j.job_type='contract.confirmation') confirmation_jobs,
+    (select count(*)::int from public.contract_reminders cr2 where cr2.contract_id=c.id and cr2.status='scheduled') open_reminders,
+    (select a.canonical_document_sha256 from public.contract_acceptances a where a.id=$2) bound_document_hash
+  from public.contracts c where c.id=$1`, [journeyContractId, journeyAcceptanceId]);
+const acceptedState = accepted.rows[0];
+if (acceptedState.status !== 'accepted' || !acceptedState.accepted || Number(acceptedState.signed_recipients) !== 1) {
+  throw new Error(`A web acceptance did not complete the contract: ${JSON.stringify(acceptedState)}`);
+}
+if (Number(acceptedState.evidence_jobs) !== 1 || Number(acceptedState.confirmation_jobs) !== 1) {
+  throw new Error(`Acceptance did not queue evidence and confirmation exactly once: ${JSON.stringify(acceptedState)}`);
+}
+if (Number(acceptedState.open_reminders) !== 0) {
+  throw new Error(`Reminders kept running after the customer accepted: ${JSON.stringify(acceptedState)}`);
+}
+if (acceptedState.bound_document_hash !== 'journey-canonical-sha') {
+  throw new Error(`The acceptance was not bound to the exact document shown: ${JSON.stringify(acceptedState)}`);
+}
+
+// Activation is refused until the evidence package for this generation exists.
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${JOWNER}',false);`);
+let activationRefused = false;
+try {
+  await db.query(`select public.activate_completed_contract($1)`, [journeyContractId]);
+} catch (error) {
+  activationRefused = /evidence/.test(error instanceof Error ? error.message : String(error));
+}
+if (!activationRefused) throw new Error("A contract was activated without a completed evidence package.");
+
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.query(`
+  insert into public.evidence_packages(tenant_id,contract_id,contract_version_id,acceptance_id,status,manifest,manifest_hash,storage_path,generated_at,canonical_document_id,canonical_document_sha256)
+  select '${JT}',id,active_version_id,$2,'completed',jsonb_build_object('generation',acceptance_generation),'journey-manifest','journey/path',now(),$3,'journey-canonical-sha'
+  from public.contracts where id=$1`, [journeyContractId, journeyAcceptanceId, journeyDocumentId]);
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${JOWNER}',false);`);
+const activated = await db.query(`select public.activate_completed_contract($1) as result`, [journeyContractId]);
+const activatedState = await db.query(`select status,activated_at from public.contracts where id=$1`, [journeyContractId]);
+if (activated.rows[0].result.status !== 'active' || activatedState.rows[0].status !== 'active' || !activatedState.rows[0].activated_at) {
+  throw new Error(`Contract activation after evidence failed: ${JSON.stringify(activatedState.rows[0])}`);
+}
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+console.log("Executed the seller journey: grounding call, contract draft, locked send, public web acceptance bound to the exact document, and evidence-gated activation.");
+
+// And the dial itself, end to end on the v2 path the application calls: reserve, report the
+// provider accepted it, then close the call with after-work.
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${JOWNER}',false);`);
+const journeyDial = await db.query(`select public.rinkel_reserve_platform_outbound_call_v2(
+  '${JCUSTOMER}',null,'+46705550001',null,null,null,gen_random_uuid(),'journey-dial-1','direct_marketing',null) as result`);
+const dial = journeyDial.rows[0].result;
+if (!dial.callId || !dial.deviceId || !dial.numberId || dial.to !== '+46705550001') {
+  throw new Error(`The dial reservation did not return a complete provider contract: ${JSON.stringify(dial)}`);
+}
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.query(`select public.rinkel_finalize_platform_dial($1,$2,'accepted',null,null)`, [dial.callId, dial.attemptId]);
+await db.query(`update public.calls set status='completed',answered_at=now()-interval '2 minutes',ended_at=now(),duration_seconds=120 where id=$1`, [dial.callId]);
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${JOWNER}',false);`);
+const afterWork = await db.query(`select public.complete_manual_call_work_v2($1::uuid,'interested','Journey efterarbete',null,null) as result`, [dial.callId]);
+const dialledCall = await db.query(`
+  select c.status,c.disposition,c.after_call_completed_at is not null as after_work,c.from_number,c.to_number,
+    (select count(*)::int from public.notes n where n.call_id=c.id) notes
+  from public.calls c where c.id=$1`, [dial.callId]);
+const dialledState = dialledCall.rows[0];
+if (afterWork.rows[0].result.completed !== true || dialledState.disposition !== 'interested'
+  || !dialledState.after_work || Number(dialledState.notes) !== 1) {
+  throw new Error(`After-work did not close the call: ${JSON.stringify(dialledState)}`);
+}
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+console.log("Executed the seller dial: reservation with caller ID and device, provider acceptance, and after-work closing the call with its disposition and note.");
 
 // Generated-type drift. `types:verify` only asserts that a hand-maintained list of names is
 // present, so a table or column added by a migration and never regenerated into

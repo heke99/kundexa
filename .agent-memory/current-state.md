@@ -264,3 +264,23 @@ service-role-användning mot tenantfiltrering.
 
 Kvar som scope, inte defekt: det finns inget API-nyckelautentiserat endpoint för
 listimport. Import via API sker genom ParseHub-webhooken.
+
+## 2026-09-10 — död kod, referensintegritet och permanent flödestest
+
+Borttaget: `.kundexa-patch-backups/` (tre incheckade ögonblicksbilder av gamla
+källträd, 60 filer), `ui/button.tsx`, `webrtc-dialer.tsx`, `use-webrtc-voice.ts`,
+`domain/feature-policy.ts`, `integrations/rinkel/normalizers.ts` och fyra oanvända
+e-postmallar som process-outbox ändå bygger själv. `recording.download` blev en
+gravsten i stil med `call.start` och dess 46elks-implementation togs bort — 46elks
+röstwebhookar svarar redan 410. Det avstängda `if (false)`-blocket i verify-sql är
+borta med en notering om varför.
+
+Behållet med avsikt: `signing/provider.ts` och `signing/policy.ts` (verify.mjs
+kontrollerar kontraktets fyra metoder — det är extensionspunkten för BankID),
+`runtime-database.typecheck.ts` (kompileringstidskontrakt för RPC-argument som får
+vara SQL NULL), samt 410-gravstenarna för 46elks röst.
+
+`npm run test` kör nu hela säljarresan som runtime: grundande samtal, avtalsutkast,
+låst utskick, publik webbacceptans bunden till exakt dokumenthash, bevisgrindad
+aktivering — plus uppringning via v2-reservationen med finalisering och efterarbete.
+Tidigare kontrollerades avtalsvägen bara med regex.

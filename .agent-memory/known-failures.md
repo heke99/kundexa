@@ -501,3 +501,28 @@ ringknapp, löser upp `assigned_user_id` mot `profiles.full_name`, och länkar t
 
 **Regel:** `customers` är det kanoniska kundkortet. Data som andra flöden agerar på
 måste synas där, annars är kortet inte kanoniskt i praktiken.
+
+## FAILURE-0050 — Tenantägda rader kunde peka på en annan tenants rad — FIXED 2026-09-10
+
+**Symptom:** Ingen observerad incident. Hittad genom att jämföra samtliga främmande
+nycklar mot tenantmodellen.
+
+**Rotorsak:** Tretton främmande nycklar mellan två tenantägda tabeller var
+enkolumnsnycklar: barnet bar `tenant_id`, men nyckeln kontrollerade bara `id` mot
+föräldern. Ingenting i databasen hindrade
+`rinkel_call_attempts_v2.number_allocation_id` från att peka på en annan tenants
+nummerallokering, eller `legal_holds.customer_id` på en annan tenants kund. De
+RPC:er som skriver raderna slår upp varje förälder tenantfiltrerat, så det var en
+saknad backstop snarare än ett känt läckage.
+
+**Åtgärd:** `202609100003_tenant_scoped_reference_integrity.sql` gör samtliga
+sammansatta på `(tenant_id, id)`, med kolumnspecifik `on delete set null (kolumn)`
+så att obligatoriskt `tenant_id` aldrig nollas (FAILURE-0001). Migrationen
+rapporterar överträdande rader med tabell och antal i stället för ett rått
+constraintfel. `platform_rinkel_webhook_events.correlated_call_id` och
+`.correlated_attempt_id` är medvetet undantagna: den tabellens `tenant_id` är null
+till dess korrelationen lyckats.
+
+**Regel:** En tenantgräns upprätthålls av schemat, inte bara av de anropare som råkar
+vara korrekta idag. `verify-sql.mjs` avvisar nu varje ny enkolumnsnyckel mellan två
+tenantägda tabeller och bevisar att en tvärtenantskrivning nekas.

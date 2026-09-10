@@ -19,11 +19,11 @@ export default async function CustomerDetail({ params, searchParams }: { params:
     supabase.from("customers").select("*").eq("id", id).single(),
     supabase.from("contact_people").select("id,full_name,title,role,email,phone_e164,alternate_phone_e164,is_primary,is_signatory,source_external_id").eq("customer_id", id).order("is_primary", { ascending: false }).order("full_name"),
     supabase.from("notes").select("id,body,is_pinned,visibility,note_type,created_by,created_at,profiles:created_by(full_name)").eq("customer_id", id).is("archived_at", null).order("is_pinned", { ascending: false }).order("created_at", { ascending: false }).limit(30),
-    supabase.from("activities").select("*").eq("customer_id", id).order("created_at", { ascending: false }).limit(30),
-    supabase.from("calls").select("*").eq("customer_id", id).order("created_at", { ascending: false }).limit(15),
-    supabase.from("contracts").select("*").eq("customer_id", id).order("created_at", { ascending: false }).limit(10),
-    supabase.from("deals").select("*").eq("customer_id", id).order("created_at", { ascending: false }),
-    supabase.from("sales_orders").select("*").eq("customer_id", id).order("created_at", { ascending: false }),
+    supabase.from("activities").select("id,title,description,status,callback_scope,due_at,created_at").eq("customer_id", id).order("created_at", { ascending: false }).limit(30),
+    supabase.from("calls").select("id,direction,status,disposition,duration_seconds,created_at").eq("customer_id", id).order("created_at", { ascending: false }).limit(15),
+    supabase.from("contracts").select("id,contract_number,title,status,value,currency").eq("customer_id", id).order("created_at", { ascending: false }).limit(10),
+    supabase.from("deals").select("id,name,status,probability,value,currency").eq("customer_id", id).order("created_at", { ascending: false }),
+    supabase.from("sales_orders").select("id,order_number,status,total,currency,created_at").eq("customer_id", id).order("created_at", { ascending: false }),
     supabase.from("customer_lists").select("id,name,callback_policy,status").eq("status", "active").order("name"),
   ]);
   if (!customer) notFound();

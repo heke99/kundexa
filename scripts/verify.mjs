@@ -462,7 +462,6 @@ for (const relative of [
   "src/app/(dashboard)/app/callbacks/page.tsx",
   "src/app/(dashboard)/app/orders/page.tsx",
   "src/components/list-dialer-workspace.tsx",
-  "src/hooks/use-webrtc-voice.ts",
   "src/app/api/v1/dialer/sessions/route.ts",
   "src/app/api/v1/dialer/next/route.ts",
   "src/app/api/v1/dialer/complete/route.ts",

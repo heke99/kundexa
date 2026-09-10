@@ -348,32 +348,6 @@ async function processContractReminder(job: Job) {
   await supabase.from("contract_events").insert({ tenant_id: job.tenant_id, contract_id: contract.id, event_type: "contract.reminder_queued", payload: { reminder_id: reminder.id, channel, acceptance_request_id: request.id } });
 }
 
-async function processRecording(job: Job) {
-  const wavUrl = String(job.payload.wav_url ?? "");
-  const callId = String(job.payload.call_id ?? job.aggregate_id ?? "");
-  if (!wavUrl || !callId) throw new Error("recording_payload_invalid");
-  const credentials = await get46ElksCredentials(job.tenant_id);
-  const response = await fetch(wavUrl, { headers: { Authorization: `Basic ${btoa(`${credentials.username}:${credentials.password}`)}` } });
-  if (!response.ok) throw new Error(`recording_download_${response.status}`);
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  const sha = await sha256Bytes(bytes);
-  const providerRecordingId = String(job.payload.provider_recording_id ?? callId);
-  const path = `${job.tenant_id}/${callId}/${providerRecordingId.replace(/[^a-zA-Z0-9._-]/g, "_")}.wav`;
-  const { error } = await supabase.storage.from("call-recordings").upload(path, bytes, { contentType: "audio/wav", upsert: true });
-  if (error) throw error;
-  await supabase.from("call_recordings").upsert({
-    tenant_id: job.tenant_id,
-    call_id: callId,
-    provider_recording_id: providerRecordingId,
-    storage_path: path,
-    sha256: sha,
-    size_bytes: bytes.length,
-    duration_seconds: job.payload.duration ? Number(job.payload.duration) : null,
-    retention_until: new Date(Date.now() + 90 * 86400000).toISOString(),
-    status: "stored",
-  }, { onConflict: "tenant_id,provider_recording_id" });
-}
-
 function escapePdfText(value: string) {
   return value.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)").replace(/[^\x20-\x7EåäöÅÄÖéÉ]/g, "?");
 }
@@ -929,7 +903,7 @@ async function processJob(job: Job) {
   if (job.job_type === "call.start") throw new Error("permanent_legacy_46elks_voice_job_disabled_use_rinkel");
   if (job.job_type === "email.send") return processEmail(job);
   if (job.job_type === "contract.reminder.dispatch") return processContractReminder(job);
-  if (job.job_type === "recording.download") return processRecording(job);
+  if (job.job_type === "recording.download") throw new Error("permanent_legacy_46elks_recording_job_disabled_use_rinkel");
   if (job.job_type === "evidence.generate") return processEvidence(job);
   if (job.job_type === "contract.confirmation") return processContractConfirmation(job);
   if (job.job_type === "contract.signed.confirmation") return processSignedContractConfirmation(job);
