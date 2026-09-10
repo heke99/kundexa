@@ -466,3 +466,28 @@ Jag har följt vägen i koden i stället: kundkortets "Hämta"-knapp länkar til
 (409) eller filen är över 20 MB (413). Den sätter `content-disposition: attachment`
 och `no-store`. Vägen är hel; den saknar bara ett test på HTTP-nivå, vilket sviten
 inte är byggd för.
+
+Sista genomgången 2026-09-10
+-----------------------------
+
+- **7/7 workers `healthy`, noll som aldrig lyckats.** Noll aktiva pg_cron-jobb och
+  noll cron-körningar de senaste tio minuterna — felströmmen från FAILURE-0056 är
+  borta, och Vercel Cron driver workrarna vidare oberört.
+- **Noll fastnade outbox-jobb, noll fastnade dial-försök.**
+- **`platform_rinkel_jobs` har ett dead-letter-jobb**, och det är inte nytt: en
+  `rinkel.reconcile_call` från 2026-08-18 som slog i taket på tio försök medan
+  Rinkels API-nyckel nekades. Samtalet den gällde är sedan länge `completed` med
+  `provider_status = 'ended'` — webhooken löste det, jobbet var redundant
+  anrikning. Ingen dataförlust och inget hängande samtal. Jag har lämnat raden
+  som den är hellre än att pilla i produktionen för kosmetikans skull, men den
+  bör vägas in: "noll dead letters" för plattformsjobb betyder i praktiken
+  "ett känt, obrukbart från 18 augusti".
+- **De tre `SECURITY DEFINER` utan `search_path`** är PostGIS `st_estimatedextent`
+  i C, alltså extensionens egna. Ingen applikationsfunktion saknar `search_path`.
+  Tidigare mätning på noll räknade bara plpgsql/sql-funktioner.
+- **Lagringen är hel.** Fyra buckets, alla privata:
+  `contract-documents` (20 MB, pdf+json), `call-recordings` (500 MB, ljud),
+  `imports` (50 MB, csv/json/ndjson/xml/xlsx), `compliance-exports` (50 MB).
+  Kontrollerat särskilt: alla fem kanoniska MIME-typer i
+  `canonicalImportMimeTypes` (FAILURE-0048) finns i `imports`-bucketens
+  tillåtna lista, så fixen kan inte få uppladdningen avvisad.
