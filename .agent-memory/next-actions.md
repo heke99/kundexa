@@ -74,3 +74,43 @@ infrastruktur.
    `callEnd` → CDR → recording.
 6. Undersök varför `callStart` och `callInsights` aldrig kvitterats medan de tre andra
    webhookarna svarar 200.
+
+## Uppdatering 2026-09-10 (efter edge-deployen)
+
+Verifierat läge i produktion (`lhvifuxcqghtbiulzkrf`), mätt direkt mot databasen:
+0 dead-letter-jobb, 0 öppna outbox-jobb, 0 fastnade dial-försök, alla sju workers
+med livstecken `healthy`.
+
+Kvar innan systemet kan användas skarpt, i den ordning som låser upp mest:
+
+1. **Deploya `process-outbox`** — `npm run functions:deploy -- --project-ref lhvifuxcqghtbiulzkrf`.
+   Den kör fortfarande kod från 2026-08-08: FAILURE-0044 (bevispaket rapporterar
+   noll e-post), bevismanifest v2 utan generationsbindning och generationslösa
+   signeringsbekräftelser. Skriptet deployar alla åtta funktionerna; de sju andra
+   är redan i fas, så det blir en no-op för dem.
+2. **Deploya webbappen från grenen.** Det aktiverar `testWebhook(event, url)`,
+   som är förutsättningen för att verifiera `outgoingCall` och `callStart` — de
+   är fortfarande bara `registered`, och utan dem fungerar inte automatisk
+   uppringning. Samma deploy tar med dialer-loopen, kundkortets kontaktpersoner,
+   importens innehållstyp och knappen för omutskick av utgånget avtal.
+3. **Verifiera `outgoingCall` och `callStart`** i integrationsvyn när (2) är ute.
+   `callEnd` och `incomingCall` är redan `verified`.
+4. **Koppla och aktivera Resend.** 0 aktiva tenantintegrationer och `outbound_email`
+   är av för samtliga tenants — inget avtal kan mejlas ut som läget är.
+5. **Publicera en avtalsmall.** Enda versionen är `draft`, och
+   `assert_contract_sendable_v2` kräver en publicerad mall — inget avtal kan skapas.
+6. **Sätt NIX-läge** (`nix_screening_mode` → `provider_check`) innan B2C-uppringning.
+7. **Lägg upp säljare, listor och produkter.** 1 aktiv medlem, 0 listor, 0 produkter.
+8. **Slå på Leaked Password Protection** i Supabase Auth — enda kvarvarande
+   säkerhetsvarningen som inte är en PostGIS-artefakt.
+
+Övriga rådgivarvarningar är genomgångna och avfärdade som förväntade:
+`spatial_ref_sys` och `st_estimatedextent` ägs av PostGIS, `citext`/`pg_trgm`/`postgis`
+ligger i `public` sedan Supabase installerade dem, de 115 SECURITY DEFINER-RPC:erna
+mot `authenticated` är arkitekturen (tenant härleds inne i funktionen), och
+`platform_*`-tabellerna har RLS på utan policies med flit — det betyder noll åtkomst
+för alla utom `service_role`.
+
+Observerad lucka utan åtgärd ännu: **`process-outbox` skriver inget livstecken.**
+Den är den enda kritiska workern utan rad i `platform_worker_heartbeats`, så en
+tyst död där syns inte i övervakningen.
