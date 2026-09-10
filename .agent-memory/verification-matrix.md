@@ -116,3 +116,16 @@ kräver en riktig Supabase-staging eller riktig Rinkel-provider är fortfarande 
 | Jobbtyper producerade mot workerhanterare | PASS | inga föräldralösa jobb |
 | Service-role-anrop mot tenantfiltrering och plattformsgrind | PASS | manuellt granskade träffar |
 | Live Supabase, Rinkel, Resend och 46elks | NOT RUN | ingen ansluten miljö |
+
+## 2026-09-10 — dialer- och avtalsflöde, tillägg
+
+| Kontroll | Status | Bevis |
+|---|---|---|
+| Efterarbete på obesvarat, telefonsvarare och providervägran | PASS | nytt test, bevisat falla utan fixen (`call_not_finished`) |
+| Automatisk dialer: obesvarat registreras, nästa prospekt hämtas | PASS | nytt runtimetest |
+| Automatisk dialer stannar vid svar | PASS | nytt runtimetest |
+| Obesvarat prospekt schemaläggs för nytt försök i framtiden | PASS | nytt runtimetest |
+| Avtalsutgång: länk går ut, påminnelser avbryts | PASS | nytt runtimetest |
+| Utgånget avtal kan skickas igen som ny generation | PASS | nytt test, bevisat falla utan fixen |
+| Utgångssvepet rör inte ett avtal med levande länk | PASS | nytt runtimetest |
+| SMS-signering: kod krävs, fel/saknad kod nekas, koden lagras aldrig | PASS | nytt runtimetest |

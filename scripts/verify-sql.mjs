@@ -2173,6 +2173,178 @@ if (activated.rows[0].result.status !== 'active' || activatedState.rows[0].statu
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
 console.log("Executed the seller journey: grounding call, contract draft, locked send, public web acceptance bound to the exact document, and evidence-gated activation.");
 
+// A deadline that passes is the ordinary case, not the end of the agreement: the link
+// expires, the contract is marked expired, and the seller must be able to send the same
+// contract again rather than draft it from scratch.
+const JEXPIRE = '00000000-0000-0000-0000-0000000000c8';
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.exec(`
+  insert into public.customers(id,tenant_id,customer_type,lifecycle,display_name,phone_e164,email,marketing_allowed,legal_basis,created_by)
+  values('${JEXPIRE}','${JT}','company','prospect','Utgången Kund AB','+46705550009','utgangen@example.test',true,'legitimate_interest','${JOWNER}')
+  on conflict(id) do nothing;
+`);
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${JOWNER}',false);`);
+const expiringCall = await db.query(`select public.register_external_manual_call(
+  '${JEXPIRE}','+46705550009','outbound',now()-interval '20 minutes',now()-interval '10 minutes',
+  'interested','Utgångssamtal',null) as id`);
+const expiringContract = await db.query(`select public.create_contract_draft_v3(
+  'KX-JOURNEY-EXPIRE','${JEXPIRE}',null,null,'00000000-0000-0000-0000-0000000000c3','00000000-0000-0000-0000-0000000000c4',
+  '00000000-0000-0000-0000-0000000000c2','Utgångsavtal','Brödtext','Villkor','{"currency":"SEK"}'::jsonb,'expire-doc-hash',
+  'telephone','{"legal_name":"Kundexa Journey AB"}'::jsonb,'{"display_name":"Utgången Kund AB"}'::jsonb,
+  '${JOWNER}',null,null,null,null,null,1000,'SEK',now()+interval '7 days') as id`);
+const expiringContractId = String(expiringContract.rows[0].id);
+await db.query(`update public.contracts set source_call_id=$1,source_type='external_manual_call',prepared_at=now(),status='ready' where id=$2`, [String(expiringCall.rows[0].id), expiringContractId]);
+const expiringDocument = await db.query(`
+  insert into public.contract_documents(tenant_id,contract_id,contract_version_id,document_type,file_name,storage_path,mime_type,size_bytes,sha256)
+  select '${JT}',id,active_version_id,'generated_pdf','expire.pdf','${JT}/'||id::text||'/expire.pdf','application/pdf',4096,'expire-canonical-sha'
+  from public.contracts where id=$1 returning id`, [expiringContractId]);
+const expiringDocumentId = String(expiringDocument.rows[0].id);
+await db.query(`select public.prepare_contract_delivery_v2(
+  $1,'email','Utgången Kund AB','utgangen@example.test',null,'expire-token-hash','expire-token-cipher','ABCD',
+  now()+interval '7 days',$2,null,null,'avtal@example.test','Ditt avtal','text','<p>html</p>','[]'::jsonb,null,null)`,
+  [expiringContractId, expiringDocumentId]);
+
+// The deadline passes and the scheduled sweep runs.
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.query(`update public.contract_acceptance_requests set expires_at=now()-interval '1 minute' where contract_id=$1 and status='pending'`, [expiringContractId]);
+await db.query(`select public.enqueue_due_contract_reminders(100)`);
+const expiredState = await db.query(`
+  select c.status,
+    (select count(*)::int from public.contract_acceptance_requests r where r.contract_id=c.id and r.status='expired') expired_requests,
+    (select count(*)::int from public.contract_reminders cr where cr.contract_id=c.id and cr.status='scheduled') open_reminders
+  from public.contracts c where c.id=$1`, [expiringContractId]);
+if (expiredState.rows[0].status !== 'expired' || Number(expiredState.rows[0].expired_requests) !== 1) {
+  throw new Error(`An overdue acceptance link did not expire the contract: ${JSON.stringify(expiredState.rows[0])}`);
+}
+if (Number(expiredState.rows[0].open_reminders) !== 0) {
+  throw new Error(`Reminders kept running for an expired request: ${JSON.stringify(expiredState.rows[0])}`);
+}
+
+// The seller sends the same contract again. The version, the canonical PDF and the source
+// call are all still valid, so this must not require drafting a new contract.
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${JOWNER}',false);`);
+let resendResult;
+try {
+  resendResult = await db.query(`select public.prepare_contract_delivery_v2(
+    $1,'email','Utgången Kund AB','utgangen@example.test',null,'expire-token-hash-2','expire-token-cipher-2','EFGH',
+    now()+interval '7 days',$2,null,null,'avtal@example.test','Ditt avtal igen','text','<p>html</p>','[]'::jsonb,null,null) as result`,
+    [expiringContractId, expiringDocumentId]);
+} catch (error) {
+  throw new Error(`An expired contract could not be sent again, so the seller has to redraft it: ${error instanceof Error ? error.message : String(error)}`);
+}
+const resent = await db.query(`
+  select c.status,c.acceptance_generation,
+    (select count(*)::int from public.contract_acceptance_requests r where r.contract_id=c.id and r.status='pending' and r.generation=c.acceptance_generation) pending_current,
+    (select count(*)::int from public.contract_acceptance_requests r where r.contract_id=c.id and r.status='expired') expired_kept
+  from public.contracts c where c.id=$1`, [expiringContractId]);
+const resentState = resent.rows[0];
+if (resentState.status !== 'sent' || Number(resentState.pending_current) !== 1) {
+  throw new Error(`Sending an expired contract again did not reopen it: ${JSON.stringify(resentState)}`);
+}
+if (Number(resentState.expired_kept) !== 1) {
+  throw new Error(`The expired attempt was erased instead of kept in the audit trail: ${JSON.stringify(resentState)}`);
+}
+
+// And the sweep must not drag the freshly sent contract back to expired just because an
+// earlier attempt on it expired.
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.query(`select public.enqueue_due_contract_reminders(100)`);
+const afterSweep = await db.query(`select status from public.contracts where id=$1`, [expiringContractId]);
+if (afterSweep.rows[0].status !== 'sent') {
+  throw new Error(`The expiry sweep expired a contract that has a live acceptance link: ${JSON.stringify(afterSweep.rows[0])}`);
+}
+
+// The new link accepts, the superseded one does not.
+const currentRequest = await db.query(`select id from public.contract_acceptance_requests where contract_id=$1 and status='pending'`, [expiringContractId]);
+await db.query(`select public.record_contract_acceptance_v3($1,'web','accepted_via_web','WEB_ACCEPT','WEB_ACCEPT','Utgången Testsson',null,'127.0.0.1','probe',null,'Jag accepterar','{}'::jsonb)`,
+  [String(currentRequest.rows[0].id)]);
+const acceptedAfterResend = await db.query(`select status from public.contracts where id=$1`, [expiringContractId]);
+if (acceptedAfterResend.rows[0].status !== 'accepted') {
+  throw new Error(`A contract sent again after expiry could not be accepted: ${JSON.stringify(acceptedAfterResend.rows[0])}`);
+}
+let expiredLinkRefused = false;
+const staleRequest = await db.query(`select id from public.contract_acceptance_requests where contract_id=$1 and status='expired' limit 1`, [expiringContractId]);
+try {
+  await db.query(`select public.record_contract_acceptance_v3($1,'web','accepted_via_web','WEB_ACCEPT','WEB_ACCEPT','Sen Testsson',null,'127.0.0.1','probe',null,'Jag accepterar','{}'::jsonb)`,
+    [String(staleRequest.rows[0].id)]);
+} catch (error) {
+  expiredLinkRefused = /not_pending|expired|superseded|generation/.test(error instanceof Error ? error.message : String(error));
+}
+if (!expiredLinkRefused) {
+  throw new Error("An expired acceptance link still accepted a decision.");
+}
+console.log("Executed contract expiry and resend: the overdue link expires the contract and cancels its reminders, the same contract can be sent again as a new generation, the sweep leaves the live link alone, and the expired link no longer accepts.");
+
+// The second signing channel. A contract sent by SMS requires the code from the message, so
+// a reply that quotes the wrong code must not sign anything.
+const JSMS = '00000000-0000-0000-0000-0000000000c9';
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.exec(`
+  insert into public.customers(id,tenant_id,customer_type,lifecycle,display_name,phone_e164,email,marketing_allowed,legal_basis,created_by)
+  values('${JSMS}','${JT}','company','prospect','SMS Kund AB','+46705550010','sms@example.test',true,'legitimate_interest','${JOWNER}')
+  on conflict(id) do nothing;
+  insert into public.tenant_features(tenant_id,feature_key,enabled) values
+    ('${JT}','outbound_sms',true),('${JT}','contract_delivery_sms',true)
+  on conflict(tenant_id,feature_key) do update set enabled=true;
+`);
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${JOWNER}',false);`);
+const smsCall = await db.query(`select public.register_external_manual_call(
+  '${JSMS}','+46705550010','outbound',now()-interval '20 minutes',now()-interval '10 minutes',
+  'interested','SMS-samtal',null) as id`);
+const smsContract = await db.query(`select public.create_contract_draft_v3(
+  'KX-JOURNEY-SMS','${JSMS}',null,null,'00000000-0000-0000-0000-0000000000c3','00000000-0000-0000-0000-0000000000c4',
+  '00000000-0000-0000-0000-0000000000c2','SMS-avtal','Brödtext','Villkor','{"currency":"SEK"}'::jsonb,'sms-doc-hash',
+  'telephone','{"legal_name":"Kundexa Journey AB"}'::jsonb,'{"display_name":"SMS Kund AB"}'::jsonb,
+  '${JOWNER}',null,null,null,null,null,1000,'SEK',now()+interval '7 days') as id`);
+const smsContractId = String(smsContract.rows[0].id);
+await db.query(`update public.contracts set source_call_id=$1,source_type='external_manual_call',prepared_at=now(),status='ready' where id=$2`, [String(smsCall.rows[0].id), smsContractId]);
+const smsDocument = await db.query(`
+  insert into public.contract_documents(tenant_id,contract_id,contract_version_id,document_type,file_name,storage_path,mime_type,size_bytes,sha256)
+  select '${JT}',id,active_version_id,'generated_pdf','sms.pdf','${JT}/'||id::text||'/sms.pdf','application/pdf',4096,'sms-canonical-sha'
+  from public.contracts where id=$1 returning id`, [smsContractId]);
+await db.query(`select public.prepare_contract_delivery_v2(
+  $1,'sms','SMS Kund AB',null,'+46705550010','sms-token-hash','sms-token-cipher','K7T2',
+  now()+interval '7 days',$2,'+46401234567','Avtal K7T2',null,null,null,null,'[]'::jsonb,null,null)`,
+  [smsContractId, String(smsDocument.rows[0].id)]);
+const smsRequest = await db.query(`select id,require_code,method from public.contract_acceptance_requests where contract_id=$1 and status='pending'`, [smsContractId]);
+if (smsRequest.rows[0].require_code !== true || smsRequest.rows[0].method !== 'sms') {
+  throw new Error(`An SMS delivery did not demand the code from the message: ${JSON.stringify(smsRequest.rows[0])}`);
+}
+const smsRequestId = String(smsRequest.rows[0].id);
+
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+let wrongCodeRefused = false;
+try {
+  await db.query(`select public.record_contract_acceptance_v3($1,'sms','accepted_via_sms','JA X999','JA X999','JA','X999',null,null,'provider-1','SMS-acceptans','{}'::jsonb)`, [smsRequestId]);
+} catch (error) {
+  wrongCodeRefused = /acceptance_code_invalid/.test(error instanceof Error ? error.message : String(error));
+}
+if (!wrongCodeRefused) throw new Error("An SMS reply quoting the wrong code signed the contract.");
+
+let missingCodeRefused = false;
+try {
+  await db.query(`select public.record_contract_acceptance_v3($1,'sms','accepted_via_sms','JA','JA','JA',null,null,null,'provider-2','SMS-acceptans','{}'::jsonb)`, [smsRequestId]);
+} catch (error) {
+  missingCodeRefused = /acceptance_code_required/.test(error instanceof Error ? error.message : String(error));
+}
+if (!missingCodeRefused) throw new Error("An SMS reply without the code signed the contract.");
+
+const smsAcceptance = await db.query(`select public.record_contract_acceptance_v3($1,'sms','accepted_via_sms','JA K7T2','JA K7T2','JA','k7t2',null,null,'provider-3','SMS-acceptans','{}'::jsonb) as id`, [smsRequestId]);
+const smsAccepted = await db.query(`
+  select c.status,
+    (select a.acceptance_code from public.contract_acceptances a where a.id=$2) stored_code,
+    (select a.method::text from public.contract_acceptances a where a.id=$2) method,
+    (select (a.evidence->>'acceptance_code_verified')::boolean from public.contract_acceptances a where a.id=$2) code_verified
+  from public.contracts c where c.id=$1`, [smsContractId, String(smsAcceptance.rows[0].id)]);
+const smsState = smsAccepted.rows[0];
+if (smsState.status !== 'accepted' || smsState.method !== 'sms' || smsState.code_verified !== true) {
+  throw new Error(`An SMS acceptance with the right code did not sign the contract: ${JSON.stringify(smsState)}`);
+}
+if (smsState.stored_code !== '[verified]') {
+  throw new Error(`The acceptance code was stored verbatim instead of as a verification marker: ${JSON.stringify(smsState)}`);
+}
+console.log("Executed SMS signing: the code from the message is required, a wrong or missing code is refused, a lower-case reply of the right code signs, and the code itself is never stored.");
+
 // And the dial itself, end to end on the v2 path the application calls: reserve, report the
 // provider accepted it, then close the call with after-work.
 await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${JOWNER}',false);`);

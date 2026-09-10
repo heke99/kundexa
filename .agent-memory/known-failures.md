@@ -578,3 +578,28 @@ den inte kräver anteckning, återkomst eller order — annars får säljaren fy
 **Regel:** Automatisk uppringning betyder att systemet arbetar listan tills någon
 svarar. Utfallet ska ändå registreras — automatiskt när maskinen kan avgöra det,
 av säljaren när en människa svarat.
+
+## FAILURE-0053 — En utgången acceptlänk dödade avtalet för gott — FIXED 2026-09-10
+
+**Symptom:** Kunden svarade inte i tid, länken gick ut, och säljaren kunde inte
+skicka samma avtal igen. Enda vägen framåt var att rita om hela avtalet under ett
+nytt nummer, trots att version, kanonisk PDF och källsamtal fortfarande var giltiga.
+
+**Rotorsak:** `enqueue_due_contract_reminders` sätter en förfallen acceptbegäran
+till `expired` och projicerar det på avtalet som `status='expired'`. Ingenting
+flyttar ett avtal ur den statusen, och `assert_contract_sendable_v2` godkände bara
+('ready','sent','delivered','opened'). `extend_contract_acceptance_expiry` kunde
+inte heller rädda det — den kräver en *pending* begäran, och då finns ingen.
+
+**Åtgärd:** En utgången länk är en egenskap hos begäran, inte ett beslut om avtalet,
+så ett nytt utskick är tillåtet från `expired`. `prepare_contract_delivery_v2`
+supersederar redan alla tidigare begäranden, höjer `acceptance_generation` och
+binder ny token, nytt svarsdatum och dokumenthash — det nya försöket blir en ren
+generation och den utgångna ligger kvar i spåret. `declined` och `cancelled`
+förblir terminala; de är beslut. Utgångssvepet flyttades till
+`expire_contracts_without_pending_acceptance`, som bara utgångsmarkerar avtal vars
+*aktuella* generation saknar levande begäran — annars hade svepet dragit tillbaka
+ett nyss omskickat avtal till `expired`.
+
+**Regel:** Skilj på att en länk tar slut och att motparten har bestämt sig. Bara det
+andra är terminalt.
