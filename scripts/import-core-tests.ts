@@ -1,12 +1,34 @@
 import assert from "node:assert/strict";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import ExcelJS from "exceljs";
 import { normalizeOrganizationNumber, passesLuhn } from "../src/lib/imports/organization-number";
 import { parseJsonPath, resolveJsonPath, resolveRecordsPath } from "../src/lib/imports/json-path";
-import { parseImportFile } from "../src/lib/imports/file-parser";
+import { canonicalImportMimeTypes, parseImportFile } from "../src/lib/imports/file-parser";
 import { inferFieldMapping, applyFieldMapping } from "../src/lib/imports/field-mapping";
 import { normalizeImportedRow } from "../src/lib/imports/normalize-row";
 
 async function main() {
+// Every format the parser accepts must also be storable. The `imports` bucket enforces its
+// own mime allowlist, so a content type the bucket rejects means the file is validated and
+// then fails on upload — the parser and the bucket have to agree on the same set.
+const migrationDir = join(process.cwd(), "supabase/migrations");
+const migrationSql = (await Promise.all(
+  (await readdir(migrationDir)).filter((name) => name.endsWith(".sql")).sort()
+    .map((name) => readFile(join(migrationDir, name), "utf8")),
+)).join("\n");
+const importsBucketAllowlist = [
+  ...migrationSql.matchAll(/allowed_mime_types=array\[([^\]]*)\][^;]*?where id='imports'/g),
+  ...migrationSql.matchAll(/\('imports','imports',[^)]*?array\[([^\]]*)\]\)/g),
+].flatMap((match) => [...match[1].matchAll(/'([^']+)'/g)].map((mime) => mime[1]));
+assert.ok(importsBucketAllowlist.length > 0, "Could not read the imports bucket mime allowlist from the migrations");
+for (const [sourceType, mimeType] of Object.entries(canonicalImportMimeTypes)) {
+  assert.ok(
+    importsBucketAllowlist.includes(mimeType),
+    `The imports bucket rejects ${mimeType}, the canonical content type stored for ${sourceType} uploads`,
+  );
+}
+
 assert.equal(passesLuhn("5560160680"), true);
 for (const value of ["556016-0680", "5560160680", "165560160680", "SE556016068001"]) {
   const normalized = normalizeOrganizationNumber(value);

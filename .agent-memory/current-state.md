@@ -235,3 +235,32 @@ Två blockerare hittades genom att torrköra den riktiga reservations-RPC:n mot 
 
 Efter fixarna reserverar `rinkel_reserve_platform_outbound_call_v2` ett riktigt samtal mot Gridex
 produktion (device `6a9e8624…`, nummer `6a6b1c70…`); verifieringen rullades tillbaka.
+
+## 2026-09-10 — Genomgång av avtals-, samtals-, kundkorts- och importflödet
+
+Hela kedjan kördes som runtime mot PGlite, inte lästes: `create_contract_draft_v3` ->
+`prepare_contract_delivery_v2` -> `record_contract_acceptance_v3` -> bevispaket ->
+`activate_completed_contract`, samt `rinkel_reserve_platform_outbound_call_v2` ->
+`rinkel_finalize_platform_dial` -> `complete_manual_call_work_v2`/`complete_dialer_work_v2`
+och `process_import_run` mot mållista. Kedjorna håller.
+
+Sex defekter hittades och åtgärdades: FAILURE-0044 till FAILURE-0049. De två som
+faktiskt bröt drift var telefoniworkerns livstecken (ett misslyckat jobb stängde av
+auto-dialern plattformsbrett) och uppringningslåset utan utgång (ett samtal utan
+providerutfall låste säljaren ute permanent).
+
+Viktig lärdom om testtäckningen: `scripts/verify-sql.mjs` körde v1-funktionerna
+(`rinkel_reserve_platform_outbound_call`, `complete_dialer_work`) medan applikationen
+anropar v2, och avtalsflödet kontrollerades bara med regex i `verify.mjs`. Båda
+defekterna låg i den glipan. Nya runtimetester täcker nu workerlivstecken, det
+tidsbegränsade uppringningslåset och tenantbunden ParseHub-commit, och vart och ett
+är bevisat falla utan sin fix.
+
+Konsistenskontroller körda över hela repot, samtliga rena efter åtgärd:
+RPC-namn och parameternamn mot migrerat schema (179 anropsställen), tabell- och
+kolumnreferenser i otypade edge functions, statuslitteraler mot enum/check-villkor,
+producerade jobbtyper mot workerhanterare, storage-buckets, feature keys och
+service-role-användning mot tenantfiltrering.
+
+Kvar som scope, inte defekt: det finns inget API-nyckelautentiserat endpoint för
+listimport. Import via API sker genom ParseHub-webhooken.

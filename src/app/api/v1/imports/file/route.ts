@@ -3,7 +3,7 @@ import type { Json } from "@/lib/supabase/database.types";
 import { createClient } from "@/lib/supabase/server";
 import { getAppContext } from "@/lib/auth";
 import { assertPermission } from "@/lib/permissions";
-import { parseImportFile } from "@/lib/imports/file-parser";
+import { canonicalImportMimeTypes, parseImportFile } from "@/lib/imports/file-parser";
 import { normalizeImportedRow } from "@/lib/imports/normalize-row";
 import { scanImportFile } from "@/lib/imports/malware-scan";
 import { importFieldMappingSchema } from "@/lib/imports/import-profile";
@@ -106,7 +106,8 @@ export async function POST(request: Request) {
       : inferFieldMapping(parsed.rows[0]);
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
     const path = `${ctx.tenantId}/${crypto.randomUUID()}-${safeName}`;
-    const upload = await supabase.storage.from("imports").upload(path, buffer, { contentType: file.type || "application/octet-stream", upsert: false });
+    const storedMimeType = canonicalImportMimeTypes[parsed.sourceType];
+    const upload = await supabase.storage.from("imports").upload(path, buffer, { contentType: storedMimeType, upsert: false });
     if (upload.error) throw new Error(upload.error.message);
     uploadedPath = path;
 

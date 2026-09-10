@@ -572,6 +572,17 @@ async function processReconciliation() {
   }
   await enqueueReconciliationJobs((stale ?? []) as Array<{ id: string; call_id: string; tenant_id: string; external_call_id: string | null }>, "stale_attempt");
 
+  // A seller may hold one non-terminal dial attempt, enforced by a partial unique index.
+  // An attempt whose outcome the provider never reports would hold that lock forever and
+  // lock the seller out of telephony, so stop waiting on a bound. This releases the
+  // attempt only; the call stays unresolved and the reconciliation above keeps chasing a
+  // late CDR for it.
+  const { error: releaseError } = await supabase.rpc("rinkel_release_stale_call_attempts", {
+    p_max_age: "01:00:00",
+    p_limit: 200,
+  });
+  if (releaseError) throw new Error(releaseError.message);
+
   const incompleteQuery = () => supabase.from("calls")
     .select("id,tenant_id,external_call_id,created_at")
     .eq("provider", "rinkel")

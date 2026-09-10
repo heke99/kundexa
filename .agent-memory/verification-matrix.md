@@ -96,3 +96,23 @@ kräver en riktig Supabase-staging eller riktig Rinkel-provider är fortfarande 
 | Generated types regenerated from live | PASS | `assign_platform_rinkel_number`, `rinkel_effective_provider_device`, `rinkel_link_seller_to_provider_user` present; zero column drift |
 | Production dry run of assignment | PASS (rolled back) | Real Gridex data: `linked_seller_count=1`, `unresolved_seller_count=0`, `telephony_activated_tenant_count=1`, `provider_device_missing_count=1` |
 | Real outbound Rinkel call | BLOCKED EXTERNALLY | Provider reports no device for the account; requires a Rinkel webphone/app sign-in first |
+
+## 2026-09-10 — flödesgenomgång
+
+| Kontroll | Status | Bevis |
+|---|---|---|
+| `npm run verify` (typecheck, edge, test, types, openapi, build) | PASS | kört efter varje fix |
+| Avtalskedja utkast -> utskick -> acceptans -> bevis -> aktivering | PASS | runtime mot PGlite |
+| Manuell uppringning: reservation v2 -> finalize -> efterarbete | PASS | runtime mot PGlite |
+| Listdialer: claim -> reservation med listkontext -> efterarbete | PASS | runtime mot PGlite |
+| Filimport -> `process_import_run` -> mållista och kontaktpersoner | PASS | runtime mot PGlite |
+| Workerlivstecken vid `degraded` | PASS | nytt test, bevisat falla utan fixen |
+| Uppringningslåset släpps efter gräns, utfallet hittas inte på | PASS | nytt test, bevisat falla utan fixen |
+| ParseHub-commit bunden till körningens tenant | PASS | nytt test, bevisat falla utan fixen |
+| Parserns mime-typer mot bucketens allowlist | PASS | nytt test i `test:imports` |
+| RPC-signaturer mot migrerat schema | PASS | 179 anropsställen, noll avvikelser |
+| Kolumnreferenser i otypade edge functions | PASS | efter FAILURE-0044 |
+| Statuslitteraler mot enum/check-villkor | PASS | noll avvikelser |
+| Jobbtyper producerade mot workerhanterare | PASS | inga föräldralösa jobb |
+| Service-role-anrop mot tenantfiltrering och plattformsgrind | PASS | manuellt granskade träffar |
+| Live Supabase, Rinkel, Resend och 46elks | NOT RUN | ingen ansluten miljö |

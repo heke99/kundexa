@@ -232,6 +232,19 @@ function resultMetrics(rows: ImportedRow[], sourceRowCount: number, parserErrors
   };
 }
 
+// The `imports` bucket only accepts the concrete formats this parser produces. Storing the
+// browser-asserted `File.type` there fails the bucket's own allowlist for uploads the parser
+// deliberately accepts — an .xlsx sent as `application/octet-stream`, or any file sent with an
+// empty type — so the file is validated and then rejected on its way to storage. The parsed
+// source type is what the file provably is, so derive the stored content type from that.
+export const canonicalImportMimeTypes: Record<ParsedImportFile["sourceType"], string> = {
+  csv: "text/csv",
+  json: "application/json",
+  ndjson: "application/x-ndjson",
+  xml: "application/xml",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+};
+
 export async function parseImportFile(buffer: Buffer, fileName: string, mimeType: string, options: ParseImportOptions = {}): Promise<ParsedImportFile> {
   const extension = fileName.toLowerCase().split(".").pop();
   assertExtensionAndMime(extension, mimeType);

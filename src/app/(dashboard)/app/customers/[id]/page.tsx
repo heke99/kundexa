@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Ban, CalendarPlus, ClipboardList, FileSignature, Mail, MessageSquareText, Phone, StickyNote } from "@/components/icons";
+import { ArrowLeft, Ban, CalendarPlus, ClipboardList, FileSignature, Mail, MessageSquareText, Phone, StickyNote, Users } from "@/components/icons";
 import { addActivity, addNote, archiveNote, blockCustomer, scheduleCallback, updateCustomerDetails, updateNote } from "@/app/actions/customers";
 import { getAppContext } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -15,8 +15,9 @@ export default async function CustomerDetail({ params, searchParams }: { params:
   const query = await searchParams;
   const context = await getAppContext();
   const supabase = await createClient();
-  const [{ data: customer }, { data: notes }, { data: activities }, { data: calls }, { data: contracts }, { data: deals }, { data: orders }, { data: lists }] = await Promise.all([
+  const [{ data: customer }, { data: contacts }, { data: notes }, { data: activities }, { data: calls }, { data: contracts }, { data: deals }, { data: orders }, { data: lists }] = await Promise.all([
     supabase.from("customers").select("*").eq("id", id).single(),
+    supabase.from("contact_people").select("id,full_name,title,role,email,phone_e164,alternate_phone_e164,is_primary,is_signatory,source_external_id").eq("customer_id", id).order("is_primary", { ascending: false }).order("full_name"),
     supabase.from("notes").select("id,body,is_pinned,visibility,note_type,created_by,created_at,profiles:created_by(full_name)").eq("customer_id", id).is("archived_at", null).order("is_pinned", { ascending: false }).order("created_at", { ascending: false }).limit(30),
     supabase.from("activities").select("*").eq("customer_id", id).order("created_at", { ascending: false }).limit(30),
     supabase.from("calls").select("*").eq("customer_id", id).order("created_at", { ascending: false }).limit(15),
@@ -26,6 +27,12 @@ export default async function CustomerDetail({ params, searchParams }: { params:
     supabase.from("customer_lists").select("id,name,callback_policy,status").eq("status", "active").order("name"),
   ]);
   if (!customer) notFound();
+  // The card is the canonical CRM record, so the person actually responsible has to be
+  // named on it. `assigned_user_id` alone said only "Tilldelad användare".
+  const { data: owner } = customer.assigned_user_id
+    ? await supabase.from("profiles").select("full_name").eq("id", customer.assigned_user_id).maybeSingle()
+    : { data: null };
+  const ownerName = owner?.full_name ?? (customer.assigned_user_id ? "Tilldelad användare" : "Ej tilldelad");
   return <>
     <Link href="/app/customers" className="muted back-link"><ArrowLeft size={15} /> Till kunder</Link>
     <PageHeader title={customer.display_name} description={`${customer.customer_type === "company" ? "Företag" : "Privatperson"} · ${customer.lifecycle}`} action={<div className="toolbar-right">{customer.phone_e164 && !customer.do_not_call
@@ -37,7 +44,7 @@ export default async function CustomerDetail({ params, searchParams }: { params:
     {query.note ? <div className="notice" style={{ marginBottom: 16 }}>Anteckningen är {query.note === "archived" ? "arkiverad med revisionsspåret bevarat" : "uppdaterad och tidigare version historikförd"}.</div> : null}
     <div className="split-layout">
       <div className="grid">
-        <Card><CardHeader><div className="detail-title"><span className="avatar">{initials(customer.display_name)}</span><div><h2>{customer.display_name}</h2><span className="muted">{customer.organization_number ?? customer.personal_identity_number ?? "Identifiering saknas"}</span></div></div><Badge className={customer.do_not_call ? "badge-danger" : "badge-success"}>{customer.do_not_call ? "Spärrad" : "Kontakt tillåten"}</Badge></CardHeader><CardContent><dl className="key-value"><dt>Telefon</dt><dd>{customer.phone_e164 ?? "—"}</dd><dt>E-post</dt><dd>{customer.email ?? "—"}</dd><dt>Adress</dt><dd>{[customer.address_line1, customer.postal_code, customer.city].filter(Boolean).join(", ") || "—"}</dd><dt>Bransch / SNI</dt><dd>{[customer.industry, customer.sni_code].filter(Boolean).join(" · ") || "—"}</dd><dt>Ansvarig</dt><dd>{customer.assigned_user_id ? "Tilldelad användare" : "Ej tilldelad"}</dd><dt>Datakälla</dt><dd>{customer.source_name ?? "Manuellt skapad"}</dd><dt>Rättslig grund</dt><dd>{customer.legal_basis ?? "Ej dokumenterad"}</dd><dt>Ringförsök</dt><dd>{customer.call_attempts}</dd></dl></CardContent></Card>
+        <Card><CardHeader><div className="detail-title"><span className="avatar">{initials(customer.display_name)}</span><div><h2>{customer.display_name}</h2><span className="muted">{customer.organization_number ?? customer.personal_identity_number ?? "Identifiering saknas"}</span></div></div><Badge className={customer.do_not_call ? "badge-danger" : "badge-success"}>{customer.do_not_call ? "Spärrad" : "Kontakt tillåten"}</Badge></CardHeader><CardContent><dl className="key-value"><dt>Telefon</dt><dd>{customer.phone_e164 ?? "—"}</dd><dt>E-post</dt><dd>{customer.email ?? "—"}</dd><dt>Adress</dt><dd>{[customer.address_line1, customer.postal_code, customer.city].filter(Boolean).join(", ") || "—"}</dd><dt>Bransch / SNI</dt><dd>{[customer.industry, customer.sni_code].filter(Boolean).join(" · ") || "—"}</dd><dt>Ansvarig</dt><dd>{ownerName}</dd><dt>Datakälla</dt><dd>{customer.source_name ?? "Manuellt skapad"}</dd><dt>Rättslig grund</dt><dd>{customer.legal_basis ?? "Ej dokumenterad"}</dd><dt>Ringförsök</dt><dd>{customer.call_attempts}</dd></dl></CardContent></Card>
         <Card>
           <CardHeader><h2>Kunduppgifter</h2><Badge>{customer.organization_number || customer.personal_identity_number ? "Identifierad" : "Ofullständig"}</Badge></CardHeader>
           <CardContent>
@@ -83,6 +90,26 @@ export default async function CustomerDetail({ params, searchParams }: { params:
               />
               <div className="span-2"><button className="button button-primary">Spara kunduppgifter</button></div>
             </form>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader><h2><Users size={17} /> Kontaktpersoner</h2><Badge>{contacts?.length ?? 0}</Badge></CardHeader>
+          <CardContent>
+            <p className="muted" style={{ marginBottom: 12 }}>
+              Dialern ringer och avtalet skickas till den kontaktperson du väljer, så numren
+              här är lika ringbara som kortets eget nummer. Importerade kontakter hamnar också här.
+            </p>
+            {contacts?.length ? contacts.map((contact) => <div className="activity-line" key={contact.id}>
+              <span className="activity-dot"><Users size={14} /></span>
+              <div>
+                <strong>{contact.full_name}{contact.is_primary ? " · Primär" : ""}{contact.is_signatory ? " · Firmatecknare" : ""}</strong>
+                <p>{[contact.title, contact.role].filter(Boolean).join(" · ") || "Roll ej angiven"}</p>
+                <p>{[contact.phone_e164, contact.alternate_phone_e164, contact.email].filter(Boolean).join(" · ") || "Inga kontaktuppgifter"}</p>
+              </div>
+              {contact.phone_e164 && !customer.do_not_call
+                ? <Link className="button button-secondary button-sm" href={`/app/dialer?customer=${customer.id}`}><Phone size={14} /> Ring</Link>
+                : null}
+            </div>) : <p className="muted">Inga kontaktpersoner är registrerade på kunden.</p>}
           </CardContent>
         </Card>
         <Card><CardHeader><h2>Historik</h2><Badge>{(activities?.length ?? 0) + (calls?.length ?? 0)} händelser</Badge></CardHeader><CardContent>{calls?.map((call) => <div className="activity-line" key={call.id}><span className="activity-dot"><Phone size={14} /></span><div><strong>{call.direction === "outbound" ? "Utgående samtal" : "Inkommande samtal"}</strong><p>{call.disposition ?? call.status} · {call.duration_seconds ?? 0} sek</p></div><time>{formatDate(call.created_at)}</time></div>)}{activities?.map((activity) => <div className="activity-line" key={activity.id}><span className="activity-dot"><CalendarPlus size={14} /></span><div><strong>{activity.title}</strong><p>{activity.description ?? activity.status}{activity.callback_scope ? ` · ${activity.callback_scope}` : ""}</p></div><time>{formatDate(activity.due_at ?? activity.created_at)}</time></div>)}</CardContent></Card>

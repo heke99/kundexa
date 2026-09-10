@@ -384,3 +384,120 @@ svarstexten flyttades till `RinkelError.providerDetail`, som bara loggas.
 
 **Regel:** Ett providerfel som når säljaren måste vara på svenska och beskriva
 åtgärden. Rått svarsinnehåll hör hemma i serverloggen, aldrig i UI.
+
+## FAILURE-0044 — Bevispaketet tappade all e-postbevisning tyst — FIXED 2026-09-10
+
+**Symptom:** Varje genererat bevismanifest och varje bevis-PDF rapporterade
+"0 e-postmeddelanden" och saknade leveransbeviset för det avtal de finns till för
+att dokumentera. Inget fel syntes någonstans.
+
+**Rotorsak:** `processEvidence` i `process-outbox` läste `error_code` från
+`email_messages`. Kolumnen heter `failure_code` där; `error_code` finns på
+`sms_messages`. PostgREST svarar med ett fel, inte ett undantag, och resultatet
+destrukturerades bara på `data`, så `emails` var alltid `null`.
+
+**Åtgärd:** Rätt kolumn, och samtliga beviskällor felkontrolleras nu — ett
+misslyckat läsanrop kastar `evidence_source_read_failed:<tabell>:<orsak>` och
+jobbet återförsöks i stället för att producera ett halvt bevis.
+
+**Regel:** Edge functions är otypade mot databasen. En läsning som ingår i ett
+juridiskt bevis får aldrig destruktureras utan att `error` kontrolleras.
+
+## FAILURE-0045 — Ett enda misslyckat jobb stängde av auto-dialern för alla — FIXED 2026-09-10
+
+**Symptom:** Automatisk uppringning slogs av med "Automatisk uppringning är pausad"
+trots att telefoniworkern kördes varje minut utan problem.
+
+**Rotorsak:** `telephony_status_for_current_user` och auto-dialer-grinden i
+reservationen kräver `last_success_at > now() - interval '3 minutes'` för
+`rinkel-platform-worker`. `record_platform_worker_heartbeat` uppdaterade
+`last_success_at` endast vid status `healthy`, och workern rapporterar `degraded`
+så snart *något* jobb i batchen fallerar. Ett återkommande jobbfel — en
+CDR-avstämning som ännu inte kan hämtas är normalfallet och återköas med backoff —
+gjorde att livstecknet blev inaktuellt och auto-dialern föll bort plattformsbrett.
+
+**Åtgärd:** `degraded` betyder att körningen slutfördes med enskilda jobbfel som
+har egen retry och dead letter; det är en levande worker. Endast `running` och
+`failed` lämnar livstecknet obevisat. Rapporterad status är oförändrad.
+
+**Regel:** Ett livstecken svarar på "kördes workern?", inte "lyckades varje jobb?".
+Blanda inte ihop jobbhälsa med processhälsa i en grind som stänger av en funktion.
+
+## FAILURE-0046 — Ett samtal utan providerutfall låste säljaren ute permanent — FIXED 2026-09-10
+
+**Symptom:** Efter ett samtal där ingen webhook eller CDR kom fram kunde säljaren
+inte ringa mer. Felet var dessutom obegripligt: en rå unique-violation, inte
+reservationens eget meddelande.
+
+**Rotorsak:** En säljare får ha exakt ett icke-terminalt uppringningsförsök —
+reservationen vägrar ett andra, och `rinkel_call_attempts_v2_active_seller_uidx`
+/ `..._active_device_uidx` upprätthåller det på lagringsnivå. Ingenting lämnade
+det tillståndet när providern tystnade: workern flyttar ett hängande försök till
+`reconciliation_required` efter 15 minuter, vilket självt är en blockerande status,
+och en CDR som aldrig dyker upp gör att avstämningsjobbet fallerar tills det
+dead-letterar. Varken tidsgräns, operatörsåtgärd eller RPC fanns för att släppa låset.
+
+**Åtgärd:** `rinkel_release_stale_call_attempts` (service-only) terminaliserar
+*försöket* efter en gräns med `error_code='PROVIDER_OUTCOME_NEVER_REPORTED'` och
+loggar `call_events` + `audit_logs`. Samtalet behåller `reconciliation_required`
+och `provider_outcome='unknown'`, så inget samtalsutfall hittas på och CDR-repair
+fortsätter. Telefoniworkern anropar den varje avstämningspass. Statusar som kan
+vara ett pågående samtal (`awaiting_provider_event`, `matched`) släpps aldrig.
+
+**Regel:** Ett lås som bara öppnas av en extern händelse måste ha en egen gräns.
+Att sluta vänta är ett sant påstående om försöket — det är inte samma sak som att
+påstå ett utfall för samtalet.
+
+## FAILURE-0047 — Automatisk ParseHub-commit hämtade tenant från ett UI-val — FIXED 2026-09-10
+
+**Symptom:** Automatisk import misslyckades med `import_run_not_found` för tenant A
+när importprofilens skapare råkade titta på tenant B i webben, och började fungera
+igen när personen bytte tillbaka.
+
+**Rotorsak:** `process_parsehub_import_run` impersonerade profilens skapare med
+enbart `set_config('request.jwt.claim.sub',...)`, så `process_import_run` löste
+tenant via `current_tenant_id()`s fallback: `profiles.active_tenant_id`, alltså
+vilken tenant personen senast valde i UI:t. Körningens egen tenant deltog aldrig i
+beslutet. Hade skaparen lämnat tenanten var automatisk commit död för gott.
+
+**Åtgärd:** Samma servicekörningskontext som kontrakts-API:t redan använder —
+`app.kundexa_tenant_id` sätts till importkörningens tenant och `current_tenant_id()`
+accepterar den bara medan aktören har aktivt medlemskap i en aktiv tenant. Aktören
+korsvalideras mot körningens tenant, och en aktiv owner/admin i tenanten tar över om
+skaparen saknar committande roll.
+
+**Regel:** Tenant härleds från resursen, aldrig från ett UI-val. Explicit tenant är
+service-only och ska korsvalideras — kanonregeln i AGENTS.md gäller även workers.
+
+## FAILURE-0048 — Filimportens mime-lista och storage-bucketens gick isär — FIXED 2026-09-10
+
+**Symptom:** En .xlsx som webbläsaren skickade som `application/octet-stream`, eller
+en fil utan angiven typ, validerades och parsades klart och dog sedan på
+uppladdningen: "Importen kunde inte behandlas. Referens: ...".
+
+**Rotorsak:** `assertExtensionAndMime` accepterar avsiktligt `application/octet-stream`
+och tom mime-typ, men uppladdningen lagrade den klientpåstådda typen
+(`file.type || "application/octet-stream"`) i bucketen `imports`, vars
+`allowed_mime_types` inte innehåller den. Två allowlists för samma sak, ur synk.
+
+**Åtgärd:** Innehållstypen härleds nu ur den parsade `sourceType` —
+`canonicalImportMimeTypes` — så det lagrade objektet får serverns bedömning i
+stället för klientens påstående. `npm run test:imports` jämför den tabellen mot
+bucketens allowlist ur migrationerna, så de kan inte glida isär igen.
+
+**Regel:** När två ställen beskriver samma tillåtna format måste ett test binda ihop
+dem. Lagra serverns slutsats om en fil, inte klientens påstående.
+
+## FAILURE-0049 — Kundkortet visade varken kontaktpersoner eller ansvarig — FIXED 2026-09-10
+
+**Symptom:** Importerade kontaktpersoner syntes ingenstans på kundkortet trots att
+dialern ringer dem och avtal skickas till dem. "Ansvarig" visade texten "Tilldelad
+användare", aldrig vem. "Skapa avtal" länkade till `/app/contracts?customer=<id>`,
+en parameter avtalsregistret inte läser, så säljaren hamnade i den ofiltrerade listan.
+
+**Åtgärd:** Kortet hämtar `contact_people` och visar dem med roll, nummer och
+ringknapp, löser upp `assigned_user_id` mot `profiles.full_name`, och länkar till
+`/app/contracts/new?customer_id=<id>`.
+
+**Regel:** `customers` är det kanoniska kundkortet. Data som andra flöden agerar på
+måste synas där, annars är kortet inte kanoniskt i praktiken.

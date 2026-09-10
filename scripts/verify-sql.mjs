@@ -1935,6 +1935,172 @@ if (
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
 console.log("Executed production hardening runtime paths: import truncation, Rinkel buffering/monotonicity, Resend reducer, generation-bound signing finalization and idempotent contract activation.");
 
+// Worker liveness, the seller dial lock and the ParseHub commit tenant context. These
+// three gates decide whether telephony and automatic import work at all, and none of them
+// had runtime coverage: the suite exercised the v1 reservation while the application calls
+// `rinkel_reserve_platform_outbound_call_v2`.
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+
+// A worker run that completed with per-job failures is a live worker. Reporting `degraded`
+// must keep proving liveness, or one failing job switches the auto-dialer off everywhere.
+await db.query(`select public.record_platform_worker_heartbeat('liveness-probe','probe-1','healthy',now()-interval '2 minutes',now()-interval '2 minutes',1,1,0,0,null,null,'{}'::jsonb)`);
+const healthySuccess = await db.query(`select last_success_at from public.platform_worker_heartbeats where worker_key='liveness-probe'`);
+await db.query(`select public.record_platform_worker_heartbeat('liveness-probe','probe-2','degraded',now(),now(),2,1,1,1,'JOB_FAILED','one job failed','{}'::jsonb)`);
+const degradedSuccess = await db.query(`select status,last_success_at from public.platform_worker_heartbeats where worker_key='liveness-probe'`);
+if (degradedSuccess.rows[0].status !== 'degraded'
+  || !degradedSuccess.rows[0].last_success_at
+  || new Date(degradedSuccess.rows[0].last_success_at) <= new Date(healthySuccess.rows[0].last_success_at)) {
+  throw new Error(`A completed worker run reporting degraded did not refresh liveness: ${JSON.stringify(degradedSuccess.rows[0])}`);
+}
+await db.query(`select public.record_platform_worker_heartbeat('liveness-probe','probe-3','failed',now(),now(),0,0,1,0,'WORKER_FAILED','run aborted','{}'::jsonb)`);
+const failedSuccess = await db.query(`select status,last_success_at from public.platform_worker_heartbeats where worker_key='liveness-probe'`);
+if (failedSuccess.rows[0].status !== 'failed'
+  || new Date(failedSuccess.rows[0].last_success_at).getTime() !== new Date(degradedSuccess.rows[0].last_success_at).getTime()) {
+  throw new Error(`A failed worker run must not prove liveness: ${JSON.stringify(failedSuccess.rows[0])}`);
+}
+await db.query(`delete from public.platform_worker_heartbeats where worker_key='liveness-probe'`);
+
+// The one-active-call lock must outlast a live call and nothing more. An attempt whose
+// provider outcome never arrived may not lock the seller out of telephony for good.
+await db.exec(`
+  update public.rinkel_number_allocations set status='active',valid_to=null
+  where id='00000000-0000-0000-0000-000000000058';
+  insert into public.customers(id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by)
+  values('00000000-0000-0000-0000-000000000094','00000000-0000-0000-0000-000000000001','company','prospect','Dial Lock Prospect','+46706660001',true,'legitimate_interest','00000000-0000-0000-0000-000000000002')
+  on conflict(id) do nothing;
+  update public.telephony_policies set telephony_enabled=true,manual_dialer_enabled=true,
+    allowed_days='{1,2,3,4,5,6,7}',allowed_start_time='00:00',allowed_end_time='23:59:59'
+    where tenant_id='00000000-0000-0000-0000-000000000001';
+`);
+await db.exec(`
+  select set_config('request.jwt.claim.role','authenticated',false);
+  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
+`);
+const lockedReservation = await db.query(`select public.rinkel_reserve_platform_outbound_call_v2(
+  '00000000-0000-0000-0000-000000000094',null,'+46706660001',null,null,null,
+  gen_random_uuid(),'dial-lock-1','direct_marketing',null) as result`);
+const lockedAttemptId = String(lockedReservation.rows[0].result.attemptId);
+if (!lockedAttemptId) throw new Error(`Dial lock probe could not reserve a call: ${JSON.stringify(lockedReservation.rows[0])}`);
+
+async function reserveAgain(key) {
+  try {
+    const result = await db.query(`select public.rinkel_reserve_platform_outbound_call_v2(
+      '00000000-0000-0000-0000-000000000094',null,'+46706660001',null,null,null,
+      gen_random_uuid(),$1,'direct_marketing',null) as result`, [key]);
+    return { reserved: true, attemptId: String(result.rows[0].result.attemptId) };
+  } catch (error) {
+    return { reserved: false, message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.query(`update public.rinkel_call_attempts_v2 set status='reconciliation_required',requested_at=now() where id=$1`, [lockedAttemptId]);
+const releasedNothingYet = await db.query(`select public.rinkel_release_stale_call_attempts(interval '1 hour',200) as result`);
+if (Number(releasedNothingYet.rows[0].result.released) !== 0) {
+  throw new Error(`The release gave up on an attempt that is still within its bound: ${JSON.stringify(releasedNothingYet.rows[0].result)}`);
+}
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
+const blockedWhileRecent = await reserveAgain('dial-lock-2');
+if (blockedWhileRecent.reserved || !/active_call_already_exists|rinkel_call_attempts_v2_active_seller_uidx/.test(blockedWhileRecent.message)) {
+  throw new Error(`A recent unresolved attempt must still hold the dial lock: ${JSON.stringify(blockedWhileRecent)}`);
+}
+
+// A call that could still be connected is never released, however old the wait.
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.query(`update public.rinkel_call_attempts_v2 set status='matched',requested_at=now()-interval '6 hours' where id=$1`, [lockedAttemptId]);
+const releasedLiveCall = await db.query(`select public.rinkel_release_stale_call_attempts(interval '1 hour',200) as result`);
+const liveCallState = await db.query(`select status from public.rinkel_call_attempts_v2 where id=$1`, [lockedAttemptId]);
+if (Number(releasedLiveCall.rows[0].result.released) !== 0 || liveCallState.rows[0].status !== 'matched') {
+  throw new Error(`A connected call was released as unresolved: ${JSON.stringify(liveCallState.rows[0])}`);
+}
+
+// The provider went silent: release the attempt, keep the call unresolved.
+await db.query(`update public.rinkel_call_attempts_v2 set status='reconciliation_required',requested_at=now()-interval '2 hours' where id=$1`, [lockedAttemptId]);
+await db.query(`update public.calls set status='reconciliation_required',provider_status='unknown' where id=(select call_id from public.rinkel_call_attempts_v2 where id=$1)`, [lockedAttemptId]);
+const released = await db.query(`select public.rinkel_release_stale_call_attempts(interval '1 hour',200) as result`);
+if (Number(released.rows[0].result.released) !== 1) {
+  throw new Error(`The stale dial attempt was not released: ${JSON.stringify(released.rows[0].result)}`);
+}
+const releasedState = await db.query(`
+  select a.status attempt_status,a.error_code,c.status call_status,c.provider_status,
+    (select count(*)::int from public.call_events e where e.call_id=a.call_id and e.event_type='dial_attempt.released_unresolved') events,
+    (select count(*)::int from public.audit_logs l where l.entity_id=a.call_id::text and l.action='rinkel.dial_attempt_released') audits
+  from public.rinkel_call_attempts_v2 a join public.calls c on c.id=a.call_id where a.id=$1`, [lockedAttemptId]);
+const releasedRow = releasedState.rows[0];
+if (releasedRow.attempt_status !== 'failed' || releasedRow.error_code !== 'PROVIDER_OUTCOME_NEVER_REPORTED') {
+  throw new Error(`The released attempt was not terminalized with its true reason: ${JSON.stringify(releasedRow)}`);
+}
+if (releasedRow.call_status !== 'reconciliation_required' || releasedRow.provider_status !== 'unknown') {
+  throw new Error(`Releasing the dial lock invented a call outcome: ${JSON.stringify(releasedRow)}`);
+}
+if (Number(releasedRow.events) !== 1 || Number(releasedRow.audits) !== 1) {
+  throw new Error(`The release left no audit trail: ${JSON.stringify(releasedRow)}`);
+}
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
+const releasedAfterBound = await reserveAgain('dial-lock-4');
+if (!releasedAfterBound.reserved) {
+  throw new Error(`An attempt with no provider outcome locked the seller out permanently: ${JSON.stringify(releasedAfterBound)}`);
+}
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.query(`update public.rinkel_call_attempts_v2 set status='failed' where tenant_id='00000000-0000-0000-0000-000000000001' and seller_user_id='00000000-0000-0000-0000-000000000002' and status<>'failed'`);
+
+// Automatic ParseHub commit must take its tenant from the import run, never from whichever
+// tenant the profile's creator happens to have selected in the web UI.
+await db.exec(`
+  insert into auth.users(id,email) values('00000000-0000-0000-0000-000000000095','multi-tenant-creator@example.test')
+  on conflict(id) do nothing;
+  insert into public.tenant_memberships(tenant_id,user_id,role,status,joined_at) values
+    ('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000095','admin','active',now()),
+    ('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000095','admin','active',now())
+  on conflict(tenant_id,user_id) do nothing;
+  update public.profiles set active_tenant_id='00000000-0000-0000-0000-000000000051'
+    where id='00000000-0000-0000-0000-000000000095';
+  insert into public.import_profiles(id,tenant_id,name,source_provider,automatic_commit,current_version,active,created_by)
+  values('00000000-0000-0000-0000-000000000096','00000000-0000-0000-0000-000000000001','ParseHub tenant context','parsehub',true,1,true,'00000000-0000-0000-0000-000000000095')
+  on conflict(id) do nothing;
+  insert into public.parsehub_projects(id,tenant_id,project_token_hash,project_name,import_profile_id,webhook_secret_hash,active)
+  values('00000000-0000-0000-0000-000000000097','00000000-0000-0000-0000-000000000001','parsehub-project-hash','Tenant context project','00000000-0000-0000-0000-000000000096','parsehub-secret-hash',true)
+  on conflict(id) do nothing;
+  insert into public.import_runs(
+    id,tenant_id,name,source_type,status,uploaded_by,total_rows,source_row_count,parsed_row_count,
+    accepted_row_count,rejected_row_count,simulation,scan_status,file_sha256,idempotency_key,
+    validation_fingerprint,import_profile_id,source_provider,field_mapping,validation_report
+  ) values(
+    '00000000-0000-0000-0000-000000000098','00000000-0000-0000-0000-000000000001','ParseHub tenant context run','json','preview_ready',
+    '00000000-0000-0000-0000-000000000095',1,1,1,1,0,true,'clean','parsehub-sha','preview:parsehub-tenant-context',
+    'parsehub:parsehub-sha','00000000-0000-0000-0000-000000000096','parsehub','{}'::jsonb,'{}'::jsonb
+  ) on conflict(id) do nothing;
+  insert into public.import_rows(tenant_id,import_run_id,row_number,raw_data,normalized_data,decision,row_status)
+  values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000098',2,'{}'::jsonb,
+    '{"customer_type":"company","display_name":"ParseHub Tenant Context AB","organization_number":"5560160680","phone_e164":"+46706660002"}'::jsonb,
+    'ready','valid');
+  insert into public.parsehub_runs(
+    id,tenant_id,parsehub_project_id,import_profile_id,import_run_id,run_token_hash,idempotency_key,status
+  ) values(
+    '00000000-0000-0000-0000-000000000099','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000097',
+    '00000000-0000-0000-0000-000000000096','00000000-0000-0000-0000-000000000098','parsehub-run-hash','parsehub-run-key','processing'
+  ) on conflict(id) do nothing;
+`);
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false); select set_config('request.jwt.claim.sub','',false);`);
+const parsehubCommit = await db.query(`select public.process_parsehub_import_run('00000000-0000-0000-0000-000000000099') as result`);
+if (parsehubCommit.rows[0].result.automaticCommit !== true
+  || parsehubCommit.rows[0].result.committedByProfileCreator !== true) {
+  throw new Error(`ParseHub automatic commit did not run as the profile creator: ${JSON.stringify(parsehubCommit.rows[0].result)}`);
+}
+const parsehubCommitted = await db.query(`
+  select r.status,r.new_count,
+    (select count(*)::int from public.customers c where c.source_import_run_id=r.id and c.tenant_id=r.tenant_id) imported
+  from public.import_runs r where r.id='00000000-0000-0000-0000-000000000098'`);
+if (!['completed', 'completed_with_warnings'].includes(parsehubCommitted.rows[0].status) || Number(parsehubCommitted.rows[0].imported) !== 1) {
+  throw new Error(`ParseHub commit did not import into the run's own tenant: ${JSON.stringify(parsehubCommitted.rows[0])}`);
+}
+const creatorTenantUnchanged = await db.query(`select active_tenant_id from public.profiles where id='00000000-0000-0000-0000-000000000095'`);
+if (String(creatorTenantUnchanged.rows[0].active_tenant_id) !== '00000000-0000-0000-0000-000000000051') {
+  throw new Error(`The ParseHub commit changed the creator's own tenant selection: ${JSON.stringify(creatorTenantUnchanged.rows[0])}`);
+}
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+console.log("Executed worker liveness, bounded seller dial lock and tenant-bound automatic ParseHub commit runtime paths.");
+
 // Generated-type drift. `types:verify` only asserts that a hand-maintained list of names is
 // present, so a table or column added by a migration and never regenerated into
 // database.types.ts passes it unnoticed and only surfaces as a runtime error. The migrated
