@@ -354,3 +354,20 @@ Kvar att deploya, kräver kommandoraden:
   aktiverar `testWebhook(event, url)` i webbappen, som är det som verifierar
   `outgoingCall` och `callStart` — den kontrollen kan alltså inte gå igenom förrän
   grenen är ute.
+
+Utrullat till main 2026-09-10
+-----------------------------
+
+Grenen `claude/system-flow-integration-check-y4natb` var 11 commits före
+`origin/main` och 0 efter — en ren fast-forward, inga konflikter och inget att
+rebasa. Hela `npm run verify` kördes om innan pushen (typer, edge-typkontroll,
+tester, OpenAPI-täckning, produktionsbygge) och gick igenom.
+
+`main` står nu på `7e03a30`, och Vercels produktionsdeploy för den committen är
+`READY` (`dpl_4yDMPGCN2GUrNMQjh4grDuaByLjw`). Därmed är webbappens fixar live:
+den automatiska dialer-loopen, kundkortets kontaktpersoner och ägarnamn,
+importens kanoniska innehållstyp, knappen för omutskick av utgånget avtal — och
+`testWebhook(event, url)`, som är förutsättningen för att verifiera
+`outgoingCall` och `callStart`.
+
+Kvar: `process-outbox` är fortfarande den enda komponenten som inte är utrullad.
