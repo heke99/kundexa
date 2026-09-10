@@ -314,12 +314,43 @@ Två saker upptäcktes under deployen:
    varje schemalagd körning — den hade aldrig lyckats. Omdeployad med
    `verify_jwt=false`; första lyckade körningen 11:30:21.
 
+Edge-deploy 2026-09-10 (andra passet)
+-------------------------------------
+
+Innan deployen jämfördes den **körande** koden i produktion mot repot, fil för fil.
+Det avslöjade en drift som ingen statisk kontroll hade fångat: både
+`process-outbox` och `rinkel-platform-worker` körde en `_shared/rinkel.ts` från
+före 2026-09-07. I produktion saknades alltså hela device-inventeringen
+(`getUser`, `listUsersWithDeviceDetails`, `staleRinkelDeviceIds`),
+`testWebhook(event, url)`, tolkningen av Rinkels felkoder (`DIALING_SELF` m.fl.)
+och snake_case-normaliseringen — levererat arbete som aldrig hade nått driften.
+`process-outbox` körde dessutom en manifestversion (`kundexa.evidence.v2`) utan
+generationsbindning.
+
+- **`rinkel-platform-worker` är omdeployad (version 3).** Efter deployen hämtades
+  den körande koden tillbaka och jämfördes byte för byte mot repot: båda filerna
+  identiska (37 509 respektive 31 302 tecken). Första körningen efter deployen
+  var `healthy` 13:43:03. FAILURE-0046:s release-RPC anropas nu på riktigt.
+- **`process-outbox` går inte att deploya genom MCP-verktyget.** Verktyget tar
+  filinnehåll som text i ett anrop, och funktionen kräver alla fyra filerna
+  samtidigt: 102,8 kB. Ett försök avvisades av servern (`Entrypoint path does not
+  exist`) eftersom `index.ts` inte fick plats i anropet — inget deployades och
+  produktionen står kvar orörd på version 4. Den behöver kommandoraden.
+- Övriga sex funktioner är i fas med repot: deras egna kataloger och de
+  `_shared`-filer de importerar (`crypto.ts`, `providers.ts`) har inte ändrats
+  sedan respektive deploy. Endast `rinkel.ts` låg efter, och den importeras bara
+  av de två ovan.
+- Alla sju workers med livstecken är `healthy`. `process-outbox` skriver inget
+  livstecken alls — den enda kritiska worker som saknar övervakning.
+
 Kvar att deploya, kräver kommandoraden:
 
 - `npm run functions:deploy -- --project-ref lhvifuxcqghtbiulzkrf` för
-  `process-outbox` (FAILURE-0044) och `rinkel-platform-worker` (anropar den nya
-  release-RPC:n). Deras källa är ~1 850 respektive ~1 690 rader inklusive
-  `_shared`; att skriva av dem genom ett verktygsanrop är en risk som
-  deployskriptet inte har.
+  `process-outbox` (FAILURE-0044 samt bevismanifest v3 och generationsbundna
+  signeringsbekräftelser). Skriptet deployar alla åtta; de sju andra är redan i
+  fas, så det blir en no-op för dem.
 - Vercel-deploy av grenen för UI-fixarna: automatisk dialer-loop, kundkortets
-  kontaktpersoner, importens innehållstyp och knappen för omutskick.
+  kontaktpersoner, importens innehållstyp och knappen för omutskick. Samma deploy
+  aktiverar `testWebhook(event, url)` i webbappen, som är det som verifierar
+  `outgoingCall` och `callStart` — den kontrollen kan alltså inte gå igenom förrän
+  grenen är ute.

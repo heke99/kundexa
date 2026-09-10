@@ -626,3 +626,35 @@ utan prunningen.
 **Regel:** `verify_jwt` är en del av funktionens kontrakt, inte en deploy-detalj. En funktion
 som autentiserar med egen hemlighet måste deployas med `--no-verify-jwt`, och heartbeat med
 `last_success_at = null` ska larma — den skiljer "har aldrig fungerat" från "fungerade nyss".
+
+## FAILURE-0055 — produktionen körde en `_shared/rinkel.ts` från före 2026-09-07 — DELVIS FIXED 2026-09-10
+
+**Symptom:** Ingen. Det är hela poängen: repot, typkontrollen och hela SQL-sviten
+var gröna, och `list_edge_functions` visade alla åtta funktionerna som `ACTIVE`.
+Driften syntes först när den **körande** koden hämtades hem med
+`get_edge_function` och jämfördes rad för rad mot repot.
+
+**Rotorsak:** En Edge Function deployas som en ögonblicksbild av sina filer. En
+ändring i en delad modul når därför inte driften förrän varje funktion som
+importerar den deployas om. `_shared/rinkel.ts` ändrades 2026-09-07, men
+`process-outbox` senast deployades 2026-08-08 och `rinkel-platform-worker`
+2026-08-07. Inget i repot gör den skillnaden synlig, eftersom repot bara beskriver
+vad som *borde* köra.
+
+**Konsekvens:** Levererat arbete låg overksamt i produktion — device-inventeringen
+(`getUser`, `listUsersWithDeviceDetails`, `staleRinkelDeviceIds`),
+`testWebhook(event, url)`, tolkningen av Rinkels felkoder (`DIALING_SELF` →
+begripligt svenskt fel i stället för rå engelsk JSON) och snake_case-normaliseringen
+av Rinkels svar. `process-outbox` skrev dessutom fortfarande bevismanifest
+`kundexa.evidence.v2` utan generationsbindning.
+
+**Åtgärd:** `rinkel-platform-worker` omdeployad och verifierad byte för byte mot
+repot. `process-outbox` kvarstår: den kräver fyra filer på 102,8 kB i ett enda
+verktygsanrop, vilket inte får plats — den behöver
+`npm run functions:deploy -- --project-ref lhvifuxcqghtbiulzkrf`.
+
+**Regel:** Deploystatus är inte samma sak som repostatus, och en delad modul har
+lika många deploys som den har importörer. Efter varje ändring i
+`supabase/functions/_shared/` ska **alla** funktioner som importerar filen
+deployas om, och en deploy verifieras genom att hämta hem den körande koden och
+jämföra den mot repot — inte genom att anta att anropet lyckades.
