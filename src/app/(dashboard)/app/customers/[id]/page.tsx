@@ -30,7 +30,7 @@ export default async function CustomerDetail({ params, searchParams }: { params:
     <Link href="/app/customers" className="muted back-link"><ArrowLeft size={15} /> Till kunder</Link>
     <PageHeader title={customer.display_name} description={`${customer.customer_type === "company" ? "Företag" : "Privatperson"} · ${customer.lifecycle}`} action={<div className="toolbar-right">{customer.phone_e164 && !customer.do_not_call
       ? <Link className="button button-primary" href={`/app/dialer?customer=${customer.id}`}><Phone size={16} /> Ring {customer.phone_e164}</Link>
-      : <span className="badge badge-warning">{customer.do_not_call ? "Spärrad för samtal" : "Telefonnummer saknas"}</span>}<Link className="button button-secondary" href={`/app/contracts?customer=${customer.id}`}><FileSignature size={16} /> Skapa avtal</Link></div>} />
+      : <span className="badge badge-warning">{customer.do_not_call ? "Spärrad för samtal" : "Telefonnummer saknas"}</span>}<Link className="button button-secondary" href={`/app/contracts/new?customer_id=${customer.id}`}><FileSignature size={16} /> Skapa avtal</Link></div>} />
     {query.error ? <p className="form-error">{query.error}</p> : null}
     {query.message ? <div className="notice" style={{ marginBottom: 16 }}>{query.message}</div> : null}
     {query.callback ? <div className="notice" style={{ marginBottom: 16 }}>Återkomsten är skapad och syns i säljarens eller teamets återkomstkö.</div> : null}

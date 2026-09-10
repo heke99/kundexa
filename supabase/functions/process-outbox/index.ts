@@ -430,17 +430,28 @@ async function processEvidence(job: Job) {
   const contractId = String(job.payload.contract_id ?? job.aggregate_id ?? "");
   const acceptanceId = String(job.payload.acceptance_id ?? "");
   const requestId = String(job.payload.acceptance_request_id ?? "");
-  const [{ data: contract }, { data: versions }, { data: acceptances }, { data: events }, { data: documents }, { data: deliveries }, { data: emails }, { data: sms }, { data: request }] = await Promise.all([
+  // Every read below becomes part of the legal evidence manifest. A failed read returns
+  // `{ data: null }` rather than throwing, so an unchecked error silently produces a
+  // manifest that omits the communication it is supposed to prove. Collect the errors and
+  // refuse to generate evidence from a partial picture.
+  const evidenceReads = await Promise.all([
     supabase.from("contracts").select("*,tenants(name,legal_name),customers(display_name,email,phone_e164)").eq("tenant_id", job.tenant_id).eq("id", contractId).single(),
     supabase.from("contract_versions").select("*").eq("tenant_id", job.tenant_id).eq("contract_id", contractId).order("version"),
     supabase.from("contract_acceptances").select("*").eq("tenant_id", job.tenant_id).eq("contract_id", contractId),
     supabase.from("contract_events").select("*").eq("tenant_id", job.tenant_id).eq("contract_id", contractId).order("occurred_at"),
     supabase.from("contract_documents").select("id,document_type,file_name,storage_path,mime_type,size_bytes,sha256,metadata,created_at").eq("tenant_id", job.tenant_id).eq("contract_id", contractId),
     supabase.from("contract_deliveries").select("*").eq("tenant_id", job.tenant_id).eq("contract_id", contractId).order("created_at"),
-    supabase.from("email_messages").select("id,provider_message_id,status,provider_status,sent_at,delivered_at,error_code,error_message,created_at").eq("tenant_id", job.tenant_id).eq("contract_id", contractId).order("created_at"),
+    supabase.from("email_messages").select("id,provider_message_id,status,provider_status,sent_at,delivered_at,failure_code,error_message,created_at").eq("tenant_id", job.tenant_id).eq("contract_id", contractId).order("created_at"),
     supabase.from("sms_messages").select("id,provider_message_id,status,sent_at,delivered_at,error_code,error_message,created_at").eq("tenant_id", job.tenant_id).eq("contract_id", contractId).order("created_at"),
-    requestId ? supabase.from("contract_acceptance_requests").select("*").eq("tenant_id", job.tenant_id).eq("id", requestId).single() : Promise.resolve({ data: null }),
+    requestId ? supabase.from("contract_acceptance_requests").select("*").eq("tenant_id", job.tenant_id).eq("id", requestId).single() : Promise.resolve({ data: null, error: null }),
   ]);
+  const evidenceReadNames = ["contracts", "contract_versions", "contract_acceptances", "contract_events", "contract_documents", "contract_deliveries", "email_messages", "sms_messages", "contract_acceptance_requests"];
+  const failedRead = evidenceReads.findIndex((read) => (read as { error?: unknown }).error);
+  if (failedRead >= 0) {
+    const message = String(((evidenceReads[failedRead] as { error?: { message?: string } }).error?.message) ?? "unknown");
+    throw new Error(`evidence_source_read_failed:${evidenceReadNames[failedRead]}:${message}`);
+  }
+  const [{ data: contract }, { data: versions }, { data: acceptances }, { data: events }, { data: documents }, { data: deliveries }, { data: emails }, { data: sms }, { data: request }] = evidenceReads;
   if (!contract) throw new Error("contract_not_found");
   const { data: sourceCall } = contract.source_call_id
     ? await supabase.from("calls").select("id,started_at,answered_at,ended_at,duration_seconds,direction,disposition,user_id,metadata").eq("tenant_id", job.tenant_id).eq("id", contract.source_call_id).maybeSingle()
