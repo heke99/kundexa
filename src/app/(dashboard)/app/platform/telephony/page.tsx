@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PlatformNumberAssignmentForm } from "@/components/platform-number-assignment-form";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { RINKEL_CORE_WEBHOOK_EVENTS } from "@/lib/integrations/rinkel/schemas";
 import { getPlatformContext, isPlatformAdmin } from "@/lib/auth";
 import {
   allocatePlatformRinkelResource,
@@ -26,7 +27,10 @@ type NumberAllocationRow = { id: string; rinkel_number_id: string; tenant_id: st
 type NumberGrantRow = { id: string; tenant_id: string; number_allocation_id: string; team_id: string | null; user_id: string | null; access_level: string; is_default: boolean; active: boolean };
 type TeamRow = { id: string; tenant_id: string; name: string; status: string };
 
-const coreEvents = new Set(["incomingCall", "outgoingCall", "callStart", "callEnd"]);
+// The four core events are defined once, next to the registration and the webhook
+// parser. A second hand-written copy here would silently disagree the day the set
+// changes, and this page is what tells the operator telephony is verified.
+const coreEvents = new Set<string>(RINKEL_CORE_WEBHOOK_EVENTS);
 const features = ["Central katalog", "Tenantallokeringar", "Fyra kärnwebhookar", "Beständig worker och CDR-reparation"];
 
 function AccessDenied({ platformRole }: { platformRole: string | null }) {
