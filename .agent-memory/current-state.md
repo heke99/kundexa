@@ -412,3 +412,57 @@ med valvhemligheterna satta, och headern får inte kunna hamna i ett felmeddelan
 - **Vercels runtime-fel:** två grupper, båda från 2026-09-07 och båda åtgärdade i
   den grenen (`DIAL_PERMISSION_DENIED`, `LEGAL_BASIS_REQUIRED`,
   `RINKEL_INVALID_REQUEST`). Inget nytt sedan dess.
+
+Deploy-vägen för Edge Functions (2026-09-10)
+--------------------------------------------
+
+Grundorsaken bakom FAILURE-0055 var inte en glömd deploy utan att det **inte fanns
+någon deploy-väg alls**. Webbappen rullas ut automatiskt av Vercel vid varje push
+till main; Edge Functions rullades ut för hand, vilket är varför produktionen kunde
+köra 34 dagar gammal kod med grönt repo, grön typkontroll och grön SQL-svit.
+
+`.github/workflows/deploy-edge-functions.yml` gör nu deployen till en följd av
+merjen, precis som för webbappen. Den utlöses av ändringar under
+`supabase/functions/**`, typkontrollerar funktionerna innan de skickas, och
+serialiserar körningar så två merjar inte kapplöper.
+
+Den kräver två repository-secrets som **du måste lägga in**:
+`SUPABASE_ACCESS_TOKEN` och `SUPABASE_PROJECT_REF` (= `lhvifuxcqghtbiulzkrf`).
+Saknas de hoppar jobbet över deployen och skriver i körningens sammanfattning att
+ingenting rullades ut — det gör main grönt utan att dölja att produktionen kan
+halka efter. När de finns rullas `process-outbox` ut automatiskt vid nästa push.
+
+Varför jag inte deployade `process-outbox` genom MCP-verktyget: dess fyra filer är
+102,8 kB och måste skickas i ett enda anrop. Jag försökte två gånger; båda gångerna
+fick `index.ts` inte plats och servern avvisade anropet med `Entrypoint path does
+not exist`. Ingenting deployades vid något av försöken — produktionen stod kvar på
+version 4 hela tiden, verifierat mot `list_edge_functions`.
+
+Verifierade flöden (runtime-uppspelning mot riktig Postgres, `verify-sql.mjs`)
+------------------------------------------------------------------------------
+
+Sviten kör de faktiska RPC:erna i ordning, inte regex mot SQL-text:
+
+- **Skicka avtal** — säljarens journey: grundande samtal, utkast, låst utskick.
+- **Signering** — webbacceptans bunden till exakt det dokument som skickades, plus
+  SMS-signering: koden ur meddelandet krävs, fel eller utebliven kod nekas, gemener
+  accepteras, och koden lagras aldrig.
+- **Godkännande tillbaka** — acceptansen projiceras på avtalet och aktiveringen är
+  bevisgrindad.
+- **Utgång och omutskick** — den förfallna länken utgår avtalet och avbryter dess
+  påminnelser, samma avtal kan skickas igen som ny generation, svepet lämnar den
+  levande länken i fred och den utgångna länken accepterar inte längre.
+- **Uppringning** — reservation med caller-ID och enhet, provideracceptans,
+  efterarbete som stänger samtalet med disposition och notering.
+- **Automatisk uppringning** — obesvarat samtal registrerar sitt utfall och schemalägger
+  återuppringning, nästa prospekt hämtas automatiskt, besvarat samtal stannar för
+  säljarens utfall.
+
+**Ladda ner avtal** är det enda av dina punkter som inte har ett automatiskt test.
+Jag har följt vägen i koden i stället: kundkortets "Hämta"-knapp länkar till
+`/api/v1/contracts/[id]/documents/[documentId]`, som autentiserar via API-nyckel
+*eller* inloggad session, kontrollerar tenant och objektåtkomst, hämtar ur
+`contract-documents`, och vägrar leverera om `sha256` inte stämmer med bytesen
+(409) eller filen är över 20 MB (413). Den sätter `content-disposition: attachment`
+och `no-store`. Vägen är hel; den saknar bara ett test på HTTP-nivå, vilket sviten
+inte är byggd för.

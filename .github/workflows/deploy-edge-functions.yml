@@ -1,0 +1,98 @@
+name: deploy-edge-functions
+
+# An Edge Function is a snapshot of its files taken at deploy time. A change to a
+# shared module therefore does not reach production until every function that
+# imports it is deployed again — and nothing in the repository makes that gap
+# visible, because the repository only describes what *should* be running.
+#
+# That gap is not hypothetical: production ran a `_shared/rinkel.ts` from before
+# 2026-09-07 for 34 days while the repository, the type check and the whole SQL
+# suite were green (FAILURE-0055). This workflow closes it by making the deploy
+# follow the merge, so "merged to main" and "running in production" mean the same
+# thing for Edge Functions the way they already do for the web app on Vercel.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/**'
+      - 'scripts/deploy-functions.mjs'
+      - '.github/workflows/deploy-edge-functions.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never let two deploys race for the same function; the later merge wins.
+concurrency:
+  group: deploy-edge-functions
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # A missing credential is a setup state, not a failure. Skipping keeps main
+      # green while still saying plainly, in the run summary, that nothing was
+      # deployed — silence here would recreate the exact blindness this workflow
+      # exists to remove.
+      - name: Check deploy credentials
+        id: credentials
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          if [ -n "$SUPABASE_ACCESS_TOKEN" ] && [ -n "$SUPABASE_PROJECT_REF" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Edge Functions were NOT deployed"
+              echo
+              echo "Set the repository secrets \`SUPABASE_ACCESS_TOKEN\` and"
+              echo "\`SUPABASE_PROJECT_REF\` to enable this workflow. Until then the"
+              echo "functions running in production can silently fall behind main."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Setup Node
+        if: steps.credentials.outputs.ready == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+
+      - name: Setup Deno
+        if: steps.credentials.outputs.ready == 'true'
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Install dependencies
+        if: steps.credentials.outputs.ready == 'true'
+        run: npm ci
+
+      # Deploying an Edge Function that does not compile takes the worker down
+      # until the next push, so prove it type-checks before it ships.
+      - name: Typecheck Edge Functions
+        if: steps.credentials.outputs.ready == 'true'
+        run: npm run typecheck:edge
+
+      - name: Deploy Edge Functions
+        if: steps.credentials.outputs.ready == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: npm run functions:deploy -- --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}"
+
+      - name: Summarise
+        if: steps.credentials.outputs.ready == 'true'
+        run: |
+          {
+            echo "### Edge Functions deployed"
+            echo
+            echo "Commit \`${GITHUB_SHA}\` is now the source of every deployed function."
+          } >> "$GITHUB_STEP_SUMMARY"
