@@ -114,3 +114,20 @@ för alla utom `service_role`.
 Observerad lucka utan åtgärd ännu: **`process-outbox` skriver inget livstecken.**
 Den är den enda kritiska workern utan rad i `platform_worker_heartbeats`, så en
 tyst död där syns inte i övervakningen.
+
+## Uppdatering 2026-09-10 (NIX på kundkortet, teamledarens mallar)
+
+Rättelse mot punkt 6 ovan: **NIX-läget behöver inte sättas.** Gridex, den tenant
+som används, har redan `nix_screening_mode = 'pre_screened_source'` och en
+dokumenterad rättslig grund. Trustcall har noll medlemmar och noll kunder och står
+kvar på det strikta standardläget, vilket är rätt för en oanvänd tenant. Stryk den
+punkten.
+
+Kvarstår i oförändrad ordning: deploya `process-outbox` (numera enklast genom att
+lägga in `SUPABASE_ACCESS_TOKEN` och `SUPABASE_PROJECT_REF` som repository-secrets,
+så sköter `deploy-edge-functions.yml` det vid varje push), verifiera `outgoingCall`
+och `callStart` i integrationsvyn, koppla Resend, publicera en avtalsmall, lägga upp
+säljare/listor/produkter och slå på Leaked Password Protection.
+
+Att publicera en avtalsmall är nu lättare: en teamledare kan ladda upp avtalet från
+Word och markera var kunduppgifterna ska in, och en ägare godkänner versionen.
