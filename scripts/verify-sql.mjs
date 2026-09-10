@@ -2199,6 +2199,148 @@ if (afterWork.rows[0].result.completed !== true || dialledState.disposition !== 
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
 console.log("Executed the seller dial: reservation with caller ID and device, provider acceptance, and after-work closing the call with its disposition and note.");
 
+// The automatic dialer works the list on its own until someone answers: an unanswered call
+// records its outcome, releases the prospect with a retry in the future, and the next claim
+// hands the seller a different prospect. The client loop depends on all three.
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.exec(`
+  insert into public.customers(id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by)
+  values
+    ('00000000-0000-0000-0000-0000000000d1','00000000-0000-0000-0000-000000000001','company','prospect','Auto Loop Ett','+46707770001',true,'legitimate_interest','00000000-0000-0000-0000-000000000002'),
+    ('00000000-0000-0000-0000-0000000000d2','00000000-0000-0000-0000-000000000001','company','prospect','Auto Loop Två','+46707770002',true,'legitimate_interest','00000000-0000-0000-0000-000000000002')
+  on conflict(id) do nothing;
+`);
+// Callbacks outrank list order in the claim, and earlier sections leave due ones behind.
+// Close them so this section measures the plain list loop and nothing else.
+await db.query(`update public.activities set status='completed',claimed_by=null,claim_expires_at=null
+  where tenant_id='00000000-0000-0000-0000-000000000001' and type='callback' and status in ('open','in_progress')`);
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);`);
+await db.query(`select public.add_customers_to_list($1,array['00000000-0000-0000-0000-0000000000d1','00000000-0000-0000-0000-0000000000d2']::uuid[])`, [runtimeListId]);
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000020',false)`);
+
+const autoSession = await db.query(`select public.start_dialer_session($1) as id`, [runtimeListId]);
+const autoSessionId = String(autoSession.rows[0].id);
+const firstAuto = await db.query(`select public.claim_next_list_member_with_contacts($1,$2) as claim`, [runtimeListId, autoSessionId]);
+const firstAutoClaim = firstAuto.rows[0].claim;
+if (firstAutoClaim.empty || !firstAutoClaim.memberId) {
+  throw new Error(`The automatic dialer could not claim a prospect: ${JSON.stringify(firstAutoClaim)}`);
+}
+const firstAutoCall = await db.query(
+  `select public.queue_list_outbound_call_target($1,$2,null,null,$3,'auto-loop-hash-1','auto-loop-token-1','+46703333333','auto-loop-call-1','direct_marketing') as id`,
+  [autoSessionId, firstAutoClaim.memberId, firstAutoClaim.defaultTarget?.phone ?? firstAutoClaim.customer.phone],
+);
+const firstAutoCallId = String(firstAutoCall.rows[0].id);
+
+// Nobody picked up. This is the status the Rinkel projection writes for UNANSWERED, and the
+// dialer records it without asking the seller.
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.query(`update public.calls set provider='rinkel',status='unanswered',ended_at=now() where id=$1`, [firstAutoCallId]);
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
+await db.query(`select public.complete_dialer_work_v2($1::uuid,'no_answer',null,null,null,false,null,null,null,'auto-loop-after-1')`, [firstAutoCallId]);
+
+const releasedMember = await db.query(`
+  select state,outcome,attempts,claimed_by,next_attempt_at,completed_at
+  from public.customer_list_members where id=$1`, [firstAutoClaim.memberId]);
+const releasedRow2 = releasedMember.rows[0];
+if (releasedRow2.state !== 'retry' || releasedRow2.outcome !== 'no_answer' || releasedRow2.claimed_by !== null) {
+  throw new Error(`An unanswered call did not release the prospect for a later attempt: ${JSON.stringify(releasedRow2)}`);
+}
+if (!releasedRow2.next_attempt_at || new Date(releasedRow2.next_attempt_at) <= new Date()) {
+  throw new Error(`An unanswered prospect was left immediately re-callable, so the dialer would spin on it: ${JSON.stringify(releasedRow2)}`);
+}
+if (releasedRow2.completed_at !== null) {
+  throw new Error(`An unanswered call closed the prospect as worked: ${JSON.stringify(releasedRow2)}`);
+}
+const preservedStatus = await db.query(`select status from public.calls where id=$1`, [firstAutoCallId]);
+if (preservedStatus.rows[0].status !== 'unanswered') {
+  throw new Error(`After-work rewrote the true provider status of the call: ${JSON.stringify(preservedStatus.rows[0])}`);
+}
+
+// The loop continues on the next prospect rather than the one nobody answered.
+const secondAuto = await db.query(`select public.claim_next_list_member_with_contacts($1,$2) as claim`, [runtimeListId, autoSessionId]);
+const secondAutoClaim = secondAuto.rows[0].claim;
+if (secondAutoClaim.empty || secondAutoClaim.memberId === firstAutoClaim.memberId) {
+  throw new Error(`The automatic dialer did not move on to the next prospect: ${JSON.stringify(secondAutoClaim)}`);
+}
+
+// An answered call is where it stops: the seller's outcome is what closes the prospect.
+const secondAutoCall = await db.query(
+  `select public.queue_list_outbound_call_target($1,$2,null,null,$3,'auto-loop-hash-2','auto-loop-token-2','+46703333333','auto-loop-call-2','direct_marketing') as id`,
+  [autoSessionId, secondAutoClaim.memberId, secondAutoClaim.defaultTarget?.phone ?? secondAutoClaim.customer.phone],
+);
+const secondAutoCallId = String(secondAutoCall.rows[0].id);
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.query(`update public.calls set provider='rinkel',status='completed',answered_at=now()-interval '1 minute',ended_at=now(),duration_seconds=60 where id=$1`, [secondAutoCallId]);
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
+await db.query(`select public.complete_dialer_work_v2($1::uuid,'not_interested',null,null,null,false,null,null,null,'auto-loop-after-2')`, [secondAutoCallId]);
+const answeredMember = await db.query(`select state,outcome,completed_at from public.customer_list_members where id=$1`, [secondAutoClaim.memberId]);
+const answered = answeredMember.rows[0];
+if (answered.state !== 'completed' || answered.outcome !== 'not_interested' || !answered.completed_at) {
+  throw new Error(`A terminal outcome on an answered call did not close the prospect: ${JSON.stringify(answered)}`);
+}
+
+// Voicemail and a provider refusal are the other outcomes Rinkel reports and the seller must
+// still be able to file. They were unreachable for the same reason `unanswered` was.
+const otherTerminalOutcomes = [
+  { status: 'voicemail', disposition: 'voicemail', note: null, phone: '+46707770003', suffix: 'vm' },
+  { status: 'blocked', disposition: 'do_not_call', note: 'Kunden vill inte bli uppringd', phone: '+46707770004', suffix: 'blk' },
+];
+for (const outcome of otherTerminalOutcomes) {
+  await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+  const probeCustomer = await db.query(`
+    insert into public.customers(tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by)
+    values('00000000-0000-0000-0000-000000000001','company','prospect',$1,$2,true,'legitimate_interest','00000000-0000-0000-0000-000000000002')
+    returning id`, [`Auto Loop ${outcome.suffix}`, outcome.phone]);
+  await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);`);
+  await db.query(`select public.add_customers_to_list($1,array[$2]::uuid[])`, [runtimeListId, String(probeCustomer.rows[0].id)]);
+  await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000020',false)`);
+  const probeClaim = (await db.query(`select public.claim_next_list_member_with_contacts($1,$2) as claim`, [runtimeListId, autoSessionId])).rows[0].claim;
+  if (probeClaim.empty) throw new Error(`No prospect available to file a ${outcome.status} outcome on.`);
+  const probeCall = await db.query(
+    `select public.queue_list_outbound_call_target($1,$2,null,null,$3,$4,$5,'+46703333333',$6,'direct_marketing') as id`,
+    [autoSessionId, probeClaim.memberId, probeClaim.defaultTarget?.phone ?? probeClaim.customer.phone,
+     `auto-loop-hash-${outcome.suffix}`, `auto-loop-token-${outcome.suffix}`, `auto-loop-call-${outcome.suffix}`],
+  );
+  const probeCallId = String(probeCall.rows[0].id);
+  await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+  await db.query(`update public.calls set provider='rinkel',status=$2,ended_at=now() where id=$1`, [probeCallId, outcome.status]);
+  await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
+  try {
+    await db.query(`select public.complete_dialer_work_v2($1::uuid,$2,$3,null,null,false,null,null,null,$4)`,
+      [probeCallId, outcome.disposition, outcome.note, `auto-loop-after-${outcome.suffix}`]);
+  } catch (error) {
+    throw new Error(`A ${outcome.status} call could not be given the outcome "${outcome.disposition}": ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const probeState = await db.query(`
+    select m.outcome, c.status from public.customer_list_members m join public.calls c on c.id=$2 where m.id=$1`,
+    [probeClaim.memberId, probeCallId]);
+  if (probeState.rows[0].outcome !== outcome.disposition || probeState.rows[0].status !== outcome.status) {
+    throw new Error(`Filing a ${outcome.status} outcome did not project cleanly: ${JSON.stringify(probeState.rows[0])}`);
+  }
+}
+
+// Every outcome the automatic dialer records without asking must exist on the list and need
+// no extra input, or the client cannot record it and has to stop for the seller.
+const unattendedDispositions = await db.query(`
+  select key,requires_note,requires_callback,requires_order,terminal,retry_after_minutes
+  from public.list_dispositions
+  where list_id=$1 and key in ('no_answer','busy','voicemail') and active
+  order by key`, [runtimeListId]);
+if (unattendedDispositions.rows.length !== 3) {
+  throw new Error(`A list is missing the unattended outcomes the automatic dialer records: ${JSON.stringify(unattendedDispositions.rows.map((row) => row.key))}`);
+}
+for (const row of unattendedDispositions.rows) {
+  if (row.requires_note || row.requires_callback || row.requires_order) {
+    throw new Error(`Unattended outcome ${row.key} demands input the automatic dialer cannot supply.`);
+  }
+  if (row.terminal || !row.retry_after_minutes) {
+    throw new Error(`Unattended outcome ${row.key} must schedule a retry instead of closing the prospect.`);
+  }
+}
+await db.query(`select public.release_list_member_claim($1,'end')`, [autoSessionId]);
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+console.log("Executed the automatic dialer loop: an unanswered call records its outcome and schedules a retry, the next prospect is claimed automatically, and an answered call stops for the seller's outcome.");
+
 // Generated-type drift. `types:verify` only asserts that a hand-maintained list of names is
 // present, so a table or column added by a migration and never regenerated into
 // database.types.ts passes it unnoticed and only surfaces as a runtime error. The migrated

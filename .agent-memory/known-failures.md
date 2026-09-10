@@ -526,3 +526,55 @@ till dess korrelationen lyckats.
 **Regel:** En tenantgräns upprätthålls av schemat, inte bara av de anropare som råkar
 vara korrekta idag. `verify-sql.mjs` avvisar nu varje ny enkolumnsnyckel mellan två
 tenantägda tabeller och bevisar att en tvärtenantskrivning nekas.
+
+## FAILURE-0051 — Efterarbete var omöjligt på varje samtal ingen svarade — FIXED 2026-09-10
+
+**Symptom:** Ett listsamtal som ringde ut, gick till telefonsvarare eller avvisades
+kunde inte ges något utfall alls. "Inget svar", "Telefonsvarare" och "Ring inte
+igen" var oåtkomliga på exakt de samtal som behöver dem. Prospektet låg kvar
+reserverat tills reservationen gick ut, och en automatisk dialer kunde inte ta sig
+förbi det första obesvarade samtalet.
+
+**Rotorsak, två delar som doldes av varandra:**
+1. `complete_dialer_work` godkände ett avslutat samtal endast i
+   ('completed','busy','no_answer','failed','cancelled'). Rinkels projektion skriver
+   aldrig tre av statusarna den producerar in i den mängden:
+   `mapRinkelCauseToCallStatus` ger `unanswered`, `voicemail`, `blocked` och
+   `outside_business_hours`.
+2. `complete_dialer_work_v2` försökte brygga det genom att skriva om `calls.status`
+   till ett godkänt värde, delegera och skriva tillbaka. Bryggan kunde aldrig
+   fungera: `call_status_rank` ger varje terminal status rank 100 och
+   `protect_rinkel_call_projection` återställer tyst varje ändring mellan två
+   rank-100-statusar — helt avsiktligt, så att en sen providerhändelse inte kan
+   skriva om ett avgjort utfall. Omskrivningen var alltså en no-op och den
+   delegerade funktionen såg fortfarande `unanswered`.
+
+**Åtgärd:** Grinden fixas i stället för statusen. `is_terminal_call_status` är en
+delad definition ovanpå `call_status_rank`, och båda funktionerna använder den.
+`complete_dialer_work_v2` skriver inte längre om `calls.status` — projektionen
+förblir enda källan till vad som hände på linjen.
+
+**Regel:** Om två skydd motsäger varandra vinner det som körs sist och tyst. En
+statusomskrivning som ska passera en grind är en ledtråd om att grinden är fel.
+
+## FAILURE-0052 — Automatisk uppringning stannade vid varje obesvarat samtal — FIXED 2026-09-10
+
+**Symptom:** I automatiskt läge öppnade dialern efterarbete efter varje samtal, även
+när ingen svarade. Säljaren fick manuellt registrera "inget svar" och klicka vidare
+för varje prospekt, vilket gör den automatiska dialern manuell.
+
+**Rotorsak:** `list-dialer-workspace.tsx` gick till `after_call` för varje terminal
+status. Ingen skillnad gjordes på ett besvarat samtal och ett som ringde ut.
+
+**Åtgärd:** Statusar där ingen kom på linjen (`unanswered`, `no_answer`, `busy`,
+`voicemail`) registreras automatiskt med listans motsvarande disposition via samma
+endpoint som säljaren använder, varefter nästa prospekt hämtas och rings upp.
+Dialern stannar för efterarbete när någon svarar (`completed`, som Rinkel skriver
+för både människa och växel). En policyvägran (`blocked`,
+`outside_business_hours`) bränner ingen disposition utan pausar sessionen med skäl.
+Ett utfall registreras automatiskt bara om listan har exakt den dispositionen och
+den inte kräver anteckning, återkomst eller order — annars får säljaren fylla i.
+
+**Regel:** Automatisk uppringning betyder att systemet arbetar listan tills någon
+svarar. Utfallet ska ändå registreras — automatiskt när maskinen kan avgöra det,
+av säljaren när en människa svarat.

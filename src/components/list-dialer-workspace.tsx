@@ -41,6 +41,24 @@ type Claim = {
 };
 type Phase = "idle" | "loading" | "ready" | "dialing" | "calling" | "after_call" | "paused" | "ended" | "empty" | "error";
 
+// Rinkel maps both a human answer and an answering service to `completed`, so every status
+// below means the prospect never came on the line. In automatic mode those are the calls the
+// dialer is supposed to work through on its own: it records the matching outcome and moves to
+// the next prospect. Anything else — an answered call above all — stops for after-work.
+const unattendedCallOutcomes: Record<string, string> = {
+  unanswered: "no_answer",
+  no_answer: "no_answer",
+  busy: "busy",
+  voicemail: "voicemail",
+};
+
+// A policy refusal is not a call outcome. Burning a disposition on it would tell the list the
+// prospect was worked, so the session stops and says why instead.
+const sessionStoppingCallStatuses: Record<string, string> = {
+  blocked: "Numret spärrades av telefonitjänsten. Sessionen är pausad tills spärren är utredd.",
+  outside_business_hours: "Samtalet avvisades utanför tillåten ringtid. Sessionen är pausad.",
+};
+
 function cleanError(value: string) { return value.replaceAll("_", " ").replace("outside list calling hours", "Listan är utanför tillåten ringtid"); }
 
 export function ListDialerWorkspace({ listId, listName, mode, dispositions, products }: {
@@ -62,9 +80,10 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
   const [selectedTargetKey, setSelectedTargetKey] = useState("");
   const selectedDisposition = useMemo(() => dispositions.find((item) => item.key === dispositionKey), [dispositionKey, dispositions]);
   const voice = useRinkelDialer();
-  const callState = useCallRealtime(callId, () => {
+  const [autoOutcome, setAutoOutcome] = useState<string | null>(null);
+  const callState = useCallRealtime(callId, (status) => {
     voice.markEnded();
-    setPhase("after_call");
+    void handleCallEnded(status);
   });
 
   useEffect(() => { if (voice.calling) setPhase("calling"); }, [voice.calling]);
@@ -153,16 +172,74 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
     } catch (caught) { setError(cleanError(caught instanceof Error ? caught.message : "pause_failed")); setPhase("error"); }
   }
 
+  // Every outcome, hand-picked or recorded automatically, goes through the same endpoint, so
+  // attempts, retry scheduling and list state are projected identically either way.
+  async function saveDisposition(key: string, extra: Record<string, unknown> = {}) {
+    if (!callId) throw new Error("call_missing");
+    await requestJson("/api/v1/dialer/complete", {
+      callId,
+      dispositionKey: key,
+      notes: null,
+      callbackScope: null,
+      callbackDueAt: null,
+      createOrder: false,
+      productId: null,
+      quantity: null,
+      unitPrice: null,
+      ...extra,
+      idempotencyKey: `dialer.complete:${callId}`,
+    });
+  }
+
+  // The outcome the dialer may record without asking. Only an exact match counts: a list that
+  // renamed or removed the outcome, or made it require a note, a callback or an order, is
+  // telling us a human has to fill it in.
+  function unattendedDispositionFor(status: string) {
+    const key = unattendedCallOutcomes[status];
+    if (!key) return null;
+    const disposition = dispositions.find((item) => item.key === key);
+    if (!disposition) return null;
+    if (disposition.requires_note || disposition.requires_callback || disposition.requires_order) return null;
+    return disposition;
+  }
+
+  async function handleCallEnded(status: string) {
+    const stopReason = sessionStoppingCallStatuses[status];
+    if (stopReason) {
+      setError(stopReason);
+      setPhase("paused");
+      return;
+    }
+    const unattended = mode === "automatic" ? unattendedDispositionFor(status) : null;
+    if (!unattended || !sessionId) {
+      setPhase("after_call");
+      return;
+    }
+    // Nobody answered. Record it and keep working the list — that is the whole point of an
+    // automatic dialer, and the seller still sees which outcome was written.
+    setPhase("loading");
+    setError(null);
+    try {
+      await saveDisposition(unattended.key);
+      setAutoOutcome(`${claim?.customer?.displayName ?? "Prospektet"}: ${unattended.label} · registrerat automatiskt`);
+      const delay = claim?.autoNextDelaySeconds ?? 0;
+      if (delay) await new Promise((resolve) => window.setTimeout(resolve, delay * 1000));
+      await claimNext(sessionId, true);
+    } catch (caught) {
+      setError(cleanError(caught instanceof Error ? caught.message : "auto_disposition_failed"));
+      setPhase("after_call");
+    }
+  }
+
   async function completeAfterCall(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const submitter = (event.nativeEvent as SubmitEvent).submitter;
     const createContractAfterSave = submitter instanceof HTMLButtonElement && submitter.value === "create_contract";
     if (!callId || !selectedDisposition || !sessionId) return;
+    const completedCallId = callId;
     setPhase("loading"); setError(null);
     try {
-      await requestJson("/api/v1/dialer/complete", {
-        callId,
-        dispositionKey,
+      await saveDisposition(dispositionKey, {
         notes: notes || null,
         callbackScope: selectedDisposition.requires_callback ? callbackScope : null,
         callbackDueAt: selectedDisposition.requires_callback && callbackDueAt ? callbackDueAt : null,
@@ -170,12 +247,12 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
         productId: createOrder ? productId || null : null,
         quantity: createOrder ? Number(quantity || 1) : null,
         unitPrice: createOrder && unitPrice ? Number(unitPrice) : null,
-        idempotencyKey: `dialer.complete:${callId}`,
       });
       if (createContractAfterSave && claim?.customer) {
-        window.location.assign(`/app/contracts/new?customer_id=${encodeURIComponent(claim.customer.id)}&source_call_id=${encodeURIComponent(callId)}`);
+        window.location.assign(`/app/contracts/new?customer_id=${encodeURIComponent(claim.customer.id)}&source_call_id=${encodeURIComponent(completedCallId)}`);
         return;
       }
+      setAutoOutcome(null);
       const delay = claim?.autoNextDelaySeconds ?? 0;
       if (mode === "automatic") {
         if (delay) await new Promise((resolve) => window.setTimeout(resolve, delay * 1000));
@@ -194,7 +271,8 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
       </div>
     </div>
     {error ? <p className="form-error">{error}</p> : null}
-    {phase === "idle" || phase === "paused" || phase === "error" ? <div className="dialer-start"><Play size={34} /><h3>{phase === "paused" ? "Ringsessionen är pausad" : "Starta ringsession"}</h3><p>{mode === "automatic" ? "Första samtalet startar när du klickar. Därefter hämtas nästa prospekt automatiskt först efter avslutat efterarbete." : "Systemet låser nästa prospekt åt dig. Du bestämmer när varje samtal startar."}</p><button className="button button-primary" type="button" onClick={begin} disabled={!voice.registered}><Play size={16} /> {phase === "paused" ? "Fortsätt" : "Starta"}</button></div> : null}
+    {autoOutcome ? <div className="notice">{autoOutcome}</div> : null}
+    {phase === "idle" || phase === "paused" || phase === "error" ? <div className="dialer-start"><Play size={34} /><h3>{phase === "paused" ? "Ringsessionen är pausad" : "Starta ringsession"}</h3><p>{mode === "automatic" ? "Första samtalet startar när du klickar. Sedan arbetar dialern listan själv: inget svar, upptaget och telefonsvarare registreras automatiskt och nästa prospekt rings upp. Den stannar för efterarbete först när någon svarar." : "Systemet låser nästa prospekt åt dig. Du bestämmer när varje samtal startar."}</p><button className="button button-primary" type="button" onClick={begin} disabled={!voice.registered}><Play size={16} /> {phase === "paused" ? "Fortsätt" : "Starta"}</button></div> : null}
     {phase === "loading" ? <div className="dialer-start"><span className="spinner" /><h3>Synkroniserar nästa arbetsuppgift…</h3></div> : null}
     {phase === "ended" ? <div className="dialer-start"><h3>Ringsessionen är avslutad</h3><p>Alla lås är släppta och sessionens sluttid är sparad.</p><Link className="button button-secondary" href="/app/dialer">Till dialern</Link></div> : null}
     {phase === "empty" ? <div className="dialer-start"><h3>Listan är färdig för tillfället</h3><p>Det finns inga tillgängliga prospekt eller förfallna återkomster just nu.</p><button className="button button-secondary" type="button" onClick={() => sessionId && claimNext(sessionId, false)}>Kontrollera igen</button></div> : null}
@@ -206,7 +284,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
         <div className="dialer-call-controls">
           {phase === "ready" ? <button className="call-button" type="button" onClick={() => dial()} disabled={!voice.registered}><Phone size={25} /></button> : null}
           {phase === "dialing" ? <Badge className="badge-info">Kopplar samtalet…</Badge> : null}
-          {phase === "calling" ? <div className="notice">Samtalet hanteras på din telefonienhet. Kundexa inväntar slutstatus innan efterarbetet öppnas.</div> : null}
+          {phase === "calling" ? <div className="notice">Samtalet hanteras på din telefonienhet. {mode === "automatic" ? "Svarar ingen registreras utfallet automatiskt och nästa prospekt rings upp." : "Kundexa inväntar slutstatus innan efterarbetet öppnas."}</div> : null}
           {callState.recovering ? <div className="notice">Samtalets slutstatus är osäker och avstäms automatiskt. Ring inte nästa prospekt ännu.</div> : null}
           {callId && callState.connectionState === "degraded" ? <div className="notice">Realtime är frånkopplat. Kundexa använder statuspolling tills anslutningen är återställd.</div> : null}
           {phase === "ready" && claim.allowSkip ? <button className="button button-ghost button-sm" type="button" onClick={() => pause("skip")}>Hoppa över</button> : null}
@@ -220,7 +298,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
       </aside>
     </div> : null}
     {phase === "after_call" && callId ? <form className="after-call-panel" onSubmit={completeAfterCall}>
-      <div><h2>Efterarbete</h2><p className="muted">Välj ett utfall innan nästa prospekt kan hämtas.</p></div>
+      <div><h2>Efterarbete</h2><p className="muted">{mode === "automatic" ? "Någon svarade. Välj utfallet innan dialern går vidare till nästa prospekt." : "Välj ett utfall innan nästa prospekt kan hämtas."}</p></div>
       <label className="field"><span>Samtalsutfall</span><select required value={dispositionKey} onChange={(event) => setDispositionKey(event.target.value)}><option value="">Välj utfall</option>{dispositions.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label>
       <label className="field"><span>Anteckning</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} required={selectedDisposition?.requires_note} /></label>
       {selectedDisposition?.requires_callback ? <div className="form-grid"><label className="field"><span>Återkomsttyp</span><select value={callbackScope} onChange={(event) => setCallbackScope(event.target.value as "personal" | "global")}><option value="personal">Personlig återkomst</option><option value="global">Global teamåterkomst</option></select></label><label className="field"><span>Tid för återkomst</span><input type="datetime-local" required value={callbackDueAt} onChange={(event) => setCallbackDueAt(event.target.value)} /></label></div> : null}
