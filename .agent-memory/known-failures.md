@@ -658,3 +658,47 @@ lika många deploys som den har importörer. Efter varje ändring i
 `supabase/functions/_shared/` ska **alla** funktioner som importerar filen
 deployas om, och en deploy verifieras genom att hämta hem den körande koden och
 jämföra den mot repot — inte genom att anta att anropet lyckades.
+
+## FAILURE-0056 — två pg_cron-jobb har misslyckats 65 954 gånger i rad utan en enda lyckad körning — FIXED 2026-09-10
+
+**Symptom:** `postgres_logs` innehåller 1 464 `ERROR`-rader per dygn:
+`null value in column "url" of relation "http_request_queue" violates not-null
+constraint`. Ingenting i applikationen märkte något, eftersom ingenting berodde
+på jobben.
+
+**Rotorsak:** Två pg_cron-jobb — `kundexa-workers-every-minute` (varje minut) och
+`kundexa-maintenance-hourly` (varje timme) — bygger sin URL från
+`vault.decrypted_secrets` där `name = 'kundexa_project_url'`. Valvet är tomt, så
+subselecten ger `null`, hela URL:en blir `null` och `net.http_post` faller på
+`http_request_queue.url`s not-null-villkor. Samma sak gäller `x-cron-secret`, som
+också blir `null`.
+
+Jobben finns **inte i repot**. De skapades direkt i produktionen 2026-07-27 och
+har aldrig fångats i en migration, vilket är varför varken typkontrollen, SQL-sviten
+eller någon tidigare genomgång kunde se dem: de granskar repot, och repot visste
+inte att de existerade.
+
+**Konsekvens:** Ingen funktionell — den riktiga schemaläggaren är Vercel Cron
+(`vercel.json`, åtta jobb, rutter under `src/app/api/cron/`), och den fungerar:
+alla workers har livstecken varje minut. Skadan är operativ och två saker till:
+
+1. 1 440 felrader per dygn dränker riktiga fel i `postgres_logs`. Det var precis
+   den bruskällan som gjorde att jag hittade dem — inget annat stack ut.
+2. Konstruktionen läcker hemligheten om den halvlagas. Felets `DETAIL` skriver ut
+   hela raden som avvisades, inklusive `headers`. Just nu står det
+   `"x-cron-secret": null`; i samma sekund som någon lägger in
+   `kundexa_cron_secret` i valvet men URL:en fortfarande är fel hamnar
+   cron-hemligheten i klartext i både `cron.job_run_details` och `postgres_logs`.
+3. Jobbet var dessutom en ofullständig kopia: `rinkel-platform-worker` saknas i
+   dess lista, så även fullt fungerande hade det inte schemalagt allt.
+
+**Åtgärd:** Båda jobben satta till `active = false` med `cron.alter_job`.
+Definitionen ligger kvar i `cron.job` och är avskriven i `current-state.md`, så
+inget går förlorat. Jag valde avstängning framför `cron.unschedule` eftersom det
+stoppar felen lika effektivt men lämnar artefakten synlig för dig att bestämma om.
+
+**Regel:** Schemaläggning ska ha exakt en ägare, och den ägaren ska finnas i repot.
+Ett jobb som skapas direkt i produktionen är osynligt för varje granskning som
+utgår från koden. Och ett schemalagt jobb som aldrig har lyckats en enda gång ska
+larma — `cron.job_run_details` med noll `succeeded` är samma sorts signal som en
+heartbeat med `last_success_at = null` (FAILURE-0054).

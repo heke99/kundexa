@@ -371,3 +371,44 @@ importens kanoniska innehållstyp, knappen för omutskick av utgånget avtal —
 `outgoingCall` och `callStart`.
 
 Kvar: `process-outbox` är fortfarande den enda komponenten som inte är utrullad.
+
+Genomgång efter utrullningen till main
+--------------------------------------
+
+Jag letade den här gången i produktionens egna loggar i stället för i repot, och
+det var där felet låg (FAILURE-0056): två pg_cron-jobb som aldrig fungerat.
+De är nu avstängda. Deras definitioner, avskrivna innan avstängningen:
+
+  jobid 1  kundexa-workers-every-minute   * * * * *
+    select net.http_post(
+      url := (select decrypted_secret from vault.decrypted_secrets
+              where name = 'kundexa_project_url')
+             || '/functions/v1/' || workers.function_name,
+      headers := jsonb_build_object('content-type','application/json',
+                 'x-cron-secret',
+                 (select decrypted_secret from vault.decrypted_secrets
+                  where name = 'kundexa_cron_secret')),
+      body := jsonb_build_object('source','supabase_cron','triggered_at',now()))
+    from (values ('process-outbox'),('automation-runner'),('data-worker'),
+                 ('ingestion-worker'),('compliance-worker'),('parsehub-worker'))
+      as workers(function_name);
+
+  jobid 2  kundexa-maintenance-hourly     0 * * * *
+    samma anrop mot '/functions/v1/maintenance-worker'.
+
+Vill du ha en databassidig reservschemaläggare måste den läggas som en migration,
+med valvhemligheterna satta, och headern får inte kunna hamna i ett felmeddelande.
+
+Övrigt som kontrollerades och är rent:
+
+- **Alla 145 RPC:er som koden anropar finns i produktionen.** Namnen extraherades
+  ur `src/` och `supabase/functions/` och slogs mot `pg_proc` i den live-databasen,
+  inte mot migrationerna.
+- **Inget schemadrift.** Typerna regenererades från det länkade projektet och
+  jämfördes mot de incheckade: skillnaden är exakt de tretton sammansatta
+  tenant-nycklarna från FAILURE-0050 plus fem funktioner, och alla fem kommer från
+  migrationer i repot. Ingen tabell eller kolumn finns i produktionen utan att
+  finnas i repot, och tvärtom. `database.types.ts` är nu uppdaterad.
+- **Vercels runtime-fel:** två grupper, båda från 2026-09-07 och båda åtgärdade i
+  den grenen (`DIAL_PERMISSION_DENIED`, `LEGAL_BASIS_REQUIRED`,
+  `RINKEL_INVALID_REQUEST`). Inget nytt sedan dess.
