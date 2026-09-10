@@ -284,3 +284,42 @@ vara SQL NULL), samt 410-gravstenarna för 46elks röst.
 låst utskick, publik webbacceptans bunden till exakt dokumenthash, bevisgrindad
 aktivering — plus uppringning via v2-reservationen med finalisering och efterarbete.
 Tidigare kontrollerades avtalsvägen bara med regex.
+
+## 2026-09-10 — deploy till länkat produktionsprojekt (lhvifuxcqghtbiulzkrf)
+
+Sex migrationer applicerade mot produktion via Supabase MCP, efter förkontroll av
+att varje textankare fanns i den *live* funktionen och att noll rader korsade
+tenantgränsen. Alla fixar verifierade live efteråt:
+
+| Fix | Live |
+|---|---|
+| FAILURE-0045 workerlivstecken vid `degraded` | ja |
+| FAILURE-0046 `rinkel_release_stale_call_attempts` | ja |
+| FAILURE-0047 ParseHub tenantkontext | ja |
+| FAILURE-0050 13 sammansatta tenant-FK | ja, noll enkolumnsnycklar kvar |
+| FAILURE-0051 efterarbete på obesvarade samtal | ja |
+| FAILURE-0053 omutskick av utgånget avtal | ja |
+
+Efter deploy: 181 tabeller, 301 policies, 0 SECURITY DEFINER utan `search_path`,
+0 dead-letter, 0 workers som aldrig lyckats. Radantal oförändrade.
+
+Två saker upptäcktes under deployen:
+
+1. **MCP-verktyget registrerar migrationer med tidsstämpelversion**, inte repots
+   filnamnsversion. Det förklarar även varför `self_dial_guard` låg som
+   `20260907160639`. Historiken är reparerad: repots sex versioner är införda i
+   `supabase_migrations.schema_migrations`, så `db push` hittar inget att köra.
+   De sex tidsstämpelraderna ligger kvar som sanningsenlig körhistorik.
+2. **FAILURE-0054**: `maintenance-worker` hade `verify_jwt=true` och svarade 401 på
+   varje schemalagd körning — den hade aldrig lyckats. Omdeployad med
+   `verify_jwt=false`; första lyckade körningen 11:30:21.
+
+Kvar att deploya, kräver kommandoraden:
+
+- `npm run functions:deploy -- --project-ref lhvifuxcqghtbiulzkrf` för
+  `process-outbox` (FAILURE-0044) och `rinkel-platform-worker` (anropar den nya
+  release-RPC:n). Deras källa är ~1 850 respektive ~1 690 rader inklusive
+  `_shared`; att skriva av dem genom ett verktygsanrop är en risk som
+  deployskriptet inte har.
+- Vercel-deploy av grenen för UI-fixarna: automatisk dialer-loop, kundkortets
+  kontaktpersoner, importens innehållstyp och knappen för omutskick.
