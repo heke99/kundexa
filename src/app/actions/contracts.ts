@@ -461,7 +461,13 @@ export async function sendContract(form: FormData) {
   const ctx = await getAppContext();
   assertPermission(ctx.role, "contracts.send");
   const contractId = z.uuid().parse(value(form, "contract_id"));
-  const channel = z.enum(["sms", "email", "both"]).catch("both").parse(value(form, "channel"));
+  // No silent default. The channel is a choice the seller made in a select that
+  // always sends a value, and guessing "both" on a malformed request would send a
+  // binding signing link by SMS as well — a paid message the seller did not ask
+  // for, and a second legally valid way to sign the same contract.
+  const channelChoice = z.enum(["sms", "email", "both"]).safeParse(value(form, "channel"));
+  if (!channelChoice.success) redirect(`/app/contracts/${contractId}?error=Välj hur avtalet ska skickas`);
+  const channel = channelChoice.data;
   const introduction = value(form, "introduction").slice(0, 1500);
   const recipientNameOverride = value(form, "recipient_name").slice(0, 200);
   const emailOverride = value(form, "recipient_email").toLowerCase();

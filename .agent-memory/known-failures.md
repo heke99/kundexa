@@ -1096,3 +1096,57 @@ där författaren kan ändra det.
 
 **Regel:** Ett system får vägra, och det får låta författaren välja. Det får inte
 själv skriva in ord i en handling som binder någon.
+
+## FAILURE-0068 — svep efter tysta fel i hela projektet — FIXED 2026-09-11
+
+Användaren bad om en genomgång av samma felklass överallt: systemet gör något
+tyst i stället för att säga ifrån. Fem fynd, fyra åtgärdade, ett testfel lagat.
+
+**0068a — ett SMS-svar på ett avtal kunde försvinna spårlöst.**
+`/api/webhooks/46elks/sms/inbound` läser `contract_recipients` och
+`contract_acceptance_requests` utan att kontrollera felet. PostgREST *returnerar*
+felet i stället för att kasta, så en misslyckad läsning ser exakt ut som "inga
+mottagare": kundens "JA" sparas som ett vanligt inkommande SMS, accepten
+registreras aldrig, och 46elks får 204 och gör aldrig om leveransen. Den andra
+läsningen är värre — ett tyst fel där hoppar över både loopen *och*
+manual_review-fallbacket. Båda kontrolleras nu och kastar, vilket ger 500 och en
+omleverans. Rutten returnerade dessutom sin interna feltext till leverantören;
+den loggas nu på vår sida och svaret är generiskt.
+
+**0068b — ett misslyckat idempotensuppslag betydde "ingen tidigare begäran".**
+`replay()` i `api-service.ts` svalde felet från `audit_logs`, så en läsning som
+fallerade läste som ett förstaförsök — och just det försök som
+idempotensnyckeln finns för att göra ofarligt hade skapat ett **andra avtal**.
+Täcker nio anropsställen: skapa, skicka, påminnelse och förlängning.
+
+**0068c — kanalen för avtalsutskick hade ett tyst standardvärde.**
+`z.enum([...]).catch("both")` gjorde varje ogiltigt värde till "skicka på båda" —
+ett betalt SMS säljaren inte bett om, med en andra juridiskt giltig väg att
+signera samma avtal. Samma felklass som `?? "accept"` på den publika
+acceptsidan. Formuläret skickar alltid ett värde, så strikt tolkning kostar
+ingenting.
+
+**0068d — oläsbara Resend-uppgifter behandlades som tomma.**
+`catch { oldCredentials = {} }` vid dekrypteringsfel. Formuläret lovar "lämna
+tomt för att behålla", så nästa sparning hade skrivit över API-nyckel och
+signeringshemlighet med tomma värden och dessutom myntat ett nytt
+`webhookPathToken` — vilket ändrar adressen som redan är registrerad hos Resend
+och tystar leveranskvitton utan ett enda felmeddelande. En nyckel som inte går
+att läsa är ett driftfaktum, oftast en roterad `KUNDEXA_ENCRYPTION_KEY`, och den
+som sparar behöver höra det.
+
+**0068e — mitt eget omläggningstest var flakigt.** Det valde rader på `outcome`
+i stället för på id, så utfallet berodde på vad tidigare tester råkat lämna i
+listan. Det växlade mellan körningar. Nu bundet till exakt de rader blocket
+själv sätter upp, och kört tre gånger i rad med samma resultat. Ett flakigt test
+förgiftar hela sviten.
+
+**Kontrollerat och rent:** `api-auth.ts` är genomgående fail-closed — varje tyst
+null nekar, inget släpps igenom. Den publika dokumentvägen faller stängt i varje
+gren och hashar om bytena mot avtalets bindning. `normalizePhone`-fångsten i
+`sendContract` följs direkt av en högljudd vägran när SMS valts. Övriga `catch`
+i actions omdirigerar med begripliga svenska meddelanden.
+
+**Regel:** PostgREST kastar inte. Varje läsning vars tomma resultat styr ett
+beslut måste ta emot `error` — annars är "det gick fel" och "det fanns inget"
+samma sak för koden, och bara det ena är sant.

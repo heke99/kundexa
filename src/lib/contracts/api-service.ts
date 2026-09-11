@@ -84,8 +84,13 @@ function actor(identity: ApiIdentity) {
 
 async function replay(identity: ApiIdentity, action: string, key: string) {
   const admin = createAdminClient();
-  const { data } = await admin.from("audit_logs").select("entity_id,after_data")
+  const { data, error } = await admin.from("audit_logs").select("entity_id,after_data")
     .eq("tenant_id", identity.tenantId).eq("action", action).eq("request_id", key).maybeSingle();
+  // An idempotency check that could not be performed must not be read as "no
+  // previous request". PostgREST returns the failure instead of throwing, so an
+  // unchecked error here looks identical to a first attempt — and the retry that
+  // the idempotency key exists to make safe would create a second contract.
+  if (error) throw new Error(`idempotency_lookup_failed:${error.code ?? "unknown"}`);
   return data ?? null;
 }
 

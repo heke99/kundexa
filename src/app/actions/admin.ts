@@ -99,7 +99,20 @@ export async function saveEmailIntegration(form: FormData) {
   const { data: existing } = await admin.from("tenant_integrations").select("id,credentials_ciphertext,configuration").eq("tenant_id", context.tenantId).eq("provider_type", "email").eq("provider", "resend").eq("name", "Resend").maybeSingle();
   let oldCredentials: ResendCredentials = {};
   if (existing?.credentials_ciphertext) {
-    try { oldCredentials = decryptJson<ResendCredentials>(existing.credentials_ciphertext, env.KUNDEXA_ENCRYPTION_KEY); } catch { oldCredentials = {}; }
+    try {
+      oldCredentials = decryptJson<ResendCredentials>(existing.credentials_ciphertext, env.KUNDEXA_ENCRYPTION_KEY);
+    } catch {
+      // Treating an unreadable secret as an empty one is silent destruction. The
+      // form tells the admin that leaving a field blank keeps what is saved, so a
+      // swallowed decrypt failure would wipe the API key and the signing secret
+      // on the next save — and mint a new `webhookPathToken`, which changes the
+      // address already registered at Resend and stops delivery receipts with no
+      // error anywhere. A key that cannot be read is an operational fact, usually
+      // a rotated KUNDEXA_ENCRYPTION_KEY, and the person saving needs to hear it.
+      redirect("/app/integrations?error=" + encodeURIComponent(
+        "De sparade Resend-uppgifterna kan inte läsas — krypteringsnyckeln har sannolikt bytts. Fyll i API-nyckel och signeringshemlighet på nytt, annars skrivs de över med tomma värden.",
+      ));
+    }
   }
   if (accountMode === "tenant_owned" && !apiKey && !oldCredentials.apiKey) redirect("/app/integrations?error=Resend API-nyckel krävs för tenantägt konto");
   const pathToken = oldCredentials.webhookPathToken || randomToken(32);

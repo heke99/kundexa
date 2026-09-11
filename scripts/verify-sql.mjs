@@ -2568,10 +2568,15 @@ console.log("Executed the automatic dialer loop: an unanswered call records its 
   )).rows[0].n);
   if (requeued !== 2) throw new Error(`Re-queueing "inte intresserad" moved ${requeued} entries, expected 2`);
 
+  // Scoped to the four rows this block set up, by id. Selecting on `outcome`
+  // instead made the assertions depend on what earlier tests happened to leave in
+  // the list — a member carrying the same outcome with a different
+  // `compliance_status` is skipped by the re-queue and turned this into a test
+  // that passed or failed depending on run order.
   const after = (await db.query(
-    `select outcome, state, attempts, completed_at, next_attempt_at > now() + interval '170 minutes' as forsenad
-       from public.customer_list_members where list_id=$1 and outcome in ('not_interested','wrong_number','do_not_call')
-       order by outcome`, [runtimeListId],
+    `select id, outcome, state, attempts, completed_at, next_attempt_at > now() + interval '170 minutes' as forsenad
+       from public.customer_list_members where id = any($1::uuid[]) order by id`,
+    [members.map((member) => member.id)],
   )).rows;
   for (const row of after) {
     if (row.outcome === "not_interested") {
@@ -2591,14 +2596,15 @@ console.log("Executed the automatic dialer loop: an unanswered call records its 
   }
 
   // Even asking for everything must leave the block alone.
-  const all = Number((await db.query(
-    `select public.requeue_customer_list_members($1,null,0,null) as n`, [runtimeListId],
-  )).rows[0].n);
-  if (all !== 1) throw new Error(`Re-queueing everything moved ${all} entries, expected only wrong_number`);
-  const blocked = (await db.query(
-    `select state from public.customer_list_members where list_id=$1 and outcome='do_not_call'`, [runtimeListId],
-  )).rows[0];
-  if (blocked.state !== "blocked") throw new Error("A blanket re-queue released a do-not-call entry");
+  const wrongNumberId = members[2].id;
+  const blockedId = members[3].id;
+  const stateOf = async (id) => (await db.query(
+    `select state from public.customer_list_members where id=$1`, [id],
+  )).rows[0].state;
+  if (await stateOf(wrongNumberId) !== "completed") throw new Error("The wrong_number fixture was disturbed before the blanket re-queue");
+  await db.query(`select public.requeue_customer_list_members($1,null,0,null)`, [runtimeListId]);
+  if (await stateOf(wrongNumberId) !== "pending") throw new Error("A blanket re-queue left a completed entry behind");
+  if (await stateOf(blockedId) !== "blocked") throw new Error("A blanket re-queue released a do-not-call entry");
 
   await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
 }

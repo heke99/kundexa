@@ -5,6 +5,8 @@ import { decideAcceptance, normalizeAcceptanceText } from "@/lib/domain/acceptan
 
 export async function POST(request: Request) {
   if (!await verify46ElksNetwork(request)) return new NextResponse(null, { status: 403 });
+  // Held outside the try so a failure can be correlated with the provider's retry.
+  let providerEventId: string | null = null;
   try {
     const token = new URL(request.url).searchParams.get("token") ?? "";
     const payload = formToObject(await request.formData());
@@ -16,6 +18,7 @@ export async function POST(request: Request) {
 
     const admin = createAdminClient();
     const providerId = payload.id ?? null;
+    providerEventId = providerId;
     const { data: event } = await admin.from("provider_webhook_events").upsert({
       tenant_id: number.tenant_id,
       provider: "46elks",
@@ -61,19 +64,27 @@ export async function POST(request: Request) {
     }, { onConflict: "tenant_id,provider_message_id" }).select("id").single();
     if (smsError) throw smsError;
 
-    const { data: recipients } = await admin.from("contract_recipients")
+    // PostgREST returns an error rather than throwing, so an unchecked read looks
+    // exactly like "no recipients": the customer's "JA" would be stored as an
+    // ordinary inbound SMS, the acceptance would never be recorded, and 46elks
+    // would get a 204 and never retry. Throwing gives a 500 and a redelivery.
+    const { data: recipients, error: recipientsError } = await admin.from("contract_recipients")
       .select("id")
       .eq("tenant_id", number.tenant_id)
       .eq("phone_e164", from);
+    if (recipientsError) throw recipientsError;
 
     if (recipients?.length) {
-      const { data: acceptanceRequests } = await admin.from("contract_acceptance_requests")
+      const { data: acceptanceRequests, error: acceptanceRequestsError } = await admin.from("contract_acceptance_requests")
         .select("id,tenant_id,contract_id,contract_version_id,recipient_id,acceptance_code,allowed_phrases,decline_phrases,require_code,call_ended_at,contracts(audience)")
         .eq("tenant_id", number.tenant_id)
         .in("recipient_id", recipients.map((recipient) => recipient.id))
         .eq("status", "pending")
         .gt("expires_at", new Date().toISOString())
         .order("created_at", { ascending: false });
+      // Same again, and worse: an unchecked failure here skips the loop *and* the
+      // manual-review fallback, so an answer to a contract would vanish entirely.
+      if (acceptanceRequestsError) throw acceptanceRequestsError;
 
       let matched = false;
       for (const acceptanceRequest of acceptanceRequests ?? []) {
@@ -143,6 +154,13 @@ export async function POST(request: Request) {
     }
     return new NextResponse(null, { status: 204 });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "webhook_processing_failed" }, { status: 500 });
+    // The provider needs a non-2xx so it redelivers; it does not need our internal
+    // error text. Keep the detail on our side, where it can be acted on.
+    console.error("inbound_sms_webhook_failed", {
+      provider: "46elks",
+      providerEventId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return NextResponse.json({ error: "webhook_processing_failed" }, { status: 500 });
   }
 }

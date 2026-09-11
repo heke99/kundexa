@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { z } from "zod";
 import { buildIlikeOrFilter, sanitizeFilterTerm } from "../src/lib/postgrest-filter";
 import { publicHostAlignment, resolveRinkelWebhookBaseUrl } from "../src/lib/env";
 
@@ -81,6 +82,25 @@ assert.equal(
   buildIlikeOrFilter(["display_name", "organization_number", "phone_e164"], "Nordic"),
   "display_name.ilike.%Nordic%,organization_number.ilike.%Nordic%,phone_e164.ilike.%Nordic%",
 );
+
+// A choice the user made must not have a fallback. `sendContract` used to parse
+// the channel with zod's `.catch("both")`, so a missing or malformed value became
+// "send by both" — a paid SMS the seller never asked for, carrying a second
+// legally valid way to sign the same contract. The form always sends a value, so
+// strict parsing costs nothing and guessing costs real money.
+{
+  const channel = z.enum(["sms", "email", "both"]);
+  for (const good of ["sms", "email", "both"]) {
+    assert.equal(channel.safeParse(good).success, true, `${good} must be accepted`);
+  }
+  for (const bad of ["", "BOTH", "epost", "sms,email", " sms"]) {
+    assert.equal(channel.safeParse(bad).success, false, `"${bad}" must be refused rather than defaulted`);
+  }
+  // The shape that caused it, kept as the thing we must not go back to.
+  assert.equal(channel.catch("both").parse("epost"), "both",
+    "zod .catch turns a bad value into a silent default — this is why sendContract no longer uses it");
+}
+console.log("Contract channel tests passed: every valid channel is accepted, an empty or malformed one is refused instead of silently becoming \"both\".");
 
 console.log("API core tests passed: PostgREST filter sanitisation, wildcard stripping, length bounds and empty-term handling.");
 }
