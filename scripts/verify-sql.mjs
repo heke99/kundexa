@@ -2673,6 +2673,66 @@ try {
 }
 if (!sellerRefused) throw new Error("A seller was able to author a contract template");
 await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);`);
+// Creating a segment is narrower than managing one, and the directory page now
+// only offers each action to the roles that can actually complete it. Pin both
+// sets against the database, so the constants in permissions.ts cannot quietly
+// stop being true.
+// Supabase grants every public table to `authenticated` by default and lets RLS
+// do the restricting; the harness only grants what a test needs, so mirror that
+// here or the probe measures a missing grant instead of the policy.
+await db.exec(`grant select, insert, update, delete on public.segments to authenticated;`);
+
+const trySegmentInsert = async (userId, label) => {
+  try {
+    await db.exec(`
+      do $segment$ begin
+        perform set_config('request.jwt.claim.role','authenticated',true);
+        perform set_config('request.jwt.claim.sub','${userId}',true);
+        set local role authenticated;
+        insert into public.segments(tenant_id,name,entity_type,segment_type,rule_definition,owner_user_id,active)
+        values('00000000-0000-0000-0000-000000000001','Segment ${label}','organization','dynamic','{}'::jsonb,'${userId}',true);
+        reset role;
+      end $segment$;`);
+    return "allowed";
+  } catch (error) {
+    return String(error.message);
+  }
+};
+
+const ownerInsert = await trySegmentInsert("00000000-0000-0000-0000-000000000002", "owner");
+if (ownerInsert !== "allowed") throw new Error(`An owner could not create a segment: ${ownerInsert}`);
+
+const leadInsert = await trySegmentInsert("00000000-0000-0000-0000-000000000093", "lead");
+if (!leadInsert.includes("row-level security")) {
+  throw new Error(`A team leader was allowed to create a segment, so segmentCreateRoles is wrong: ${leadInsert}`);
+}
+const sellerInsert = await trySegmentInsert("00000000-0000-0000-0000-000000000020", "seller");
+if (!sellerInsert.includes("row-level security")) {
+  throw new Error(`A seller was allowed to create a segment: ${sellerInsert}`);
+}
+
+// Managing an existing one is wider, and the RPC is the authority.
+const segmentId = (await db.query(
+  `select id from public.segments where tenant_id='00000000-0000-0000-0000-000000000001' order by created_at desc limit 1`,
+)).rows[0].id;
+const tryRefresh = async (userId) => {
+  await db.exec(`select set_config('request.jwt.claim.sub','${userId}',false)`);
+  try {
+    await db.query(`select public.refresh_segment_materialization($1,null)`, [segmentId]);
+    return "allowed";
+  } catch (error) {
+    return String(error.message);
+  }
+};
+const leadRefresh = await tryRefresh("00000000-0000-0000-0000-000000000093");
+if (leadRefresh !== "allowed") throw new Error(`A team leader could not refresh a segment: ${leadRefresh}`);
+const sellerRefresh = await tryRefresh("00000000-0000-0000-0000-000000000020");
+if (!sellerRefresh.includes("segment_manage_permission_required")) {
+  throw new Error(`A seller was allowed to refresh a segment: ${sellerRefresh}`);
+}
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
+console.log("Executed segment authority: only a tenant admin may create one, a team leader may refresh but not create, and a seller may do neither.");
+
 console.log("Executed contract template authorship: a team leader creates a draft, cannot release it, an owner approves it into the current version, and a seller is refused.");
 
 // Generated-type drift. `types:verify` only asserts that a hand-maintained list of names is

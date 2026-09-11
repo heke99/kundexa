@@ -20,6 +20,21 @@ const rolePermissions: Record<string, Permission[]> = {
   viewer: ["customers.read", "calls.read", "messages.read", "contracts.read", "reports.read", "directory.read"],
 };
 
+/**
+ * Who may create a segment. Narrower than `segments.manage` on purpose: the
+ * `segments` table's write policy admits only tenant admins, so offering the
+ * action to anyone else produces a button that always fails with a row-level
+ * security error. Declared here so the page and the server action cannot drift
+ * from each other, or from what the database actually allows.
+ */
+export const segmentCreateRoles = ["owner", "admin"] as const;
+
+/**
+ * Who may refresh or materialise a segment that already exists. Matches the gate
+ * inside `refresh_segment_materialization` and `materialize_segment_to_campaign`.
+ */
+export const segmentManageRoles = ["owner", "admin", "team_lead", "backoffice"] as const;
+
 export function can(role: string, permission: Permission) {
   return rolePermissions[role]?.includes(permission) ?? false;
 }

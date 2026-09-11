@@ -754,3 +754,36 @@ användaren kan göra något åt, logga resten.
   att den aldrig når ternären. Ett tvetydigt svar registreras som
   `manual_review_required`, och bara när det finns exakt en väntande begäran att
   knyta det till — att gissa vilket avtal ett tvetydigt svar gäller vore värre.
+
+## FAILURE-0059 — "Skapa segment" visades för alla och misslyckades för nästan alla — FIXED 2026-09-11
+
+**Symptom:** Inget rapporterat. Hittad vid en systematisk genomgång av alla 110
+exporterade serveråtgärder: vilka saknar en behörighetsgrind?
+
+**Rotorsak:** `createDirectorySegment` hade bara `getAppContext()` och gick sedan
+rakt på `insert into segments`. Katalogsidan renderade knappen utan rollvillkor, så
+den syntes för varje roll med `directory.read` — säljare, viewer, finance, quality.
+`segments`-tabellens RLS-policy släpper bara igenom `is_tenant_admin`, alltså
+owner och admin.
+
+**Konsekvens:** Ingen säkerhetslucka — RLS höll. Men en knapp som alltid
+misslyckades för de flesta roller, och förklaringen som visades var Postgres egen
+text: *new row violates row-level security policy for table "segments"*. Samma sak
+för Uppdatera/Skicka på befintliga segment, där RPC:n nekar alla utom
+owner/admin/team_lead/backoffice.
+
+**Åtgärd:** Rollmängderna är deklarerade en gång i `permissions.ts`
+(`segmentCreateRoles`, `segmentManageRoles`) och används av både sidan och
+åtgärderna, så de inte kan glida isär. Knappar visas bara för roller som kan
+slutföra handlingen, och åtgärderna kontrollerar själva med ett svenskt
+meddelande om någon postar formuläret direkt.
+
+**Regel:** En knapp som databasen kommer att neka ska inte visas. Och när tre lager
+— behörighetsmodell, RLS och RPC — säger olika saker om samma handling, är det
+databasen som bestämmer; koden ska säga samma sak som den.
+
+**Notering:** `team_lead` och `backoffice` har `segments.manage` och får uppdatera
+och materialisera ett segment, men inte skapa ett. Den asymmetrin är RLS:ens, och
+jag har låtit den stå — att ändra vem som får skriva i en tenant-tabell är ditt
+beslut, inte ett buggfix. Ett runtime-test spikar nu den faktiska behörigheten så
+konstanterna inte kan bli osanna i tysthet.

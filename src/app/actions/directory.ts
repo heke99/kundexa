@@ -2,6 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getAppContext, isAdmin } from "@/lib/auth";
+import { segmentCreateRoles, segmentManageRoles } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { directorySearchSchema } from "@/lib/directory";
 
@@ -25,7 +26,14 @@ function filtersFromForm(form: FormData) {
 }
 
 export async function createDirectorySegment(form: FormData) {
-  const context = await getAppContext(); const name = text(form, "name");
+  const context = await getAppContext();
+  // The table's write policy admits only tenant admins. Checking here turns a
+  // raw row-level security error into a sentence, and stops the action being
+  // reachable by posting the form directly.
+  if (!(segmentCreateRoles as readonly string[]).includes(context.role)) {
+    redirect("/app/directory?error=Endast ägare eller administratör får skapa segment.");
+  }
+  const name = text(form, "name");
   if (!name) redirect("/app/directory?error=Segmentnamn krävs");
   const rules = filtersFromForm(form); const supabase = await createClient();
   const { data, error } = await supabase.from("segments").insert({ tenant_id: context.tenantId, name, description: text(form, "description") || null, entity_type: rules.entityType, segment_type: text(form, "segmentType") || "dynamic", rule_definition: rules, owner_user_id: context.userId, active: true }).select("id").single();
@@ -36,13 +44,19 @@ export async function createDirectorySegment(form: FormData) {
 }
 
 export async function refreshDirectorySegment(form: FormData) {
-  const context = await getAppContext(); const segmentId = text(form, "segment_id"); if (!segmentId) return;
+  const context = await getAppContext();
+  if (!(segmentManageRoles as readonly string[]).includes(context.role)) {
+    redirect("/app/directory?error=Du saknar behörighet att arbeta med segment.");
+  } const segmentId = text(form, "segment_id"); if (!segmentId) return;
   const supabase = await createClient(); const { error } = await supabase.rpc("refresh_segment_materialization", { p_segment_id: segmentId, p_actor: context.userId });
   if (error) redirect(`/app/directory?error=${encodeURIComponent(error.message)}`); revalidatePath("/app/directory");
 }
 
 export async function sendSegmentToCampaign(form: FormData) {
-  const context = await getAppContext(); const segmentId = text(form, "segment_id"); const campaignId = text(form, "campaign_id");
+  const context = await getAppContext();
+  if (!(segmentManageRoles as readonly string[]).includes(context.role)) {
+    redirect("/app/directory?error=Du saknar behörighet att arbeta med segment.");
+  } const segmentId = text(form, "segment_id"); const campaignId = text(form, "campaign_id");
   if (!segmentId || !campaignId) redirect("/app/directory?error=Segment och kampanj krävs");
   const supabase = await createClient(); const { data, error } = await supabase.rpc("materialize_segment_to_campaign", { p_segment_id: segmentId, p_campaign_id: campaignId, p_actor: context.userId });
   if (error) redirect(`/app/directory?error=${encodeURIComponent(error.message)}`); revalidatePath("/app/directory"); revalidatePath("/app/campaigns");
