@@ -223,13 +223,16 @@ export function RinkelDialer({
     {rinkel.dialPath?.mapped ? <dl className="key-value dialer-path">
       <dt>Kunden ser</dt>
       <dd>{rinkel.dialPath.callerIdNumber ?? "—"}</dd>
-      <dt>Din enhet som ringer</dt>
+      <dt>Ringer upp dig</dt>
       <dd>
-        {rinkel.dialPath.deviceRingsPhone ?? "Webbtelefonen"}
+        {rinkel.dialPath.dialPathCorrect
+          ? "Webbtelefonen"
+          : rinkel.dialPath.deviceRingsPhone ?? "Webbtelefonen"}
         {rinkel.dialPath.providerUserName ? ` · ${rinkel.dialPath.providerUserName}` : ""}
       </dd>
     </dl> : null}
-    {rinkel.dialPath?.mapped && rinkel.dialPath.seatNameMatchesProfile === false ? <p className="notice warning">
+    {rinkel.dialPath?.issue ? <p className="notice warning">{rinkel.dialPath.issue}</p> : null}
+    {rinkel.dialPath?.mapped && !rinkel.dialPath.issue && rinkel.dialPath.seatNameMatchesProfile === false ? <p className="notice warning">
       Telefoniplatsen som ringer upp dig står på {rinkel.dialPath.providerUserName}. Samtalet går då via
       den personens telefon i stället för din egen. Be administratören lägga upp en egen telefoniplats för dig.
     </p> : null}

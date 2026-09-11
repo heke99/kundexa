@@ -1234,3 +1234,25 @@ till en Kundexa-användare, så en delad plats kan inte blockeras i kod utan att
 grunda säljare på en namnstavning. Namnet driver en varning, aldrig ett avslag.
 Rätt åtgärd ligger på Rinkel-sidan: en egen plats per säljare, webbtelefonen som
 ringenhet.
+
+**FAILURE-0071, fortsättning: det gick att fixa.** Min första slutsats — att
+uppringningsvägen bara var en Rinkel-sidig konfiguration — var för snabb. Jag
+gav upp på deras API-schema när dokumentationssajtens Docusaurus-chunkar 404:ade
+på min gissade URL-form. Rätt form stod i `runtime~main.js`: namnkartan ger
+`c7e32a66` och contenthash-kartan `6c3f1939`, alltså
+`/assets/js/c7e32a66.6c3f1939.js`. I den chunken ligger hela OpenAPI-kroppen för
+`PATCH /users/{id}`, och där finns `preferences.muteOtherDevicesOnWebphone`,
+dokumenterad som "Whether or not to call only Webphone when available", plus
+`preferences.defaultOutboundNumber`.
+
+Produktionen körde med `muteOtherDevicesOnWebphone: false` och
+`ringDevices: "all"`, så varje uppringning ringde platsens mobil (+46 70 …,
+ägarens privata linje) parallellt med webbtelefonen. Att svara där är hela
+orsaken till att samtalet "gick via ägarens nummer". Nu sätter Kundexa
+inställningen — automatiskt vid katalogsynk och på begäran per företag — och
+läser tillbaka platsen innan något registreras som åtgärdat. En 204 säger bara
+att kroppen togs emot.
+
+Lärdomen är metodmässig, inte teknisk: jag drog en slutsats om vad en leverantör
+*inte* kan göra utifrån att jag inte hittade dokumentationen, i stället för att
+läsa den. "Jag hittade det inte" och "det finns inte" är olika påståenden.

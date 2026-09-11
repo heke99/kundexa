@@ -12,6 +12,16 @@ export type DialPath = {
   callerIdNumber?: string | null;
   callerIdSource?: string | null;
   seatNameMatchesProfile?: boolean | null;
+  /** Rinkel's "call only Webphone when available". False means a mobile rings too. */
+  webphoneOnly?: boolean | null;
+  ringDevices?: string | null;
+  outboundNumberMatches?: boolean | null;
+  dialPathCorrect?: boolean | null;
+  dialPolicyAppliedAt?: string | null;
+  dialPolicyError?: string | null;
+  seatSharedWithOtherUser?: boolean | null;
+  /** One actionable sentence, or null when the dial path is correct. */
+  issue?: string | null;
 };
 
 export type EndCallResult = {

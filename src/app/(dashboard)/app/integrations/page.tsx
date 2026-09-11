@@ -9,11 +9,31 @@ import { Field, SelectField } from "@/components/ui/form-field";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
 import {
+  repairTenantDialPath,
   saveRinkelCallerIdDefault,
   saveTelephonyPolicy,
 } from "@/app/actions/rinkel";
 
 type Config = Record<string, unknown>;
+type DialPathReport = {
+  expectedNumberId: string | null;
+  incorrectCount: number;
+  seats: Array<{
+    providerUserRowId: string;
+    externalUserId: string;
+    displayName: string | null;
+    sellerName: string | null;
+    appliedAt: string | null;
+    error: string | null;
+    state: {
+      webphoneOnly: boolean;
+      ringDevices: string | null;
+      seatPhoneE164: string | null;
+      outboundNumberMatches: boolean | null;
+      correct: boolean;
+    };
+  }>;
+};
 type TenantRinkelResources = {
   users: Array<{
     allocationId: string;
@@ -56,6 +76,7 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
     { data: reminderPolicy },
     { data: rinkelResourceData },
     { data: telephonyPolicy },
+    { data: dialPathData },
   ] = await Promise.all([
     supabase.from("tenant_integrations").select("id,provider_type,provider,name,status,last_verified_at,configuration,credentials_ciphertext").order("created_at"),
     supabase.from("phone_numbers").select("*").order("number_e164"),
@@ -64,6 +85,7 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
     supabase.from("contract_reminder_policies").select("*").maybeSingle(),
     supabase.rpc("get_tenant_rinkel_resources"),
     supabase.from("telephony_policies").select("*").maybeSingle(),
+    supabase.rpc("tenant_rinkel_dial_path_report"),
   ]);
   const rinkelResources = (rinkelResourceData ?? {
     users: [], numbers: [], mappings: [],
@@ -76,6 +98,7 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
   const resendConfig = (resend?.configuration ?? {}) as Config;
   const featureMap = new Map((features ?? []).map((feature) => [feature.feature_key, feature.enabled]));
   const resendActive = resend?.status === "active";
+  const dialPath = (dialPathData ?? { expectedNumberId: null, seats: [], incorrectCount: 0 }) as DialPathReport;
 
   return <>
     <PageHeader title="Integrationer" description="Tenantseparerade leverantörsanslutningar för telefoni, SMS, e-post och avtalsleverans." />
@@ -119,6 +142,41 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
             : "väntar på registrerad enhet";
           return <div className="activity-line" key={mapping.id}><span className="activity-dot"><Phone size={13} /></span><div><strong>{profile?.full_name ?? mapping.kundexaUserId}</strong><p>{user?.displayName ?? "Telefoni-användare saknas"} · {deviceLabel} · {number?.number ?? "nummer saknas"}</p></div><Badge className={device ? "badge-success" : "badge-warning"}>{device ? "Ringklar" : "Väntar på enhet"}</Badge></div>;
         })}</div>
+      </CardContent></Card>
+
+      {/* Uppringningsvägen. Rinkels `/dial` startar alltid samtalet genom en
+          platsens enhet — det går inte att ringa "från numret" — så en plats som
+          fortfarande ringer på en mobil skickar samtalet via den telefonen hur
+          rätt caller-ID Kundexa än väljer. Rättningen sätter Rinkels
+          "call only Webphone when available" och företagets utgående nummer. */}
+      <Card><CardHeader><h2><Phone size={17} /> Uppringningsväg</h2><Badge className={dialPath.incorrectCount ? "badge-warning" : "badge-success"}>{dialPath.incorrectCount ? `${dialPath.incorrectCount} att rätta` : "Rätt inställd"}</Badge></CardHeader><CardContent>
+        <p className="muted">
+          Telefonitjänsten kopplar upp säljarens egen enhet först och ringer kunden därifrån. Ringer platsen
+          på en mobil går samtalet via den telefonen — kunden ser fortfarande företagets nummer, men samtalet
+          sker inte i webbtelefonen. Rättningen ställer om platsen till att bara ringa i webbtelefonen och att
+          ringa ut från företagets nummer. Säljarens språk, ringsignal och aviseringar rörs inte.
+        </p>
+        {dialPath.seats.length ? <div style={{ marginTop: 14 }}>{dialPath.seats.map((seat) => <div className="activity-line" key={seat.providerUserRowId}>
+          <span className="activity-dot"><Phone size={13} /></span>
+          <div>
+            <strong>{seat.sellerName ?? seat.displayName ?? seat.externalUserId}</strong>
+            <p>
+              {seat.state.correct
+                ? `Ringer i webbtelefonen${seat.appliedAt ? ` · rättad ${formatDate(seat.appliedAt)}` : ""}`
+                : `Ringer ${seat.state.seatPhoneE164 ?? "en annan enhet"} först${seat.state.outboundNumberMatches === false ? " · fel utgående nummer på platsen" : ""}`}
+            </p>
+            {seat.error ? <p className="form-error" style={{ marginTop: 6 }}>{seat.error}</p> : null}
+          </div>
+          <Badge className={seat.state.correct ? "badge-success" : "badge-warning"}>{seat.state.correct ? "Rätt" : "Rättas"}</Badge>
+        </div>)}</div> : <p className="notice warning" style={{ marginTop: 12 }}>Ingen säljare är mappad till telefoni ännu, så det finns ingen plats att rätta.</p>}
+        {!dialPath.expectedNumberId && dialPath.seats.length ? <p className="notice warning" style={{ marginTop: 12 }}>
+          Företaget saknar ett aktivt utgående telefonnummer, så platsen kan inte peka på något nummer. Be plattformsadministratören tilldela ett nummer först.
+        </p> : null}
+        <form action={repairTenantDialPath} style={{ marginTop: 14 }}>
+          <button className="button button-primary" disabled={!dialPath.seats.length || !dialPath.expectedNumberId}>
+            <Phone size={15} /> Rätta uppringningsvägen
+          </button>
+        </form>
       </CardContent></Card>
 
       <Card><CardHeader><h2>Caller-ID-standarder</h2><Badge>Prioriterad resolver</Badge></CardHeader><CardContent>

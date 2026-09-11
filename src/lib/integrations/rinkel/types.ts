@@ -7,6 +7,7 @@ export type {
   RinkelKnownEndCause,
   RinkelNumber,
   RinkelProviderOutcome,
+  RinkelSeatDialPolicy,
   RinkelUser,
   RinkelWebhookEvent,
   RinkelWebhookPayload,

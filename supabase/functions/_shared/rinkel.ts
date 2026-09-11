@@ -69,6 +69,47 @@ export type RinkelUser = {
   raw: JsonObject;
 };
 
+/**
+ * The two provider preferences that decide *which phone actually rings* when
+ * Kundexa dials.
+ *
+ * `/dial` always originates the call through a provider user's device — there is
+ * no way to place a call "from the number" alone — so the seat's own ring
+ * preferences, not anything in Kundexa, determine whether the seller answers in
+ * the browser or whether some mobile rings instead. `numberId` only controls
+ * what the customer sees.
+ *
+ * `muteOtherDevicesOnWebphone` is Rinkel's "call only Webphone when available".
+ * With it off, a seat that carries a mobile number rings that mobile alongside
+ * the webphone, and the call is effectively placed through whoever owns it.
+ */
+export type RinkelSeatDialPolicy = {
+  webphoneOnly: boolean;
+  defaultOutboundNumberId: string | null;
+  ringDevices: string | null;
+  seatPhoneE164: string | null;
+};
+
+/** Reads the policy out of a stored or freshly fetched provider user payload. */
+export function rinkelSeatDialPolicy(raw: unknown): RinkelSeatDialPolicy {
+  const user = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
+  const preferences = user.preferences && typeof user.preferences === "object" && !Array.isArray(user.preferences)
+    ? user.preferences as Record<string, unknown>
+    : {};
+  const phone = user.phoneNumber && typeof user.phoneNumber === "object" && !Array.isArray(user.phoneNumber)
+    ? user.phoneNumber as Record<string, unknown>
+    : {};
+  const outbound = preferences.defaultOutboundNumber;
+  const ring = preferences.ringDevices;
+  const e164 = phone.e164;
+  return {
+    webphoneOnly: preferences.muteOtherDevicesOnWebphone === true,
+    defaultOutboundNumberId: typeof outbound === "string" && outbound.trim() ? outbound.trim() : null,
+    ringDevices: typeof ring === "string" && ring.trim() ? ring.trim() : null,
+    seatPhoneE164: typeof e164 === "string" && e164.trim() ? e164.trim() : null,
+  };
+}
+
 export type RinkelNumber = {
   id: string;
   number: string;
@@ -386,6 +427,39 @@ export class RinkelClient {
         anonymous: input.anonymous ?? false,
       },
       retrySafe: false,
+      acceptNoContent: true,
+    });
+  }
+
+  /**
+   * Points the seat at the webphone and at the number Kundexa dials from.
+   *
+   * Sends only the two preferences it owns. Rinkel merges a PATCH body, so the
+   * seller's language, colour mode, ringtone and notification settings are their
+   * own and are left untouched — Kundexa has no business overwriting them, and a
+   * full-object write would silently do exactly that.
+   */
+  async setSeatDialPreferences(input: {
+    userId: string;
+    webphoneOnly: boolean;
+    defaultOutboundNumberId?: string | null;
+  }): Promise<void> {
+    if (!input.userId) {
+      throw new RinkelError("RINKEL_INVALID_REQUEST", "Rinkel-användaren saknas.");
+    }
+    const preferences: Record<string, unknown> = {
+      muteOtherDevicesOnWebphone: input.webphoneOnly,
+    };
+    if (input.defaultOutboundNumberId) {
+      preferences.defaultOutboundNumber = input.defaultOutboundNumberId;
+    }
+    await this.request(`/users/${encodeURIComponent(input.userId)}`, {
+      method: "PATCH",
+      body: { preferences },
+      // The body is a fixed target state, not a delta, so a replay lands on the
+      // same result. `request` still only retries GET; this says what is true
+      // rather than relying on that.
+      retrySafe: true,
       acceptNoContent: true,
     });
   }

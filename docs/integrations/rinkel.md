@@ -124,13 +124,36 @@ provideranvändares enhet, aldrig "från numret" i sig. Vilken telefon som ringe
 - `deviceId` är den **enhet som ringer upp säljaren först**. Ringer den platsen
   på en mobil går första benet via den mobilens ägare.
 
-Delar flera säljare en Rinkel-plats ringer varje samtal alltså upp den
-personens telefon. Rinkel exponerar inget fält som binder en plats till en
-Kundexa-användare, så detta går inte att blockera i kod utan att grunda
-säljare på en namnstavning. I stället visas det:
-`current_user_dial_path()` returnerar både numret kunden ser och telefonen som
-ringer, och dialern skriver ut båda före samtalet. Rätt åtgärd på Rinkel-sidan
-är en egen plats per säljare, med webbtelefonen som ringenhet.
+Det går däremot att styra *vilken* av platsens enheter som ringer.
+`PATCH /users/{id}` tar `preferences.muteOtherDevicesOnWebphone` — Rinkels
+"call only Webphone when available" — och `preferences.defaultOutboundNumber`.
+Med den första `false` ringer en plats som bär ett mobilnummer den mobilen
+parallellt med webbtelefonen, och svarar man där går samtalet via den telefonen.
+Kundexa sätter båda och läser tillbaka platsen efteråt; en 204 säger bara att
+kroppen togs emot, inte att platsen nu ringer i webbtelefonen.
+
+Kundexa skriver **bara** de två inställningarna. Rinkel slår ihop en PATCH-kropp,
+så säljarens språk, färgläge, ringsignal och aviseringar är deras egna. En
+skrivning av hela objektet hade tagit över dem tyst.
+
+Rättningen sker på två ställen:
+
+- **`Synkronisera katalog`** ställer om varje plats som är allokerad till en
+  tenant och inte redan är rätt. En frisk synk skriver ingenting hos providern.
+- **`Rätta uppringningsvägen`** under Integrationer gör samma sak för ett
+  enskilt företag, och visar resultat per plats.
+
+`platform_rinkel_users.dial_policy_applied_at` sätts först efter en bekräftad
+läsning tillbaka, och `dial_policy_error` bär orsaken när det inte gick.
+`rinkel_seat_dial_path_state()` härleder rätt/fel ur den synkade providerbilden
+i stället för att lagra en flagga som kan säga emot den.
+
+**Det som inte går att lösa i kod:** delar flera säljare en Rinkel-plats ringer
+varje samtal upp samma telefon så snart webbtelefonen inte är öppen. Rinkel
+exponerar inget fält som binder en plats till en Kundexa-användare, så det kan
+inte vägras utan att grunda säljare på en namnstavning. Det visas i stället —
+`current_user_dial_path()` returnerar `seatSharedWithOtherUser` och en
+åtgärdbar `issue` — och rätt åtgärd är en egen plats per säljare.
 
 ## Webhookar
 

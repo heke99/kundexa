@@ -9,7 +9,7 @@ import { sha256 } from "@/lib/crypto";
 import { serverEnv } from "@/lib/env";
 import { invokeRinkelPlatformWorker } from "@/lib/workers/rinkel-platform-worker";
 import { toJson } from "@/lib/supabase/json";
-import { createPlatformRinkelClient, staleRinkelDeviceIds } from "@/lib/integrations/rinkel/client";
+import { createPlatformRinkelClient, rinkelSeatDialPolicy, staleRinkelDeviceIds } from "@/lib/integrations/rinkel/client";
 import { safeRinkelError } from "@/lib/integrations/rinkel/errors";
 import {
   RINKEL_CORE_WEBHOOK_EVENTS,
@@ -358,6 +358,70 @@ async function ensureTenantPhoneNumber(number: RinkelNumber) {
   return number;
 }
 
+/**
+ * Brings every seat Kundexa dials through onto the dial-path policy.
+ *
+ * Runs as part of the catalog sync so a newly provisioned seat is correct from
+ * its first call rather than after someone notices a customer complaining that
+ * a mobile rang. Only seats that are actually allocated to a tenant are touched
+ * — a Rinkel seat nobody dials through is the account owner's business, not
+ * Kundexa's — and only when the stored payload says the policy is not already
+ * in effect, so a healthy sync makes no provider writes at all.
+ */
+async function enforceAllocatedSeatDialPolicies(
+  admin: ReturnType<typeof createAdminClient>,
+  integrationId: string,
+) {
+  const { data: allocations, error: allocationsError } = await admin.from("rinkel_user_allocations")
+    .select("tenant_id,rinkel_user_id,platform_rinkel_users!inner(id,external_user_id,active,raw_provider_data,platform_integration_id)")
+    .eq("status", "active")
+    .is("valid_to", null);
+  if (allocationsError) throw allocationsError;
+
+  const seats = (allocations ?? [])
+    .map((allocation) => {
+      const user = Array.isArray(allocation.platform_rinkel_users)
+        ? allocation.platform_rinkel_users[0]
+        : allocation.platform_rinkel_users;
+      return user && user.active && user.platform_integration_id === integrationId
+        ? { tenantId: allocation.tenant_id, providerUserRowId: user.id, externalUserId: user.external_user_id, raw: user.raw_provider_data }
+        : null;
+    })
+    .filter((seat): seat is NonNullable<typeof seat> => Boolean(seat));
+  if (!seats.length) return { applied: 0, failed: 0 };
+
+  const { data: numberAllocations, error: numberError } = await admin.from("rinkel_number_allocations")
+    .select("tenant_id,created_at,platform_rinkel_numbers!inner(external_number_id,active,is_platform_default)")
+    .in("tenant_id", [...new Set(seats.map((seat) => seat.tenantId))])
+    .eq("status", "active")
+    .is("valid_to", null)
+    .order("created_at");
+  if (numberError) throw numberError;
+
+  const numberByTenant = new Map<string, string>();
+  for (const allocation of numberAllocations ?? []) {
+    const number = Array.isArray(allocation.platform_rinkel_numbers)
+      ? allocation.platform_rinkel_numbers[0]
+      : allocation.platform_rinkel_numbers;
+    if (!number?.active || numberByTenant.has(allocation.tenant_id)) continue;
+    numberByTenant.set(allocation.tenant_id, number.external_number_id);
+  }
+
+  let applied = 0;
+  let failed = 0;
+  for (const seat of seats) {
+    const expectedNumberId = numberByTenant.get(seat.tenantId) ?? null;
+    const current = rinkelSeatDialPolicy(seat.raw);
+    const alreadyCorrect = current.webphoneOnly
+      && (!expectedNumberId || current.defaultOutboundNumberId === expectedNumberId);
+    if (alreadyCorrect) continue;
+    const failure = await applySeatDialPolicy(admin, seat, expectedNumberId);
+    if (failure) failed += 1;
+    else applied += 1;
+  }
+  return { applied, failed };
+}
+
 export async function syncPlatformRinkelDirectory() {
   const context = await platformAdminContext();
   const admin = createAdminClient();
@@ -483,6 +547,11 @@ export async function syncPlatformRinkelDirectory() {
     const activeDeviceCount = (synchronizedDevices ?? []).filter((device) => activeStoredUserIds.has(device.platform_rinkel_user_id)).length;
     const activeNumberCount = numbers.filter((number) => number.active).length;
     const repairedMappingCount = await repairUniqueRinkelDeviceMappings(admin, integration.id);
+    // Rinkel places every call through a seat's device, so a seat that still
+    // rings a personal mobile sends the call via that phone no matter what
+    // caller ID Kundexa picks. Correct it here, where the fresh catalog already
+    // says which seats exist and which are allocated.
+    const dialPolicy = await enforceAllocatedSeatDialPolicies(admin, integration.id);
     const dialConfigured = activeUserCount > 0 && activeDeviceCount > 0 && activeNumberCount > 0;
     const capabilities = {
       ...(integration.capabilities ?? {}),
@@ -542,6 +611,8 @@ export async function syncPlatformRinkelDirectory() {
       users_without_provider_device: users.filter((user) => user.active && !user.deviceId && !user.deviceInventoryError).length,
       repaired_mappings: repairedMappingCount,
       dial_configured: dialConfigured,
+      dial_policy_applied: dialPolicy.applied,
+      dial_policy_failed: dialPolicy.failed,
     });
     revalidatePath("/app/platform/telephony");
     revalidatePath("/app/integrations");
@@ -550,7 +621,7 @@ export async function syncPlatformRinkelDirectory() {
     // in on a Rinkel device yet; say that instead of blaming the payload shape.
     const usersWithoutDevice = users.filter((user) => user.active && !user.deviceId && !user.deviceInventoryError).length;
     const unreadableUsers = users.filter((user) => user.deviceInventoryError).length;
-    successMessage = `Katalogen synkroniserades: ${users.length} användare, ${activeDeviceCount} registrerade enheter och ${numbers.length} nummer.${repairedMappingCount ? ` ${repairedMappingCount} befintliga säljarmappningar reparerades automatiskt.` : ""}${usersWithoutDevice ? ` ${usersWithoutDevice} aktiva användare saknar registrerad enhet hos Rinkel; de kan tilldelas men kan ringa först när de loggat in i Rinkels webbtelefon eller app och katalogen synkats igen.` : ""}${unreadableUsers ? ` ${unreadableUsers} användare kunde inte läsas i detalj och deras befintliga enheter bevarades.` : ""}`;
+    successMessage = `Katalogen synkroniserades: ${users.length} användare, ${activeDeviceCount} registrerade enheter och ${numbers.length} nummer.${repairedMappingCount ? ` ${repairedMappingCount} befintliga säljarmappningar reparerades automatiskt.` : ""}${usersWithoutDevice ? ` ${usersWithoutDevice} aktiva användare saknar registrerad enhet hos Rinkel; de kan tilldelas men kan ringa först när de loggat in i Rinkels webbtelefon eller app och katalogen synkats igen.` : ""}${unreadableUsers ? ` ${unreadableUsers} användare kunde inte läsas i detalj och deras befintliga enheter bevarades.` : ""}${dialPolicy.applied ? ` ${dialPolicy.applied} telefoniplats${dialPolicy.applied === 1 ? "" : "er"} ställdes om till att ringa i webbtelefonen i stället för på en mobil.` : ""}${dialPolicy.failed ? ` ${dialPolicy.failed} telefoniplats${dialPolicy.failed === 1 ? "" : "er"} kunde inte ställas om; orsaken visas per plats under Integrationer.` : ""}`;
   } catch (error) {
     const safe = safePlatformError(error);
     await admin.from("platform_integrations").update({
@@ -805,6 +876,127 @@ function assignmentSummary(report: AssignmentReport) {
       : "",
     unresolved ? `${unresolved} säljare kunde inte kopplas automatiskt${reasons ? ` (${reasons})` : ""}. Tilldela numret per säljare och välj telefoni-användare manuellt.` : "",
   ].filter(Boolean).join(" ");
+}
+
+// ---------------------------------------------------------------------------
+// Uppringningsvägen
+//
+// `POST /dial` always originates the call through a provider user's device;
+// Rinkel offers no way to place a call from the number alone. So the seat's own
+// ring preferences — not anything in Kundexa — decide whether the seller answers
+// in the browser or whether a mobile rings instead, and a seat carrying a
+// personal mobile rings that phone on every call.
+//
+// Rinkel does expose the fix: `preferences.muteOtherDevicesOnWebphone`, "call
+// only Webphone when available". Kundexa sets it, together with the outbound
+// number the tenant actually holds, and confirms both by reading the seat back.
+// A 204 only says the body was accepted.
+// ---------------------------------------------------------------------------
+
+type DialPathSeat = {
+  providerUserRowId: string;
+  externalUserId: string;
+  displayName: string | null;
+  email: string | null;
+  sellerUserId: string | null;
+  sellerName: string | null;
+  appliedAt: string | null;
+  error: string | null;
+  state: {
+    webphoneOnly: boolean;
+    ringDevices: string | null;
+    defaultOutboundNumberId: string | null;
+    seatPhoneE164: string | null;
+    outboundNumberMatches: boolean | null;
+    correct: boolean;
+  };
+};
+
+type DialPathReport = {
+  expectedNumberId: string | null;
+  seats: DialPathSeat[];
+  incorrectCount: number;
+};
+
+/**
+ * Applies the dial-path policy to one seat and records what the provider says
+ * afterwards. Returns null on success, or a safe reason.
+ *
+ * Every failure is written to the seat rather than only returned, because the
+ * caller here is a button press: without the stored reason, the next person to
+ * look at the page sees an unrepaired seat and no explanation.
+ */
+async function applySeatDialPolicy(
+  admin: ReturnType<typeof createAdminClient>,
+  seat: { providerUserRowId: string; externalUserId: string },
+  expectedNumberId: string | null,
+): Promise<string | null> {
+  const client = createPlatformRinkelClient(crypto.randomUUID());
+  let confirmed: RinkelUser | null = null;
+  let failure: string | null = null;
+  try {
+    await client.setSeatDialPreferences({
+      userId: seat.externalUserId,
+      webphoneOnly: true,
+      defaultOutboundNumberId: expectedNumberId,
+    });
+    // Read back. "Rinkel accepted the body" and "the seat now rings the
+    // webphone" are different claims, and only the second one is worth storing.
+    confirmed = await client.getUser(seat.externalUserId);
+    const applied = rinkelSeatDialPolicy(confirmed.raw);
+    if (!applied.webphoneOnly) {
+      failure = "Telefonitjänsten sparade inte inställningen att bara webbtelefonen ska ringa.";
+    } else if (expectedNumberId && applied.defaultOutboundNumberId !== expectedNumberId) {
+      failure = "Telefonitjänsten sparade inte företagets utgående nummer på platsen.";
+    }
+  } catch (error) {
+    failure = safePlatformError(error).message;
+  }
+  const { error: recordError } = await admin.rpc("record_rinkel_seat_dial_policy", {
+    p_provider_user_id: seat.providerUserRowId,
+    p_raw_provider_data: confirmed ? rinkelUserProviderPayload(confirmed) : null,
+    p_error: failure,
+  });
+  if (recordError) {
+    // The provider may well have been changed; saying nothing would leave the
+    // page showing a stale "not repaired" with no reason at all.
+    return failure ?? "Rättningen gick igenom hos telefonitjänsten men kunde inte sparas i Kundexa.";
+  }
+  return failure;
+}
+
+export async function repairTenantDialPath() {
+  await tenantAdminContext();
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("tenant_rinkel_dial_path_report");
+  if (error) go("/app/integrations", "error", safePlatformError(error).message);
+  const report = (data ?? { expectedNumberId: null, seats: [], incorrectCount: 0 }) as DialPathReport;
+  if (!report.seats.length) {
+    go("/app/integrations", "error", "Företaget har ingen aktiv telefoniplats att rätta. Mappa säljarna till telefoni först.");
+  }
+  if (!report.expectedNumberId) {
+    go("/app/integrations", "error", "Företaget saknar ett aktivt utgående telefonnummer, så platsen kan inte peka på något nummer.");
+  }
+
+  const admin = createAdminClient();
+  const failures: string[] = [];
+  let repaired = 0;
+  for (const seat of report.seats) {
+    const failure = await applySeatDialPolicy(admin, seat, report.expectedNumberId);
+    if (failure) failures.push(`${seat.sellerName ?? seat.displayName ?? seat.externalUserId}: ${failure}`);
+    else repaired += 1;
+  }
+
+  revalidatePath("/app/integrations");
+  revalidatePath("/app/dialer");
+  if (failures.length) {
+    go("/app/integrations", "error", `${repaired} av ${report.seats.length} telefoniplatser rättades. ${failures.join(" ")}`);
+  }
+  go(
+    "/app/integrations",
+    "message",
+    `${repaired} telefoniplats${repaired === 1 ? "" : "er"} ringer nu i webbtelefonen och ringer ut från företagets nummer. Säljaren måste vara inloggad i telefonitjänstens webbtelefon när samtalet startas.`,
+  );
 }
 
 export async function assignPlatformPhoneNumber(form: FormData) {

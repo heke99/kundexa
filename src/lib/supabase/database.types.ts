@@ -8626,6 +8626,8 @@ export type Database = {
         Row: {
           active: boolean
           created_at: string
+          dial_policy_applied_at: string | null
+          dial_policy_error: string | null
           display_name: string
           email: string | null
           external_device_id: string | null
@@ -8640,6 +8642,8 @@ export type Database = {
         Insert: {
           active?: boolean
           created_at?: string
+          dial_policy_applied_at?: string | null
+          dial_policy_error?: string | null
           display_name: string
           email?: string | null
           external_device_id?: string | null
@@ -8654,6 +8658,8 @@ export type Database = {
         Update: {
           active?: boolean
           created_at?: string
+          dial_policy_applied_at?: string | null
+          dial_policy_error?: string | null
           display_name?: string
           email?: string | null
           external_device_id?: string | null
@@ -14983,6 +14989,14 @@ export type Database = {
         }
         Returns: undefined
       }
+      record_rinkel_seat_dial_policy: {
+        Args: {
+          p_error?: string
+          p_provider_user_id: string
+          p_raw_provider_data: Json
+        }
+        Returns: Json
+      }
       refresh_due_dynamic_customer_lists: {
         Args: { p_limit?: number }
         Returns: Json
@@ -15252,6 +15266,10 @@ export type Database = {
           p_session_id: string
           p_target_phone: string
         }
+        Returns: Json
+      }
+      rinkel_seat_dial_path_state: {
+        Args: { p_expected_number_id: string; p_raw: Json }
         Returns: Json
       }
       rollback_import_run: { Args: { p_import_run_id: string }; Returns: Json }
@@ -16009,6 +16027,7 @@ export type Database = {
         Returns: string
       }
       telephony_status_for_current_user: { Args: never; Returns: Json }
+      tenant_rinkel_dial_path_report: { Args: never; Returns: Json }
       tenant_user_security_states: {
         Args: never
         Returns: {

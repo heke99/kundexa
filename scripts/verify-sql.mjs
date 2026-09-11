@@ -924,6 +924,109 @@ const callsAfterSelfDial = await db.query(`select count(*)::int as count from pu
 if (callsAfterSelfDial.rows[0].count !== callsBeforeSelfDial.rows[0].count) {
   throw new Error("A refused self-dial still created a call row.");
 }
+// Uppringningsvägen, härledd. `muteOtherDevicesOnWebphone` is Rinkel's
+// "call only Webphone when available"; with it off the seat's mobile rings
+// alongside the webphone and the call is placed through whoever owns that
+// phone, however correct the caller ID is.
+const seatStateBefore = await db.query(`select public.rinkel_seat_dial_path_state(
+  jsonb_build_object(
+    'preferences', jsonb_build_object('muteOtherDevicesOnWebphone', false, 'ringDevices', 'all', 'defaultOutboundNumber', 'platform-number-a'),
+    'phoneNumber', jsonb_build_object('e164','+46709999999')
+  ), 'platform-number-a') as state`);
+if (
+  seatStateBefore.rows[0].state.correct !== false
+  || seatStateBefore.rows[0].state.webphoneOnly !== false
+  || seatStateBefore.rows[0].state.outboundNumberMatches !== true
+  || seatStateBefore.rows[0].state.seatPhoneE164 !== '+46709999999'
+) {
+  throw new Error(`A seat that rings a mobile was reported as correct: ${JSON.stringify(seatStateBefore.rows[0].state)}`);
+}
+const seatStateAfter = await db.query(`select public.rinkel_seat_dial_path_state(
+  jsonb_build_object('preferences', jsonb_build_object('muteOtherDevicesOnWebphone', true, 'defaultOutboundNumber', 'platform-number-a')),
+  'platform-number-a') as state`);
+if (seatStateAfter.rows[0].state.correct !== true) {
+  throw new Error(`A webphone-only seat on the right number was not reported correct: ${JSON.stringify(seatStateAfter.rows[0].state)}`);
+}
+// Webphone-only is not enough on its own: a seat pointing at another number
+// dials out on that number instead of the tenant's.
+const seatStateWrongNumber = await db.query(`select public.rinkel_seat_dial_path_state(
+  jsonb_build_object('preferences', jsonb_build_object('muteOtherDevicesOnWebphone', true, 'defaultOutboundNumber', 'platform-number-b')),
+  'platform-number-a') as state`);
+if (
+  seatStateWrongNumber.rows[0].state.correct !== false
+  || seatStateWrongNumber.rows[0].state.outboundNumberMatches !== false
+) {
+  throw new Error(`A seat on the wrong outbound number was reported correct: ${JSON.stringify(seatStateWrongNumber.rows[0].state)}`);
+}
+// The seller's own view names the phone that rings and says what to do, rather
+// than leaving it to be discovered by hearing the wrong phone ring.
+await db.exec(`
+  update public.platform_rinkel_users
+  set raw_provider_data=jsonb_build_object(
+    'preferences', jsonb_build_object('muteOtherDevicesOnWebphone', false, 'ringDevices', 'all', 'defaultOutboundNumber', 'platform-number-a'),
+    'phoneNumber', jsonb_build_object('e164','+46709999999')
+  )
+  where id='00000000-0000-0000-0000-000000000052';
+`);
+const uncorrectedPath = await db.query(`select public.current_user_dial_path() as path`);
+if (
+  uncorrectedPath.rows[0].path.dialPathCorrect !== false
+  || uncorrectedPath.rows[0].path.webphoneOnly !== false
+  || !String(uncorrectedPath.rows[0].path.issue ?? "").includes('+46709999999')
+) {
+  throw new Error(`The seller was not told which phone rings: ${JSON.stringify(uncorrectedPath.rows[0].path)}`);
+}
+// A tenant admin sees every seat the company dials through, and only its own.
+const dialPathReport = await db.query(`select public.tenant_rinkel_dial_path_report() as report`);
+if (
+  dialPathReport.rows[0].report.expectedNumberId !== 'platform-number-a'
+  || dialPathReport.rows[0].report.seats.length !== 1
+  || dialPathReport.rows[0].report.incorrectCount !== 1
+  || dialPathReport.rows[0].report.seats[0].state.correct !== false
+) {
+  throw new Error(`Dial path report was wrong: ${JSON.stringify(dialPathReport.rows[0].report)}`);
+}
+// Recording the repair is a read-back from the provider, so only the server
+// that made the call may write it. A signed-in user must not.
+let sellerCannotRecordDialPolicy = false;
+try {
+  await db.query(`select public.record_rinkel_seat_dial_policy(
+    '00000000-0000-0000-0000-000000000052', jsonb_build_object('preferences', jsonb_build_object('muteOtherDevicesOnWebphone', true)), null)`);
+} catch (error) {
+  sellerCannotRecordDialPolicy = String(error).includes('service_role_required');
+}
+if (!sellerCannotRecordDialPolicy) {
+  throw new Error('A signed-in user was able to record a dial-path repair they never performed.');
+}
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.query(`select public.record_rinkel_seat_dial_policy(
+  '00000000-0000-0000-0000-000000000052',
+  jsonb_build_object(
+    'preferences', jsonb_build_object('muteOtherDevicesOnWebphone', true, 'ringDevices', 'all', 'defaultOutboundNumber', 'platform-number-a'),
+    'phoneNumber', jsonb_build_object('e164','+46709999999')
+  ), null) as result`);
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
+const correctedPath = await db.query(`select public.current_user_dial_path() as path`);
+if (
+  correctedPath.rows[0].path.dialPathCorrect !== true
+  || correctedPath.rows[0].path.issue !== null
+  || correctedPath.rows[0].path.dialPolicyAppliedAt === null
+  // The seat still carries the mobile; what changed is that it no longer rings.
+  || correctedPath.rows[0].path.deviceRingsPhone !== '+46709999999'
+) {
+  throw new Error(`The repair was not reflected in the seller's dial path: ${JSON.stringify(correctedPath.rows[0].path)}`);
+}
+// A failed repair must say why rather than leaving the seat looking untouched.
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.query(`select public.record_rinkel_seat_dial_policy(
+  '00000000-0000-0000-0000-000000000052', null, 'Telefonitjänsten nekade ändringen.') as result`);
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
+const failedRepairPath = await db.query(`select public.current_user_dial_path() as path`);
+if (failedRepairPath.rows[0].path.dialPolicyError !== 'Telefonitjänsten nekade ändringen.') {
+  throw new Error(`A failed repair left no reason behind: ${JSON.stringify(failedRepairPath.rows[0].path)}`);
+}
+console.log("Executed the dial path repair: a seat that rings a mobile is reported incorrect, webphone-only on the wrong number is still incorrect, the seller is told which phone rings, the tenant report sees only its own seat, a signed-in user may not record a repair, a recorded repair clears the warning, and a failed one leaves its reason.");
+
 await db.exec(`
   update public.platform_rinkel_users set raw_provider_data='{}'::jsonb
   where id='00000000-0000-0000-0000-000000000052';

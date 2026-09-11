@@ -1,7 +1,7 @@
 import { serverEnv } from "@/lib/env";
-import { RinkelClient, RinkelError, RINKEL_DEFAULT_BASE_URL, staleRinkelDeviceIds } from "../../../../supabase/functions/_shared/rinkel";
+import { RinkelClient, RinkelError, RINKEL_DEFAULT_BASE_URL, rinkelSeatDialPolicy, staleRinkelDeviceIds } from "../../../../supabase/functions/_shared/rinkel";
 
-export { RinkelClient, RINKEL_DEFAULT_BASE_URL, staleRinkelDeviceIds };
+export { RinkelClient, RINKEL_DEFAULT_BASE_URL, rinkelSeatDialPolicy, staleRinkelDeviceIds };
 
 export function isPlatformRinkelRuntimeConfigured() {
   const env = serverEnv();
