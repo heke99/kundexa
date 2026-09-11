@@ -2735,6 +2735,50 @@ console.log("Executed segment authority: only a tenant admin may create one, a t
 
 console.log("Executed contract template authorship: a team leader creates a draft, cannot release it, an owner approves it into the current version, and a seller is refused.");
 
+// E-mail is on from the start; switching it off is the deliberate act. The
+// subtlety is that three places seed the default and only the trigger's write
+// survives, so a change to either of the other two would look right and do
+// nothing. These pin the outcome rather than any one of the three.
+{
+  await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+  const newTenant = (await db.query(
+    `insert into public.tenants(slug,name,legal_name,organization_number,status)
+     values('epost-default','E-post Default AB','E-post Default AB','5561234567','active') returning id`,
+  )).rows[0].id;
+
+  const flagsFor = async (tenantId) => Object.fromEntries((await db.query(
+    `select feature_key, enabled from public.tenant_features where tenant_id=$1
+       and feature_key in ('outbound_email','contract_delivery_email','outbound_sms','contract_delivery_sms')`,
+    [tenantId],
+  )).rows.map((row) => [row.feature_key, row.enabled]));
+
+  const seeded = await flagsFor(newTenant);
+  if (seeded.outbound_email !== true || seeded.contract_delivery_email !== true) {
+    throw new Error(`A new tenant did not get e-mail enabled: ${JSON.stringify(seeded)}`);
+  }
+  // Only e-mail moved. SMS costs money per message and was never asked for.
+  if (seeded.outbound_sms !== false || seeded.contract_delivery_sms !== false) {
+    throw new Error(`Enabling e-mail also enabled SMS: ${JSON.stringify(seeded)}`);
+  }
+
+  // The tenants that already existed are brought along by the backfill.
+  const backfilled = await flagsFor("00000000-0000-0000-0000-000000000001");
+  if (backfilled.outbound_email !== true || backfilled.contract_delivery_email !== true) {
+    throw new Error(`An existing tenant was not backfilled: ${JSON.stringify(backfilled)}`);
+  }
+
+  // And switching it off has to stick — that is the whole point of a default.
+  await db.query(
+    `update public.tenant_features set enabled=false where tenant_id=$1 and feature_key='outbound_email'`,
+    [newTenant],
+  );
+  const afterOptOut = await flagsFor(newTenant);
+  if (afterOptOut.outbound_email !== false) throw new Error("Switching e-mail off did not hold");
+
+  await db.query(`delete from public.tenants where id=$1`, [newTenant]);
+}
+console.log("Executed the e-mail default: a newly created tenant has outbound e-mail and contract delivery by e-mail on without SMS following along, the tenants that already existed are backfilled, and switching it off stays off.");
+
 // An incoming row that belongs to a customer you already have does not get
 // rejected — it silently updates that customer, and all you see afterwards is a
 // count. These prove the report names the same collisions the import will act

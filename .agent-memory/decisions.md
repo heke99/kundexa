@@ -142,3 +142,32 @@ instead of a bare success. It is idempotent per scope, so re-assigning never pro
 Seller-to-provider linking is deterministic and refuses to guess: an explicit provider user (seller scope, one
 seller), then an unambiguous case-insensitive email match, then a single free provider user when exactly one
 seller in the company still lacks a mapping. Anything else is reported in `unresolved_reasons`.
+
+## 2026-09-11 — E-postutskick är på från början
+
+**Beslut:** `outbound_email` och `contract_delivery_email` sås som `true` för
+varje ny tenant, och är bakfyllda för de som redan fanns. Den som inte vill ha
+e-post stänger av den i Administration, och avstängningen består.
+
+**Varför:** Att skicka e-post är vad produkten är till för. Att ha det avstängt
+är undantaget, inte normalläget. Tidigare kunde ett nytt företag inte mejla ett
+avtal förrän någon hittat två reglage, och utskicket föll på
+`outbound_email_feature_disabled` — ett felmeddelande som inte säger var reglaget
+finns.
+
+**Fällan, som hade gjort en halv fix osynlig:** tre ställen sår defaultvärdet,
+och bara ett av dem vinner. `bootstrap_operational_defaults` är en AFTER
+INSERT-trigger på `tenants` och skriver först. `create_tenant_with_owner` och
+`ensure_tenant_defaults` skriver båda `on conflict do nothing`, så när de körs
+finns triggerns rad redan och deras insert är en tom operation. Att ändra någon
+av de två hade sett rätt ut och inte gjort någonting alls. Det är bevisat: med
+bara de två patchade får en ny tenant fortfarande `false`.
+
+**Avgränsning:** Endast e-post. SMS kostar pengar per meddelande och står kvar
+avstängt. `team_features` rörs inte — den tabellen läses ingenstans i koden, så
+e-post grindas uteslutande per företag.
+
+**Ingen grind är försvagad.** Funktionsflaggan säger vad tenanten får göra;
+huruvida ett enskilt meddelande får skickas avgörs separat av kontaktpolicy och
+rättslig grund, och ingenting skickas alls innan en Resend-integration är aktiv.
+Att slå på flaggan tar bort en återvändsgränd, inte ett skydd.
