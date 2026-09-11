@@ -1463,3 +1463,61 @@ katalogmetadata, och åtkomsten är redan avgjord av
 `callStart` har inte uteblivit för att något är trasigt, utan för att inget
 kvalificerande samtal har inträffat. De två utgående samtalen slutade i
 providerfel respektive obesvarat, och det enda besvarade samtalet var inkommande.
+
+## Femte svepet: gränssnittet
+
+**FAILURE-0083 — på mobil fanns ingen navigation alls.**
+`@media(max-width:760px){.sidebar{display:none}}` och ingen mobilmeny någonstans.
+Under 760 px kom man till dashboarden och därifrån ingenstans utom genom att
+skriva URL:er. Samma medieregel hade `.topbar form{display:none}`, vilket också
+dolde **utloggningsknappen och tenantväxlaren** — på en telefon gick det alltså
+varken att navigera, byta företag eller logga ut. För en produkt där säljaren
+sitter med telefonen i handen är det allvarligt.
+
+Sidomenyn är nu en låda som glider in, med bakgrundsdimning, stängning på Escape,
+på bakgrundsklick och vid navigering. Den tas inte längre bort ur DOM:en utan
+flyttas ut med `transform` plus `visibility:hidden`, så en skärmläsare inte
+vandrar runt i en meny ingen ser.
+
+**FAILURE-0084 — `/app/queues` gick inte att nå för någon.**
+Ingen nav-post, ingen länk någonstans i projektet, och ingen regel i
+`routeAccessMap`. Layouten omdirigerar på saknad regel, så den som ändå skrev
+URL:en fick "Du saknar behörighet" — för en sida som inte hade någon
+behörighetsregel alls. `call_queues` har noll rader och ingenting skriver till
+den. Sidan är borttagen; tabellen ligger kvar. Ett invariant-test går nu igenom
+varje sida under `(dashboard)/app` och kräver både en åtkomstregel och en väg
+dit; jag la till en testsida och körde om för att se att det faller.
+
+**FAILURE-0085 — alla 60 ikoner var en av fyra generiska former.**
+`createIcon(name, variant)` valde mellan fyra figurer med `variant % 4`. Sidomenyn
+visade alltså samma cirkel, hus, kuvert och plusruta om och om igen — och ofta
+fel: kuvert för "Prospekt", hus för "Avtal". En ikon som inte skiljer sin rad
+från nästa är sämre än ingen ikon, för den kostar ändå raden 28 px och inbjuder
+till feltolkning. Varje namn har nu en egen 24×24-bana ritad på samma rutnät.
+
+**FAILURE-0086 — topbaren låg vänsterställd.**
+`justify-content:space-between` med ett enda barn lägger barnet till vänster, så
+klocka, företagsnamn och utloggning satt hopklämda i vänsterkanten med resten av
+baren tom.
+
+**Omstruktureringen.** Navigationen var korrekt rollfiltrerad men inte
+*rollformad*: samma taxonomi för alla, bara olika många rader. En säljare fick 17
+länkar i fyra grupper där de tre hen använder dagligen låg utspridda. Nu grupperat
+efter arbetsuppgift — Ringa, Kunder, Sälj, Kommunikation, Leda, Inställningar —
+med sektioner som går att fälla ihop och där en tom sektion försvinner helt.
+Säljare: 16 länkar i fyra sektioner med dagens tre först. Ägare: 32 länkar, 24
+synliga, de åtta sällan använda inställningarna bakom en ihopfälld sektion.
+`routeAccessMap` är fortfarande enda sanningen om *vem som får* nå vad.
+
+**Ett fel i min egen kod, hittat innan det gick ut.** Jag lagrade först en lista
+över ihopfällda sektioner. En tom lista betyder "ingenting är ihopfällt", vilket
+inte går att skilja från "personen har inte valt" — så sektionen som ska börja
+ihopfälld hade slagit upp sig själv så fort det lagrade värdet lästes efter
+mount. Lagrar nu bara uttryckliga val.
+
+**Metod.** Jag kan inte köra appen här (inga credentials), men Chromium finns, så
+jag renderade den verkliga markupen mot den verkliga CSS:en och tittade på den i
+1440 px och 390 px. Det var så jag såg den vänsterställda topbaren och att
+ikonerna var oanvändbara. En bugg jag "såg" — att notisbrickan hamnade under
+klockan — visade sig vara ett fel i min egen testrigg, som bara laddade
+`globals.css` medan brickans regler ligger i `dialer.css`.

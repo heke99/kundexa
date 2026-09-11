@@ -476,3 +476,47 @@ console.log("Remediation regression tests passed.");
   assert.doesNotMatch(processOutboxCron, /functions\/v1\/process-outbox/);
 }
 console.log("Every Vercel-scheduled Edge worker records a heartbeat through the same invoker.");
+
+
+// Every dashboard page must be reachable: a rule in `routeAccessMap` and, unless
+// it is a detail or wizard page opened from its parent, an entry in the sidebar.
+// `/app/queues` had neither — the layout redirects on a missing rule, so it
+// answered "du saknar behörighet" to every role for a page that had no
+// permission rule at all, and nothing anywhere linked to it.
+{
+  const { readdirSync, statSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const root = new URL("../src/app/(dashboard)/app", import.meta.url).pathname;
+  const routes = [];
+  const walk = (dir, prefix) => {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walk(full, `${prefix}/${entry}`);
+      else if (entry === "page.tsx") routes.push(prefix || "/app");
+    }
+  };
+  walk(root, "/app");
+
+  const ruled = [...permissions.matchAll(/"(\/app[^"]*)":\s*\{/g)].map((match) => match[1]);
+  const navHrefs = [...navConfig.matchAll(/href:\s*"(\/app[^"]*)"/g)].map((match) => match[1]);
+  const resolves = (route) => ruled.some((rule) => rule === "/app"
+    ? route === "/app"
+    : route === rule || route.startsWith(`${rule}/`));
+
+  // `/app/platform*` is exempt because the layout returns early for it on a
+  // platform context, before the tenant guard runs — a different gate, not a
+  // missing one. That branch is already pinned above, where `appLayout` is
+  // asserted to compute `platformMode` and call `getPlatformContext`.
+  const unreachable = routes.filter((route) =>
+    !route.includes("[") && !route.startsWith("/app/platform") && !resolves(route));
+  assert.deepEqual(unreachable, [],
+    `Pages with no routeAccessMap rule are redirected away from for every role: ${unreachable}`);
+
+  // A page that is neither in the nav nor a child of a navigated route can only
+  // be found by typing its URL.
+  const findable = (route) => navHrefs.some((href) => route === href || route.startsWith(`${href}/`))
+    || route === "/app" || route.startsWith("/app/platform");
+  const hidden = routes.filter((route) => !route.includes("[") && !findable(route));
+  assert.deepEqual(hidden, [], `Pages with no navigation path: ${hidden}`);
+}
+console.log("Every dashboard page has an access rule and a navigation path.");
