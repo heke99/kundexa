@@ -1421,3 +1421,45 @@ samma påståenden — den faller på alla fyra.
 Fel — förväxling sker mellan *par*, och när `1` är borttaget är `L` entydigt.
 Testet påstod något starkare än vad som behövdes och starkare än vad alfabetet
 gjorde.
+
+## Rättelse: telefoni var aldrig avstängd
+
+Jag rapporterade "`telephony_enabled = false` för Gridex — ingen kan ringa alls"
+som go-live-blockerare nummer ett. Det var fel, och felet var mitt.
+
+Frågan jag ställde var:
+
+```sql
+(select telephony_enabled from public.telephony_policies limit 1) as telephony_enabled
+```
+
+Ingen `where`, ingen `order by`. Den returnerade en godtycklig rad. Postgres gav
+mig **Trustcalls** rad — den andra tenanten, som aldrig konfigurerat telefoni och
+därför ligger kvar på det seedade förvalet. Jag presenterade den som Gridex.
+
+Gridex har `telephony_enabled = true`, `manual_dialer_enabled = true` och
+`automatic_dialer_enabled = true`, satt 2026-08-02 och senast uppdaterat
+2026-09-07. Beviset ligger dessutom i samtalsloggen: ett verkligt utgående samtal
+2026-09-11 14:59 från +46 10 808 69 54, åtta sekunder, som providern rapporterade
+UNANSWERED. Hela kedjan kördes — reservation, dial accepted,
+webhook-korrelation, call ended.
+
+Det är exakt den felklass jag ägnat sessionen åt att laga i deras kod: en
+oscopead läsning presenterad som ett scopeat svar. Att den kom från min egen
+diagnostik i stället för från produktionskoden gör den inte mindre fel — jag
+gjorde en faktapåstående om deras system utifrån en fråga som inte kunde bära
+det.
+
+**Kontrollen den ledde till var värd något.** `admin`-klienten går förbi RLS, så
+en oscopead läsning där vore en verklig korsläcka. Jag gick igenom varje
+`admin.from(...)`-läsning i projektet: alla är scopeade med
+`.eq("tenant_id", ...)` (min första grep missade det bara för att kedjan bryts
+över radslut). De två som saknar tenant-filter — `field_freshness` och
+`data_quality_scores` — har inget `tenant_id` alls; de är plattformsgemensam
+katalogmetadata, och åtkomsten är redan avgjord av
+`directory_entity_projection_for_tenant` som ger 404 innan de läses.
+
+**Konsekvens för callStart.** Att telefoni är på omtolkar också den webhooken:
+`callStart` har inte uteblivit för att något är trasigt, utan för att inget
+kvalificerande samtal har inträffat. De två utgående samtalen slutade i
+providerfel respektive obesvarat, och det enda besvarade samtalet var inkommande.
