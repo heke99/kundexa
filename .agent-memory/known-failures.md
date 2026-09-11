@@ -1150,3 +1150,44 @@ i actions omdirigerar med begripliga svenska meddelanden.
 **Regel:** PostgREST kastar inte. Varje läsning vars tomma resultat styr ett
 beslut måste ta emot `error` — annars är "det gick fel" och "det fanns inget"
 samma sak för koden, och bara det ena är sant.
+
+## FAILURE-0069 — tysta fel i obevakad kod och i listuppdateringen — FIXED 2026-09-11
+
+Andra svepet efter samma felklass. Workers kör utan att någon tittar, så tystnad
+där kostar mest.
+
+**process-outbox, två fail-open.** Spärrkontrollen (`bounced`, `complained`,
+`suppressed`) och uppslaget av SMS-nummer läste båda utan felkontroll. Ett
+misslyckat spärruppslag läser som "inte spärrad", så påminnelsen går till en
+adress som studsat — eller anmält utskicket som skräppost, vilket skadar
+avsändardomänens rykte varje gång det upprepas. Ett misslyckat nummeruppslag är
+omöjligt att skilja från "tenanten har inget SMS-nummer", och på kanal `both` är
+just den skillnaden hela saken: e-posten går, SMS-halvan försvinner utan fel och
+utan leveransrad. Båda kastar nu, och jobbet görs om.
+
+**automation-runner, tre.** Uppslaget från avtal till kund kom fram som
+`customer_missing` och körningen registrerades som **completed** — ett
+databasfel rapporterat som ett medvetet överhopp. De andra två är
+dubblettkontroller, där ett misslyckat uppslag betyder "finns inte ännu" och
+automationen skapar en andra aktivitet respektive en andra spärr vid varje
+återförsök.
+
+**`refresh_due_dynamic_customer_lists` räknade fel och kastade bort `sqlerrm`.**
+Den returnerade `{"completed": 8, "failed": 3}`. Anroparen lägger siffran i sitt
+livstecken, så en dynamisk lista som tyst slutat uppdateras såg exakt ut som en
+som aldrig var i tur — medan säljarna fortsatte ringa på den. Felen bär nu
+list-id och meddelande, begränsat till tjugo.
+
+**Kontrollerat och rent:** `safe_uuid` returnerar null avsiktligt och heter så,
+PostGIS-vakten höjer en notice, och parsehubs rollback-hanterare skriver ned
+orsaken. `message_templates` läses inte av någon kod — en andra död tabell
+bredvid `team_features`.
+
+**Inte utrullat, och det ska sägas rakt ut:** `process-outbox` och
+`automation-runner` är lagade i repot men **inte deployade**. Jag hand-överförde
+`process-outbox` tidigare i sessionen; det tog tre försök och införde en
+escape-artefakt. 68 kB kod som måste transkriberas exakt är i sig en risk, och
+ingen av kodvägarna har någonsin körts i produktion (noll avtal, noll
+påminnelser, noll automationer). De två repository-hemligheterna gör
+utrullningen automatisk och tar bort hela felklassen — det är tredje gången de
+visar sig vara den verkliga lösningen.
