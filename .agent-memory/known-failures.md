@@ -1277,12 +1277,20 @@ personlig). Testet visar båda riktningarna — att skriva utfallet direkt lämn
 kunden ringbar, och att gå via RPC:n spärrar henne och får nästa uppringning
 avvisad.
 
-**FAILURE-0073 — kundkortets spärrknapp motsade sin egen spärr.**
-`blockCustomer` la en `compliance_blocks`-rad, vilket faktiskt stoppar samtalet
-i `evaluate_exact_call_policy`. Men kortet läser `customers.do_not_call` för
-både märkningen och om dialern ska visas, och den rörde den inte. En spärrad kund
-visade alltså "Kontakt tillåten" med fungerande ringknapp, och avslaget kom först
-när säljaren tryckte.
+**FAILURE-0073 — fanns inte. En rättelse av mig.**
+Jag läste `blockCustomer`, såg att den bara skriver `compliance_blocks` och inte
+`customers.do_not_call`, och drog slutsatsen att kundkortet motsäger sin egen
+spärr. Fel: triggern `compliance_blocks_project_customer` kör
+`private.project_compliance_block_to_customer` vid varje insert och projicerar
+spärren till kundkortet. Regressionstestet på rad 238 i
+`remediation-regression-tests.mjs` slår uttryckligen ned en handskriven
+`update({do_not_call:true})` i just den filen — en tidigare åtgärd hade flyttat
+logiken till databasen så att spärr, hävning, kanalbyte och utgång inte kan säga
+emot varandra. Min ändring var både onödig och en återgång till det som redan
+rättats. Testet fångade den; jag backade den.
+
+Lärdomen är densamma som förra gången, i motsatt riktning: "jag ser inte
+skrivningen i koden" och "skrivningen sker inte" är olika påståenden.
 
 **FAILURE-0074 till 0077 — skrivningar vars fel aldrig kontrollerades.**
 Samma tysta klass som tidigare, men på skrivsidan:
