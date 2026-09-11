@@ -1015,3 +1015,40 @@ misslyckas tyst.
 
 **Regel:** Om ett tillstånd kan nås automatiskt måste vägen tillbaka finnas
 uttryckligen, annars är filtreringen en återvändsgränd.
+
+## FAILURE-0066 — fem körda migrationer var inte registrerade under sina filnamn — FIXED 2026-09-11
+
+**Symptom:** Inget i drift. Syns bara om man jämför repots migrationsfilnamn mot
+`supabase_migrations.schema_migrations`.
+
+**Rotorsak:** Migrationer applicerade genom MCP:s `apply_migration` registreras
+under en tidsstämpel som verktyget själv genererar (`20260911123905`), inte under
+repofilens versionsprefix (`202609110004`). Databasen visste alltså att
+migrationen var körd — men under ett namn som `supabase db push` inte känner igen.
+
+**Konsekvens:** 84 filer i repot, 91 rader i registret, och fem repofiler som
+registret inte kände till. En framtida `supabase db push` hade sett dem som
+okörda och kört dem igen.
+
+Fyra av de fem är rena `create or replace`/`grant` och hade varit ofarliga att
+köra om. **Den femte var det inte:** `202609110004_email_enabled_by_default.sql`
+avslutas med `on conflict (tenant_id,feature_key) do update set enabled = true`.
+En omkörning hade slagit på e-post igen för en tenant som medvetet stängt av
+den — och brutit precis det löfte som står i migrationens egen kommentar
+("nothing re-runs this"). Löftet byggde på bokföring som inte fanns.
+
+**Åtgärd:** De fem versionerna är införda i registret med sina repofilnamn, med
+`statements` som noterar vilken MCP-tidsstämpel de faktiskt kördes under. Det är
+samma operation som `supabase migration repair --status applied`. Migrationsfilen
+är **inte** ändrad — den är levererad.
+
+**Elva kvarvarande dubbletter lämnas orörda:** samma migration registrerad både
+under sitt filnamn och under en MCP-tidsstämpel, från den här och en tidigare
+session. De är ofarliga för `db push`, som bara frågar om en repoversion finns,
+och att radera rader ur migrationsregistret är mer riskabelt än att låta dem stå.
+
+**Regel:** En migration ska registreras under samma version som repofilen heter.
+Kör man den genom ett verktyg som sätter sin egen tidsstämpel måste registret
+lagas efteråt — annars är "den här körs bara en gång" ett antagande, inte ett
+faktum. `npm run verify` kan inte se det här: sviten kör mot PGlite och har ingen
+bild av produktionens migrationsregister.

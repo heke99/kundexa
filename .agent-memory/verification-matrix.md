@@ -186,3 +186,18 @@ första skarpa utringda samtalet. Provider-testet för `callStart` föll dessuto
 `RINKEL_INVALID_REQUEST`, vilket är noterat men inte åtgärdat: jag kan inte
 anropa Rinkels API härifrån och vill inte ändra en fungerande registrering på en
 gissning.
+
+## 2026-09-11 — synkroniseringskontroll, kod mot databas
+
+| Yta | Status | Bevis |
+|---|---|---|
+| Arbetsträd rent | PASS | inga oföljda eller ändrade filer |
+| HEAD = origin/main = arbetsgrenen | PASS | alla tre på `022c0e3` |
+| Migrationsfiler registrerade i databasen | **FIXED** | 5 saknades under sitt filnamn, införda; 0 kvar |
+| Genererade typer mot migrerat schema | PASS | 180 tabeller, noll kolumndrift |
+| Typfilen committad | PASS | inga lokala ändringar |
+| Edge Functions mot repot | PASS | 8/8 jämförda byte för byte tidigare i dag; inga commits i `supabase/functions/` sedan dess |
+| Vercel produktion mot HEAD | PASS | READY på `022c0e3` |
+
+**Kvar som inte går att se härifrån:** produktionens migrationsregister syns inte
+för `npm run verify`, som kör mot PGlite. Den kontrollen är manuell.
