@@ -1,0 +1,26 @@
+-- Give an admin back the ability to undo a merge they made.
+--
+-- `merge_master_entities` and `undo_master_entity_merge` were written as a pair:
+-- both take a `p_actor uuid` recorded against the decision, and both open with
+--
+--     if auth.role() is distinct from 'service_role'
+--        and not public.is_tenant_admin(...) then raise exception 'admin_required'
+--
+-- which only makes sense for a signed-in human caller. The hardening pass in
+-- `20260813222943_secdef_service_only_and_bypass_hardening.sql` kept the grant on
+-- the merge and revoked it on the undo, alongside a batch of genuinely internal
+-- helpers (`rebuild_master_entity`, `recalculate_data_quality`,
+-- `source_priority_for`). Those have no admin branch and no actor; the undo was
+-- swept up with them, which left its own admin branch unreachable.
+--
+-- The effect is that merging two directory entities is irreversible for everyone
+-- who can reach the application. Merging is destructive — it moves identity keys
+-- and source links onto the survivor and marks the other entity merged — so an
+-- undo that exists, is admin-gated, and is tenant-scoped should be reachable by
+-- the same admin who can cause the damage. Shipping the merge queue without it
+-- would be shipping a one-way door next to a door that already has a handle.
+--
+-- Nothing else about the function changes: the body still refuses a non-admin,
+-- still scopes every write to the decision's own tenant, and still records who
+-- undid it.
+grant execute on function public.undo_master_entity_merge(uuid,uuid) to authenticated;

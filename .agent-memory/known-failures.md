@@ -879,3 +879,43 @@ kvar under egen rubrik.
 
 **Regel:** En vy som visar ett fel måste också innehålla vägen att rätta det.
 Att flagga något som "behöver rättas" utan att kunna rätta det är inte hjälp.
+
+## FAILURE-0063 — dubblettkön upptäcktes men lästes aldrig, och sammanslagning gick inte att ångra — FIXED 2026-09-11
+
+**Symptom:** Inget, för ingen visste att kön fanns. Hittades genom att jämföra
+varje exporterad server action mot vad gränssnittet faktiskt anropar:
+`mergeDirectoryEntities` fanns med admingrind och RPC men refererades inte från
+någon vy.
+
+**Rotorsak, del 1:** `complete_ingestion_record` skriver dubblettförslag till
+`duplicate_candidates` vid varje inläsning — två masterposter som delar en
+identitetsnyckel. Detektionen har alltid körts. Ingenting läste tabellen, så
+förslagen samlades osedda och två poster för samma företag kunde aldrig slås ihop.
+
+**Rotorsak, del 2:** `undo_master_entity_merge` var `service_role`-only.
+Härdningsmigrationen `20260813222943` behöll grant:en på sammanslagningen och
+drog in den på ångra-funktionen tillsammans med en rad genuint interna hjälpare
+(`rebuild_master_entity`, `recalculate_data_quality`, `source_priority_for`). De
+har varken adminbranch eller `p_actor`; ångra-funktionen har båda, och dess egen
+`is_tenant_admin`-kontroll blev därmed onåbar kod. Sammanslagning var alltså
+oåterkallelig för alla som når applikationen.
+
+**Åtgärd:** En granskningsvy på `/app/directory/duplicates` med båda posterna
+sida vid sida, matchningsmetod och säkerhet, val av vilken post som behålls,
+"inte en dubblett", och en lista med gjorda sammanslagningar som går att ångra.
+Katalogsidan visar antalet öppna förslag. Migration `202609110002` återställer
+grant:en till `authenticated`; funktionens kropp är orörd.
+
+**Om testet:** runtimetestet bevisar adminkontrollen — en säljare nekas både
+sammanslagning och ångra — men **inte** grant:en, eftersom PGlite-harnessen kör
+som superuser och därför inte tillämpar `GRANT`. Grant:en är i stället bevisad i
+produktion: `has_function_privilege('authenticated', …)` var `false` före
+migrationen och `true` efter, och `anon` är fortsatt `false`.
+
+**Ett fynd på vägen, inte åtgärdat:** resolvern matchar på telefonnummer, så två
+olika företag med samma växelnummer slås ihop till en masterpost redan vid
+inläsning i stället för att flaggas som förslag. Det är resolverns avsiktliga
+beteende och rör inte den här vyn, men det är värt att veta innan skarp import.
+
+**Regel:** En detektion utan en väg att agera på den är inte en funktion, och en
+destruktiv åtgärd ska inte erbjudas när dess ångra-funktion finns men är onåbar.

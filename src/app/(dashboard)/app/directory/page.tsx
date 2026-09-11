@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { DataTable } from "@/components/ui/data-table";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
-import { Search, ListFilter, RefreshCw, Megaphone } from "@/components/icons";
+import { Search, ListFilter, RefreshCw, Megaphone, Users } from "@/components/icons";
 import { getAppContext } from "@/lib/auth";
 import { segmentCreateRoles, segmentManageRoles } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
@@ -31,14 +31,17 @@ export default async function DirectoryPage({ searchParams }: { searchParams: Pr
   const mayCreateSegment = (segmentCreateRoles as readonly string[]).includes(context.role);
   const mayManageSegments = (segmentManageRoles as readonly string[]).includes(context.role); const input = inputFromParams(p); const shouldSearch = one(p.run) === "1";
   const result = shouldSearch ? await searchDirectoryForTenant(context.tenantId, input) : null; const supabase = await createClient();
-  const [{ data: segments }, { data: campaigns }, { data: memberships }, { data: teams }] = await Promise.all([
+  const [{ data: segments }, { data: campaigns }, { data: memberships }, { data: teams }, { count: pendingDuplicates }] = await Promise.all([
     supabase.from("segments").select("id,name,segment_type,last_refreshed_at,segment_snapshots(member_count,generated_at)").eq("tenant_id", context.tenantId).order("created_at", { ascending: false }).limit(30),
     supabase.from("campaigns").select("id,name,status").eq("tenant_id", context.tenantId).in("status", ["draft", "scheduled", "active"]).order("created_at", { ascending: false }),
     supabase.from("tenant_memberships").select("user_id,profiles:user_id(full_name)").eq("status", "active").in("role", ["owner", "admin", "team_lead", "sales"]),
     supabase.from("teams").select("id,name").order("name"),
+    // Detection runs on every ingestion; without a count here the queue is a page
+    // nobody knows to open.
+    supabase.from("duplicate_candidates").select("id", { count: "exact", head: true }).eq("tenant_id", context.tenantId).eq("status", "pending"),
   ]);
   return <>
-    <PageHeader title="Katalog & målgrupper" description="Sök lokalt i Kundexas licensstyrda masterdata. Filter skapar aldrig premiumanrop; berikning och discovery körs separat." />
+    <PageHeader title="Katalog & målgrupper" description="Sök lokalt i Kundexas licensstyrda masterdata. Filter skapar aldrig premiumanrop; berikning och discovery körs separat." action={<Link className="button button-secondary" href="/app/directory/duplicates"><Users size={15}/> Dubbletter{pendingDuplicates ? ` (${pendingDuplicates})` : ""}</Link>} />
     {one(p.error) ? <p className="form-error">{one(p.error)}</p> : null}{one(p.message) ? <div className="notice success">{one(p.message)}</div> : null}
     <Card><CardHeader><h2><Search size={17}/> Lokal katalogsökning</h2><Badge>Ingen extern kostnad</Badge></CardHeader><CardContent>
       <form className="form-stack" method="get"><input type="hidden" name="run" value="1" />

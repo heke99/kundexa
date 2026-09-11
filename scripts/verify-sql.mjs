@@ -2735,6 +2735,117 @@ console.log("Executed segment authority: only a tenant admin may create one, a t
 
 console.log("Executed contract template authorship: a team leader creates a draft, cannot release it, an owner approves it into the current version, and a seller is refused.");
 
+// Duplicate detection has always run during ingestion — two master entities that
+// share an identity key become a pending candidate — but nothing read the queue
+// and nothing could act on it. These prove the whole loop: detection produces a
+// candidate, an admin resolves it, and the resolution can be undone.
+{
+  const owner = "00000000-0000-0000-0000-000000000002";
+  const seller = "00000000-0000-0000-0000-000000000020";
+  await db.exec(`select set_config('request.jwt.claim.sub','${owner}',false)`);
+
+  // A second record for the same company name, with a different organisation
+  // number and no phone. The resolver matches on organisation number, source id,
+  // phone or email — none of which hit here, so it becomes its own entity — while
+  // identity keys also cover name+postcode, which is what raises the candidate.
+  // That is the ordinary duplicate: one company arriving twice from two sources,
+  // once with the wrong number. A shared phone would not do: the resolver treats
+  // that as the same company and unifies the two before detection ever sees them.
+  await db.exec(`select * from public.schedule_due_ingestion_jobs(10)`);
+  const secondRun = (await db.query(
+    `select id from public.ingestion_runs where ingestion_job_id='00000000-0000-0000-0000-000000000007' and id<>$1 order by created_at desc limit 1`,
+    [runId],
+  )).rows[0];
+  if (!secondRun) throw new Error("The duplicate fixture could not schedule a second ingestion run");
+  const secondRunId = String(secondRun.id);
+  await db.query(`select * from public.claim_ingestion_runs($1,1)`, ["verify-duplicate-worker"]);
+  const secondRaw = await db.query(
+    `select public.record_ingestion_raw_payload($1,'page:2','application/json',200,'verify-request-2','{}',now(),'verify-sha-2','ciphertext',null,'{}') as id`,
+    [secondRunId],
+  );
+  const duplicateFacts = [
+    { field_key: "canonical_name", field_value: "Kundexa Verify AB", value_hash: "d1", confidence: 0.9 },
+    { field_key: "organization_number", field_value: "5567654321", value_hash: "d2", confidence: 1 },
+    { field_key: "city", field_value: "Malmö", value_hash: "d3", confidence: 0.8 },
+  ];
+  const duplicateCanonical = {
+    canonical_name: "Kundexa Verify AB", organization_number: "5567654321",
+    city: "Malmö", country_code: "SE",
+  };
+  await db.query(
+    `select public.complete_ingestion_record($1,$2,'verify-duplicate',$3::jsonb,$4::jsonb,null,now()) as result`,
+    [secondRunId, String(secondRaw.rows[0].id), JSON.stringify(duplicateFacts), JSON.stringify(duplicateCanonical)],
+  );
+  await db.query(`select public.complete_ingestion_run($1,null,'{}')`, [secondRunId]);
+
+  const candidate = (await db.query(
+    `select id,left_entity_id,right_entity_id,match_method,confidence,status
+       from public.duplicate_candidates where tenant_id='00000000-0000-0000-0000-000000000001'`,
+  )).rows;
+  if (candidate.length !== 1) {
+    const diag = (await db.query(`select id,canonical_name,organization_number from public.master_entities order by created_at`)).rows;
+    const keys = (await db.query(`select key_type,normalized_value,master_entity_id from public.identity_keys order by key_type`)).rows;
+    throw new Error(`Duplicate detection produced ${candidate.length} candidates, expected 1. entities=${JSON.stringify(diag)} keys=${JSON.stringify(keys)}`);
+  }
+  if (candidate[0].match_method !== "name_postal" || Number(candidate[0].confidence) !== 0.8) {
+    throw new Error(`Duplicate candidate has the wrong provenance: ${JSON.stringify(candidate[0])}`);
+  }
+  const target = String(candidate[0].left_entity_id);
+  const source = String(candidate[0].right_entity_id);
+
+  // From here the assertions are about who may act, so the session has to look
+  // like a signed-in user. Both functions skip their admin check for
+  // `service_role`, which is the ambient role in this harness — leaving it set
+  // would make every refusal below pass for the wrong reason.
+  await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
+
+  // A seller must not be able to merge, even though the RPC is granted to
+  // `authenticated` — the admin branch inside the function is the authority.
+  await db.exec(`select set_config('request.jwt.claim.sub','${seller}',false)`);
+  try {
+    await db.query(`select public.merge_master_entities('00000000-0000-0000-0000-000000000001',$1,$2,'${seller}')`, [target, source]);
+    throw new Error("A seller was allowed to merge two directory entities");
+  } catch (error) {
+    if (!String(error.message).includes("admin_required")) throw error;
+  }
+
+  await db.exec(`select set_config('request.jwt.claim.sub','${owner}',false)`);
+  const decision = await db.query(
+    `select public.merge_master_entities('00000000-0000-0000-0000-000000000001',$1,$2,'${owner}') as id`,
+    [target, source],
+  );
+  const decisionId = String(decision.rows[0].id);
+
+  const merged = (await db.query(`select merged_into_id from public.master_entities where id=$1`, [source])).rows[0];
+  if (String(merged.merged_into_id) !== target) throw new Error("The merged entity does not point at the survivor");
+  const resolvedCandidate = (await db.query(`select status from public.duplicate_candidates where id=$1`, [candidate[0].id])).rows[0];
+  if (resolvedCandidate.status !== "merged") throw new Error(`The candidate was not closed by the merge: ${resolvedCandidate.status}`);
+  const movedLinks = (await db.query(`select count(*)::int as n from public.entity_source_links where master_entity_id=$1`, [source])).rows[0];
+  if (movedLinks.n !== 0) throw new Error("Source links were left on the merged entity");
+
+  // The undo is the reason the merge button is safe to offer. It was granted to
+  // service_role only, which made every merge irreversible from the application
+  // even though the function's own body checks for a tenant admin.
+  await db.exec(`select set_config('request.jwt.claim.sub','${seller}',false)`);
+  try {
+    await db.query(`select public.undo_master_entity_merge($1,'${seller}')`, [decisionId]);
+    throw new Error("A seller was allowed to undo a merge");
+  } catch (error) {
+    if (!String(error.message).includes("admin_required")) throw error;
+  }
+
+  await db.exec(`select set_config('request.jwt.claim.sub','${owner}',false)`);
+  await db.query(`select public.undo_master_entity_merge($1,'${owner}')`, [decisionId]);
+  const restored = (await db.query(`select merged_into_id from public.master_entities where id=$1`, [source])).rows[0];
+  if (restored.merged_into_id !== null) throw new Error("Undo did not restore the merged entity");
+  const undone = (await db.query(`select decision,undone_by from public.merge_decisions where id=$1`, [decisionId])).rows[0];
+  if (undone.decision !== "undone" || String(undone.undone_by) !== owner) {
+    throw new Error(`Undo did not record who reversed it: ${JSON.stringify(undone)}`);
+  }
+  await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+}
+console.log("Executed directory duplicate review: ingestion raises a name+postcode candidate, a seller may neither merge nor undo, an owner merges so the survivor keeps the links and the candidate closes, and the undo restores the entity and records who reversed it.");
+
 // The seller's organisation number is printed on every contract. Nothing
 // validated it, so production holds an eleven-digit and a nine-digit value where
 // a Swedish organisationsnummer has ten. These prove the write path now refuses

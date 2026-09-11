@@ -63,9 +63,65 @@ export async function sendSegmentToCampaign(form: FormData) {
   redirect(`/app/directory?message=${encodeURIComponent(`Segmentet skickades till kampanjen: ${JSON.stringify(data)}`)}`);
 }
 
+const duplicatesPath = "/app/directory/duplicates";
+
+/**
+ * Merge one directory entity into another.
+ *
+ * Destructive: identity keys and source links move to the survivor and the other
+ * entity is marked merged. The caller picks which of the pair survives, so the
+ * form sends both ids explicitly rather than relying on the order they happen to
+ * be stored in — `duplicate_candidates` normalises the pair by uuid order, which
+ * carries no meaning about which record is the better one.
+ */
 export async function mergeDirectoryEntities(form: FormData) {
-  const context = await getAppContext(); if (!isAdmin(context.role)) throw new Error("Adminbehörighet krävs");
-  const target = text(form, "target_entity_id"); const source = text(form, "source_entity_id"); if (!target || !source) return;
-  const supabase = await createClient(); const { error } = await supabase.rpc("merge_master_entities", { p_tenant_id: context.tenantId, p_target: target, p_source: source, p_actor: context.userId });
-  if (error) redirect(`/app/directory?error=${encodeURIComponent(error.message)}`); revalidatePath("/app/directory");
+  const context = await getAppContext();
+  if (!isAdmin(context.role)) redirect(`${duplicatesPath}?error=Endast ägare eller administratör får slå ihop katalogposter`);
+  const target = text(form, "target_entity_id");
+  const source = text(form, "source_entity_id");
+  if (!target || !source) redirect(`${duplicatesPath}?error=Välj vilken post som ska behållas`);
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("merge_master_entities", {
+    p_tenant_id: context.tenantId, p_target: target, p_source: source, p_actor: context.userId,
+  });
+  if (error) redirect(`${duplicatesPath}?error=${encodeURIComponent(error.message)}`);
+  revalidatePath(duplicatesPath);
+  revalidatePath("/app/directory");
+  redirect(`${duplicatesPath}?message=${encodeURIComponent("Posterna är sammanslagna. Du kan ångra det nedan.")}`);
+}
+
+/**
+ * Mark a suggested pair as not a duplicate.
+ *
+ * The suggestion comes from a shared identity key — two records with the same
+ * phone number are a candidate at 0.8 confidence, and a shared switchboard
+ * number is a perfectly ordinary reason for that to be wrong. Rejecting keeps
+ * the row so the same pair is not proposed again.
+ */
+export async function rejectDuplicateCandidate(form: FormData) {
+  const context = await getAppContext();
+  if (!isAdmin(context.role)) redirect(`${duplicatesPath}?error=Endast ägare eller administratör får avfärda en dubblett`);
+  const candidateId = text(form, "candidate_id");
+  if (!candidateId) redirect(`${duplicatesPath}?error=Ogiltigt förslag`);
+  const supabase = await createClient();
+  const { error } = await supabase.from("duplicate_candidates")
+    .update({ status: "rejected", reviewed_by: context.userId, reviewed_at: new Date().toISOString() })
+    .eq("tenant_id", context.tenantId).eq("id", candidateId).eq("status", "pending");
+  if (error) redirect(`${duplicatesPath}?error=${encodeURIComponent(error.message)}`);
+  revalidatePath(duplicatesPath);
+  redirect(`${duplicatesPath}?message=${encodeURIComponent("Förslaget är avfärdat och föreslås inte igen.")}`);
+}
+
+/** Undo a merge, restoring the source links the decision recorded before it ran. */
+export async function undoDirectoryMerge(form: FormData) {
+  const context = await getAppContext();
+  if (!isAdmin(context.role)) redirect(`${duplicatesPath}?error=Endast ägare eller administratör får ångra en sammanslagning`);
+  const decisionId = text(form, "decision_id");
+  if (!decisionId) redirect(`${duplicatesPath}?error=Ogiltigt beslut`);
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("undo_master_entity_merge", { p_decision_id: decisionId, p_actor: context.userId });
+  if (error) redirect(`${duplicatesPath}?error=${encodeURIComponent(error.message)}`);
+  revalidatePath(duplicatesPath);
+  revalidatePath("/app/directory");
+  redirect(`${duplicatesPath}?message=${encodeURIComponent("Sammanslagningen är ångrad.")}`);
 }
