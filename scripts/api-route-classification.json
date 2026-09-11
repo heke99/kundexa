@@ -11,6 +11,10 @@
     "classification": "internal",
     "reason": "Interactive after-call compatibility endpoint"
   },
+  "/calls/end": {
+    "classification": "internal",
+    "reason": "Session-bound: only the seller who owns the call, or a tenant admin, may release its dial attempt"
+  },
   "/calls/{id}/recording": {
     "classification": "internal",
     "reason": "Session-bound playback policy and short-lived redirect; not API-key compatible"

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Phone, Radio } from "@/components/icons";
+import { Phone, PhoneOff, Radio } from "@/components/icons";
 import { useRinkelDialer } from "@/hooks/use-rinkel-dialer";
 import { useCallRealtime } from "@/hooks/use-call-realtime";
 
@@ -19,11 +19,18 @@ export function RinkelDialer({
   initialCustomer,
   callbackActivityId,
   callerIdOptions = [],
+  lockedToCustomer = false,
 }: {
   customers: Customer[];
   initialCustomer?: string;
   callbackActivityId?: string;
   callerIdOptions?: CallerIdOption[];
+  /**
+   * On the customer card the dialer belongs to the record it sits on. Locking
+   * it removes the search and the picker rather than hiding them, so there is
+   * no way to be on one card and dial another.
+   */
+  lockedToCustomer?: boolean;
 }) {
   const [selected, setSelected] = useState(initialCustomer ?? "");
   const [customerQuery, setCustomerQuery] = useState("");
@@ -38,6 +45,7 @@ export function RinkelDialer({
   const [callbackScope, setCallbackScope] = useState<"personal" | "global">("personal");
   const [callbackDueAt, setCallbackDueAt] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [endMessage, setEndMessage] = useState<string | null>(null);
   const requestKeyRef = useRef<string | null>(null);
   const rinkel = useRinkelDialer();
   const callState = useCallRealtime(callId, () => {
@@ -46,6 +54,7 @@ export function RinkelDialer({
   });
 
   useEffect(() => {
+    if (lockedToCustomer) return;
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       const normalizedQuery = customerQuery.trim();
@@ -71,7 +80,7 @@ export function RinkelDialer({
       }
     }, 350);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [customerQuery, customers, initialCustomer]);
+  }, [customerQuery, customers, initialCustomer, lockedToCustomer]);
 
   const visibleCustomers = useMemo(() => {
     const byId = new Map<string, Customer>();
@@ -111,6 +120,22 @@ export function RinkelDialer({
     }
   }
 
+  async function endCurrentCall() {
+    if (!callId || rinkel.ending) return;
+    setError(null);
+    try {
+      const result = await rinkel.endCall(callId);
+      setEndMessage(result.message);
+      // An unanswered call is closed here and now, so the after-call form must
+      // open immediately rather than waiting for a realtime update that will
+      // never carry anything new. A call that was already answered is left to
+      // the provider, and its own terminal event opens the form.
+      if (result.callClosed) setAfterCall(true);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Samtalet kunde inte avslutas");
+    }
+  }
+
   async function complete(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const submitter = (event.nativeEvent as SubmitEvent).submitter;
@@ -139,6 +164,7 @@ export function RinkelDialer({
     }
     setAfterCall(false);
     setCallId(null);
+    setEndMessage(null);
     setDisposition("");
     setNotes("");
     setCallbackDueAt("");
@@ -151,21 +177,27 @@ export function RinkelDialer({
         <Radio size={12} /> {rinkel.status}
       </span>
     </div>
-    <div className="phone-display">{visibleCustomers.find((customer) => customer.id === selected)?.phone_e164 ?? "Välj kund"}</div>
-    <label className="field dialer-customer-select">
-      <span>Sök kund eller prospekt</span>
-      <input type="search" value={customerQuery} onChange={(event) => setCustomerQuery(event.target.value)} placeholder="Namn, telefon eller e-post" autoComplete="off" />
-      <small>{customerSearchLoading ? "Söker…" : "Visar högst 30 behöriga träffar"}</small>
-    </label>
-    <label className="field dialer-customer-select">
-      <span>Kund eller prospekt</span>
-      <select value={selected} onChange={(event) => setSelected(event.target.value)}>
-        <option value="">Välj kund</option>
-        {visibleCustomers.map((customer) => <option key={customer.id} value={customer.id} disabled={customer.do_not_call}>
-          {customer.display_name} · {customer.phone_e164}{customer.do_not_call ? " · SPÄRRAD" : ""}
-        </option>)}
-      </select>
-    </label>
+    <div className="phone-display">{visibleCustomers.find((customer) => customer.id === selected)?.phone_e164 ?? (lockedToCustomer ? "Telefonnummer saknas" : "Välj kund")}</div>
+    {lockedToCustomer
+      ? <p className="muted" style={{ marginBottom: 12 }}>
+          Ringer {visibleCustomers.find((customer) => customer.id === selected)?.display_name ?? "kunden"} från det här kundkortet.
+        </p>
+      : <>
+        <label className="field dialer-customer-select">
+          <span>Sök kund eller prospekt</span>
+          <input type="search" value={customerQuery} onChange={(event) => setCustomerQuery(event.target.value)} placeholder="Namn, telefon eller e-post" autoComplete="off" />
+          <small>{customerSearchLoading ? "Söker…" : "Visar högst 30 behöriga träffar"}</small>
+        </label>
+        <label className="field dialer-customer-select">
+          <span>Kund eller prospekt</span>
+          <select value={selected} onChange={(event) => setSelected(event.target.value)}>
+            <option value="">Välj kund</option>
+            {visibleCustomers.map((customer) => <option key={customer.id} value={customer.id} disabled={customer.do_not_call}>
+              {customer.display_name} · {customer.phone_e164}{customer.do_not_call ? " · SPÄRRAD" : ""}
+            </option>)}
+          </select>
+        </label>
+      </>}
     {callerIdOptions.length > 0 ? <label className="field dialer-customer-select">
       <span>Utgående nummer</span>
       <select
@@ -184,7 +216,37 @@ export function RinkelDialer({
       aria-label="Ring via telefoni">
       <Phone size={25} />
     </button>
+    {/* Two different numbers, and until now only the second was ever shown.
+        Telefonitjänsten ringer alltid upp säljarens egen enhet först och kopplar
+        därefter kunden, så "numret kunden ser" säger ingenting om vilken telefon
+        som faktiskt ringer. Står fel telefon här går samtalet via fel person. */}
+    {rinkel.dialPath?.mapped ? <dl className="key-value dialer-path">
+      <dt>Kunden ser</dt>
+      <dd>{rinkel.dialPath.callerIdNumber ?? "—"}</dd>
+      <dt>Din enhet som ringer</dt>
+      <dd>
+        {rinkel.dialPath.deviceRingsPhone ?? "Webbtelefonen"}
+        {rinkel.dialPath.providerUserName ? ` · ${rinkel.dialPath.providerUserName}` : ""}
+      </dd>
+    </dl> : null}
+    {rinkel.dialPath?.mapped && rinkel.dialPath.seatNameMatchesProfile === false ? <p className="notice warning">
+      Telefoniplatsen som ringer upp dig står på {rinkel.dialPath.providerUserName}. Samtalet går då via
+      den personens telefon i stället för din egen. Be administratören lägga upp en egen telefoniplats för dig.
+    </p> : null}
     {rinkel.calling ? <p className="notice">Samtalet hanteras på din telefonienhet. Kundexa uppdaterar status automatiskt.</p> : null}
+    {callId && (rinkel.calling || callState.recovering) ? <div className="dialer-end">
+      <button type="button" className="button button-danger" onClick={endCurrentCall} disabled={rinkel.ending}>
+        <PhoneOff size={15} /> {rinkel.ending ? "Avslutar…" : "Avsluta samtalet"}
+      </button>
+      {/* Say what the button does, because it cannot do the other thing:
+          telefonitjänsten har inget API för att koppla ned ett uppkopplat
+          samtal. Ett påstående om motsatsen skulle vara osant. */}
+      <small className="muted">
+        Har kunden svarat lägger du på i webbtelefonen eller appen — telefonitjänsten kan inte kopplas ned
+        härifrån. Kundexa släpper samtalsförsöket direkt så att du kan ringa nästa nummer.
+      </small>
+    </div> : null}
+    {endMessage ? <p className="notice">{endMessage}</p> : null}
     {callState.recovering ? <p className="notice">Samtalets slutstatus är ännu inte säkerställd. Kundexa fortsätter automatisk avstämning—starta inte ett nytt samtal.</p> : null}
     {callId && callState.connectionState === "degraded" ? <p className="notice">Realtime är tillfälligt frånkopplat. Samtalsstatus hämtas via säker fallback.</p> : null}
     {error ? <p className="form-error">{error}</p> : null}

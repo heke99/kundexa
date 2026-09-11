@@ -19,7 +19,14 @@ export async function GET() {
   try {
     await getAppContext();
     const supabase = await createClient();
-    const { data, error } = await supabase.rpc("telephony_status_for_current_user");
+    // Two independent reads: readiness, and which phone actually rings. The
+    // dial path is diagnostic, so a failure to read it must not take the
+    // readiness answer down with it — but it must not be silently reported as
+    // "no dial path" either, which is why the error is kept and surfaced.
+    const [{ data, error }, { data: dialPath, error: dialPathError }] = await Promise.all([
+      supabase.rpc("telephony_status_for_current_user"),
+      supabase.rpc("current_user_dial_path"),
+    ]);
     if (error || !data) {
       return NextResponse.json({
         platformConfigured: null,
@@ -47,6 +54,8 @@ export async function GET() {
     const blockers = [...runtimeBlocker, ...(payload.blockers ?? [])];
     return NextResponse.json({
       ...payload,
+      dialPath: dialPathError ? null : dialPath ?? null,
+      dialPathError: dialPathError ? "DIAL_PATH_UNAVAILABLE" : null,
       runtimeConfigured,
       platformReady: runtimeConfigured && payload.platformReady === true,
       manualReady: runtimeConfigured && payload.manualReady === true,

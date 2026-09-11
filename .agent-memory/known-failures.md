@@ -1191,3 +1191,46 @@ ingen av kodvägarna har någonsin körts i produktion (noll avtal, noll
 påminnelser, noll automationer). De två repository-hemligheterna gör
 utrullningen automatisk och tar bort hela felklassen — det är tredje gången de
 visar sig vara den verkliga lösningen.
+
+## Samtalet gick inte att avsluta, och uppringningsvägen syntes inte
+
+**FAILURE-0070 — ingen väg ur ett hängande samtalsförsök.**
+`rinkel_reserve_platform_outbound_call_v2` vägrar ett nytt samtal så länge ett
+försök ligger i icke-terminal status (`active_call_already_exists`). Enda vägen
+ut var `rinkel_release_stale_call_attempts`, en service-role-städare som
+uttryckligen vägrar gränser under 15 minuter och normalt kör på en timme. En
+säljare vars försök hängde — tappad webhook, avbrutet providersvar, kund som
+lade på innan något event kom — kunde alltså inte ringa **någon** på upp till en
+timme, utan någon kontroll någonstans i produkten. Åtgärd: `end_active_call`,
+som säljaren själv når via `POST /api/v1/calls/end` och en röd "Avsluta
+samtalet" i båda dialrarna.
+
+Funktionen är avsiktligt asymmetrisk. Ett **obesvarat** samtal stängs som
+`cancelled`; det är sant och det öppnar efterarbetet. Ett **besvarat** samtal
+lämnas orört, eftersom en terminal status hade fryst projektionen
+(`protect_rinkel_call_projection` låser varje providerfält när rangen når 100)
+och kastat bort den längd och det utfall som CDR:en är på väg att leverera. Bara
+försöket släpps. Testet i `verify-sql.mjs` kontrollerar båda grenarna, att en
+annan tenant inte kan avsluta samtalet, och att providerns längd fortfarande
+landar efteråt.
+
+**FAILURE-0071 — numret kunden ser förväxlades med telefonen som ringer.**
+Rinkels `/dial` kräver alltid en `deviceId`: samtalet startas genom en
+provideranvändares enhet, aldrig "från numret". `numberId` är vad kunden ser —
+och resolvern väljer alltid tenantens egen aktiva allokering, så caller-ID kan
+inte bli ett annat företags nummer. `deviceId` är den enhet som ringer upp
+säljaren först, och den satt bara i reservationens självringningsvakt; den
+visades ingenstans. Delar flera säljare en Rinkel-plats ringer varje samtal
+därför upp den platsägarens telefon, vilket bara gick att upptäcka genom att
+höra den ringa. `current_user_dial_path()` returnerar nu båda numren och dialern
+skriver ut dem före samtalet.
+
+**Vad som inte går, och varför det inte är byggt.** Rinkel har ingen
+hangup-endpoint — hela deras samtalsstyrning är `POST /dial`, läst ur deras
+publicerade endpointlista, inte antaget. Kundexa kan alltså inte koppla ned ett
+uppkopplat samtal, och knappen påstår inte det: den säger rakt ut att man lägger
+på i webbtelefonen. Rinkel exponerar inte heller något fält som binder en plats
+till en Kundexa-användare, så en delad plats kan inte blockeras i kod utan att
+grunda säljare på en namnstavning. Namnet driver en varning, aldrig ett avslag.
+Rätt åtgärd ligger på Rinkel-sidan: en egen plats per säljare, webbtelefonen som
+ringenhet.

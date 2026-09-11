@@ -13979,6 +13979,7 @@ export type Database = {
         Returns: Database["public"]["Enums"]["membership_role"]
       }
       current_tenant_id: { Args: never; Returns: string }
+      current_user_dial_path: { Args: never; Returns: Json }
       current_user_security_state: {
         Args: never
         Returns: {
@@ -14209,6 +14210,10 @@ export type Database = {
         | { Args: { schema_name: string; table_name: string }; Returns: string }
         | { Args: { table_name: string }; Returns: string }
       enablelongtransactions: { Args: never; Returns: string }
+      end_active_call: {
+        Args: { p_call_id: string; p_reason?: string }
+        Returns: Json
+      }
       enqueue_automation_event: {
         Args: {
           p_entity_id: string

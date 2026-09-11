@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
-import { Phone, Pause, Play, StickyNote } from "@/components/icons";
+import { Phone, PhoneOff, Pause, Play, StickyNote } from "@/components/icons";
 import { useRinkelDialer } from "@/hooks/use-rinkel-dialer";
 import { useCallRealtime } from "@/hooks/use-call-realtime";
 
@@ -203,6 +203,23 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
     return disposition;
   }
 
+  // Rinkel has no hangup endpoint, so this never claims to drop the provider's
+  // call. It releases the dial attempt — which is what blocks the seat and the
+  // rest of the list — and closes an unanswered call. `cancelled` is in neither
+  // the unattended-outcome map nor the session-stopping map, so the seller lands
+  // on the after-call form and picks the outcome themselves rather than having
+  // "ej svar" written for a call they chose to end.
+  async function endCurrentCall() {
+    if (!callId || voice.ending) return;
+    setError(null);
+    try {
+      const result = await voice.endCall(callId);
+      if (result.callClosed) await handleCallEnded(result.callStatus);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Samtalet kunde inte avslutas");
+    }
+  }
+
   async function handleCallEnded(status: string) {
     const stopReason = sessionStoppingCallStatuses[status];
     if (stopReason) {
@@ -287,6 +304,15 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
           {phase === "calling" ? <div className="notice">Samtalet hanteras på din telefonienhet. {mode === "automatic" ? "Svarar ingen registreras utfallet automatiskt och nästa prospekt rings upp." : "Kundexa inväntar slutstatus innan efterarbetet öppnas."}</div> : null}
           {callState.recovering ? <div className="notice">Samtalets slutstatus är osäker och avstäms automatiskt. Ring inte nästa prospekt ännu.</div> : null}
           {callId && callState.connectionState === "degraded" ? <div className="notice">Realtime är frånkopplat. Kundexa använder statuspolling tills anslutningen är återställd.</div> : null}
+          {callId && (phase === "calling" || phase === "dialing" || callState.recovering) ? <div className="dialer-end">
+            <button className="button button-danger" type="button" onClick={endCurrentCall} disabled={voice.ending}>
+              <PhoneOff size={15} /> {voice.ending ? "Avslutar…" : "Avsluta samtalet"}
+            </button>
+            <small className="muted">
+              Har kunden svarat lägger du på i webbtelefonen eller appen — telefonitjänsten kan inte kopplas ned
+              härifrån. Kundexa släpper samtalsförsöket direkt så att listan kan fortsätta.
+            </small>
+          </div> : null}
           {phase === "ready" && claim.allowSkip ? <button className="button button-ghost button-sm" type="button" onClick={() => pause("skip")}>Hoppa över</button> : null}
         </div>
         <Link className="muted" href={`/app/customers/${claim.customer.id}`}>Öppna fullständigt kundkort</Link>

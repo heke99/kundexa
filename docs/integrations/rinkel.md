@@ -89,6 +89,49 @@ Ett aktivt Rinkel-nummer får bara ha **en aktiv tenantägare**. Det kan delas a
 
 En idempotent replay returnerar den verkliga attempt-/providerstatusen. Ett tidigare `failed`, `ended` eller avslutat försök visas aldrig som att Rinkel ringer igen.
 
+## Uppringningsvägen och att avsluta ett samtal
+
+Två egenskaper hos Rinkels API styr vad Kundexa kan och inte kan göra. Båda är
+lästa ur Rinkels publicerade endpointlista (`developers.rinkel.com`), inte
+antagna.
+
+**Rinkel har ingen hangup-endpoint.** Hela deras samtalsstyrning är `POST /dial`.
+Kundexa kan därför inte koppla ned ett uppkopplat samtal — det görs på säljarens
+enhet. Det Kundexa kan göra, och gör via `end_active_call`
+(`POST /api/v1/calls/end`), är att släppa *samtalsförsöket*. Det är försöket som
+faktiskt blockerar: `rinkel_reserve_platform_outbound_call_v2` vägrar ett nytt
+samtal så länge ett försök ligger i icke-terminal status
+(`active_call_already_exists`), och enda tidigare vägen ut var
+`rinkel_release_stale_call_attempts`, en service-role-städare som vägrar gränser
+under 15 minuter. En säljare vars försök hängde kunde alltså inte ringa någon på
+upp till en timme.
+
+Funktionen är avsiktligt asymmetrisk:
+
+- **Obesvarat samtal** — stängs som `cancelled`. Det är sant, det är terminalt
+  och det öppnar efterarbetet.
+- **Besvarat samtal** — samtalsraden lämnas orörd. En terminal status hade fryst
+  projektionen (`protect_rinkel_call_projection` låser varje providerfält när
+  rangen når 100) och kastat bort den längd och det utfall som webhook eller CDR
+  är på väg att leverera. Endast försöket släpps.
+
+**`/dial` kräver alltid en `deviceId`.** Ett samtal startas genom en
+provideranvändares enhet, aldrig "från numret" i sig. Vilken telefon som ringer
+är därmed en egenskap hos säljarens Rinkel-plats, inte hos Kundexa:
+
+- `numberId` är vad **kunden ser**. Resolvern väljer alltid en aktiv allokering
+  som tillhör tenanten, så caller-ID kan inte bli ett annat företags nummer.
+- `deviceId` är den **enhet som ringer upp säljaren först**. Ringer den platsen
+  på en mobil går första benet via den mobilens ägare.
+
+Delar flera säljare en Rinkel-plats ringer varje samtal alltså upp den
+personens telefon. Rinkel exponerar inget fält som binder en plats till en
+Kundexa-användare, så detta går inte att blockera i kod utan att grunda
+säljare på en namnstavning. I stället visas det:
+`current_user_dial_path()` returnerar både numret kunden ser och telefonen som
+ringer, och dialern skriver ut båda före samtalet. Rätt åtgärd på Rinkel-sidan
+är en egen plats per säljare, med webbtelefonen som ringenhet.
+
 ## Webhookar
 
 Obligatoriska kärnevent:

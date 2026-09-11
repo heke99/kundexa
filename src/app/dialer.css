@@ -13,6 +13,14 @@
 .list-launch-card p { margin:4px 0 0; color:#708087; font-size:12px; }
 .dialer-status,.dialer-workspace-header { display:flex; justify-content:space-between; align-items:center; gap:16px; }
 .dialer-customer-select { color:white; margin-top:18px; }
+/* Uppringningsvägen: numret kunden ser och telefonen som faktiskt ringer är
+   två olika saker, och tidigare visades bara det första. */
+.dialer-path { margin:16px 0 0; padding:12px 14px; background:#ffffff14; border:1px solid #ffffff2e; border-radius:11px; row-gap:6px; font-size:12px; }
+.dialer-path dt { color:#cfe6df; font-weight:600; }
+.dialer-path dd { margin:0; color:white; }
+.dialer-end { margin-top:14px; display:grid; gap:8px; justify-items:start; }
+.dialer-end small { color:#cfe6df; font-size:11px; line-height:1.55; }
+.customer-card-dialer .phone-panel { margin:0; }
 .manual-after-call { margin-top:20px; padding:16px; display:grid; gap:12px; background:white; color:#17202a; border-radius:13px; }
 .manual-after-call h3,.manual-after-call p { margin:0; }
 .manual-after-call p { color:#68767d; font-size:13px; }

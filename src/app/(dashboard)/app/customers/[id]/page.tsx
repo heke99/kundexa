@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { RinkelDialer } from "@/components/rinkel-dialer";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
 import { formatCurrency, formatDate, initials } from "@/lib/utils";
 
@@ -15,7 +16,7 @@ export default async function CustomerDetail({ params, searchParams }: { params:
   const query = await searchParams;
   const context = await getAppContext();
   const supabase = await createClient();
-  const [{ data: customer }, { data: contacts }, { data: notes }, { data: activities }, { data: calls }, { data: contracts }, { data: deals }, { data: orders }, { data: lists }] = await Promise.all([
+  const [{ data: customer }, { data: contacts }, { data: notes }, { data: activities }, { data: calls }, { data: contracts }, { data: deals }, { data: orders }, { data: lists }, { data: callerIdData }] = await Promise.all([
     supabase.from("customers").select("*").eq("id", id).single(),
     supabase.from("contact_people").select("id,full_name,title,role,email,phone_e164,alternate_phone_e164,is_primary,is_signatory,source_external_id").eq("customer_id", id).order("is_primary", { ascending: false }).order("full_name"),
     supabase.from("notes").select("id,body,is_pinned,visibility,note_type,created_by,created_at,profiles:created_by(full_name)").eq("customer_id", id).is("archived_at", null).order("is_pinned", { ascending: false }).order("created_at", { ascending: false }).limit(30),
@@ -25,6 +26,7 @@ export default async function CustomerDetail({ params, searchParams }: { params:
     supabase.from("deals").select("id,name,status,probability,value,currency").eq("customer_id", id).order("created_at", { ascending: false }),
     supabase.from("sales_orders").select("id,order_number,status,total,currency,created_at").eq("customer_id", id).order("created_at", { ascending: false }),
     supabase.from("customer_lists").select("id,name,callback_policy,status").eq("status", "active").order("name"),
+    supabase.rpc("get_current_user_rinkel_numbers"),
   ]);
   if (!customer) notFound();
   // The card is the canonical CRM record, so the person actually responsible has to be
@@ -36,7 +38,7 @@ export default async function CustomerDetail({ params, searchParams }: { params:
   return <>
     <Link href="/app/customers" className="muted back-link"><ArrowLeft size={15} /> Till kunder</Link>
     <PageHeader title={customer.display_name} description={`${customer.customer_type === "company" ? "Företag" : "Privatperson"} · ${customer.lifecycle}`} action={<div className="toolbar-right">{customer.phone_e164 && !customer.do_not_call
-      ? <Link className="button button-primary" href={`/app/dialer?customer=${customer.id}`}><Phone size={16} /> Ring {customer.phone_e164}</Link>
+      ? <a className="button button-primary" href="#kundkort-dialer"><Phone size={16} /> Ring {customer.phone_e164}</a>
       : <span className="badge badge-warning">{customer.do_not_call ? "Spärrad för samtal" : "Telefonnummer saknas"}</span>}<Link className="button button-secondary" href={`/app/contracts/new?customer_id=${customer.id}`}><FileSignature size={16} /> Skapa avtal</Link></div>} />
     {query.error ? <p className="form-error">{query.error}</p> : null}
     {query.message ? <div className="notice" style={{ marginBottom: 16 }}>{query.message}</div> : null}
@@ -116,6 +118,30 @@ export default async function CustomerDetail({ params, searchParams }: { params:
         <Card><CardHeader><h2>Order, avtal och affärer</h2></CardHeader><CardContent>{orders?.map((order) => <div className="activity-line" key={order.id}><span className="activity-dot"><ClipboardList size={14} /></span><div><strong>{order.order_number}</strong><p>{order.status} · {formatCurrency(Number(order.total), order.currency)}</p></div><time>{formatDate(order.created_at)}</time></div>)}{contracts?.map((contract) => <div className="activity-line" key={contract.id}><span className="activity-dot"><FileSignature size={14} /></span><div><Link href={`/app/contracts/${contract.id}`}><strong>{contract.contract_number} · {contract.title}</strong></Link><p>{contract.status}</p></div><time>{formatCurrency(Number(contract.value), contract.currency)}</time></div>)}{deals?.map((deal) => <div className="activity-line" key={deal.id}><span className="activity-dot"><FileSignature size={14} /></span><div><strong>{deal.name}</strong><p>{deal.status} · {deal.probability}%</p></div><time>{formatCurrency(Number(deal.value), deal.currency)}</time></div>)}</CardContent></Card>
       </div>
       <div className="grid">
+        {/* Samtalet sker på kundkortet. Tidigare skickade "Ring" säljaren till
+            /app/dialer, alltså bort från kortet med kundens historik, anteckningar
+            och avtal — precis det underlag samtalet handlar om. Dialern är låst
+            till det här kundkortet, så det går inte att stå på ett kort och ringa
+            ett annat. */}
+        {customer.phone_e164 && !customer.do_not_call ? <Card id="kundkort-dialer" className="customer-card-dialer">
+          <CardHeader><h3><Phone size={16} /> Ring kunden</h3></CardHeader>
+          <CardContent>
+            <div className="phone-panel">
+              <RinkelDialer
+                customers={[{
+                  id: customer.id,
+                  display_name: customer.display_name,
+                  phone_e164: customer.phone_e164,
+                  do_not_call: customer.do_not_call,
+                }]}
+                initialCustomer={customer.id}
+                callbackActivityId={query.callback}
+                lockedToCustomer
+                callerIdOptions={(callerIdData ?? []) as Array<{ allocationId: string; number: string; displayName: string | null; isDefault?: boolean; accessSource?: "user" | "team" | "tenant" }>}
+              />
+            </div>
+          </CardContent>
+        </Card> : null}
         <Card><CardHeader><h3><CalendarPlus size={16} /> Boka återkomst</h3></CardHeader><CardContent><form action={scheduleCallback} className="form-stack"><input type="hidden" name="customer_id" value={customer.id} /><Field label="Rubrik" name="title" defaultValue="Återkomst" /><Field label="Tidpunkt" name="due_at" type="datetime-local" required /><SelectField label="Typ" name="scope" defaultValue="personal"><option value="personal">Personlig – endast jag</option><option value="global">Global – teamets gemensamma kö</option></SelectField><SelectField label="Ringlista (valfritt)" name="list_id" defaultValue=""><option value="">Ingen specifik lista</option>{lists?.map((list) => <option key={list.id} value={list.id}>{list.name} · {list.callback_policy}</option>)}</SelectField><TextareaField label="Vad ska följas upp?" name="description" /><button className="button button-primary">Skapa återkomst</button></form></CardContent></Card>
         <Card><CardHeader><h3><StickyNote size={16} /> Lägg till anteckning</h3></CardHeader><CardContent><form action={addNote} className="form-stack"><input type="hidden" name="customer_id" value={customer.id} /><TextareaField label="Anteckning" name="body" required /><div className="form-grid"><SelectField label="Typ" name="note_type" defaultValue="general"><option value="general">Allmän</option><option value="call">Samtal</option><option value="callback">Återkomst</option><option value="order">Order</option><option value="internal">Intern</option></SelectField><SelectField label="Synlighet" name="visibility" defaultValue="team"><option value="private">Privat</option><option value="team">Team</option><option value="tenant">Hela företaget</option></SelectField></div><label className="check-row"><input type="checkbox" name="is_pinned" /> Fäst högst upp på kundkortet</label><button className="button button-primary">Spara</button></form></CardContent></Card>
         <Card><CardHeader><h3>Anteckningar</h3></CardHeader><CardContent>{notes?.map((note) => { const canEdit=note.created_by===context.userId||["owner","admin"].includes(context.role); return <div className="activity-line" key={note.id}><span className="activity-dot"><StickyNote size={14} /></span><div><strong>{note.is_pinned ? "Fäst" : note.note_type} · {note.visibility}</strong><p>{note.body}</p>{canEdit?<details><summary>Redigera eller arkivera</summary><form action={updateNote} className="form-stack note-edit-form"><input type="hidden" name="customer_id" value={customer.id}/><input type="hidden" name="note_id" value={note.id}/><TextareaField label="Text" name="body" defaultValue={note.body} required/><SelectField label="Synlighet" name="visibility" defaultValue={note.visibility}><option value="private">Privat</option><option value="team">Team</option><option value="tenant">Hela företaget</option></SelectField><label className="check-row"><input type="checkbox" name="is_pinned" defaultChecked={note.is_pinned}/> Fäst högst upp</label><button className="button button-secondary button-sm">Spara ny version</button></form><form action={archiveNote}><input type="hidden" name="customer_id" value={customer.id}/><input type="hidden" name="note_id" value={note.id}/><button className="button button-ghost button-sm">Arkivera</button></form></details>:null}</div><time>{formatDate(note.created_at)}</time></div>; })}</CardContent></Card>

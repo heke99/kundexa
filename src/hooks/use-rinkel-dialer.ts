@@ -2,7 +2,30 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 
+export type DialPath = {
+  mapped?: boolean;
+  deviceReady?: boolean;
+  /** The phone Rinkel rings first: the seller's own seat at the provider. */
+  deviceRingsPhone?: string | null;
+  providerUserName?: string | null;
+  /** What the customer sees. A different number from the one above. */
+  callerIdNumber?: string | null;
+  callerIdSource?: string | null;
+  seatNameMatchesProfile?: boolean | null;
+};
+
+export type EndCallResult = {
+  callId: string;
+  attemptReleased: boolean;
+  callClosed: boolean;
+  answeredWhenEnded: boolean;
+  providerHangupSupported: boolean;
+  callStatus: string;
+  message: string;
+};
+
 type StatusResponse = {
+  dialPath?: DialPath | null;
   manualReady?: boolean;
   automaticReady?: boolean;
   platformConfigured?: boolean | null;
@@ -86,6 +109,8 @@ export function useRinkelDialer() {
   const [registered, setRegistered] = useState(false);
   const [automaticReady, setAutomaticReady] = useState(false);
   const [calling, setCalling] = useState(false);
+  const [ending, setEnding] = useState(false);
+  const [dialPath, setDialPath] = useState<DialPath | null>(null);
   const [status, setStatus] = useState("Kontrollerar telefoni…");
 
   useEffect(() => {
@@ -96,6 +121,7 @@ export function useRinkelDialer() {
         if (!active) return;
         setRegistered(Boolean(response.ok && data.manualReady));
         setAutomaticReady(Boolean(response.ok && data.automaticReady));
+        setDialPath(response.ok ? data.dialPath ?? null : null);
         setStatus(response.ok ? telephonyStatusMessage(data) : publicTelephonyMessage(data.errorMessage ?? "Telefonistatus kunde inte hämtas"));
       })
       .catch(() => {
@@ -183,5 +209,30 @@ export function useRinkelDialer() {
     setStatus("Telefoni redo");
   }, []);
 
-  return { registered, automaticReady, calling, status, startCall, markEnded };
+  // Rinkel exposes no hangup endpoint — its whole call-control surface is
+  // `POST /dial` — so this never claims to drop the provider's call. What it
+  // does is release the dial attempt, which is what actually blocks the seller
+  // from calling the next number, and close an unanswered call.
+  const endCall = useCallback(async (callId: string, reason?: string) => {
+    setEnding(true);
+    try {
+      const response = await fetch("/api/v1/calls/end", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ callId, reason: reason ?? null }),
+      });
+      const payload = await response.json().catch(() => null) as (EndCallResult & { message?: string; error?: string }) | null;
+      if (!response.ok || !payload) {
+        throw new Error(payload?.message ?? "Samtalet kunde inte avslutas");
+      }
+      setCalling(false);
+      setStatus(payload.message ?? "Telefoni redo");
+      return payload;
+    } finally {
+      setEnding(false);
+    }
+  }, []);
+
+  return { registered, automaticReady, calling, ending, dialPath, status, startCall, markEnded, endCall };
 }

@@ -965,6 +965,144 @@ if (centralFinal.rows[0].call_status !== "dial_requested" || centralFinal.rows[0
 await db.exec(`
   update public.calls set status='completed',ended_at=now() where id='${centralResult.callId}';
   update public.rinkel_call_attempts_v2 set status='completed' where id='${centralResult.attemptId}';
+`);
+
+// Avsluta ett samtal. The reservation refuses a second dial while an attempt is
+// in a non-terminal status, and until now the only thing that ever released
+// such an attempt was a service-role janitor with a 15-minute floor. A seller
+// whose attempt hung was therefore unable to call anyone, from anywhere in the
+// product, for up to an hour.
+// Its own reservation, not the shared fixture above: this block deliberately
+// leaves a call in a non-terminal state and then ends it, and a `cancelled`
+// status is terminal, so reusing the fixture would pin it and break the
+// monotonic-projection test further down.
+const endTest = await db.query(`
+  select public.rinkel_reserve_platform_outbound_call(
+    '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
+    gen_random_uuid(),'central-rinkel-end-call','customer_service'
+  ) as result
+`);
+const endTestResult = endTest.rows[0].result;
+if (!endTestResult.callId) {
+  throw new Error(`End-call fixture reservation failed: ${JSON.stringify(endTestResult)}`);
+}
+let refusedSecondDialWhileAttemptOpen = false;
+try {
+  await db.query(`
+    select public.rinkel_reserve_platform_outbound_call(
+      '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
+      gen_random_uuid(),'central-rinkel-blocked-by-open-attempt','customer_service'
+    )
+  `);
+} catch (error) {
+  refusedSecondDialWhileAttemptOpen = String(error).includes('active_call_already_exists');
+}
+if (!refusedSecondDialWhileAttemptOpen) {
+  throw new Error('An open dial attempt no longer blocks a second reservation; the end-call test proves nothing.');
+}
+// The call belongs to tenant A. A seller in tenant B must not be able to see it,
+// let alone end it.
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000050',false)`);
+let crossTenantEndRefused = false;
+try {
+  await db.query(`select public.end_active_call($1,null)`, [endTestResult.callId]);
+} catch (error) {
+  crossTenantEndRefused = String(error).includes('call_not_found');
+}
+if (!crossTenantEndRefused) {
+  throw new Error("A seller in another tenant was able to end this tenant's call.");
+}
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
+const endedUnanswered = await db.query(`select public.end_active_call($1,'Kunden svarade inte') as result`, [endTestResult.callId]);
+const endedUnansweredResult = endedUnanswered.rows[0].result;
+if (
+  endedUnansweredResult.attemptReleased !== true
+  || endedUnansweredResult.callClosed !== true
+  || endedUnansweredResult.callStatus !== 'cancelled'
+  || endedUnansweredResult.providerHangupSupported !== false
+) {
+  throw new Error(`Ending an unanswered call did not close it: ${JSON.stringify(endedUnansweredResult)}`);
+}
+const endedUnansweredRow = await db.query(`select c.status call_status,c.ended_at,c.end_cause,a.status attempt_status,a.error_code
+  from public.calls c join public.rinkel_call_attempts_v2 a on a.call_id=c.id where c.id=$1`, [endTestResult.callId]);
+if (
+  endedUnansweredRow.rows[0].call_status !== 'cancelled'
+  || endedUnansweredRow.rows[0].ended_at === null
+  || endedUnansweredRow.rows[0].end_cause !== 'cancelled_by_user'
+  || endedUnansweredRow.rows[0].attempt_status !== 'failed'
+  || endedUnansweredRow.rows[0].error_code !== 'ENDED_BY_SELLER'
+) {
+  throw new Error(`Ended call row is wrong: ${JSON.stringify(endedUnansweredRow.rows[0])}`);
+}
+// The point of the whole action: the seat is free again immediately, without
+// waiting for the janitor's 15-minute floor.
+const dialAfterEnd = await db.query(`
+  select public.rinkel_reserve_platform_outbound_call(
+    '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
+    gen_random_uuid(),'central-rinkel-after-end','customer_service'
+  ) as result
+`);
+const afterEndResult = dialAfterEnd.rows[0].result;
+if (!afterEndResult.callId || afterEndResult.callId === endTestResult.callId) {
+  throw new Error(`Ending the call did not free the seller to dial again: ${JSON.stringify(afterEndResult)}`);
+}
+// An answered call is a different claim. Rinkel has no hangup endpoint, so the
+// conversation is on a device Kundexa cannot reach; writing a terminal status
+// here would freeze the projection (protect_rinkel_call_projection pins every
+// provider field once the rank reaches 100) and discard the duration and
+// outcome the provider is about to report. Release the attempt, leave the call.
+await db.exec(`update public.calls set status='answered',answered_at=now() where id='${afterEndResult.callId}'`);
+const endedAnswered = await db.query(`select public.end_active_call($1,null) as result`, [afterEndResult.callId]);
+const endedAnsweredResult = endedAnswered.rows[0].result;
+if (
+  endedAnsweredResult.attemptReleased !== true
+  || endedAnsweredResult.callClosed !== false
+  || endedAnsweredResult.answeredWhenEnded !== true
+  || endedAnsweredResult.callStatus !== 'answered'
+) {
+  throw new Error(`Ending an answered call wrongly closed it: ${JSON.stringify(endedAnsweredResult)}`);
+}
+const answeredRow = await db.query(`select status,ended_at from public.calls where id=$1`, [afterEndResult.callId]);
+if (answeredRow.rows[0].status !== 'answered' || answeredRow.rows[0].ended_at !== null) {
+  throw new Error(`An answered call was closed by the seller's end action: ${JSON.stringify(answeredRow.rows[0])}`);
+}
+// The provider's own outcome still lands afterwards, which is the entire reason
+// the call row was left open.
+await db.exec(`update public.calls set status='completed',ended_at=now(),duration_seconds=61 where id='${afterEndResult.callId}'`);
+const providerTruth = await db.query(`select status,duration_seconds from public.calls where id=$1`, [afterEndResult.callId]);
+if (providerTruth.rows[0].status !== 'completed' || providerTruth.rows[0].duration_seconds !== 61) {
+  throw new Error(`Provider outcome could not land after the seller ended the call: ${JSON.stringify(providerTruth.rows[0])}`);
+}
+// The dial path: the phone that rings first is not the number the customer sees.
+const dialPath = await db.query(`select public.current_user_dial_path() as path`);
+const dialPathResult = dialPath.rows[0].path;
+if (
+  dialPathResult.mapped !== true
+  || dialPathResult.callerIdNumber !== '+46811111111'
+  || dialPathResult.deviceReady !== true
+) {
+  throw new Error(`Dial path did not report the caller ID and device: ${JSON.stringify(dialPathResult)}`);
+}
+await db.exec(`
+  update public.platform_rinkel_users
+  set raw_provider_data=jsonb_build_object('phoneNumber',jsonb_build_object('e164','+46709999999'))
+  where id='00000000-0000-0000-0000-000000000052';
+`);
+const dialPathWithSeatPhone = await db.query(`select public.current_user_dial_path() as path`);
+if (
+  dialPathWithSeatPhone.rows[0].path.deviceRingsPhone !== '+46709999999'
+  || dialPathWithSeatPhone.rows[0].path.callerIdNumber !== '+46811111111'
+) {
+  throw new Error(`Dial path confused the ringing phone with the caller ID: ${JSON.stringify(dialPathWithSeatPhone.rows[0].path)}`);
+}
+await db.exec(`
+  update public.platform_rinkel_users set raw_provider_data='{}'::jsonb
+  where id='00000000-0000-0000-0000-000000000052';
+  update public.rinkel_call_attempts_v2 set status='completed' where call_id='${afterEndResult.callId}';
+`);
+console.log("Executed ending a call: an open attempt blocks the next dial, another tenant may not end the call, ending an unanswered call closes it and frees the seat at once, ending an answered call releases only the attempt so the provider's duration still lands, and the dial path separates the phone that rings from the number the customer sees.");
+
+await db.exec(`
   update public.rinkel_number_allocations set status='revoked',valid_to=now()
     where id='00000000-0000-0000-0000-000000000058';
 `);
