@@ -702,3 +702,55 @@ Ett jobb som skapas direkt i produktionen är osynligt för varje granskning som
 utgår från koden. Och ett schemalagt jobb som aldrig har lyckats en enda gång ska
 larma — `cron.job_run_details` med noll `succeeded` är samma sorts signal som en
 heartbeat med `last_success_at = null` (FAILURE-0054).
+
+## FAILURE-0057 — ett uteblivet besked signerade avtalet — FIXED 2026-09-11
+
+**Symptom:** Inget rapporterat. Hittad vid genomgång av den publika signeringssidan.
+
+**Rotorsak:** `respondPublicContract` läste beslutet som
+`String(formData.get("decision") ?? "accept")`. Beslutet kommer från värdet på den
+knapp kunden trycker på, så om det av någon anledning inte kom med — ett fält som
+föll bort, ett inskickat formulär från annat håll — tolkades det som att kunden
+**accepterade** ett juridiskt bindande avtal.
+
+**Konsekvens:** En acceptans kunde registreras med bevis (namn, tid, IP,
+dokumenthash) utan att kunden valt att acceptera.
+
+**Åtgärd:** Beslutet har inget standardvärde längre. Parsningen ligger i
+`src/lib/contracts/public-response.ts` så den går att testa, och testet kräver att
+ett uteblivet, tomt eller okänt beslut avvisas i stället för att tolkas som
+acceptans. Enter-i-formuläret fungerar fortfarande: webbläsaren skickar värdet
+från förvald knapp.
+
+**Regel:** Ett standardvärde är ett antagande. På en handling som binder någon
+juridiskt får det inte finnas ett — uteblivet svar ska betyda "fråga igen", aldrig
+"ja".
+
+## FAILURE-0058 — databasens felmeddelanden nådde den publika signeringssidan — FIXED 2026-09-11
+
+**Symptom:** Inget rapporterat. Samma genomgång.
+
+**Rotorsak:** `redirect(...?error=${encodeURIComponent(error.message)})` skickade
+Postgres egna undantagstext till en oautentiserad sida.
+
+**Konsekvens:** Funktionsnamn, villkorsnamn och interna identifierare kunde visas
+för vem som helst med länken, och texten var ändå inte något kunden kunde agera på.
+
+**Åtgärd:** Kända tillstånd (fel kod, utgången länk, omskickat avtal, inaktiv
+begäran) får en svensk mening kunden kan agera på. Allt annat loggas server-side
+med `requestId` och besvaras generiskt.
+
+**Regel:** En publik yta får aldrig återge databasens text. Översätt de tillstånd
+användaren kan göra något åt, logga resten.
+
+## Kontrollerat och avfärdat 2026-09-11
+
+- **Intervallgrinden för bindnings-/uppsägningstid** finns i UI:t men inte i API:t.
+  Inte en lucka: `create_contract_draft_api_v2` tar värdena från den aktiva
+  prisversionen, och prisversionen valideras med samma gränser (240/120/365) där
+  den skapas. UI-grinden är extra djupförsvar eftersom säljaren får skriva över.
+- **SMS-signeringen** såg först ut att registrera `manual_review` som `declined`.
+  Fel läsning: `if (decision === "manual_review") continue;` tre rader ovanför gör
+  att den aldrig når ternären. Ett tvetydigt svar registreras som
+  `manual_review_required`, och bara när det finns exakt en väntande begäran att
+  knyta det till — att gissa vilket avtal ett tvetydigt svar gäller vore värre.

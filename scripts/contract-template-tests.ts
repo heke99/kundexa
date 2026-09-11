@@ -6,6 +6,7 @@ import {
   missingContextFields, templateContextFields, validateTemplateVariables,
 } from "../src/lib/contracts/template-context";
 import { renderStrictTemplate, templateVariableNames } from "../src/lib/domain/template";
+import { parsePublicContractResponse } from "../src/lib/contracts/public-response";
 
 // Build a real .docx rather than a fixture file, so the test proves the reader
 // against the actual container format instead of against one saved example.
@@ -177,6 +178,27 @@ async function main() {
   assert.match(rendered, /Ingen bindningstid/);
   assert.match(rendered, /Ingen produkt/);
   assert.match(rendered, /Inga särskilda villkor/);
+
+  // --- The customer's answer ----------------------------------------------
+  // The decision comes from the value of the button the customer pressed. If it
+  // does not arrive, the only safe answer is to ask again: a default of "accept"
+  // would record a legally binding acceptance because a field went astray.
+  const answer = (fields: Record<string, string>) =>
+    parsePublicContractResponse({ get: (name: string) => fields[name] ?? null });
+
+  const accepted = answer({ full_name: "Anna Andersson", confirm: "on", decision: "accept" });
+  assert.ok(accepted.success && accepted.data.decision === "accept");
+  const declined = answer({ full_name: "Anna Andersson", confirm: "on", decision: "decline" });
+  assert.ok(declined.success && declined.data.decision === "decline");
+
+  assert.equal(answer({ full_name: "Anna Andersson", confirm: "on" }).success, false);
+  assert.equal(answer({ full_name: "Anna Andersson", confirm: "on", decision: "" }).success, false);
+  assert.equal(answer({ full_name: "Anna Andersson", confirm: "on", decision: "ACCEPT" }).success, false);
+  // The explicit confirmation and a real name stay required.
+  assert.equal(answer({ full_name: "Anna Andersson", decision: "accept" }).success, false);
+  assert.equal(answer({ full_name: "A", confirm: "on", decision: "accept" }).success, false);
+
+  console.log("Public acceptance parsing tests passed: an explicit accept or decline is required, a missing or unrecognised decision is refused rather than treated as acceptance, and the confirmation stays mandatory.");
 
   console.log("Contract template placeholder tests passed: correct templates accepted, a misremembered field is rejected with the real name, no non-scalar field is advertised, one context serves both render paths, and every advertised placeholder renders.");
 

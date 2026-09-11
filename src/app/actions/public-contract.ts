@@ -3,6 +3,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { parsePublicContractResponse } from "@/lib/contracts/public-response";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { serverEnv } from "@/lib/env";
 import { sha256 } from "@/lib/crypto";
@@ -12,18 +13,8 @@ const DECLINE_TEXT = "Jag avstår från avtalet och förstår att mitt besked do
 
 export async function respondPublicContract(formData: FormData) {
   const token = String(formData.get("token") ?? "");
-  const parsed = z.object({
-    fullName: z.string().min(2).max(200),
-    confirm: z.literal("on"),
-    decision: z.enum(["accept", "decline"]),
-    acceptanceCode: z.string().trim().max(32).optional(),
-  }).safeParse({
-    fullName: String(formData.get("full_name") ?? "").trim(),
-    confirm: formData.get("confirm"),
-    decision: String(formData.get("decision") ?? "accept"),
-    acceptanceCode: String(formData.get("acceptance_code") ?? "").trim() || undefined,
-  });
-  if (!token || !parsed.success) redirect(`/accept/${token}?error=Bekräfta namn och ditt uttryckliga besked`);
+  const parsed = parsePublicContractResponse(formData);
+  if (!token || !parsed.success) redirect(`/accept/${token}?error=Bekräfta ditt namn, kryssa i rutan och välj att acceptera eller avstå.`);
 
   const env = serverEnv();
   const admin = createAdminClient();
@@ -76,7 +67,28 @@ export async function respondPublicContract(formData: FormData) {
       decision: parsed.data.decision,
     },
   });
-  if (error) redirect(`/accept/${token}?error=${encodeURIComponent(error.message)}`);
+  if (error) {
+    // This page is public and unauthenticated, so the database's own message
+    // must not reach it: constraint names, function names and internal
+    // identifiers are not for the customer, and a raw error is not actionable
+    // for them either. Recognised states get a sentence they can act on;
+    // everything else is logged server-side and answered generically.
+    const code = error.message.split(":")[0];
+    const customerFacing: Record<string, string> = {
+      acceptance_code_required: "Ange acceptanskoden som skickades till dig.",
+      acceptance_code_invalid: "Acceptanskoden stämmer inte. Kontrollera koden i meddelandet och försök igen.",
+      acceptance_request_expired: "Acceptlänken har löpt ut. Kontakta avsändaren för en ny.",
+      acceptance_request_not_pending: "Begäran är inte längre aktiv.",
+      acceptance_request_superseded_generation: "Avtalet har skickats om. Använd den senaste länken du fick.",
+      acceptance_request_not_found: "Länken är ogiltig.",
+      invalid_acceptance_decision: "Välj att acceptera eller avstå från avtalet.",
+    };
+    const message = customerFacing[code];
+    if (!message) console.error("public_contract_acceptance_failed", { requestId: request.id, code });
+    redirect(`/accept/${token}?error=${encodeURIComponent(
+      message ?? "Ditt besked kunde inte registreras. Kontakta avsändaren av avtalet.",
+    )}`);
+  }
   redirect(`/accept/${token}?${accepted ? "accepted" : "declined"}=1`);
 }
 
