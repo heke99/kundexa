@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Field } from "@/components/ui/form-field";
 import { saveLegalEntity, toggleTenantFeature } from "@/app/actions/admin";
+import { normalizeOrganizationNumber } from "@/lib/imports/organization-number";
 
 const featureLabels: Record<string, string> = {
   outbound_calls: "Utgående samtal",
@@ -17,6 +18,58 @@ const featureLabels: Record<string, string> = {
   mass_campaigns: "Masskampanjer",
   exports: "Exporter",
 };
+
+
+
+// Sending a contract checks two flags, not one: the channel's own gate and the
+// general outbound gate. With only the delivery flag on, the send fails at
+// `outbound_email_feature_disabled` — a green row that does nothing.
+const featurePrerequisites: Record<string, string> = {
+  contract_delivery_email: "outbound_email",
+  contract_delivery_sms: "outbound_sms",
+};
+
+function blockedPrerequisite(
+  feature: { feature_key: string; enabled: boolean },
+  features: { feature_key: string; enabled: boolean }[] | null,
+): string | null {
+  if (!feature.enabled) return null;
+  const required = featurePrerequisites[feature.feature_key];
+  if (!required) return null;
+  return features?.some((other) => other.feature_key === required && other.enabled) ? null : required;
+}
+
+type LegalEntityRow = {
+  organization_number: string | null;
+  country_code: string | null;
+  address_line1: string | null;
+  postal_code: string | null;
+  city: string | null;
+};
+
+/**
+ * What would make this company wrong on a contract.
+ *
+ * The organisation number is checked against the same rule the customer import
+ * has always used, because until now nothing checked the seller's own — which is
+ * how an eleven-digit value ended up on the party that signs.
+ */
+function legalEntityProblems(entity: LegalEntityRow): string[] {
+  const problems: string[] = [];
+  const swedish = (entity.country_code ?? "SE").toUpperCase() === "SE";
+  if (!entity.organization_number) {
+    problems.push("Organisationsnummer saknas — det trycks på varje avtal.");
+  } else if (swedish && !normalizeOrganizationNumber(entity.organization_number, { allowPerson: true }).valid) {
+    problems.push(`"${entity.organization_number}" är inget giltigt svenskt organisationsnummer. Det skrivs ut som avsändarens organisationsnummer på avtalet.`);
+  }
+  const missingAddress = [
+    !entity.address_line1 && "adress",
+    !entity.postal_code && "postnummer",
+    !entity.city && "ort",
+  ].filter(Boolean);
+  if (missingAddress.length) problems.push(`Avsändaradressen är ofullständig: ${missingAddress.join(", ")} saknas.`);
+  return problems;
+}
 
 export default async function AdminPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string }> }) {
   const params = await searchParams;
@@ -37,7 +90,13 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
         <CardContent>
           {features?.map((feature) => <div className="activity-line" key={feature.feature_key}>
             <span className="activity-dot"><Settings size={14} /></span>
-            <div><strong>{featureLabels[feature.feature_key] ?? feature.feature_key}</strong><p>{feature.enabled ? "Tillåten för tenanten" : "Blockerad i databasen"}</p></div>
+            <div>
+              <strong>{featureLabels[feature.feature_key] ?? feature.feature_key}</strong>
+              <p>{feature.enabled ? "Tillåten för tenanten" : "Blockerad i databasen"}</p>
+              {blockedPrerequisite(feature, features)
+                ? <p className="form-error">Får ingen effekt: {featureLabels[blockedPrerequisite(feature, features)!]} är avstängd, och utskicket kräver båda.</p>
+                : null}
+            </div>
             <form action={toggleTenantFeature}>
               <input type="hidden" name="feature_key" value={feature.feature_key} />
               <input type="hidden" name="enabled" value={feature.enabled ? "false" : "true"} />
@@ -50,11 +109,24 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
       <Card>
         <CardHeader><h2>Juridiska avsändarbolag</h2><Badge>{legalEntities?.length ?? 0}</Badge></CardHeader>
         <CardContent>
-          {legalEntities?.map((entity) => <div className="activity-line" key={entity.id}>
-            <span className="activity-dot"><Settings size={14} /></span>
-            <div><strong>{entity.legal_name}</strong><p>{entity.organization_number ?? "Organisationsnummer saknas"} · {entity.city ?? "Ort saknas"}</p></div>
-            <Badge className={entity.is_default ? "badge-success" : ""}>{entity.is_default ? "Standard" : "Aktiv"}</Badge>
-          </div>)}
+          {legalEntities?.map((entity) => {
+            // This company is the signing party on every contract it is used for,
+            // and its details are rendered into the document. A number that was
+            // saved before the write path validated it is still in the table, so
+            // say so here rather than letting it reach a customer.
+            const problems = legalEntityProblems(entity);
+            return <div className="activity-line" key={entity.id}>
+              <span className="activity-dot"><Settings size={14} /></span>
+              <div>
+                <strong>{entity.legal_name}</strong>
+                <p>{entity.organization_number ?? "Organisationsnummer saknas"} · {entity.city ?? "Ort saknas"}</p>
+                {problems.length ? <p className="form-error">{problems.join(" ")}</p> : null}
+              </div>
+              <Badge className={problems.length ? "badge-danger" : entity.is_default ? "badge-success" : ""}>
+                {problems.length ? "Behöver rättas" : entity.is_default ? "Standard" : "Aktiv"}
+              </Badge>
+            </div>;
+          })}
           <form action={saveLegalEntity} className="form-stack" style={{ marginTop: 18 }}>
             <Field label="Juridiskt namn" name="legal_name" required />
             <Field label="Organisationsnummer" name="organization_number" />

@@ -14491,6 +14491,10 @@ export type Database = {
       is_tenant_admin: { Args: { p_tenant_id?: string }; Returns: boolean }
       is_tenant_member: { Args: { p_tenant_id: string }; Returns: boolean }
       is_terminal_call_status: { Args: { p_status: string }; Returns: boolean }
+      is_valid_organization_number: {
+        Args: { p_country_code?: string; p_value: string }
+        Returns: boolean
+      }
       list_current_user_tenants: {
         Args: never
         Returns: {

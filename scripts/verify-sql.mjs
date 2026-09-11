@@ -2735,6 +2735,82 @@ console.log("Executed segment authority: only a tenant admin may create one, a t
 
 console.log("Executed contract template authorship: a team leader creates a draft, cannot release it, an owner approves it into the current version, and a seller is refused.");
 
+// The seller's organisation number is printed on every contract. Nothing
+// validated it, so production holds an eleven-digit and a nine-digit value where
+// a Swedish organisationsnummer has ten. These prove the write path now refuses
+// what would end up on a legally binding document, and that it agrees with the
+// normalizer the customer import has always used.
+{
+  const owner = "00000000-0000-0000-0000-000000000002";
+  await db.exec(`select set_config('request.jwt.claim.sub','${owner}',false)`);
+
+  const saveEntity = async (organizationNumber, countryCode = "SE") => {
+    try {
+      const result = await db.query(
+        `select public.upsert_tenant_legal_entity(null,$1,$2,null,null,null,$3,null,null,null,false) as id`,
+        [`Testbolag ${organizationNumber}-${countryCode}`, organizationNumber, countryCode],
+      );
+      return { id: result.rows[0].id };
+    } catch (error) {
+      return { error: String(error.message) };
+    }
+  };
+
+  // The exact values sitting in production today.
+  for (const rejected of ["5594616-7149", "559333333"]) {
+    const attempt = await saveEntity(rejected);
+    if (!attempt.error?.includes("organization_number_invalid")) {
+      throw new Error(`An invalid seller organisation number was accepted (${rejected}): ${attempt.error ?? "saved"}`);
+    }
+  }
+  // A ten-digit number that fails Luhn is the subtler case: right shape, wrong number.
+  const luhnFailure = await saveEntity("556461-6149");
+  if (!luhnFailure.error?.includes("organization_number_invalid")) {
+    throw new Error(`A seller organisation number failing the Luhn check was accepted: ${luhnFailure.error ?? "saved"}`);
+  }
+
+  // Every spelling of the same real number must land in one canonical form.
+  for (const accepted of ["556123-4567", "5561234567", "SE556123456701", "165561234567"]) {
+    const attempt = await saveEntity(accepted);
+    if (attempt.error) throw new Error(`A valid seller organisation number was refused (${accepted}): ${attempt.error}`);
+    const stored = (await db.query(
+      `select organization_number from public.tenant_legal_entities where id=$1`, [attempt.id],
+    )).rows[0].organization_number;
+    if (stored !== "556123-4567") {
+      throw new Error(`A valid seller organisation number was not normalised (${accepted} stored as ${stored})`);
+    }
+  }
+
+  // An enskild firma signs with a personnummer, and refusing it would lock a
+  // real Swedish business out of its own contracts.
+  const soleTrader = await saveEntity("19121212-1212".slice(2));
+  if (soleTrader.error) throw new Error(`A sole trader's personnummer was refused: ${soleTrader.error}`);
+
+  // A foreign entity has a different national format; guessing at one would
+  // refuse a legitimate company.
+  const foreign = await saveEntity("NO 987 654 321 MVA", "NO");
+  if (foreign.error) throw new Error(`A non-Swedish organisation number was refused: ${foreign.error}`);
+
+  // The rows that already hold an invalid number must stay writable — a CHECK
+  // constraint here would have made them impossible to correct.
+  await db.exec(`
+    insert into public.tenant_legal_entities(tenant_id,legal_name,organization_number,country_code,active,is_default)
+    values('00000000-0000-0000-0000-000000000001','Historiskt bolag','5594616-7149','SE',true,false);`);
+  await db.exec(`
+    update public.tenant_legal_entities set active=true
+    where tenant_id='00000000-0000-0000-0000-000000000001' and organization_number='5594616-7149';`);
+
+  // And the admin screen must be able to mark them without seeing another tenant.
+  const probe = await db.query(
+    `select public.is_valid_organization_number('5594616-7149','SE') as bad,
+            public.is_valid_organization_number('556123-4567','SE') as good,
+            public.is_valid_organization_number('987654321','NO') as foreign_ok`);
+  if (probe.rows[0].bad !== false || probe.rows[0].good !== true || probe.rows[0].foreign_ok !== true) {
+    throw new Error(`is_valid_organization_number disagrees with the write path: ${JSON.stringify(probe.rows[0])}`);
+  }
+}
+console.log("Executed seller organisation number validation: the two values production actually holds are refused, a Luhn failure is refused, every spelling of a real number normalises to one form, a sole trader and a foreign company are accepted, and an already-invalid row stays writable so it can be corrected.");
+
 // Generated-type drift. `types:verify` only asserts that a hand-maintained list of names is
 // present, so a table or column added by a migration and never regenerated into
 // database.types.ts passes it unnoticed and only surfaces as a runtime error. The migrated

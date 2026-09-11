@@ -159,3 +159,30 @@ saknades när FAILURE-0055 kunde ligga overksam i 34 dagar.
 `dead_letter` sedan 2026-08-18 med `Rinkel API-nyckeln nekades.` efter tio
 försök. Det är från innan plattformsnyckeln var konfigurerad, och det är
 dead-letter-mekaniken som gör sitt jobb — inte ett fel i dagens system.
+
+## 2026-09-11 — go-live-kontroll mot produktionens faktiska data
+
+| Kontroll | Status | Bevis |
+|---|---|---|
+| Säljarens organisationsnummer valideras på skrivvägen | PASS | nytt runtimetest, bevisat falla utan fixen (`accepted (5594616-7149): saved`) |
+| Varje stavning av samma nummer normaliseras till en form | PASS | `556123-4567`, `5561234567`, `SE556123456701`, `165561234567` → ett värde |
+| Enskild firma och utländskt bolag nekas inte | PASS | nytt runtimetest |
+| Redan ogiltig rad förblir skrivbar och går att rätta | PASS | nytt runtimetest |
+| SQL-normaliseraren håller med TypeScript-normaliseraren | PASS | samma Luhn-utfall på fyra nummer |
+| Avtal kan skapas utan produkt | PASS | `productId` är valfri i `createContract`; priset anges manuellt |
+| Utkastmallens platshållare är alla giltiga | PASS | alla tolv validerar mot `templateContextFields` |
+| Säkerhetsrådgivare utan PostGIS-artefakter | PASS | endast `auth_leaked_password_protection` kvarstår |
+
+**Tre fynd i produktionens data som bara ägaren kan rätta:** båda
+organisationsnumren är ogiltiga, båda avsändarbolagen saknar adress/postnummer/ort,
+och `outbound_email` är av för Gridex trots att `contract_delivery_email` är på.
+
+**Rättelse av ett tidigare påstående:** jag skrev att `outgoingCall` och
+`callStart` verifieras med "en knapptryckning". Det är fel.
+`record_platform_rinkel_webhook_processed` sätter `verified` först när en
+verklig leverans kommer in — `callEnd` och `incomingCall` blev verifierade
+2026-08-18 av riktiga samtal. De två återstående verifierar sig själva vid det
+första skarpa utringda samtalet. Provider-testet för `callStart` föll dessutom på
+`RINKEL_INVALID_REQUEST`, vilket är noterat men inte åtgärdat: jag kan inte
+anropa Rinkels API härifrån och vill inte ändra en fungerande registrering på en
+gissning.

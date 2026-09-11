@@ -802,3 +802,58 @@ och materialisera ett segment, men inte skapa ett. Den asymmetrin är RLS:ens, o
 jag har låtit den stå — att ändra vem som får skriva i en tenant-tabell är ditt
 beslut, inte ett buggfix. Ett runtime-test spikar nu den faktiska behörigheten så
 konstanterna inte kan bli osanna i tysthet.
+
+## FAILURE-0060 — säljarens organisationsnummer validerades inte och två ogiltiga ligger i produktion — FIXED 2026-09-11
+
+**Symptom:** Inget i drift, för inget avtal har skickats ännu. Felet syns bara om
+man läser `tenant_legal_entities` och kontrollerar värdena mot ett riktigt
+organisationsnummer.
+
+**Rotorsak:** `upsert_tenant_legal_entity` validerade telefonnumret mot E.164
+men sparade organisationsnumret ordagrant. Kundernas organisationsnummer har
+alltid gått genom `normalizeOrganizationNumber` (tio siffror, Luhn, kanonisk
+form `NNNNNN-NNNN`) vid varje import — säljarens eget, det som faktiskt trycks
+på dokumentet, var det enda identitetsnumret i systemet som ingenting kontrollerade.
+
+**Konsekvens:** Produktionen innehåller `5594616-7149` (elva siffror) för
+Gridex El AB och `559333333` (nio siffror) för Trustcall. Mallen använder
+`{{seller.organization_number}}`, så båda hade skrivits ut som den avtalsslutande
+partens organisationsnummer på ett juridiskt bindande dokument. Ett avtal med fel
+organisationsnummer på avsändaren är en identifieringsbrist i själva handlingen.
+
+**Åtgärd:** `202609110001_validate_seller_organization_number.sql` speglar
+TypeScript-normaliseraren i SQL (`private.normalize_swedish_organization_number`
+plus Luhn-kontrollen) och validerar i `upsert_tenant_legal_entity` när landet är
+SE. Personnummer accepteras — en enskild firma tecknar avtal med ett sådant, och
+att neka det hade låst ute ett verkligt svenskt företag från sina egna avtal.
+Utländska bolag lämnas orörda, eftersom en gissning om deras nationella format
+hade nekat ett legitimt företag.
+
+**Medvetet ingen CHECK-constraint.** De två felaktiga raderna finns redan. En
+constraint — även `NOT VALID` — hade fått varje senare UPDATE av just de raderna
+att falla, inklusive `is_default=false`-svepet inuti samma funktion. Validering på
+skrivvägen nekar nya felaktiga värden utan att göra de befintliga raderna
+oskrivbara, vilket är precis det som gör att de går att rätta.
+
+De två befintliga värdena är **inte** rättade av mig: rätt organisationsnummer är
+en uppgift bara ägaren har, och att gissa hade varit värre än att lämna felet
+synligt. Admin-vyn markerar dem nu som "Behöver rättas" med skälet utskrivet.
+
+**Regel:** Ett identitetsnummer som hamnar på en juridiskt bindande handling ska
+valideras med samma regel oavsett om det är kundens eller vårt eget.
+
+## FAILURE-0061 — `contract_delivery_email` kunde stå på medan `outbound_email` var av — FIXED 2026-09-11
+
+**Symptom:** Admin-vyn visade "Avtalsutskick via e-post: Tillåten för tenanten"
+för Gridex. Ett avtalsutskick hade ändå fallit på `outbound_email_feature_disabled`.
+
+**Rotorsak:** Utskicket kontrollerar två flaggor, inte en — kanalens egen grind
+och den allmänna utgående grinden. Admin-vyn visade dem som oberoende reglage,
+så en påslagen leveransflagga läste som "klart" när den inte hade någon effekt.
+
+**Åtgärd:** Admin-vyn skriver nu ut beroendet på den flagga som är verkningslös.
+Flaggan i produktion är **inte** ändrad av mig: att slå på `outbound_email` utan
+en kopplad Resend-nyckel flyttar bara felet till leverantörssteget.
+
+**Regel:** En grind som beror på en annan ska säga det där den visas, inte där
+den kontrolleras.
