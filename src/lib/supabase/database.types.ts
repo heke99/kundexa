@@ -14003,6 +14003,16 @@ export type Database = {
           total_members: number
         }[]
       }
+      customer_list_requeue_candidates: {
+        Args: { p_list_id: string }
+        Returns: {
+          label: string
+          last_completed_at: string
+          members: number
+          outcome: string
+          outcome_group: string
+        }[]
+      }
       customer_list_seller_workload: {
         Args: { p_list_id: string }
         Returns: {
@@ -15055,6 +15065,15 @@ export type Database = {
         Returns: Json
       }
       report_sales_overview: { Args: { p_since?: string }; Returns: Json }
+      requeue_customer_list_members: {
+        Args: {
+          p_completed_before?: string
+          p_delay_minutes?: number
+          p_list_id: string
+          p_outcomes?: string[]
+        }
+        Returns: number
+      }
       requeue_platform_rinkel_job: {
         Args: { p_job_id: string; p_reason: string }
         Returns: undefined

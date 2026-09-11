@@ -214,3 +214,44 @@ export async function upsertListDisposition(form: FormData) {
   revalidatePath(`/app/lists/${listId}`);
   redirect(`/app/lists/${listId}?saved=1`);
 }
+
+/**
+ * Put worked-through entries back into the dialling queue.
+ *
+ * The non-terminal outcomes do not need this — `no_answer`, `busy` and
+ * `voicemail` carry a retry delay that brings them back on their own. This is
+ * for the ones that deliberately ended the entry, above all "inte intresserad".
+ *
+ * The RPC refuses a caller who may not manage the list, and it never releases a
+ * `do_not_call` or NIX block. Both are asserted by the runtime tests rather than
+ * relied on here.
+ */
+export async function requeueListMembers(form: FormData) {
+  const context = await getAppContext();
+  const listId = value(form, "list_id");
+  if (!listId) redirect("/app/lists?error=Listan saknas");
+
+  const outcomes = form.getAll("outcomes").map((entry) => String(entry).trim()).filter(Boolean);
+  const delayMinutes = Number(value(form, "delay_minutes") || "0");
+  if (!Number.isFinite(delayMinutes) || delayMinutes < 0 || delayMinutes > 525600) {
+    redirect(`/app/lists/${listId}?error=Ange en giltig fördröjning`);
+  }
+  if (!outcomes.length) redirect(`/app/lists/${listId}?error=Välj minst ett utfall att lägga om`);
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("requeue_customer_list_members", {
+    p_list_id: listId,
+    p_outcomes: outcomes,
+    p_delay_minutes: delayMinutes,
+    p_completed_before: null,
+  });
+  if (error) {
+    const swedish = error.message.includes("list_manage_permission_denied")
+      ? "Du saknar behörighet att lägga om den här listan."
+      : message(error);
+    redirect(`/app/lists/${listId}?error=${encodeURIComponent(swedish)}`);
+  }
+  void context;
+  revalidatePath(`/app/lists/${listId}`);
+  redirect(`/app/lists/${listId}?message=${encodeURIComponent(`${Number(data ?? 0)} prospekt är lagda tillbaka i listan.`)}`);
+}

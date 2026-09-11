@@ -2513,6 +2513,98 @@ await db.query(`select public.release_list_member_claim($1,'end')`, [autoSession
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
 console.log("Executed the automatic dialer loop: an unanswered call records its outcome and schedules a retry, the next prospect is claimed automatically, and an answered call stops for the seller's outcome.");
 
+// The queue filters a worked prospect out on its own — claim_next_list_member only
+// looks at pending/retry/callback/skipped — so "inte intresserad" stops being
+// offered. What was missing is the way back. These prove the re-queue brings the
+// right entries back and refuses the ones that are legal blocks rather than
+// sales outcomes.
+{
+  const owner = "00000000-0000-0000-0000-000000000002";
+  const seller = "00000000-0000-0000-0000-000000000020";
+  await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+
+  // Three worked-through entries with different endings, plus one that asked not
+  // to be called. Attempts are maxed so the reset is exercised too.
+  const members = (await db.query(
+    `select id, customer_id from public.customer_list_members where list_id=$1 order by id limit 4`,
+    [runtimeListId],
+  )).rows;
+  if (members.length < 4) throw new Error(`The re-queue fixture needs four list members, found ${members.length}`);
+  const endings = ["not_interested", "not_interested", "wrong_number", "do_not_call"];
+  for (const [index, member] of members.entries()) {
+    await db.query(
+      `update public.customer_list_members
+         set state=$2, outcome=$3, attempts=99, completed_at=now() - interval '1 day',
+             compliance_status='allowed', claimed_by=null, claim_expires_at=null
+       where id=$1`,
+      [member.id, endings[index] === "do_not_call" ? "blocked" : "completed", endings[index]],
+    );
+  }
+
+  await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
+
+  // What a re-queue would bring back, before pressing anything. The blocked one
+  // must not be offered.
+  await db.exec(`select set_config('request.jwt.claim.sub','${owner}',false)`);
+  const candidates = (await db.query(`select * from public.customer_list_requeue_candidates($1)`, [runtimeListId])).rows;
+  const byOutcome = Object.fromEntries(candidates.map((row) => [row.outcome, Number(row.members)]));
+  if (byOutcome.not_interested !== 2 || byOutcome.wrong_number !== 1) {
+    throw new Error(`The re-queue preview miscounted: ${JSON.stringify(candidates)}`);
+  }
+  if ("do_not_call" in byOutcome) throw new Error("A do-not-call entry was offered for re-queueing");
+
+  // A seller may not re-open a list the team leader closed.
+  await db.exec(`select set_config('request.jwt.claim.sub','${seller}',false)`);
+  try {
+    await db.query(`select public.requeue_customer_list_members($1,null,0,null)`, [runtimeListId]);
+    throw new Error("A seller was allowed to re-queue a list");
+  } catch (error) {
+    if (!String(error.message).includes("list_manage_permission_denied")) throw error;
+  }
+
+  await db.exec(`select set_config('request.jwt.claim.sub','${owner}',false)`);
+  const requeued = Number((await db.query(
+    `select public.requeue_customer_list_members($1,array['not_interested'],180,null) as n`, [runtimeListId],
+  )).rows[0].n);
+  if (requeued !== 2) throw new Error(`Re-queueing "inte intresserad" moved ${requeued} entries, expected 2`);
+
+  const after = (await db.query(
+    `select outcome, state, attempts, completed_at, next_attempt_at > now() + interval '170 minutes' as forsenad
+       from public.customer_list_members where list_id=$1 and outcome in ('not_interested','wrong_number','do_not_call')
+       order by outcome`, [runtimeListId],
+  )).rows;
+  for (const row of after) {
+    if (row.outcome === "not_interested") {
+      if (row.state !== "pending") throw new Error(`A re-queued entry is ${row.state}, expected pending`);
+      // Without this the next disposition would close it again immediately.
+      if (Number(row.attempts) !== 0) throw new Error(`A re-queued entry kept ${row.attempts} attempts`);
+      if (row.completed_at !== null) throw new Error("A re-queued entry is still marked completed");
+      if (!row.forsenad) throw new Error("The re-queue delay was not applied to next_attempt_at");
+    }
+    // Untouched: a different outcome was not asked for, and the block is not a sales outcome.
+    if (row.outcome === "wrong_number" && row.state !== "completed") {
+      throw new Error("Re-queueing one outcome moved another");
+    }
+    if (row.outcome === "do_not_call" && row.state !== "blocked") {
+      throw new Error("A do-not-call entry was put back into the dialling queue");
+    }
+  }
+
+  // Even asking for everything must leave the block alone.
+  const all = Number((await db.query(
+    `select public.requeue_customer_list_members($1,null,0,null) as n`, [runtimeListId],
+  )).rows[0].n);
+  if (all !== 1) throw new Error(`Re-queueing everything moved ${all} entries, expected only wrong_number`);
+  const blocked = (await db.query(
+    `select state from public.customer_list_members where list_id=$1 and outcome='do_not_call'`, [runtimeListId],
+  )).rows[0];
+  if (blocked.state !== "blocked") throw new Error("A blanket re-queue released a do-not-call entry");
+
+  await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+}
+console.log("Executed re-queueing a worked list: the preview counts what would come back and hides the do-not-call entries, a seller may not re-open a list, re-queueing one outcome resets its state, attempt counter and completion while leaving other outcomes alone, the delay lands on next_attempt_at, and even a blanket re-queue leaves a compliance block untouched.");
+
+
 // The customer card is its own entry point for a NIX report. A seller learns a
 // number is listed in ways that are not a finished call, so the report must not
 // depend on one — and it must land in exactly the same place as the dialer's

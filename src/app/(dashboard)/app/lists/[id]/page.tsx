@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ListFilter, PhoneCall, Settings, Users } from "@/components/icons";
-import { addCustomersToList, materializeSegmentToList, setCustomerListSellers, updateCustomerList, updateCustomerListSellerAssignment, upsertListDisposition } from "@/app/actions/lists";
+import { addCustomersToList, materializeSegmentToList, requeueListMembers, setCustomerListSellers, updateCustomerList, updateCustomerListSellerAssignment, upsertListDisposition } from "@/app/actions/lists";
 import { splitListToTeam } from "@/app/actions/organization";
 import { createClient } from "@/lib/supabase/server";
 import { getAppContext } from "@/lib/auth";
@@ -16,7 +16,7 @@ import { isoToZonedLocalDateTime } from "@/lib/domain/time";
 
 export default async function ListDetailPage({ params, searchParams }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ error?: string; saved?: string; imported?: string; member_page?: string }>;
+  searchParams: Promise<{ error?: string; message?: string; saved?: string; imported?: string; member_page?: string }>;
 }) {
   const { id } = await params;
   const query = await searchParams;
@@ -26,7 +26,7 @@ export default async function ListDetailPage({ params, searchParams }: {
   const memberPageSize = 100;
   const memberOffset = (memberPage - 1) * memberPageSize;
   // Kandidatstatus och medlemsantal aggregeras i databasen i stället för att hämta alla rader.
-  const [{ data: list }, { data: mayManage }, { data: members }, { data: assignments }, { data: memberships }, { data: teamMembers }, { data: dispositions }, { data: segments }, { data: candidateCounts }, { data: listOverview }, { data: sellerWorkloadData }, { data: phoneNumbers }, { data: teams }] = await Promise.all([
+  const [{ data: list }, { data: mayManage }, { data: members }, { data: assignments }, { data: memberships }, { data: teamMembers }, { data: dispositions }, { data: segments }, { data: candidateCounts }, { data: listOverview }, { data: sellerWorkloadData }, { data: phoneNumbers }, { data: teams }, { data: requeueCandidates }] = await Promise.all([
     supabase.from("customer_lists").select("*").eq("id", id).single(),
     supabase.rpc("can_manage_customer_list", { p_list_id: id }),
     supabase.from("customer_list_members").select("id,customer_id,assigned_user_id,state,attempts,outcome,next_attempt_at,customers(display_name,phone_e164,city,do_not_call)").eq("list_id", id).order("priority", { ascending: false }).order("id").range(memberOffset, memberOffset + memberPageSize),
@@ -40,6 +40,9 @@ export default async function ListDetailPage({ params, searchParams }: {
     supabase.rpc("customer_list_seller_workload", { p_list_id: id }),
     supabase.from("phone_numbers").select("id,number_e164").eq("status", "active").eq("supports_voice", true).order("number_e164"),
     supabase.from("teams").select("id,name,status").eq("status", "active").order("name"),
+    // Vad en omläggning skulle hämta tillbaka, innan någon trycker på något.
+    // Spärrade poster räknas aldrig med — det avgörs i RPC:n, inte här.
+    supabase.rpc("customer_list_requeue_candidates", { p_list_id: id }),
   ]);
   if (!list) notFound();
   const memberStats = (listOverview?.[0] ?? { total_members: members?.length ?? 0, open_members: 0, active_sellers: 0 }) as { total_members: number; open_members: number; active_sellers: number };
@@ -58,6 +61,7 @@ export default async function ListDetailPage({ params, searchParams }: {
     <PageHeader title={list.name} description={`${list.list_type} · ${list.dialing_mode === "automatic" ? "automatisk sekventiell dialer" : "manuell ringning"}`} action={list.status === "active" ? <Link className="button button-primary" href={`/app/dialer/lists/${id}`}><PhoneCall size={16} /> Öppna ringsession</Link> : <Badge>{list.status}</Badge>} />
     {query.error ? <p className="form-error">{query.error}</p> : null}
     {query.saved ? <div className="notice" style={{ marginBottom: 16 }}>Listan är uppdaterad och synkroniserad med säljarvyn.</div> : null}
+    {query.message ? <div className="notice success" style={{ marginBottom: 16 }}>{query.message}</div> : null}
     {query.imported ? <div className="notice" style={{ marginBottom: 16 }}>Prospekteringen är synkroniserad: {query.imported}</div> : null}
     <div className="grid grid-4" style={{ marginBottom: 18 }}>
       <Card><CardContent><strong>{Number(memberStats.total_members)}</strong><div className="muted">Prospekt totalt</div></CardContent></Card>
@@ -159,6 +163,40 @@ export default async function ListDetailPage({ params, searchParams }: {
             <CustomerMultiSearchSelect name="customer_ids" label="Prospekt och kunder" />
             <button className="button button-secondary">Lägg till valda</button>
           </form></CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <h3>Lägg om avslutade prospekt</h3>
+            <Badge>{(requeueCandidates ?? []).reduce((total, row) => total + Number(row.members), 0)}</Badge>
+          </CardHeader>
+          <CardContent>
+            {/* Inget svar, upptaget och telefonsvarare kommer tillbaka av sig själva
+                efter sin egen fördröjning. Det här gäller bara de utfall som
+                avslutade posten, framför allt "inte intresserad". */}
+            <p className="muted" style={{ marginTop: 0 }}>
+              Inget svar, upptaget och telefonsvarare läggs om automatiskt efter sin egen tid och syns inte här.
+              Spärrade nummer — <code>Ring inte igen</code> och NIX — kan aldrig läggas om.
+            </p>
+            {!requeueCandidates?.length
+              ? <p className="muted">Inga avslutade prospekt att lägga tillbaka ännu.</p>
+              : <form action={requeueListMembers} className="form-stack">
+                  <input type="hidden" name="list_id" value={id} />
+                  {requeueCandidates.map((row) => <label className="check-row" key={row.outcome}>
+                    <input type="checkbox" name="outcomes" value={row.outcome ?? ""} defaultChecked={row.outcome === "not_interested"} />
+                    {row.label} · {row.members} prospekt
+                    <span className="muted"> · senast {formatDate(row.last_completed_at)}</span>
+                  </label>)}
+                  <SelectField label="Syns i listan igen om" name="delay_minutes" defaultValue="180">
+                    <option value="0">Direkt</option>
+                    <option value="180">3 timmar</option>
+                    <option value="300">5 timmar</option>
+                    <option value="1440">24 timmar</option>
+                    <option value="10080">7 dagar</option>
+                  </SelectField>
+                  <button className="button button-secondary" disabled={!mayManage}>Lägg tillbaka i listan</button>
+                  {!mayManage ? <p className="muted">Endast teamledare för listans team eller en administratör kan lägga om.</p> : null}
+                </form>}
+          </CardContent>
         </Card>
         <Card>
           <CardHeader><h3>Nytt eller uppdaterat samtalsutfall</h3></CardHeader>

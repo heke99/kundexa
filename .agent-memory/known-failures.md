@@ -984,3 +984,34 @@ i admin-vyn tills ägaren fyller i det riktiga numret.
 
 **Regel:** Där ett värde inte går att härleda är det inte en åtgärd att gissa.
 Räkna fram kandidaterna, visa dem, och lämna beslutet till den som vet.
+
+## FAILURE-0065 — en avslutad listpost kunde aldrig läggas tillbaka i kön — FIXED 2026-09-11
+
+**Symptom:** En lista som ringts igenom var slut. "Inte intresserad" försvann ur
+kön och gick inte att få tillbaka utan att bygga om listan för hand.
+
+**Rotorsak:** `claim_next_list_member` tittar bara på tillstånden `pending`,
+`retry`, `callback` och `skipped`. Ett terminalt utfall sätter `completed`, vilket
+alltså filtrerar bort posten automatiskt — den halvan fungerade och var avsiktlig.
+Det som saknades var vägen tillbaka. Ingen RPC, ingen vy, ingenting kunde flytta
+en post från `completed` till `pending`.
+
+**Åtgärd:** `requeue_customer_list_members` med `can_manage_customer_list` som
+grind — samma behörighet som avgör vem som får sätta listan i automatiskt läge.
+Nollställer tillstånd, försökräknare och slutförandetid, och sätter
+`next_attempt_at` efter vald fördröjning. `customer_list_requeue_candidates`
+visar vad en omläggning skulle hämta tillbaka innan någon trycker. Vyn på listan
+har förvalen direkt, 3 h, 5 h, 24 h och 7 dagar.
+
+**Två saker den aldrig rör:** `do_not_call` och `nix_listed`, som är juridiska
+spärrar och inte säljutfall, samt allt vars `compliance_status` inte är
+`allowed`. Testet begär omläggning av *allt* och kontrollerar att spärren ändå
+står kvar.
+
+**Försökräknaren var den subtila delen:** att lägga tillbaka en post som redan
+nått listans `max_attempts` utan att nollställa räknaren hade satt den direkt
+till `completed` igen vid nästa disposition — omläggningen hade sett ut att
+misslyckas tyst.
+
+**Regel:** Om ett tillstånd kan nås automatiskt måste vägen tillbaka finnas
+uttryckligen, annars är filtreringen en återvändsgränd.
