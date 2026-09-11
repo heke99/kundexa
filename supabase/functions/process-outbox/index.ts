@@ -298,9 +298,15 @@ async function processContractReminder(job: Job) {
   let smsMessageId: string | null = reminder.sms_message_id;
 
   if (channel === "email" || channel === "both") {
-    const { data: permanentFailure } = await supabase.from("contract_deliveries").select("id")
+    // A suppression check must never fail open. PostgREST returns the failure
+    // instead of throwing, so an unchecked error here reads as "not suppressed"
+    // and the reminder goes to an address that bounced — or complained, which is
+    // a spam report. Throwing leaves the job to retry instead of burning the
+    // sending domain's reputation on a guess.
+    const { data: permanentFailure, error: permanentFailureError } = await supabase.from("contract_deliveries").select("id")
       .eq("tenant_id", job.tenant_id).eq("acceptance_request_id", request.id).eq("channel", "email")
       .in("status", ["bounced", "complained", "suppressed"]).limit(1).maybeSingle();
+    if (permanentFailureError) throw new Error(`reminder_suppression_check_failed:${permanentFailureError.code ?? "unknown"}`);
     if (!permanentFailure && recipient.email) {
       const subject = `Påminnelse om avtal ${contract.contract_number}`;
       const personal = reminder.personal_message ? `<p style="font-size:15px;line-height:1.65">${escapeHtml(String(reminder.personal_message))}</p>` : "";
@@ -330,7 +336,11 @@ async function processContractReminder(job: Job) {
 
   if (channel === "sms" || channel === "both") {
     if (recipient.phone_e164) {
-      const { data: number } = await supabase.from("phone_numbers").select("number_e164").eq("tenant_id", job.tenant_id).eq("supports_sms", true).eq("status", "active").limit(1).maybeSingle();
+      // Unchecked, a failed read is indistinguishable from "this tenant has no SMS
+      // number" — and on channel "both" that difference is the whole story: the
+      // email goes, the SMS half disappears with no error and no delivery row.
+      const { data: number, error: numberError } = await supabase.from("phone_numbers").select("number_e164").eq("tenant_id", job.tenant_id).eq("supports_sms", true).eq("status", "active").limit(1).maybeSingle();
+      if (numberError) throw new Error(`reminder_sms_number_lookup_failed:${numberError.code ?? "unknown"}`);
       if (number) {
         const idempotencyKey = `${baseKey}/sms`;
         const body = `Påminnelse om avtal ${contract.contract_number} från ${tenant.legal_name}. Granska: ${acceptUrl}. Giltigt till ${expiresLabel}.`;
@@ -577,7 +587,8 @@ async function processContractConfirmation(job: Job) {
   }
 
   if (recipient.phone_e164) {
-    const { data: number } = await supabase.from("phone_numbers").select("number_e164").eq("tenant_id", job.tenant_id).eq("supports_sms", true).eq("status", "active").limit(1).maybeSingle();
+    const { data: number, error: numberError } = await supabase.from("phone_numbers").select("number_e164").eq("tenant_id", job.tenant_id).eq("supports_sms", true).eq("status", "active").limit(1).maybeSingle();
+    if (numberError) throw new Error(`confirmation_sms_number_lookup_failed:${numberError.code ?? "unknown"}`);
     if (number) {
       const idempotencyKey = `contract-confirmation/${acceptanceId || request.id}/sms`;
       const smsBody = `Bekräftelse: ditt besked för avtal ${contract.contract_number} hos ${tenant.legal_name} registrerades ${acceptedLabel}.`;

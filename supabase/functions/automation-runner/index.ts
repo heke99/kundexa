@@ -78,7 +78,11 @@ function limitNumber(limits: Record<string, Json>, key: string, fallback: number
 async function getCustomer(run: Run): Promise<Customer | null> {
   let customerId = run.entity_type === "customer" ? run.entity_id : null;
   if (!customerId && run.entity_type === "contract" && run.entity_id) {
-    const { data } = await supabase.from("contracts").select("customer_id").eq("tenant_id", run.tenant_id).eq("id", run.entity_id).maybeSingle();
+    // A failed read here would arrive downstream as "customer_missing" and the run
+    // would be recorded as completed — a database error reported as a deliberate
+    // skip. Throwing lets the runner retry it like any other transient failure.
+    const { data, error } = await supabase.from("contracts").select("customer_id").eq("tenant_id", run.tenant_id).eq("id", run.entity_id).maybeSingle();
+    if (error) throw error;
     customerId = data?.customer_id ?? null;
   }
   if (!customerId) return null;
@@ -145,7 +149,10 @@ async function executeAction(run: Run, customer: Customer | null, action: Action
   if (type === "create_activity") {
     if (!customer) return { skipped: "customer_missing" };
     const metadata = { automation_run_id: run.id, action_index: index };
-    const { data: existing } = await supabase.from("activities").select("id").eq("tenant_id", run.tenant_id).eq("customer_id", customer.id).contains("metadata", metadata).maybeSingle();
+    // The de-duplication check: unchecked, a failed read means "no activity yet"
+    // and the automation creates a second one on every retry.
+    const { data: existing, error: existingError } = await supabase.from("activities").select("id").eq("tenant_id", run.tenant_id).eq("customer_id", customer.id).contains("metadata", metadata).maybeSingle();
+    if (existingError) throw existingError;
     if (existing) return { existing: existing.id };
     const dueMinutes = Number(action.due_minutes ?? 0);
     const dueAt = dueMinutes > 0 ? new Date(Date.now() + dueMinutes * 60000).toISOString() : null;
@@ -168,7 +175,8 @@ async function executeAction(run: Run, customer: Customer | null, action: Action
     if (!customer) return { skipped: "customer_missing" };
     const channels = Array.isArray(action.channels) ? action.channels.map(String) : ["call", "sms", "email"];
     const source = `automation:${run.id}:${index}`;
-    const { data: existing } = await supabase.from("compliance_blocks").select("id").eq("tenant_id", run.tenant_id).eq("customer_id", customer.id).eq("source", source).maybeSingle();
+    const { data: existing, error: existingError } = await supabase.from("compliance_blocks").select("id").eq("tenant_id", run.tenant_id).eq("customer_id", customer.id).eq("source", source).maybeSingle();
+    if (existingError) throw existingError;
     if (!existing) {
       const { error } = await supabase.from("compliance_blocks").insert({
         tenant_id: run.tenant_id,

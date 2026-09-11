@@ -2513,6 +2513,31 @@ await db.query(`select public.release_list_member_claim($1,'end')`, [autoSession
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
 console.log("Executed the automatic dialer loop: an unanswered call records its outcome and schedules a retry, the next prospect is claimed automatically, and an answered call stops for the seller's outcome.");
 
+// A dynamic list that stops refreshing used to leave only a number behind:
+// {"completed": 8, "failed": 3}, with sqlerrm discarded inside the handler. The
+// worker puts that count in its heartbeat, so a list that silently stopped being
+// updated looked exactly like one that was never due — while sellers kept working
+// it. Catching per list is right; throwing away the reason was not.
+{
+  await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+  const shape = (await db.query(`select public.refresh_due_dynamic_customer_lists(10) as result`)).rows[0].result;
+  for (const key of ["completed", "failed", "failures"]) {
+    if (!(key in shape)) throw new Error(`The refresh result is missing "${key}": ${JSON.stringify(shape)}`);
+  }
+  if (!Array.isArray(shape.failures)) throw new Error("failures must be an array the worker can log");
+  // Whatever the fixture state, the count and the detail must agree rather than
+  // one of them quietly saying something else.
+  if (Number(shape.failed) !== shape.failures.length && shape.failures.length < 20) {
+    throw new Error(`failed=${shape.failed} but ${shape.failures.length} reasons were returned`);
+  }
+  for (const failure of shape.failures) {
+    if (!failure.list_id || !failure.error) {
+      throw new Error(`A failure must name the list and the reason: ${JSON.stringify(failure)}`);
+    }
+  }
+}
+console.log("Executed the dynamic list refresh: the result names which list failed and why instead of returning a bare count, and the count agrees with the detail.");
+
 // The queue filters a worked prospect out on its own — claim_next_list_member only
 // looks at pending/retry/callback/skipped — so "inte intresserad" stops being
 // offered. What was missing is the way back. These prove the re-queue brings the
