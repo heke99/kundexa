@@ -71,15 +71,22 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Pr
             <TextareaField label="Beskrivning" name="description" />
             <Field label="Dynamisk avtalstitel" name="title_template" defaultValue="{{contract.title}}" required />
             <ContractTemplateDocumentUpload target="body_template" label="Ladda upp avtalet (.docx)" />
-            <TextareaField label="Avtalstext" name="body_template" defaultValue={"Avtal mellan {{seller.legal_name}}, organisationsnummer {{seller.organization_number}}, och {{customer.display_name}}. Avtalet avser {{product.name}}. Månadspris: {{price.recurring_fee}} {{price.currency}}. Startavgift: {{price.setup_fee}} {{price.currency}}."} required />
+            <TextareaField label="Avtalstext" name="body_template" defaultValue={"Avtal mellan {{seller.legal_name}} och {{customer.display_name}}. Avtalet avser {{product.name}}. Månadspris: {{price.recurring_fee}} {{price.currency}}.\n\nKundens organisationsnummer: {{customer.organization_number?saknas}}\nKundens e-post: {{customer.email?}}"} required />
             <ContractTemplateDocumentUpload target="terms_template" label="Ladda upp villkoren (.docx)" />
-            <TextareaField label="Fullständiga villkor" name="terms_template" defaultValue={"Bindningstid: {{price.binding_months}} månader. Uppsägningstid: {{price.notice_months}} månader. Betalningsvillkor: {{price.payment_terms_days}} dagar. Avtalet upprättades {{today}}. Här ska tenantens juridiskt granskade fullständiga villkor anges innan versionen godkänns."} required />
+            <TextareaField label="Fullständiga villkor" name="terms_template" defaultValue={"Bindningstid: {{price.binding_months?ingen}}. Uppsägningstid: {{price.notice_months?ingen}}. Betalningsvillkor: {{price.payment_terms_days?enligt överenskommelse}} dagar. Avtalet upprättades {{today}}.\n\nHär ska era juridiskt granskade fullständiga villkor anges innan versionen godkänns."} required />
             <button className="button button-primary" disabled={!legalEntities?.length}>Spara som nytt utkast</button>
           </form>
           <div className="notice" style={{ marginTop: 16 }}>
-            Ladda upp avtalet från Word och markera sedan var kundens uppgifter ska in — systemet fyller i dem från kundkortet när säljaren skickar avtalet. Ett fält som inte finns avvisas redan när du sparar, och ett fält som är tomt på kundkortet stoppar avtalet innan det skickas, med namnet på det som fattas.</div>
+            Ladda upp avtalet från Word och markera sedan var kundens uppgifter ska in — systemet fyller i dem från kundkortet när säljaren skickar avtalet. <strong>Använd bara de fält du faktiskt vill ha med.</strong> Texten ovan är ett förslag, inte ett krav: ta bort det du inte behöver.
+            <p style={{ marginTop: 10, marginBottom: 0 }}>
+              Ett fält måste ha ett värde — är det tomt på kundkortet stoppas avtalet innan det skickas, med namnet på det som fattas.
+              Vill du att fältet ska få vara tomt sätter du ett frågetecken sist: <code>{"{{customer.email?}}"}</code> visar ingenting,
+              och <code>{"{{customer.organization_number?saknas}}"}</code> visar ordet <em>saknas</em> i stället.
+              Ett fältnamn som inte finns avvisas redan när du sparar, med det riktiga namnet utskrivet.
+            </p>
+          </div>
           <div className="notice" style={{ marginTop: 12 }}>
-            <strong>Alla tillgängliga fält</strong>
+            <strong>Fält du kan använda</strong> <span className="muted">— inget av dem är obligatoriskt</span>
             {templateContextRoots.map((root) => <p key={root} style={{ marginTop: 8 }}>
               <strong>{root}</strong>{" · "}
               {templateContextFields[root].map((field, index) => <span key={field}>{index ? ", " : ""}<code>{`{{${root}.${field}}}`}</code></span>)}

@@ -5,7 +5,7 @@ import {
   allTemplatePlaceholders, buildTemplateRenderContext, describeTemplateVariableProblem,
   missingContextFields, templateContextFields, validateTemplateVariables,
 } from "../src/lib/contracts/template-context";
-import { renderStrictTemplate, templateVariableNames } from "../src/lib/domain/template";
+import { renderStrictTemplate, requiredTemplateVariableNames, templateVariableNames } from "../src/lib/domain/template";
 import { parsePublicContractResponse } from "../src/lib/contracts/public-response";
 
 // Build a real .docx rather than a fixture file, so the test proves the reader
@@ -160,10 +160,11 @@ async function main() {
       company_name: "Kund AB", personal_identity_number: "19800101-0000", organization_number: "5569999999",
       email: "kund@example.test", phone_e164: "+46700000000", address_line1: "Kundgatan 2",
       postal_code: "11122", city: "Stockholm", country_code: "SE" },
-    product: null,
+    product: { id: "p1", name: "Elavtal", sku: "EL-1", description: "Rörligt pris" },
     price: { currency: "SEK", setup_fee: 0, recurring_fee: 499, variable_fee: 0,
-      binding_months: null, notice_months: null, payment_terms_days: null },
-    contract: { title: "Avtal", sales_channel: "telephone", audience: "B2B", language: "sv" },
+      binding_months: 12, notice_months: 1, payment_terms_days: 30 },
+    contract: { title: "Avtal", sales_channel: "telephone", audience: "B2B", language: "sv",
+      starts_on: "2026-10-01", ends_on: "2027-10-01", special_terms: "Inga" },
   });
   assert.deepEqual(missingContextFields(context), []);
 
@@ -173,11 +174,37 @@ async function main() {
   assert.deepEqual(templateVariableNames(everyPlaceholder), allTemplatePlaceholders());
   const rendered = renderStrictTemplate(everyPlaceholder, context);
   assert.match(rendered, /Kund AB/);
-  // An absent optional value arrives as readable Swedish rather than as nothing,
-  // or the strict renderer would refuse the whole template.
-  assert.match(rendered, /Ingen bindningstid/);
-  assert.match(rendered, /Ingen produkt/);
-  assert.match(rendered, /Inga särskilda villkor/);
+  assert.match(rendered, /Elavtal/);
+
+  // The context must invent nothing. It used to substitute "Ingen bindningstid",
+  // "Ej angivet" and "Inga särskilda villkor" for absent values so the strict
+  // renderer would not refuse — wording the author never wrote, on the fields
+  // where wording carries legal weight. An empty value now stays empty, and the
+  // author says what should happen with the optional marker.
+  const sparseContext = buildTemplateRenderContext({
+    seller: { legal_name: "Kundexa AB" },
+    customer: { display_name: "Kund AB" },
+    product: null,
+    price: { currency: "SEK", setup_fee: 0, recurring_fee: 499, variable_fee: 0,
+      binding_months: null, notice_months: null, payment_terms_days: null },
+    contract: { title: "Avtal", sales_channel: "telephone", audience: "B2B", language: "sv" },
+  });
+  for (const invented of ["Ingen bindningstid", "Ingen produkt", "Inga särskilda villkor", "Ej angivet"]) {
+    assert.ok(
+      !JSON.stringify(sparseContext).includes(invented),
+      `The render context must not invent the wording "${invented}"`,
+    );
+  }
+  // Unmarked, it refuses and names what is missing — the author gets told.
+  assert.throws(
+    () => renderStrictTemplate("Bindningstid: {{price.binding_months}}", sparseContext),
+    /unresolved_template_variables:price\.binding_months/,
+  );
+  // Marked, the author's own wording goes in.
+  assert.equal(
+    renderStrictTemplate("Bindningstid: {{price.binding_months?ingen}}", sparseContext),
+    "Bindningstid: ingen",
+  );
 
   // --- The customer's answer ----------------------------------------------
   // The decision comes from the value of the button the customer pressed. If it
@@ -200,7 +227,76 @@ async function main() {
 
   console.log("Public acceptance parsing tests passed: an explicit accept or decline is required, a missing or unrecognised decision is refused rather than treated as acceptance, and the confirmation stays mandatory.");
 
-  console.log("Contract template placeholder tests passed: correct templates accepted, a misremembered field is rejected with the real name, no non-scalar field is advertised, one context serves both render paths, and every advertised placeholder renders.");
+  // Not every field belongs in every agreement. A private individual has no
+  // organisation number and plenty of customers have no e-mail, so the author has
+  // to be able to say "this one may be empty" — while a field they did mean to
+  // require still refuses, because silently leaving a blank in a binding document
+  // is worse than refusing to produce it.
+  {
+    const sparse = { customer: { display_name: "Ada Lovelace", email: "", organization_number: null }, seller: { legal_name: "Gridex El AB" } };
+
+    // Required is still required: unchanged behaviour for everything written before.
+    assert.throws(
+      () => renderStrictTemplate("{{seller.legal_name}} / {{customer.email}}", sparse),
+      /unresolved_template_variables:customer\.email/,
+      "A field without the optional marker must still refuse to render when empty",
+    );
+
+    // `?` alone renders nothing at all.
+    assert.equal(
+      renderStrictTemplate("E-post:{{customer.email?}}", sparse),
+      "E-post:",
+      "An optional field with no fallback should render as nothing",
+    );
+
+    // `?text` puts the author's own words in its place.
+    assert.equal(
+      renderStrictTemplate("Orgnr: {{customer.organization_number?saknas}}", sparse),
+      "Orgnr: saknas",
+      "An optional field should render its fallback when the value is missing",
+    );
+
+    // A present value always wins over the fallback.
+    assert.equal(
+      renderStrictTemplate("{{customer.display_name?okänd}}", sparse),
+      "Ada Lovelace",
+      "A field that has a value must never fall back",
+    );
+
+    // The marker is not part of the field name, so a misspelling is caught either way.
+    assert.deepEqual(
+      templateVariableNames("{{customer.email?}} {{customer.address?nej}}"),
+      ["customer.address", "customer.email"],
+      "Optional placeholders must report their bare field name",
+    );
+    const misspelled = validateTemplateVariables(templateVariableNames("{{customer.address?nej}}"));
+    assert.equal(misspelled.length, 1, "An optional placeholder with a bad field name must still be rejected");
+    assert.match(describeTemplateVariableProblem(misspelled[0]), /address_line1/, "and still name the real field");
+
+    // The stored schema has to tell the truth: it used to mark everything required.
+    assert.deepEqual(
+      requiredTemplateVariableNames("{{seller.legal_name}}", "{{customer.email?}}", "{{today}}"),
+      ["seller.legal_name", "today"],
+      "Only unmarked fields belong in the required set",
+    );
+    // Required anywhere means required — one optional use must not excuse it.
+    assert.deepEqual(
+      requiredTemplateVariableNames("{{customer.email?}} och {{customer.email}}"),
+      ["customer.email"],
+      "A field used required somewhere stays required",
+    );
+
+    // Nothing forces a minimum number of placeholders, including none at all.
+    assert.equal(
+      renderStrictTemplate("Ett avtal helt utan platshållare.", sparse),
+      "Ett avtal helt utan platshållare.",
+      "A template with no placeholders must render unchanged",
+    );
+    assert.deepEqual(validateTemplateVariables(templateVariableNames("Ingen platshållare alls.")), [],
+      "A template with no placeholders must pass validation");
+  }
+
+  console.log("Contract template placeholder tests passed: correct templates accepted, a misremembered field is rejected with the real name, no non-scalar field is advertised, one context serves both render paths, every advertised placeholder renders, an optional field may be empty or fall back while a required one still refuses, and a template with no placeholders at all is fine.");
 
   console.log("Contract template document tests passed: docx paragraphs, tabs, line breaks, entities, stored entries, blank-line collapsing, plain text, HTML, and every refused format.");
 }

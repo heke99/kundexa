@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getAppContext } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { templateVariableNames } from "@/lib/domain/template";
+import { requiredTemplateVariableNames, templateVariableNames } from "@/lib/domain/template";
 import { validateTemplateVariables, describeTemplateVariableProblem } from "@/lib/contracts/template-context";
 
 const value = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
@@ -38,6 +38,7 @@ export async function createContractTemplateVersion(form: FormData) {
   if (!parsed.success) redirect("/app/templates?error=Kontrollera mallens namn, målgrupp, juridiska bolag och fullständiga villkor");
 
   const variables = templateVariableNames(parsed.data.titleTemplate, parsed.data.bodyTemplate, parsed.data.termsTemplate);
+  const required = requiredTemplateVariableNames(parsed.data.titleTemplate, parsed.data.bodyTemplate, parsed.data.termsTemplate);
   // Check the field, not just the group. `{{customer.address}}` is a plausible
   // guess for a field actually called `address_line1`; accepting it here means
   // the mistake surfaces weeks later, for every customer, in front of a seller
@@ -61,7 +62,10 @@ export async function createContractTemplateVersion(form: FormData) {
     p_body_template: parsed.data.bodyTemplate,
     p_terms_template: parsed.data.termsTemplate,
     p_variables: variables,
-    p_variables_schema: Object.fromEntries(variables.map((name) => [name, { type: "string", required: true }])),
+    // The schema used to mark every field required, which was both untrue and
+    // unread. A field is required only when the template asks for it without the
+    // `?` marker, and now the stored schema says so.
+    p_variables_schema: Object.fromEntries(variables.map((name) => [name, { type: "string", required: required.includes(name) }])),
     p_signing_configuration: { methods: ["web", "sms"], require_explicit_acceptance: true },
   });
   if (error) redirect(`/app/templates?error=${encodeURIComponent(error.message)}`);

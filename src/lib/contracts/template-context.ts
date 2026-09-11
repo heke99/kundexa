@@ -197,11 +197,21 @@ type ContractInput = {
 /**
  * Build the render context both paths use.
  *
- * This exists so the shape cannot be written twice and drift. The placeholder
- * fallbacks matter as much as the values: `renderStrictTemplate` treats null and
- * the empty string as unresolved and refuses the whole template, so an optional
- * field has to arrive as readable Swedish rather than as nothing — otherwise a
- * contract with no binding period could never be rendered at all.
+ * This exists so the shape cannot be written twice and drift.
+ *
+ * It deliberately invents nothing. It used to substitute Swedish wording for
+ * absent values — "Ingen bindningstid", "Ej angivet", "Inga särskilda villkor" —
+ * so that `renderStrictTemplate` would not refuse. That solved the right problem
+ * the wrong way: it put words the author never wrote into a binding document,
+ * and it did so invisibly, on exactly the fields where the wording carries legal
+ * weight. A contract that says "Uppsägningstid: Ej angivet" says something
+ * different from one that omits the line.
+ *
+ * The author decides instead, in the template text, with the optional marker:
+ * `{{price.notice_months?}}` renders nothing and
+ * `{{price.notice_months?Ingen uppsägningstid}}` renders their own words. An
+ * unmarked field still refuses when it is empty, which is what makes the marker
+ * mean something.
  */
 export function buildTemplateRenderContext(input: {
   seller: Record<string, unknown>;
@@ -214,28 +224,28 @@ export function buildTemplateRenderContext(input: {
     seller: input.seller,
     customer: input.customer,
     product: {
-      id: input.product?.id ?? "Ingen produkt",
-      name: input.product?.name ?? "Ingen produkt",
-      sku: input.product?.sku ?? "—",
-      description: input.product?.description ?? "—",
+      id: input.product?.id ?? null,
+      name: input.product?.name ?? null,
+      sku: input.product?.sku ?? null,
+      description: input.product?.description ?? null,
     },
     price: {
       currency: input.price.currency,
       setup_fee: input.price.setup_fee,
       recurring_fee: input.price.recurring_fee,
       variable_fee: input.price.variable_fee,
-      binding_months: input.price.binding_months ?? "Ingen bindningstid",
-      notice_months: input.price.notice_months ?? "Ej angivet",
-      payment_terms_days: input.price.payment_terms_days ?? "Ej angivet",
+      binding_months: input.price.binding_months,
+      notice_months: input.price.notice_months,
+      payment_terms_days: input.price.payment_terms_days,
     },
     contract: {
       title: input.contract.title,
       sales_channel: input.contract.sales_channel,
       audience: input.contract.audience,
-      starts_on: input.contract.starts_on || "Ej angivet",
-      ends_on: input.contract.ends_on || "Ej angivet",
+      starts_on: input.contract.starts_on || null,
+      ends_on: input.contract.ends_on || null,
       language: input.contract.language,
-      special_terms: input.contract.special_terms || "Inga särskilda villkor",
+      special_terms: input.contract.special_terms || null,
     },
     today: new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeZone: "Europe/Stockholm" }).format(new Date()),
   };

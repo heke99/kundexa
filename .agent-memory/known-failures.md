@@ -1052,3 +1052,47 @@ Kör man den genom ett verktyg som sätter sin egen tidsstämpel måste registre
 lagas efteråt — annars är "den här körs bara en gång" ett antagande, inte ett
 faktum. `npm run verify` kan inte se det här: sviten kör mot PGlite och har ingen
 bild av produktionens migrationsregister.
+
+## FAILURE-0067 — varje platshållare var tvingande, och schemat påstod det utan att någon läste det — FIXED 2026-09-11
+
+**Symptom:** Rapporterat av användaren: man ska inte vara tvungen att fylla alla
+platshållare, och inte tvungen att ha tolv.
+
+**Rotorsak, del 1:** `renderStrictTemplate` vägrade på varje värde som var null,
+undefined eller tomt. Det fanns ingen väg att säga "det här fältet får vara tomt".
+En privatperson har inget organisationsnummer och många kunder saknar e-post, så
+en mall som nämnde ett sådant fält kunde aldrig renderas för dem.
+
+**Rotorsak, del 2:** `createContractTemplateVersion` skrev
+`{ type: "string", required: true }` för **varje** variabel i `variables_schema`.
+Det var både osant och **oläst** — ingenting i systemet konsulterar fältet. Ren
+dekoration som såg ut som en regel.
+
+**"Tolv platshållare" var en synvilla:** minimum är `z.string().min(20)`, alltså
+tjugo *tecken*. Formulärets förifyllda text råkade innehålla tolv fält, och den
+lästes som ett krav.
+
+**Åtgärd:** Platshållaren bär nu sin egen valfrihet. `{{fält}}` måste ha ett
+värde precis som förut; `{{fält?}}` renderar ingenting; `{{fält?text}}` renderar
+författarens egna ord. En regel: ett frågetecken gör fältet frivilligt, och det
+som följer är vad som visas i stället. `variables_schema` speglar nu det på
+riktigt via `requiredTemplateVariableNames`, och "obligatorisk någonstans" vinner
+över "frivillig på ett annat ställe i samma dokument".
+
+Valfritt är **opt-in**, inte standard. Att tyst utelämna ett fält författaren
+menade skulle vara där — "Organisationsnummer:" följt av ingenting — är värre än
+att vägra rendera.
+
+**Spegelvänt fel som hittades i samma svep och åtgärdades:**
+`buildTemplateRenderContext` *hittade på* svensk text för saknade värden —
+"Ingen bindningstid", "Ej angivet", "Inga särskilda villkor" — just för att
+renderaren inte skulle vägra. Det löste rätt problem på fel sätt: ord som
+författaren aldrig skrivit hamnade i ett bindande dokument, osynligt, på precis
+de fält där formuleringen har juridisk tyngd. Ett avtal som säger
+"Uppsägningstid: Ej angivet" säger något annat än ett som utelämnar raden.
+Kontexten hittar nu inte på någonting, och standardmallen i formuläret använder
+markören med samma ordval — så beteendet är detsamma men beslutet syns i texten
+där författaren kan ändra det.
+
+**Regel:** Ett system får vägra, och det får låta författaren välja. Det får inte
+själv skriva in ord i en handling som binder någon.
