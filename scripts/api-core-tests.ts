@@ -3,6 +3,7 @@ import { z } from "zod";
 import { buildIlikeOrFilter, sanitizeFilterTerm } from "../src/lib/postgrest-filter";
 import { publicHostAlignment, resolveRinkelWebhookBaseUrl } from "../src/lib/env";
 import { isoToZonedDateOnly, isoToZonedLocalDateTime, zonedLocalDateTimeToIso } from "../src/lib/domain/time";
+import { acceptanceCode } from "../src/lib/crypto";
 
 function withEnv(values: Record<string, string | undefined>, run: () => void) {
   const previous = new Map(Object.keys(values).map((key) => [key, process.env[key]]));
@@ -151,3 +152,42 @@ void main().catch((error) => { console.error(error); process.exitCode = 1; });
   assert.equal(isoToZonedDateOnly("2026-07-15T10:00:00.000Z", stockholm), "2026-07-15");
 }
 console.log("Contract date fields are pre-filled in the tenant's timezone, round-trip through the action's parser unchanged, and a date-only default does not roll back a day.");
+
+// The acceptance code is the second factor on a legally binding signature, for
+// someone who has the link but not the message. The old generator upper-cased
+// four base64 characters, which folds the lowercase letters onto their uppercase
+// twins: 5.19 bits per character rather than 6, and 44% of the probability mass
+// in the all-letter codes. At the page's 10 attempts per minute, a link live for
+// its default week admitted about 100k guesses against that.
+{
+  const samples = Array.from({ length: 4000 }, () => acceptanceCode());
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+  for (const code of samples) {
+    assert.equal(code.length, 6, `Unexpected length: ${code}`);
+    for (const character of code) {
+      assert.ok(alphabet.includes(character), `Character outside the alphabet: ${character} in ${code}`);
+    }
+  }
+  // Confusion is between *pairs*, so the alphabet only has to break each pair
+  // rather than drop every character that has ever looked like another. I and 1
+  // collide, O and 0 collide; dropping 0 and 1 settles both, which is why L and
+  // the remaining letters can stay and the alphabet is a clean 32 symbols.
+  for (const dropped of ["I", "O", "0", "1"]) {
+    assert.ok(!samples.some((code) => code.includes(dropped)), `Ambiguous ${dropped} is reachable`);
+  }
+  assert.equal(alphabet.length, 32, "The alphabet is no longer a power of two, so the rejection bound needs rechecking");
+  // Every symbol occurs, and no symbol dominates — the skew the old generator had
+  // would show up here as letters appearing at roughly twice the rate of digits.
+  const counts = new Map([...alphabet].map((character) => [character, 0]));
+  for (const code of samples) for (const character of code) counts.set(character, (counts.get(character) ?? 0) + 1);
+  const frequencies = [...counts.values()];
+  assert.ok(Math.min(...frequencies) > 0, "Some symbol in the alphabet is unreachable");
+  // 24000 draws over 32 symbols is 750 expected each; a 2x skew would break this
+  // bound comfortably while ordinary sampling noise does not.
+  assert.ok(Math.max(...frequencies) / Math.min(...frequencies) < 1.6,
+    `Alphabet is skewed: min=${Math.min(...frequencies)} max=${Math.max(...frequencies)}`);
+  // And distinct: a generator returning a constant would pass everything above.
+  assert.ok(new Set(samples).size > samples.length * 0.99, "Codes repeat far more than chance allows");
+}
+console.log("The acceptance code is six characters drawn uniformly from a 32-symbol alphabet with no confusable characters.");

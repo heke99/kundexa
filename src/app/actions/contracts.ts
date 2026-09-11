@@ -6,7 +6,7 @@ import { z } from "zod";
 import { getAppContext } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { encryptJson, randomToken, sha256, sha256Bytes } from "@/lib/crypto";
+import { acceptanceCode, encryptJson, randomToken, sha256, sha256Bytes } from "@/lib/crypto";
 import { canonicalAppBaseUrl, serverEnv } from "@/lib/env";
 import { normalizePhone } from "@/lib/domain/phone";
 import { assertPermission } from "@/lib/permissions";
@@ -541,7 +541,7 @@ export async function sendContract(form: FormData) {
   catch (error) { redirect(`/app/contracts/${contractId}?error=${encodeURIComponent(error instanceof Error ? error.message : "Kanonisk PDF kunde inte skapas")}`); }
 
   const token = randomToken();
-  const code = randomToken(4).slice(0, 4).toUpperCase();
+  const code = acceptanceCode();
   const publicUrl = `${canonicalAppBaseUrl()}/accept/${token}`;
   const expiresLabel = new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeStyle: "short", timeZone: ctx.tenantTimezone }).format(expiresAt!);
   const sellerSnapshot = (contract.seller_snapshot ?? {}) as Record<string, unknown>;

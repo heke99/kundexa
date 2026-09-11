@@ -1389,3 +1389,35 @@ läs- *och* skrivpolicyer, kontakttidsregeln läser tenantens tidszon (initialv�
 `Europe/Stockholm` i deklarationen skrivs över från `tenants.timezone`), inga
 loggar skriver hemligheter eller personuppgifter, och alla åtta Edge Functions
 har ett cron-schema.
+
+**FAILURE-0082 — acceptanskoden var för svag för att vara en andra faktor.**
+`randomToken(4).slice(0,4).toUpperCase()`. Fyra base64-tecken är 24 likformiga
+bitar, men versaliseringen viker de 26 gemena bokstäverna ovanpå sina versala
+tvillingar: bokstäver blir dubbelt så sannolika som siffror. Uppmätt entropi
+**5,19 bitar per tecken — 20,7 bitar totalt**, och 44 % av sannolikhetsmassan
+ligger i de 457 000 rena bokstavskoderna.
+
+Den publika acceptsidan tillåter 10 försök per minut per begäran, så en länk som
+lever sin standardvecka släpper igenom ~100 000 gissningar. Mot den fördelningen,
+med bokstavskoder först, lyckades en förfalskning ungefär **en gång på tio** —
+för någon som redan hade länken men inte meddelandet, alltså exakt den koden
+finns till för att stoppa.
+
+Nu sex tecken ur ett likformigt 32-teckens alfabet: 30 bitar, ungefär en på tio
+tusen över samma vecka. Alfabetet utesluter 0 och 1, vilket bryter båda
+förväxlingsparen (I/1 och O/0) och låter L och övriga bokstäver vara kvar —
+därav jämnt 32 symboler. Rejection sampling håller det likformigt.
+
+Jämförelsen i `record_contract_acceptance_v3` är en skiftlägesokänslig
+strängjämförelse utan längdantagande, så befintliga fyrteckenskoder fungerar
+fortfarande. Produktionen har noll avtal, så frågan är ändå teoretisk.
+
+Testet mäter det i stället för att anta: alfabetsmedlemskap, längd, att inget
+uteslutet tecken kan nås, att ingen symbol dominerar (den gamla generatorns skev
+var 2,29×) och att koderna inte upprepas. Jag körde den gamla generatorn mot
+samma påståenden — den faller på alla fyra.
+
+**Rättelse under arbetet:** mitt första test hävdade att `L` måste saknas.
+Fel — förväxling sker mellan *par*, och när `1` är borttaget är `L` entydigt.
+Testet påstod något starkare än vad som behövdes och starkare än vad alfabetet
+gjorde.

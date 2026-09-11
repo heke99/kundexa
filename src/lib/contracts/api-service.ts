@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { renderStrictTemplate } from "@/lib/domain/template";
 import { buildTemplateRenderContext } from "./template-context";
 import { normalizePhone } from "@/lib/domain/phone";
-import { encryptJson, randomToken, sha256 } from "@/lib/crypto";
+import { acceptanceCode, encryptJson, randomToken, sha256 } from "@/lib/crypto";
 import { canonicalAppBaseUrl, serverEnv } from "@/lib/env";
 import { ensureCanonicalContractDocument } from "@/lib/contracts/canonical-document";
 import { renderContractDeliveryEmail } from "@/lib/email/templates/contract-delivery";
@@ -249,7 +249,7 @@ export async function sendContractFromApi(identity: ApiIdentity, contractId: str
 
   const canonical = await ensureCanonicalContractDocument(admin, { tenantId: identity.tenantId, contractId, actorUserId: actor(identity) });
   const token = randomToken();
-  const code = randomToken(4).slice(0, 4).toUpperCase();
+  const code = acceptanceCode();
   const acceptUrl = `${canonicalAppBaseUrl()}/accept/${token}`;
   const expiryLabel = new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeStyle: "short", timeZone: tenant?.timezone ?? "Europe/Stockholm" }).format(expiresAt);
   const sellerSnapshot = (contract.seller_snapshot ?? {}) as Record<string, unknown>;
