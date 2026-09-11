@@ -857,3 +857,25 @@ en kopplad Resend-nyckel flyttar bara felet till leverantörssteget.
 
 **Regel:** En grind som beror på en annan ska säga det där den visas, inte där
 den kontrolleras.
+
+## FAILURE-0062 — ett juridiskt avsändarbolag gick inte att rätta i gränssnittet — FIXED 2026-09-11
+
+**Symptom:** Upptäcktes när jag skulle skriva instruktionen "spara om bolaget med
+rätt organisationsnummer". Det gick inte att göra.
+
+**Rotorsak:** `upsert_tenant_legal_entity` har alltid tagit emot ett `p_id` och
+uppdaterar raden när det finns. Admin-vyn hade bara ett tomt formulär utan
+`name="id"`, så `value(form,"id")` blev alltid tomt och `p_id` alltid null —
+varje sparning blev en INSERT.
+
+**Konsekvens:** Ett felaktigt bolag kunde inte rättas, bara dubbleras. Den som
+försökte korrigera Gridex organisationsnummer hade fått två aktiva bolag med
+samma namn och olika nummer, och avtalet hade pekat på vilket som helst av dem.
+Det här gjorde FAILURE-0060 omöjlig att åtgärda för ägaren.
+
+**Åtgärd:** Varje bolag har nu ett förifyllt redigeringsformulär med `id` som
+dolt fält, öppet från början när raden har ett problem. Tilläggsformuläret ligger
+kvar under egen rubrik.
+
+**Regel:** En vy som visar ett fel måste också innehålla vägen att rätta det.
+Att flagga något som "behöver rättas" utan att kunna rätta det är inte hjälp.

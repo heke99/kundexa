@@ -115,19 +115,39 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
             // saved before the write path validated it is still in the table, so
             // say so here rather than letting it reach a customer.
             const problems = legalEntityProblems(entity);
-            return <div className="activity-line" key={entity.id}>
-              <span className="activity-dot"><Settings size={14} /></span>
-              <div>
-                <strong>{entity.legal_name}</strong>
-                <p>{entity.organization_number ?? "Organisationsnummer saknas"} · {entity.city ?? "Ort saknas"}</p>
-                {problems.length ? <p className="form-error">{problems.join(" ")}</p> : null}
-              </div>
-              <Badge className={problems.length ? "badge-danger" : entity.is_default ? "badge-success" : ""}>
-                {problems.length ? "Behöver rättas" : entity.is_default ? "Standard" : "Aktiv"}
-              </Badge>
-            </div>;
+            return <details className="form-section" key={entity.id} open={problems.length > 0}>
+              <summary className="activity-line" style={{ cursor: "pointer" }}>
+                <span className="activity-dot"><Settings size={14} /></span>
+                <div>
+                  <strong>{entity.legal_name}</strong>
+                  <p>{entity.organization_number ?? "Organisationsnummer saknas"} · {entity.city ?? "Ort saknas"}</p>
+                  {problems.length ? <p className="form-error">{problems.join(" ")}</p> : null}
+                </div>
+                <Badge className={problems.length ? "badge-danger" : entity.is_default ? "badge-success" : ""}>
+                  {problems.length ? "Behöver rättas" : entity.is_default ? "Standard" : "Aktiv"}
+                </Badge>
+              </summary>
+              {/* The upsert has always accepted an id; the form never sent one, so
+                  saving a correction silently created a second company instead of
+                  fixing the first. */}
+              <form action={saveLegalEntity} className="form-stack" style={{ marginTop: 12 }}>
+                <input type="hidden" name="id" value={entity.id} />
+                <Field label="Juridiskt namn" name="legal_name" defaultValue={entity.legal_name ?? ""} required />
+                <Field label="Organisationsnummer" name="organization_number" defaultValue={entity.organization_number ?? ""} placeholder="556123-4567" />
+                <Field label="Adress" name="address_line1" defaultValue={entity.address_line1 ?? ""} />
+                <Field label="Postnummer" name="postal_code" defaultValue={entity.postal_code ?? ""} />
+                <Field label="Ort" name="city" defaultValue={entity.city ?? ""} />
+                <Field label="Landkod" name="country_code" defaultValue={entity.country_code ?? "SE"} required />
+                <Field label="E-post" name="email" type="email" defaultValue={entity.email ?? ""} />
+                <Field label="Telefon i E.164" name="phone_e164" defaultValue={entity.phone_e164 ?? ""} placeholder="+4640123456" />
+                <Field label="Webbplats" name="website" defaultValue={entity.website ?? ""} />
+                <label><input type="checkbox" name="is_default" defaultChecked={entity.is_default} /> Använd som standardpart i nya avtal</label>
+                <button className="button button-primary">Spara ändringar</button>
+              </form>
+            </details>;
           })}
-          <form action={saveLegalEntity} className="form-stack" style={{ marginTop: 18 }}>
+          <h3 style={{ marginTop: 22 }}>Lägg till ett nytt bolag</h3>
+          <form action={saveLegalEntity} className="form-stack">
             <Field label="Juridiskt namn" name="legal_name" required />
             <Field label="Organisationsnummer" name="organization_number" />
             <Field label="Adress" name="address_line1" />
