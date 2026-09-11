@@ -537,3 +537,36 @@ Det som saknades och nu är byggt:
    Avvisningen säger vad man ska göra i stället. Den som ändå vill ha en färdig
    PDF signerad kan fortfarande använda `uploadContractPdf` per avtal — men då
    vävs inga kunduppgifter in, för det går inte i en låst fil.
+
+Synkkontroll 2026-09-11
+------------------------
+
+Genomgång av varje plats där något kan ligga ur fas, mätt och inte antaget.
+
+| Plats | Resultat |
+|---|---|
+| Git | `HEAD` = `origin/main` = grenen = `7608431`, ren arbetskatalog |
+| Migrationer | 79 i repot, **alla 79 registrerade** i `schema_migrations` — `db push` hittar inget att köra |
+| Schema mot typer | `database.types.ts` är **byte-identisk** med vad produktionen genererar (527 015 tecken) — noll drift |
+| GitHub Actions | `verify` grön på `7608431`; `deploy-edge-functions` giltig, hoppar över utan credentials |
+| Vercel | Produktionsdeploy `READY` på exakt `7608431` |
+| Edge Functions | 7 av 8 i fas; `process-outbox` kör kod från 2026-08-08 |
+| Drift | 7/7 workers `healthy`, 0 eftersläpande, 0 aktiva pg_cron, 0 fastnade outbox-jobb, 0 fastnade dial-försök, 181 tabeller |
+
+Sju extra rader i `schema_migrations` är MCP-verktygets tidsstämpeldubbletter, var och
+en namngiven efter den repomigration den körde. De är sanningsenlig körhistorik, inte
+drift: varje repoversion finns också registrerad under sitt eget filnamn.
+
+**Rättelse om `automation-runner`.** En tidsstämpeljämförelse flaggade den som ur fas:
+källan commit:ades 27 minuter efter deployen. Fel slutsats. Hela filens historik efter
+deployen är **en** commit, som tog bort sju rader — och de raderna finns inte i den
+körande koden. Den deployades alltså från en arbetskopia som redan hade ändringen, och
+commit:en kom efteråt. Innehållet avgör, inte tidsstämpeln.
+
+Det lär också ut gränsen för metoden: deploytid mot commit-tid ger falsklarm i båda
+riktningar när någon deployar från en okommitterad arbetskopia. Den enda kontroll som
+håller är att hämta hem den körande koden och jämföra den. Det gjordes för
+`rinkel-platform-worker` (byte-identisk), `automation-runner` (innehållet stämmer) och
+`process-outbox` (bekräftat ur fas). De fem övriga vilar på tidsstämplar plus att deras
+källa inte ändrats sedan långt före deployen — svagare, men utan känd motsägelse.
+`deploy-edge-functions.yml` gör frågan överflödig framåt.
