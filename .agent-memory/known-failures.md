@@ -627,7 +627,7 @@ utan prunningen.
 som autentiserar med egen hemlighet måste deployas med `--no-verify-jwt`, och heartbeat med
 `last_success_at = null` ska larma — den skiljer "har aldrig fungerat" från "fungerade nyss".
 
-## FAILURE-0055 — produktionen körde en `_shared/rinkel.ts` från före 2026-09-07 — DELVIS FIXED 2026-09-10
+## FAILURE-0055 — produktionen körde en `_shared/rinkel.ts` från före 2026-09-07 — FIXED 2026-09-11
 
 **Symptom:** Ingen. Det är hela poängen: repot, typkontrollen och hela SQL-sviten
 var gröna, och `list_edge_functions` visade alla åtta funktionerna som `ACTIVE`.
@@ -648,10 +648,25 @@ begripligt svenskt fel i stället för rå engelsk JSON) och snake_case-normalis
 av Rinkels svar. `process-outbox` skrev dessutom fortfarande bevismanifest
 `kundexa.evidence.v2` utan generationsbindning.
 
-**Åtgärd:** `rinkel-platform-worker` omdeployad och verifierad byte för byte mot
-repot. `process-outbox` kvarstår: den kräver fyra filer på 102,8 kB i ett enda
-verktygsanrop, vilket inte får plats — den behöver
-`npm run functions:deploy -- --project-ref lhvifuxcqghtbiulzkrf`.
+**Åtgärd:** Båda funktionerna omdeployade och verifierade byte för byte mot repot.
+`rinkel-platform-worker` (version 3) och `process-outbox` (version 5, deployad
+2026-09-11 08:14 UTC) hämtades hem med `get_edge_function` och jämfördes fil för
+fil. `rinkel-platform-worker` är identisk. `process-outbox` är identisk i tre av
+fyra filer; i `index.ts` skiljer sig fyra rader genom att radbrytningarna i en
+enda mallsträng står som `\n` i stället för som faktiska radbrytningar. Det är en
+artefakt av hur jag överförde filen, inte en kodskillnad: `\n` i en template
+literal *är* en radbrytning, och att båda formerna ger samma sträng är verifierat
+i körning. Ingen annan skillnad finns i någon fil.
+
+Samtidigt svepte jag alla åtta Edge Functions, inte bara de två: `automation-runner`,
+`compliance-worker`, `data-worker`, `ingestion-worker`, `maintenance-worker` och
+`parsehub-worker` är byte-identiska med repot. Driften är därmed stängd i hela
+ytan, inte bara där den först syntes. Att `automation-runner` är identisk bekräftar
+också att min tidigare misstanke mot den — grundad på tidsstämplar — var fel.
+
+`process-outbox` har kört två gånger efter omdeployen, båda HTTP 200, och kön
+töms i skarp drift: `rinkel.retention`-jobben som köades 00:00 i dag var klara
+00:01, med `attempts = 1` och utan fel.
 
 **Regel:** Deploystatus är inte samma sak som repostatus, och en delad modul har
 lika många deploys som den har importörer. Efter varje ändring i

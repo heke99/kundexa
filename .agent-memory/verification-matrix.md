@@ -129,3 +129,33 @@ kräver en riktig Supabase-staging eller riktig Rinkel-provider är fortfarande 
 | Utgånget avtal kan skickas igen som ny generation | PASS | nytt test, bevisat falla utan fixen |
 | Utgångssvepet rör inte ett avtal med levande länk | PASS | nytt runtimetest |
 | SMS-signering: kod krävs, fel/saknad kod nekas, koden lagras aldrig | PASS | nytt runtimetest |
+
+## 2026-09-11 — deployverifiering av hela Edge Function-ytan
+
+Repot beskriver vad som *borde* köra. Den här omgången jämför i stället den
+**körande** koden mot repot, för varenda funktion — det är den kontroll som
+saknades när FAILURE-0055 kunde ligga overksam i 34 dagar.
+
+| Funktion | Version | Status | Bevis |
+|---|---|---|---|
+| `process-outbox` | 5 | PASS | 3/4 filer byte-identiska; `index.ts` skiljer sig bara i att fyra radbrytningar i en mallsträng står som `\n`. Bevisat i körning att båda formerna ger samma sträng. |
+| `rinkel-platform-worker` | 3 | PASS | båda filerna byte-identiska |
+| `automation-runner` | 4 | PASS | byte-identisk |
+| `compliance-worker` | 3 | PASS | båda filerna byte-identiska |
+| `data-worker` | 3 | PASS | alla tre filerna byte-identiska |
+| `ingestion-worker` | 3 | PASS | alla tre filerna byte-identiska |
+| `maintenance-worker` | 5 | PASS | byte-identisk |
+| `parsehub-worker` | 3 | PASS | båda filerna byte-identiska |
+
+| Driftkontroll | Status | Bevis |
+|---|---|---|
+| `process-outbox` körd efter omdeploy | PASS | två anrop, båda HTTP 200 |
+| Outboxkön töms i skarp drift | PASS | `rinkel.retention` köad 00:00, klar 00:01, `attempts = 1`, inget fel |
+| Alla sju workers har livstecken | PASS | `platform_worker_heartbeats`, ingen med `last_error_code` |
+| Aktiva pg_cron-jobb | PASS | 0 (FAILURE-0056 kvarstår avstängd) |
+| Fastnade jobb i någon kö | PASS | 0 väntande, 0 låsta |
+
+**Ett observandum, inte ett fel:** ett `rinkel.reconcile_call`-jobb ligger i
+`dead_letter` sedan 2026-08-18 med `Rinkel API-nyckeln nekades.` efter tio
+försök. Det är från innan plattformsnyckeln var konfigurerad, och det är
+dead-letter-mekaniken som gör sitt jobb — inte ett fel i dagens system.
