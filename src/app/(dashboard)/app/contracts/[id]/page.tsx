@@ -8,14 +8,22 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { getAppContext } from "@/lib/auth";
+import { isoToZonedLocalDateTime } from "@/lib/domain/time";
 
 const labels: Record<string, string> = { draft: "Utkast", ready: "Redo", sent: "Skickat", delivered: "Levererat", opened: "Öppnat", accepted: "Accepterat", declined: "Avstått", expired: "Utgånget", superseded: "Ersatt", cancelled: "Avbrutet", signed: "Dokumenterat", active: "Aktivt", queued: "Köad", submitting: "Skickas", failed: "Misslyckad", bounced: "Studsad", complained: "Rapporterad", suppressed: "Undertryckt", clicked: "Länk klickad", delayed: "Fördröjd", dead_letter: "Kräver åtgärd", pending: "Väntar" };
-const localDateTime = (value?: string | null) => value ? new Date(new Date(value).getTime() - new Date(value).getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : "";
+
 
 export default async function ContractDetail({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; message?: string }> }) {
   const { id } = await params;
   const query = await searchParams;
+  const ctx = await getAppContext();
   const supabase = await createClient();
+  // Every datetime-local field below is read back by an action that parses it with
+  // `zonedLocalDateTimeToIso(..., ctx.tenantTimezone)`. Pre-filling from the
+  // server's own UTC offset, which is zero on Vercel, made the two disagree by the
+  // whole offset — on the contract's response deadline among other things.
+  const localDateTime = (value?: string | null) => isoToZonedLocalDateTime(value ?? null, ctx.tenantTimezone);
   const [{ data: contract }, { data: versions }, { data: documents }, { data: deliveries }, { data: events }, { data: acceptances }, { data: requests }, { data: reminders }, { data: evidence }] = await Promise.all([
     supabase.from("contracts").select("*,customers(display_name,email,phone_e164),products(name),tenant_legal_entities(legal_name,organization_number)").eq("id", id).single(),
     supabase.from("contract_versions").select("*").eq("contract_id", id).order("version", { ascending: false }),

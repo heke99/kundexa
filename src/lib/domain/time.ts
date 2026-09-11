@@ -23,3 +23,22 @@ export function isoToZonedLocalDateTime(value: string | null, timeZone: string) 
   const parts = Object.fromEntries(formatter.formatToParts(new Date(value)).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }
+
+/**
+ * The `YYYY-MM-DD` a `type="date"` input should show for an instant, in the
+ * tenant's timezone.
+ *
+ * `toISOString().slice(0, 10)` is the UTC date, which is yesterday's date in
+ * Stockholm between midnight and 01:00 or 02:00 depending on the season. On a
+ * contract that is a start date a day in the past.
+ */
+export function isoToZonedDateOnly(value: string | null, timeZone: string) {
+  if (!value) return "";
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone, year: "numeric", month: "2-digit", day: "2-digit",
+  });
+  const parts = Object.fromEntries(
+    formatter.formatToParts(new Date(value)).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}

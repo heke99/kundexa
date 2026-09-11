@@ -1327,3 +1327,65 @@ och `redirect()` ligger inte i något `try` som skulle svälja den.
 manuella spärrar och NIX, och för NIX är det avsiktligt. För en manuell
 kontaktspärr med fritextorsak är det ett produktbeslut, inte en bugg att tyst
 rätta.
+
+## Fjärde svepet: tid, liveness och gammal yta
+
+**FAILURE-0079 — avtalsdatum förifylldes på serverns klocka och lästes tillbaka på tenantens.**
+Varje `datetime-local`-fält i avtalsflödet skickas till en action som tolkar det
+med `zonedLocalDateTimeToIso(value, ctx.tenantTimezone)`. Sidorna förifyllde dem
+med serverns egen UTC-offset, som är noll på Vercel. Ett fält som visade 12:00
+lästes alltså tillbaka som 12:00 svensk tid för ett ögonblick som var 14:00 —
+hela offseten fel, sommartid två timmar.
+
+Det gällde sju fält, varav flera juridiskt bindande: avtalets **sista
+svarsdatum** på både utskicks- och förlängningsformuläret, start- och sluttid för
+det samtal som avtalet binds till, och avtalets startdatum. Datumfältet använde
+dessutom `toISOString().slice(0,10)`, alltså UTC-datumet, som mellan midnatt och
+kl. 02 i Stockholm är gårdagen — ett avtal skrivet 00:30 fick startdatum
+föregående dag.
+
+Rätt hjälpare fanns redan i projektet och användes korrekt på återkomst- och
+listsidorna. Den saknades bara här. Tillagd: `isoToZonedDateOnly` för
+datumfälten. Testet kontrollerar båda riktningarna och båda årstiderna, och
+regressionsvakten slår ned `getTimezoneOffset` i de två filerna.
+
+**FAILURE-0080 — den mest kritiska workern var den enda utan livstecken.**
+Sex schemalagda workers går via `invokeScheduledEdgeWorker`, som skriver
+"running" före anropet, "failed" vid nätverksfel eller 5xx, och jobbräknare vid
+lyckad körning. `rinkel-platform-worker` skriver sitt eget. `process-outbox` hade
+en egen cron-route som vidarebefordrade anropet och returnerade svaret — och
+gjorde inget annat. Den hade alltså **ingen rad alls** i
+`platform_worker_heartbeats`.
+
+Allt som bevakar workerhälsa läser den tabellen. En process-outbox som hade
+svarat 500 varje minut i dagar hade sett exakt likadan ut som en frisk: sju
+workers, alla gröna, och ingen rad för den åttonde. Det är den som levererar
+varje avtal, SMS, e-post och påminnelse. Routen går nu genom samma invoker, och
+ett testfall jämför cron-schemat i `vercel.json` mot listan över bevakade workers
+— det failar om någon lägger till en worker utan bevakning. Jag kontrollerade att
+testet faktiskt failar genom att ta bort posten och köra om.
+
+**FAILURE-0081 — tretton föråldrade RPC:er var fortfarande körbara av `authenticated`.**
+Var och en har en efterträdare som applikationen anropar, och ingen av dem finns
+i något `.rpc(...)`-anrop i repot. Kvar låg bara grant:en, och Supabase
+publicerar en grantad funktion som `/rest/v1/rpc/<namn>`. En bekräftad skillnad:
+`update_tenant_member` är äldre än v3:s
+`removed_member_requires_reactivation_workflow` och kan alltså återaktivera en
+borttagen medlem utan det arbetsflödet. En misstanke kontrollerades och var
+felaktig — `complete_dialer_work` har terminalstatusvakten, tvärtemot vad jag
+antog av v2:s wrapper.
+
+Säkert eftersom varje intern anropare själv är SECURITY DEFINER. Funktionerna
+ligger kvar; bara den publika ingången stängs. Den tidigare
+hardening-omgången över-revokerade och tog `undo_master_entity_merge` som UI:t
+behövde — PGlite kör som superuser och kontrollerar inte GRANT alls, så inget
+runtime-test här kan se det. Skyddet är produktionskontrollen i båda riktningar:
+alla 156 anropade RPC:er är fortfarande körbara, alla 13 är revokerade.
+
+**Kontrollerat och rent:** RLS-policyerna på varje tenant-ägd tabell är
+tenant-scopade (den enda utan scope är en avsiktlig `using false`), alla fyra
+storage-buckets är privata med storleks- och MIME-gränser och tenant-scopade
+läs- *och* skrivpolicyer, kontakttidsregeln läser tenantens tidszon (initialvärdet
+`Europe/Stockholm` i deklarationen skrivs över från `tenants.timezone`), inga
+loggar skriver hemligheter eller personuppgifter, och alla åtta Edge Functions
+har ett cron-schema.

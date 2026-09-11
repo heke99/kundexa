@@ -9,6 +9,15 @@ export const scheduledEdgeWorkers = [
   "compliance-worker",
   "parsehub-worker",
   "maintenance-worker",
+  // `process-outbox` had its own cron route that forwarded the request and
+  // returned the body, and nothing else. It was therefore the one scheduled
+  // worker with no row in `platform_worker_heartbeats` — no "running", no
+  // "failed" on a network error or a 5xx, no counts, and no timeout. Contract
+  // delivery, SMS, e-mail and every reminder run through it, so the most
+  // business-critical worker was also the only one whose silence looked
+  // exactly like health: the platform page showed seven workers, all green,
+  // and no row at all for the eighth.
+  "process-outbox",
 ] as const;
 
 export type ScheduledEdgeWorker = (typeof scheduledEdgeWorkers)[number];
@@ -20,6 +29,7 @@ const payloads: Record<ScheduledEdgeWorker, Record<string, unknown>> = {
   "compliance-worker": { source: "vercel_cron", limit: 20, queueLimit: 100 },
   "parsehub-worker": { source: "vercel_cron" },
   "maintenance-worker": { source: "vercel_cron" },
+  "process-outbox": { source: "vercel_cron" },
 };
 
 export function isScheduledEdgeWorker(value: string): value is ScheduledEdgeWorker {

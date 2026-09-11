@@ -49,6 +49,11 @@ const [
   sidebar,
   verifyWorkflow,
   openapiVerifier,
+  contractsNewPage,
+  contractDetailPage,
+  scheduledEdgeWorker,
+  processOutboxCron,
+  vercelConfig,
 ] = await Promise.all([
   read("supabase/migrations/202608080001_cross_surface_consistency_remediation.sql"),
   read("supabase/migrations/202608080002_database_lint_runtime_hardening.sql"),
@@ -95,6 +100,11 @@ const [
   read("src/components/app-shell/sidebar.tsx"),
   read(".github/workflows/verify.yml"),
   read("scripts/verify-openapi-coverage.mjs"),
+  read("src/app/(dashboard)/app/contracts/new/page.tsx"),
+  read("src/app/(dashboard)/app/contracts/[id]/page.tsx"),
+  read("src/lib/workers/scheduled-edge-worker.ts"),
+  read("src/app/api/cron/process-outbox/route.ts"),
+  read("vercel.json"),
 ]);
 
 const [
@@ -227,6 +237,16 @@ assert.doesNotMatch(authUsers, /page\s*<=\s*20/);
 assert.match(authUsers, /while \(true\)/);
 
 assert.match(contracts, /zonedLocalDateTimeToIso\(value\(form, "expires_at"\), ctx\.tenantTimezone\)/);
+
+// The pre-fill has to use the same clock as the parser above. `getTimezoneOffset()`
+// is the *server's* offset — 0 on Vercel — so pre-filling with it put every
+// datetime-local field on the contract pages a whole UTC offset away from how the
+// action reads it back.
+assert.doesNotMatch(contractsNewPage, /getTimezoneOffset/);
+assert.doesNotMatch(contractDetailPage, /getTimezoneOffset/);
+assert.match(contractsNewPage, /isoToZonedLocalDateTime\(date\.toISOString\(\), ctx\.tenantTimezone\)/);
+assert.match(contractsNewPage, /isoToZonedDateOnly\(date\.toISOString\(\), ctx\.tenantTimezone\)/);
+assert.match(contractDetailPage, /isoToZonedLocalDateTime\(value \?\? null, ctx\.tenantTimezone\)/);
 assert.match(contracts, /timeZone: ctx\.tenantTimezone/);
 assert.match(contracts, /från \$\{sellerLegalName\}/);
 assert.match(apiContracts, /select\("name,legal_name,timezone"\)/);
@@ -435,3 +455,24 @@ assert.match(apiAuth, /password_change_required/);
 assert.match(registerPage, /Publik registrering är stängd/);
 
 console.log("Remediation regression tests passed.");
+
+
+// Every worker Vercel schedules must go through the invoker that writes a
+// heartbeat, because `platform_worker_heartbeats` is what the platform page and
+// the dialer readiness checks read. `process-outbox` used to have its own route
+// that forwarded the request and returned the body — so the worker that delivers
+// every contract, SMS and reminder was the one whose total silence was
+// indistinguishable from health.
+{
+  const scheduledPaths = JSON.parse(vercelConfig).crons.map((entry) => entry.path);
+  const scheduledWorkers = scheduledPaths
+    .map((path) => path.replace("/api/cron/edge-workers/", "").replace("/api/cron/", ""))
+    .filter((worker) => worker !== "rinkel-platform-worker")
+    .sort();
+  const monitored = [...scheduledEdgeWorker.matchAll(/^\s*"([a-z-]+)",$/gm)].map((match) => match[1]).sort();
+  assert.deepEqual(monitored, scheduledWorkers,
+    `Scheduled workers and heartbeat-monitored workers disagree: cron=${scheduledWorkers}, monitored=${monitored}`);
+  assert.match(processOutboxCron, /invokeScheduledEdgeWorker\("process-outbox"\)/);
+  assert.doesNotMatch(processOutboxCron, /functions\/v1\/process-outbox/);
+}
+console.log("Every Vercel-scheduled Edge worker records a heartbeat through the same invoker.");

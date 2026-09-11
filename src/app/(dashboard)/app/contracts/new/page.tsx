@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
 import { formatDate } from "@/lib/utils";
 import { getAppContext } from "@/lib/auth";
+import { isoToZonedDateOnly, isoToZonedLocalDateTime } from "@/lib/domain/time";
 import { CustomerSearchSelect, type CustomerSearchOption } from "@/components/customer-search-select";
 
 type CallOption = {
@@ -51,8 +52,14 @@ export default async function NewContractPage({ searchParams }: { searchParams: 
   const selectableTeams = (teams ?? []).filter((team) => ["owner", "admin", "contract_manager"].includes(ctx.role) || ctx.teamIds.includes(team.id));
   const now = new Date();
   const ended = new Date(now.getTime() - 5 * 60_000);
-  const localInput = (date: Date) => new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
-  const dateInput = (date: Date) => date.toISOString().slice(0, 10);
+  // These values are pre-filled here and parsed back by the action with
+  // `zonedLocalDateTimeToIso(..., ctx.tenantTimezone)`. The old helpers read the
+  // *server's* own UTC offset, which is zero on Vercel, so a field shown as 12:00
+  // was read back as 12:00 Stockholm for a call that actually happened at 14:00,
+  // and the date-only default rolled back a day between midnight and 02:00. The
+  // pre-fill and the parse have to agree on whose clock they mean.
+  const localInput = (date: Date) => isoToZonedLocalDateTime(date.toISOString(), ctx.tenantTimezone);
+  const dateInput = (date: Date) => isoToZonedDateOnly(date.toISOString(), ctx.tenantTimezone);
   const defaultExpiry = new Date(now.getTime() + 7 * 86400000);
 
   return <>

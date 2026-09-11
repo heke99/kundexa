@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { z } from "zod";
 import { buildIlikeOrFilter, sanitizeFilterTerm } from "../src/lib/postgrest-filter";
 import { publicHostAlignment, resolveRinkelWebhookBaseUrl } from "../src/lib/env";
+import { isoToZonedDateOnly, isoToZonedLocalDateTime, zonedLocalDateTimeToIso } from "../src/lib/domain/time";
 
 function withEnv(values: Record<string, string | undefined>, run: () => void) {
   const previous = new Map(Object.keys(values).map((key) => [key, process.env[key]]));
@@ -106,3 +107,47 @@ console.log("API core tests passed: PostgREST filter sanitisation, wildcard stri
 }
 
 void main().catch((error) => { console.error(error); process.exitCode = 1; });
+
+// A datetime-local field is pre-filled by a page and parsed back by an action.
+// They have to mean the same clock. The pages used to pre-fill from the server's
+// clock — `getTimezoneOffset()` is 0 on Vercel — while every action parses with
+// `zonedLocalDateTimeToIso(value, ctx.tenantTimezone)`. A field shown as 12:00
+// was therefore recorded as 12:00 Stockholm for an instant that was 14:00 there,
+// and the response deadline on a binding contract landed the whole UTC offset
+// early.
+{
+  const stockholm = "Europe/Stockholm";
+  // Summer: UTC+2.
+  const summer = "2026-07-15T12:00:00.000Z";
+  assert.equal(isoToZonedLocalDateTime(summer, stockholm), "2026-07-15T14:00");
+  assert.equal(zonedLocalDateTimeToIso(isoToZonedLocalDateTime(summer, stockholm), stockholm), summer);
+  // Winter: UTC+1.
+  const winter = "2026-01-15T12:00:00.000Z";
+  assert.equal(isoToZonedLocalDateTime(winter, stockholm), "2026-01-15T13:00");
+  assert.equal(zonedLocalDateTimeToIso(isoToZonedLocalDateTime(winter, stockholm), stockholm), winter);
+
+  // The old helper, reproduced. On a UTC server it returns the UTC wall clock,
+  // which is two hours off in summer — that difference is the defect.
+  const serverClock = (value: string) => {
+    const date = new Date(value);
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+  };
+  if (new Date(summer).getTimezoneOffset() === 0) {
+    assert.equal(serverClock(summer), "2026-07-15T12:00");
+    assert.notEqual(serverClock(summer), isoToZonedLocalDateTime(summer, stockholm));
+  }
+
+  // A date-only field is the tenant's date, not the UTC one. Half past midnight
+  // in Stockholm is still the previous day in UTC; a contract start date must not
+  // default to yesterday.
+  assert.equal(isoToZonedDateOnly("2026-07-15T22:30:00.000Z", stockholm), "2026-07-16");
+  assert.equal("2026-07-15T22:30:00.000Z".slice(0, 10), "2026-07-15");
+  assert.notEqual(
+    isoToZonedDateOnly("2026-07-15T22:30:00.000Z", stockholm),
+    "2026-07-15T22:30:00.000Z".slice(0, 10),
+  );
+  // And a plain midday instant is the same date either way, so the helper is not
+  // simply shifting everything forward.
+  assert.equal(isoToZonedDateOnly("2026-07-15T10:00:00.000Z", stockholm), "2026-07-15");
+}
+console.log("Contract date fields are pre-filled in the tenant's timezone, round-trip through the action's parser unchanged, and a date-only default does not roll back a day.");
