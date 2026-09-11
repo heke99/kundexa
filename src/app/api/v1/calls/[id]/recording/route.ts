@@ -43,7 +43,10 @@ export async function GET(
       target = await createPlatformRinkelClient(`recording:${callId}`)
         .getRecordingUrl(recording.provider_recording_id);
     }
-    await admin.from("recording_access_logs").insert({
+    // The access log is the point of the policy above. Playing a recording with
+    // no trail is worse than refusing to play it, so this fails the request
+    // rather than the log.
+    const { error: accessLogError } = await admin.from("recording_access_logs").insert({
       tenant_id: app.tenantId,
       recording_id: recording.id,
       user_id: app.userId,
@@ -52,6 +55,7 @@ export async function GET(
         ?? request.headers.get("x-real-ip")
         ?? null,
     });
+    if (accessLogError) throw new Error("recording_access_log_failed");
     return NextResponse.redirect(target, 307);
   } catch (error) {
     await admin.from("audit_logs").insert({

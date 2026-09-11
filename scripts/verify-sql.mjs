@@ -2611,6 +2611,89 @@ if (afterWork.rows[0].result.completed !== true || dialledState.disposition !== 
 }
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
 console.log("Executed the seller dial: reservation with caller ID and device, provider acceptance, and after-work closing the call with its disposition and note.");
+// "Ring inte igen" must actually block the customer.
+//
+// The /app/calls after-call form used to write the disposition straight onto the
+// call row. Nothing else happened: there is no trigger on `calls` that applies a
+// block, so a customer who asked not to be called again was recorded as such and
+// stayed fully callable. Only `complete_manual_call_work` reaches
+// `apply_call_block_disposition`, so the page now goes through the same RPC the
+// dialer does. This pins that consequence.
+const BLOCKCUSTOMER = '00000000-0000-0000-0000-0000000000d1';
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.exec(`
+  insert into public.customers(id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by)
+  values('${BLOCKCUSTOMER}','${JT}','company','prospect','Spärrkund AB','+46705550077',true,'legitimate_interest','${JOWNER}')
+  on conflict(id) do nothing;
+`);
+// The journey dial above left its attempt in `awaiting_provider_event`, which is
+// exactly the state that blocks the seller's next call. Close it first — this
+// block is about the disposition, not about the seat lock.
+await db.query(`update public.rinkel_call_attempts_v2 set status='completed' where call_id=$1`, [dial.callId]);
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${JOWNER}',false);`);
+const blockDial = await db.query(`select public.rinkel_reserve_platform_outbound_call_v2(
+  '${BLOCKCUSTOMER}',null,'+46705550077',null,null,null,gen_random_uuid(),'journey-block-1','direct_marketing',null) as result`);
+const blockCall = blockDial.rows[0].result;
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.query(`select public.rinkel_finalize_platform_dial($1,$2,'accepted',null,null)`, [blockCall.callId, blockCall.attemptId]);
+await db.query(`update public.calls set status='completed',answered_at=now()-interval '1 minute',ended_at=now(),duration_seconds=60 where id=$1`, [blockCall.callId]);
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${JOWNER}',false);`);
+
+const beforeBlock = await db.query(`select do_not_call from public.customers where id=$1`, [BLOCKCUSTOMER]);
+if (beforeBlock.rows[0].do_not_call !== false) {
+  throw new Error("The block fixture started out blocked, so the assertion below would prove nothing.");
+}
+// The old behaviour, reproduced exactly: write the disposition onto the call row
+// and nothing else. The customer must still be callable afterwards — that is the
+// defect, and it is what makes the RPC necessary rather than merely tidier.
+await db.query(`update public.calls set disposition='do_not_call' where id=$1`, [blockCall.callId]);
+const afterDirectWrite = await db.query(`
+  select c.do_not_call,
+    (select count(*)::int from public.compliance_blocks b where b.customer_id=c.id and b.active) blocks
+  from public.customers c where c.id=$1`, [BLOCKCUSTOMER]);
+if (afterDirectWrite.rows[0].do_not_call !== false || Number(afterDirectWrite.rows[0].blocks) !== 0) {
+  throw new Error(`Writing the disposition directly now blocks the customer; this test no longer describes the defect: ${JSON.stringify(afterDirectWrite.rows[0])}`);
+}
+await db.query(`update public.calls set disposition=null where id=$1`, [blockCall.callId]);
+
+await db.query(`select public.complete_manual_call_work_v2($1::uuid,'do_not_call','Kunden bad att inte bli uppringd igen',null,null) as result`, [blockCall.callId]);
+const afterBlock = await db.query(`
+  select c.do_not_call, c.blocked_reason,
+    (select count(*)::int from public.compliance_blocks b
+      where b.customer_id=c.id and b.active and 'call'=any(b.channels)) blocks
+  from public.customers c where c.id=$1`, [BLOCKCUSTOMER]);
+if (afterBlock.rows[0].do_not_call !== true || Number(afterBlock.rows[0].blocks) < 1) {
+  throw new Error(`The canonical after-call path did not block the customer: ${JSON.stringify(afterBlock.rows[0])}`);
+}
+// And the block has to bite: the next reservation for the same customer is refused.
+let blockedCustomerRefused = false;
+try {
+  await db.query(`select public.rinkel_reserve_platform_outbound_call_v2(
+    '${BLOCKCUSTOMER}',null,'+46705550077',null,null,null,gen_random_uuid(),'journey-block-2','direct_marketing',null)`);
+} catch (error) {
+  blockedCustomerRefused = /CUSTOMER_DO_NOT_CALL|CUSTOMER_CHANNEL_BLOCK|COMPLIANCE_BLOCK|exact_call_policy_denied/i
+    .test(error instanceof Error ? error.message : String(error));
+}
+if (!blockedCustomerRefused) {
+  throw new Error("A customer blocked by the after-call disposition could still be dialled.");
+}
+// The disposition set is the function's, not the screen's: an option the page
+// once offered ("contract") is refused rather than silently accepted.
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.query(`update public.calls set disposition=null,after_call_completed_at=null where id=$1`, [blockCall.callId]);
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${JOWNER}',false);`);
+let invalidDispositionRefused = false;
+try {
+  await db.query(`select public.complete_manual_call_work_v2($1::uuid,'contract',null,null,null)`, [blockCall.callId]);
+} catch (error) {
+  invalidDispositionRefused = /manual_disposition_invalid/.test(error instanceof Error ? error.message : String(error));
+}
+if (!invalidDispositionRefused) {
+  throw new Error("The after-call path accepted a disposition the canonical set does not contain.");
+}
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+console.log("Executed the manual after-call path: writing the disposition directly leaves the customer callable, the canonical RPC blocks the customer and files a compliance block, the next dial to them is refused, and a disposition outside the canonical set is refused.");
+
 
 // The automatic dialer works the list on its own until someone answers: an unanswered call
 // records its outcome, releases the prospect with a retry in the future, and the next claim

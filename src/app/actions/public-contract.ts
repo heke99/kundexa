@@ -27,8 +27,13 @@ export async function respondPublicContract(formData: FormData) {
   if (!request) redirect(`/accept/${token}?error=Länken är ogiltig`);
   if (request.status !== "pending") redirect(`/accept/${token}?error=Begäran är inte längre aktiv`);
   if (new Date(request.expires_at) <= new Date()) {
-    await admin.from("contract_acceptance_requests").update({ status: "expired" }).eq("id", request.id).eq("status", "pending");
-    await admin.rpc("cancel_contract_reminders", { p_acceptance_request_id: request.id, p_reason: "expired" });
+    // Best effort, and deliberately not fatal: the customer is told the link has
+    // expired either way, and the nightly sweep expires it again. Log rather
+    // than leave it invisible.
+    const { error: expireError } = await admin.from("contract_acceptance_requests").update({ status: "expired" }).eq("id", request.id).eq("status", "pending");
+    if (expireError) console.error("acceptance_expiry_write_failed", { requestId: request.id, code: expireError.code ?? null });
+    const { error: cancelError } = await admin.rpc("cancel_contract_reminders", { p_acceptance_request_id: request.id, p_reason: "expired" });
+    if (cancelError) console.error("acceptance_reminder_cancel_failed", { requestId: request.id, code: cancelError.code ?? null });
     redirect(`/accept/${token}?error=Acceptlänken har löpt ut`);
   }
   if (!request.canonical_document_id || !request.canonical_document_sha256) redirect(`/accept/${token}?error=Avtalsdokumentets bindning saknas`);

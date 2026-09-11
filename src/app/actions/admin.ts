@@ -190,9 +190,15 @@ export async function testResendIntegration(form: FormData) {
   const providerMessageId = typeof result.id === "string" ? result.id : null;
   const success = Boolean(response?.ok && providerMessageId);
   const nextConfig = toJsonObject({ ...configuration, last_test_status: success ? "success" : "error", last_tested_at: testedAt, last_error: success ? null : safeError, last_test_provider_message_id: success ? providerMessageId : null });
-  await admin.from("tenant_integrations").update({ status: success ? "active" : "error", last_verified_at: success ? testedAt : null, configuration: nextConfig }).eq("tenant_id", context.tenantId).eq("id", integration.id);
+  // The redirect below announces the outcome. If this write is lost the
+  // integration keeps its old status while the screen says it is now active,
+  // and sending is gated on that status.
+  const { error: integrationStatusError } = await admin.from("tenant_integrations").update({ status: success ? "active" : "error", last_verified_at: success ? testedAt : null, configuration: nextConfig }).eq("tenant_id", context.tenantId).eq("id", integration.id);
   await admin.from("audit_logs").insert({ tenant_id: context.tenantId, actor_user_id: context.userId, action: success ? "integration.resend_test_succeeded" : "integration.resend_test_failed", entity_type: "tenant_integration", entity_id: integration.id, after_data: toJson({ tested_at: testedAt, provider_message_id: success ? providerMessageId : null, error: safeError }) });
   revalidatePath("/app/integrations");
+  if (integrationStatusError) {
+    redirect(`/app/integrations?error=${encodeURIComponent("Testet kördes men resultatet kunde inte sparas på integrationen. Kör testet igen.")}`);
+  }
   redirect(`/app/integrations?${success ? "message" : "error"}=${encodeURIComponent(success ? "Resend-testet lyckades. Integrationen är nu aktiv." : safeError ?? "Resend-testet misslyckades")}`);
 }
 
@@ -672,11 +678,19 @@ export async function setProviderStatus(form: FormData) {
   const context = await adminContext();
   const providerId = value(form, "provider_id");
   const status = value(form, "status");
-  if (!providerId || !["active", "paused"].includes(status)) return;
+  // A bare `return` looked to the admin exactly like a successful pause.
+  if (!providerId || !["active", "paused"].includes(status)) {
+    redirect("/app/data-sources?error=Välj en leverantör och ett giltigt läge");
+  }
   const supabase = await createClient();
   const { error } = await supabase.from("data_providers").update({ status, paused_reason: status === "paused" ? value(form, "reason") || "Manuellt pausad" : null }).eq("tenant_id", context.tenantId).eq("id", providerId);
   if (error) redirect(`/app/data-sources?error=${encodeURIComponent(error.message)}`);
-  await supabase.from("provider_accounts").update({ status: status === "active" ? "active" : "paused" }).eq("tenant_id", context.tenantId).eq("data_provider_id", providerId);
+  // The account rows are what the ingestion workers read. A provider paused
+  // only on the parent row keeps ingesting.
+  const { error: accountError } = await supabase.from("provider_accounts").update({ status: status === "active" ? "active" : "paused" }).eq("tenant_id", context.tenantId).eq("data_provider_id", providerId);
+  if (accountError) {
+    redirect(`/app/data-sources?error=${encodeURIComponent("Leverantören uppdaterades men dess konton kunde inte ändras. Försök igen.")}`);
+  }
   revalidatePath("/app/data-sources");
 }
 
@@ -922,8 +936,18 @@ export async function exportDataSubjectRequest(form: FormData) {
   const { error: uploadError } = await admin.storage.from("compliance-exports").upload(path, Buffer.from(serialized, "utf8"), { contentType: "application/json", upsert: false });
   if (uploadError) redirect(`/app/compliance?error=${encodeURIComponent(uploadError.message)}`);
   const resultHash = sha256(serialized);
-  await admin.from("data_subject_requests").update({ status: "completed", completed_at: new Date().toISOString(), handled_by: context.userId, result_storage_path: path, result_hash: resultHash }).eq("tenant_id", context.tenantId).eq("id", requestId);
-  await admin.from("data_subject_request_events").insert({ tenant_id: context.tenantId, request_id: requestId, event_type: "export_generated", actor_user_id: context.userId, details: { path, sha256: resultHash } });
+  // The export file is already in storage. If this write is lost the request
+  // stays open with no path to the file that answers it — and a data subject
+  // request has a statutory deadline, so "looks unhandled" is the expensive
+  // failure, not a second attempt.
+  const { error: completionError } = await admin.from("data_subject_requests").update({ status: "completed", completed_at: new Date().toISOString(), handled_by: context.userId, result_storage_path: path, result_hash: resultHash }).eq("tenant_id", context.tenantId).eq("id", requestId);
+  if (completionError) {
+    redirect(`/app/compliance?error=${encodeURIComponent(`Exporten skapades (${path}) men begäran kunde inte markeras som besvarad. Försök igen.`)}`);
+  }
+  const { error: exportEventError } = await admin.from("data_subject_request_events").insert({ tenant_id: context.tenantId, request_id: requestId, event_type: "export_generated", actor_user_id: context.userId, details: { path, sha256: resultHash } });
+  if (exportEventError) {
+    redirect("/app/compliance?error=Exporten är klar men händelsen kunde inte loggas. Kontrollera revisionsspåret.");
+  }
   revalidatePath("/app/compliance");
   redirect("/app/compliance?message=Integritetsexport skapad i privat lagring");
 }
@@ -950,9 +974,18 @@ export async function executeDataSubjectRestriction(form: FormData) {
   const { data: customer } = await admin.from("customers").select("phone_e164,email").eq("tenant_id", context.tenantId).eq("id", request.customer_id).single();
   const { error: blockError } = await admin.from("compliance_blocks").insert({ tenant_id: context.tenantId, customer_id: request.customer_id, phone_e164: customer?.phone_e164, email: customer?.email, channels: ["call", "sms", "email"], reason, source: `data_subject_request:${requestId}`, active: true, created_by: context.userId });
   if (blockError) redirect(`/app/compliance?error=${encodeURIComponent(blockError.message)}`);
-  await admin.from("data_subject_requests").update({ status: "completed", completed_at: new Date().toISOString(), handled_by: context.userId, processing_notes: reason }).eq("tenant_id", context.tenantId).eq("id", requestId);
-  await admin.from("data_subject_request_events").insert({ tenant_id: context.tenantId, request_id: requestId, event_type: request.request_type === "objection" ? "objection_applied" : "restriction_applied", actor_user_id: context.userId, details: { reason } });
+  // The block is in place; only the bookkeeping can still fail. Say so, because
+  // an open request is what the deadline is measured against.
+  const { error: restrictionError } = await admin.from("data_subject_requests").update({ status: "completed", completed_at: new Date().toISOString(), handled_by: context.userId, processing_notes: reason }).eq("tenant_id", context.tenantId).eq("id", requestId);
+  if (restrictionError) {
+    redirect("/app/compliance?error=Spärren är lagd men begäran kunde inte markeras som besvarad. Försök igen.");
+  }
+  const { error: restrictionEventError } = await admin.from("data_subject_request_events").insert({ tenant_id: context.tenantId, request_id: requestId, event_type: request.request_type === "objection" ? "objection_applied" : "restriction_applied", actor_user_id: context.userId, details: { reason } });
+  if (restrictionEventError) {
+    redirect("/app/compliance?error=Spärren är lagd men händelsen kunde inte loggas. Kontrollera revisionsspåret.");
+  }
   revalidatePath("/app/compliance");
+  redirect("/app/compliance?message=Begäran är besvarad och spärren är lagd");
 }
 
 export async function createLegalHold(form: FormData) {

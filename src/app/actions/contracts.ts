@@ -258,7 +258,13 @@ export async function createContract(form: FormData) {
       const { error: sourceError } = await supabase.from("contracts").update({ source_call_id: parsed.data.sourceCallId, source_type: sourceType, prepared_at: new Date().toISOString() }).eq("id", contractId);
       if (sourceError) throw sourceError;
     } catch (sourceError) {
-      await supabase.from("contracts").delete().eq("id", contractId).eq("status", "draft");
+      // Compensating delete. If it fails the draft survives with no source call,
+      // so say so instead of reporting only the original problem — an invisible
+      // orphan draft is worse than a longer message.
+      const { error: rollbackError } = await supabase.from("contracts").delete().eq("id", contractId).eq("status", "draft");
+      if (rollbackError) {
+        redirect(`/app/contracts?error=${encodeURIComponent("Det valda samtalet är inte avtalsgrundande, och utkastet kunde inte tas bort. Radera det manuellt i avtalslistan.")}`);
+      }
       redirect(`/app/contracts?error=${encodeURIComponent(sourceError instanceof Error ? sourceError.message : "Det valda samtalet är inte avtalsgrundande")}`);
     }
   }
@@ -396,7 +402,10 @@ export async function createContractCustomer(form: FormData) {
       email: parsed.data.email || null, phone_e164: phone, is_primary: true,
     });
     if (contactError) {
-      await supabase.from("customers").delete().eq("id", customer.id);
+      const { error: rollbackError } = await supabase.from("customers").delete().eq("id", customer.id);
+      if (rollbackError) {
+        redirect(`/app/contracts/new?error=${encodeURIComponent("Kontaktpersonen kunde inte sparas och kundkortet kunde inte tas bort igen. Kundkortet finns kvar utan kontaktperson.")}`);
+      }
       redirect(`/app/contracts/new?error=${encodeURIComponent(contactError.message)}`);
     }
   }
@@ -602,12 +611,24 @@ export async function extendContractExpiry(form: FormData) {
   if (!request) redirect(`/app/contracts/${contractId}?error=Ingen aktiv acceptbegäran finns`);
   const { error } = await admin.from("contract_acceptance_requests").update({ expires_at: expiresAt!.toISOString() }).eq("tenant_id", ctx.tenantId).eq("id", request.id).eq("status", "pending");
   if (error) redirect(`/app/contracts/${contractId}?error=${encodeURIComponent(error.message)}`);
-  await admin.from("contracts").update({ expires_at: expiresAt!.toISOString() }).eq("tenant_id", ctx.tenantId).eq("id", contractId);
+  // The acceptance request above is authoritative for the public link, but the
+  // contract row is what every internal screen shows. Leaving this unchecked let
+  // the two disagree while the seller was told the date had been extended.
+  const { error: contractExpiryError } = await admin.from("contracts")
+    .update({ expires_at: expiresAt!.toISOString() }).eq("tenant_id", ctx.tenantId).eq("id", contractId);
+  if (contractExpiryError) {
+    redirect(`/app/contracts/${contractId}?error=${encodeURIComponent("Svarsdatumet uppdaterades på acceptlänken men inte på avtalet. Försök igen.")}`);
+  }
   const { data: policy } = await admin.from("contract_reminder_policies").select("final_reminder_before_expiry_hours").eq("tenant_id", ctx.tenantId).maybeSingle();
   if (policy) {
     const finalReminderAt = new Date(expiresAt!.getTime() - Number(policy.final_reminder_before_expiry_hours) * 3600000).toISOString();
-    await admin.from("contract_reminders").update({ scheduled_at: finalReminderAt })
+    // An unmoved final reminder fires against the old deadline — before the new
+    // one — which reads to the customer as a deadline that already passed.
+    const { error: reminderShiftError } = await admin.from("contract_reminders").update({ scheduled_at: finalReminderAt })
       .eq("tenant_id", ctx.tenantId).eq("acceptance_request_id", request.id).eq("kind", "automatic").eq("sequence_number", 3).eq("status", "scheduled");
+    if (reminderShiftError) {
+      redirect(`/app/contracts/${contractId}?error=${encodeURIComponent("Svarsdatumet är förlängt, men den sista påminnelsen kunde inte flyttas. Kontrollera påminnelserna.")}`);
+    }
   }
   await admin.from("audit_logs").insert({ tenant_id: ctx.tenantId, actor_user_id: ctx.userId, action: "contract.expiry_extended", entity_type: "contract", entity_id: contractId, before_data: { expires_at: request.expires_at }, after_data: { expires_at: expiresAt!.toISOString() } });
   await admin.from("contract_events").insert({ tenant_id: ctx.tenantId, contract_id: contractId, event_type: "contract.expiry_extended", actor_user_id: ctx.userId, payload: { previous_expires_at: request.expires_at, expires_at: expiresAt!.toISOString() } });

@@ -21,6 +21,8 @@
 .dialer-end { margin-top:14px; display:grid; gap:8px; justify-items:start; }
 .dialer-end small { color:#cfe6df; font-size:11px; line-height:1.55; }
 .customer-card-dialer .phone-panel { margin:0; }
+.after-call-inline { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.after-call-inline select,.after-call-inline input { border:1px solid #d5dfe1; border-radius:9px; padding:8px 10px; font-size:13px; }
 .manual-after-call { margin-top:20px; padding:16px; display:grid; gap:12px; background:white; color:#17202a; border-radius:13px; }
 .manual-after-call h3,.manual-after-call p { margin:0; }
 .manual-after-call p { color:#68767d; font-size:13px; }

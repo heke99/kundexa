@@ -5,6 +5,27 @@ import { redirect } from "next/navigation";
 import { getAppContext } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { assertPermission } from "@/lib/permissions";
+import { zonedLocalDateTimeToIso } from "@/lib/domain/time";
+
+// The set `complete_manual_call_work` accepts. Anything else is refused there as
+// `manual_disposition_invalid`, so offering a wider list in the UI only produces
+// a failure after the seller has typed their note.
+const manualDispositions = new Set([
+  "no_answer", "busy", "voicemail", "callback", "interested",
+  "not_interested", "wrong_number", "do_not_call", "nix_listed",
+]);
+
+// The database speaks in codes. Translate the ones a seller can actually act on.
+function afterCallMessage(error: { message?: string }) {
+  const raw = String(error?.message ?? "");
+  if (raw.includes("call_not_finished")) {
+    return "Samtalet är inte avslutat ännu. Vänta tills telefonitjänsten rapporterat slutstatus, eller avsluta samtalet i dialern.";
+  }
+  if (raw.includes("manual_call_not_found")) return "Samtalet hör inte till dig, eller är ett listsamtal.";
+  if (raw.includes("future_callback_required")) return "Återkomsten måste ligga i framtiden.";
+  if (raw.includes("manual_disposition_invalid")) return "Välj ett giltigt samtalsresultat.";
+  return errorMessage(error instanceof Error ? error : new Error(raw));
+}
 
 const value = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
 const requestKey = (form: FormData, prefix: string) => value(form, "idempotency_key") || `${prefix}:${crypto.randomUUID()}`;
@@ -61,17 +82,45 @@ export async function setCallDisposition(form: FormData) {
   const callId = value(form, "call_id");
   const disposition = value(form, "disposition");
   const notes = value(form, "notes");
+  const callbackScope = value(form, "callback_scope") || "personal";
+  const callbackDueAt = value(form, "callback_due_at");
+  if (!callId) redirect("/app/calls?error=Samtalet saknas");
+
   const supabase = await createClient();
-  const { data: call } = await supabase.from("calls").select("customer_id,list_id,callback_activity_id").eq("id", callId).single();
-  if (call?.list_id) redirect(`/app/dialer/lists/${call.list_id}?error=Listans efterarbete måste slutföras i ringsessionen`);
-  const { error } = await supabase.from("calls").update({ disposition, notes, status: "completed", ended_at: new Date().toISOString() }).eq("id", callId);
-  if (error) throw error;
-  if (call?.callback_activity_id) await supabase.from("activities").update({ status: "completed", completed_at: new Date().toISOString(), handled_at: new Date().toISOString(), claimed_by: null, claim_expires_at: null }).eq("id", call.callback_activity_id);
-  if (call?.customer_id) {
-    const next = disposition === "callback" ? new Date(Date.now() + 86_400_000).toISOString() : null;
-    await supabase.from("customers").update({ last_contact_at: new Date().toISOString(), next_activity_at: next }).eq("id", call.customer_id);
-    if (notes) await supabase.from("notes").insert({ tenant_id: ctx.tenantId, customer_id: call.customer_id, body: notes, note_type: "call", call_id: callId, created_by: ctx.userId });
-    if (next) await supabase.from("activities").insert({ tenant_id: ctx.tenantId, customer_id: call.customer_id, type: "callback", title: "Återuppringning", due_at: next, assigned_user_id: ctx.userId, callback_scope: "personal", created_by: ctx.userId });
+  // A failed read here used to be indistinguishable from "the call does not
+  // exist", and the code went on to update a row it had not found.
+  const { data: call, error: callError } = await supabase.from("calls")
+    .select("id,list_id").eq("id", callId).maybeSingle();
+  if (callError) redirect("/app/calls?error=Samtalet kunde inte läsas. Försök igen.");
+  if (!call) redirect("/app/calls?error=Samtalet finns inte");
+  if (call.list_id) redirect(`/app/dialer/lists/${call.list_id}?error=Listans efterarbete måste slutföras i ringsessionen`);
+
+  if (!manualDispositions.has(disposition)) {
+    redirect("/app/calls?error=Välj ett giltigt samtalsresultat");
   }
+  if (disposition === "callback" && !callbackDueAt) {
+    redirect("/app/calls?error=Ange när återkomsten ska ske");
+  }
+
+  // The canonical after-call path, the same one the dialer uses. Writing the
+  // disposition straight onto `calls` — which is what this action used to do —
+  // skipped every consequence the disposition is supposed to have. Most
+  // seriously, `do_not_call` and `nix_listed` never reached
+  // `apply_call_block_disposition`, so a customer who asked not to be called
+  // again was recorded as such on the call row and remained fully callable.
+  // There is no trigger on `calls` that applies the block; the function is the
+  // only path. It also brings the terminal-status guard, the customer's contact
+  // counters, the note, the callback activity, the audit row, and idempotency.
+  const { error } = await supabase.rpc("complete_manual_call_work_v2", {
+    p_call_id: callId,
+    p_disposition: disposition,
+    p_notes: notes || null,
+    p_callback_scope: disposition === "callback" ? callbackScope : null,
+    p_callback_due_at: disposition === "callback"
+      ? zonedLocalDateTimeToIso(callbackDueAt, ctx.tenantTimezone)
+      : null,
+  });
+  if (error) redirect(`/app/calls?error=${encodeURIComponent(afterCallMessage(error))}`);
   revalidatePath("/app/calls");
+  redirect("/app/calls?message=Efterarbetet är registrerat");
 }

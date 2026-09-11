@@ -1256,3 +1256,66 @@ att kroppen togs emot.
 Lärdomen är metodmässig, inte teknisk: jag drog en slutsats om vad en leverantör
 *inte* kan göra utifrån att jag inte hittade dokumentationen, i stället för att
 läsa den. "Jag hittade det inte" och "det finns inte" är olika påståenden.
+
+## Tredje svepet: när systemet säger en sak och gör en annan
+
+**FAILURE-0072 — "Ring inte igen" på /app/calls spärrade ingen.**
+`setCallDisposition` skrev utfallet rakt på samtalsraden. Ingenting annat hände.
+Det finns ingen trigger på `calls` som lägger en spärr — `apply_call_block_disposition`
+nås bara via `complete_manual_call_work`, och den vägen gick sidan aldrig. En
+kund som bad att inte bli uppringd igen fick det noterat på samtalet och förblev
+fullt ringbar: `customers.do_not_call` orörd, ingen `compliance_blocks`-rad,
+inget NIX-utfall. Samma väg hoppade också över kundens kontakträknare,
+anteckningen, återkomsten, revisionsraden, idempotensen och kravet på att
+samtalet faktiskt är avslutat.
+
+Sidan går nu genom `complete_manual_call_work_v2`, samma RPC som dialern.
+Utfallslistan är funktionens, inte skärmens: "Avtal ska skickas" fanns i menyn
+men avvisas av databasen som `manual_disposition_invalid`, och återkomst krävde
+en tid och en kö som formuläret aldrig frågade om utan hittade på (+24 h,
+personlig). Testet visar båda riktningarna — att skriva utfallet direkt lämnar
+kunden ringbar, och att gå via RPC:n spärrar henne och får nästa uppringning
+avvisad.
+
+**FAILURE-0073 — kundkortets spärrknapp motsade sin egen spärr.**
+`blockCustomer` la en `compliance_blocks`-rad, vilket faktiskt stoppar samtalet
+i `evaluate_exact_call_policy`. Men kortet läser `customers.do_not_call` för
+både märkningen och om dialern ska visas, och den rörde den inte. En spärrad kund
+visade alltså "Kontakt tillåten" med fungerande ringknapp, och avslaget kom först
+när säljaren tryckte.
+
+**FAILURE-0074 till 0077 — skrivningar vars fel aldrig kontrollerades.**
+Samma tysta klass som tidigare, men på skrivsidan:
+
+- `extendContractExpiry` kontrollerade acceptbegäran men inte avtalsraden eller
+  den sista påminnelsen. Säljaren fick "förlängt" medan de tre kunde peka på
+  olika datum, och en oflyttad slutpåminnelse går ut före den nya deadlinen.
+- DSAR: både exporten och begränsningen markerade begäran som besvarad utan att
+  kontrollera skrivningen. Exportfilen låg redan i lagringen — begäran såg
+  obesvarad ut med en fil ingen hittade, och en registerbegäran mäts mot en
+  lagstadgad frist.
+- Resend-testet skrev integrationens status okontrollerat och omdirigerade sedan
+  med "Integrationen är nu aktiv".
+- `setProviderStatus` returnerade tyst vid ogiltig indata och skrev
+  `provider_accounts` okontrollerat. Det är kontoraderna ingestionsarbetarna
+  läser, så en leverantör pausad bara på förälderraden fortsätter hämta.
+- De två kompenserande `delete` i avtalsflödet: misslyckas de blir det ett
+  föräldralöst utkast eller kundkort som ingen ser.
+- Uppspelningsloggen för inspelningar. Att spela upp en inspelning utan spår är
+  sämre än att neka uppspelningen, så den fäller nu anropet.
+
+**FAILURE-0078 — `is_valid_organization_number` gick att anropa som `anon`.**
+Mitt eget missade `revoke ... from public` i organisationsnummermigrationen.
+Funktionen läser inga tabeller, så inget läckte, men en SECURITY DEFINER-funktion
+publicerad oautentiserad är yta utan syfte.
+
+**Kontrollerat och rent i det här svepet:** varje RPC koden anropar finns och är
+körbar (154 av 154), inga route-handlers saknar autentisering, RLS är påslagen på
+varje tabell utom PostGIS egen `spatial_ref_sys`, ingen egen SECURITY
+DEFINER-funktion saknar `search_path`, inga `catch {}`, inga zod-`.catch()` kvar,
+och `redirect()` ligger inte i något `try` som skulle svälja den.
+
+**Noterat, inte ändrat:** det finns ingen väg att häva en spärr. Det gäller både
+manuella spärrar och NIX, och för NIX är det avsiktligt. För en manuell
+kontaktspärr med fritextorsak är det ett produktbeslut, inte en bugg att tyst
+rätta.
