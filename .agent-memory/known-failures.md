@@ -852,8 +852,20 @@ och den allmänna utgående grinden. Admin-vyn visade dem som oberoende reglage,
 så en påslagen leveransflagga läste som "klart" när den inte hade någon effekt.
 
 **Åtgärd:** Admin-vyn skriver nu ut beroendet på den flagga som är verkningslös.
-Flaggan i produktion är **inte** ändrad av mig: att slå på `outbound_email` utan
-en kopplad Resend-nyckel flyttar bara felet till leverantörssteget.
+
+**Uppdatering 2026-09-11:** På användarens uttryckliga begäran är `outbound_email`
+nu påslagen för Gridex, så paret är konsistent. Inget skickas ändå förrän Resend
+är kopplat — men när det är kopplat fungerar utskicket i stället för att falla på
+`outbound_email_feature_disabled`. Ändringen gjordes direkt mot databasen via
+MCP, inte genom `set_tenant_feature`, och har därför ingen rad i `audit_logs`;
+att skriva en revisionsrad med ägaren som aktör hade varit osant.
+
+**Samma inkonsistens finns kvar på SMS-sidan och är medvetet orörd:** Gridex har
+`contract_delivery_sms=true` och `outbound_sms=false`, och `send_contract`-grinden
+är uppbyggd exakt likadant för SMS. Jag slog inte på den. Att aktivera utgående
+SMS är en bredare kapacitet för en kanal användaren aldrig nämnt i go-live, och
+`sms_acceptance` är dessutom av för tenanten. Det är ett val, inte ett fel att
+tyst rätta.
 
 **Regel:** En grind som beror på en annan ska säga det där den visas, inte där
 den kontrolleras.
@@ -951,3 +963,24 @@ ska **inte** rapporteras.
 
 **Regel:** En rapport om vad ett system kommer att göra måste härledas ur samma
 regler som systemet faktiskt kör, och testet ska vara att de två är oense.
+
+## FAILURE-0060, kvarstående datafel — KAN INTE RÄTTAS AV MIG 2026-09-11
+
+Användaren bad mig rätta även de två ogiltiga organisationsnumren. Jag kan inte,
+och det är nu belagt i stället för påstått.
+
+Jag räknade fram varje giltig reparation: ta bort en siffra ur det elvasiffriga
+värdet respektive lägg till en i det niosiffriga, och behåll bara de kandidater
+som är tio siffror, klarar Luhn och klassas som organisation (inte personnummer).
+
+- `5594616-7149` → **två** giltiga kandidater: `559416-7149`, `559461-6749`.
+- `559333333` → **tio** giltiga kandidater.
+
+Numret är alltså inte entydigt härledbart. Att välja en av två är ett mynt-kast
+om vilket organisationsnummer som trycks på ett juridiskt bindande avtal, och
+för Trustcall en tiondels chans. Ett fabricerat identitetsnummer på en handling
+är värre än ett synligt flaggat fel, så de står kvar markerade "Behöver rättas"
+i admin-vyn tills ägaren fyller i det riktiga numret.
+
+**Regel:** Där ett värde inte går att härleda är det inte en åtgärd att gissa.
+Räkna fram kandidaterna, visa dem, och lämna beslutet till den som vet.
