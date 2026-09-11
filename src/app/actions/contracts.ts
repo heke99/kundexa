@@ -11,6 +11,7 @@ import { canonicalAppBaseUrl, serverEnv } from "@/lib/env";
 import { normalizePhone } from "@/lib/domain/phone";
 import { assertPermission } from "@/lib/permissions";
 import { renderStrictTemplate } from "@/lib/domain/template";
+import { buildTemplateRenderContext } from "@/lib/contracts/template-context";
 import { zonedLocalDateTimeToIso } from "@/lib/domain/time";
 import { assertContractCallEligibility } from "@/lib/contracts/call-eligibility";
 import { ensureCanonicalContractDocument } from "@/lib/contracts/canonical-document";
@@ -173,31 +174,29 @@ export async function createContract(form: FormData) {
     city: customer.city,
     country_code: customer.country_code,
   };
-  const context = {
+  const context = buildTemplateRenderContext({
     seller: sellerSnapshot,
     customer: counterpartySnapshot,
-    product: {
-      id: product?.id ?? "Ingen produkt",
-      name: product?.name ?? "Ingen produkt",
-      sku: product?.sku ?? "—",
-      description: product?.description ?? "—",
-    },
+    product,
     price: {
       currency: commercialTerms.currency,
       setup_fee: commercialTerms.setup_fee,
       recurring_fee: commercialTerms.recurring_fee,
       variable_fee: commercialTerms.variable_fee,
-      binding_months: commercialTerms.binding_months ?? "Ingen bindningstid",
-      notice_months: commercialTerms.notice_months ?? "Ej angivet",
-      payment_terms_days: commercialTerms.payment_terms_days ?? "Ej angivet",
+      binding_months: commercialTerms.binding_months,
+      notice_months: commercialTerms.notice_months,
+      payment_terms_days: commercialTerms.payment_terms_days,
     },
     contract: {
-      title: parsed.data.title, sales_channel: parsed.data.salesChannel, audience,
-      starts_on: parsed.data.startsOn || "Ej angivet", ends_on: parsed.data.endsOn || "Ej angivet",
-      language: parsed.data.language, special_terms: parsed.data.specialTerms || "Inga särskilda villkor",
+      title: parsed.data.title,
+      sales_channel: parsed.data.salesChannel,
+      audience,
+      starts_on: parsed.data.startsOn,
+      ends_on: parsed.data.endsOn,
+      language: parsed.data.language,
+      special_terms: parsed.data.specialTerms,
     },
-    today: new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeZone: "Europe/Stockholm" }).format(new Date()),
-  };
+  });
 
   let renderedTitle: string;
   let renderedBody: string;

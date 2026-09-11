@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { ApiIdentity } from "@/lib/api-auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { renderStrictTemplate } from "@/lib/domain/template";
+import { buildTemplateRenderContext } from "./template-context";
 import { normalizePhone } from "@/lib/domain/phone";
 import { encryptJson, randomToken, sha256 } from "@/lib/crypto";
 import { canonicalAppBaseUrl, serverEnv } from "@/lib/env";
@@ -17,6 +18,14 @@ export const apiCreateContractSchema = z.object({
   legal_entity_id: z.uuid(),
   product_id: z.uuid().nullable().optional(),
   title: z.string().min(2).max(200),
+  // The same commercial fields the seller's screen collects. A template is
+  // written once and rendered by both paths, so a placeholder that resolves on
+  // screen has to resolve here too — otherwise an approved template fails over
+  // the API with `unresolved_template_variables` and nowhere else.
+  starts_on: z.iso.date().nullable().optional(),
+  ends_on: z.iso.date().nullable().optional(),
+  language: z.enum(["sv", "en"]).optional(),
+  special_terms: z.string().max(4000).optional(),
   idempotency_key: z.string().min(8).max(200),
 });
 
@@ -131,22 +140,38 @@ export async function createContractFromApi(identity: ApiIdentity, input: Create
     variable_fees: variableFees.fees,
     binding_months: price?.binding_months ?? null, notice_months: price?.notice_months ?? null,
     payment_terms_days: price?.payment_terms_days ?? null, product_id: product?.id ?? null,
-    product_name: product?.name ?? null, price_version: price?.version ?? null, additional_terms: toJsonObject(price?.terms ?? {}),
+    product_name: product?.name ?? null, price_version: price?.version ?? null,
+    starts_on: input.starts_on ?? null, ends_on: input.ends_on ?? null, language: input.language ?? "sv",
+    additional_terms: {
+      ...toJsonObject(price?.terms ?? {}),
+      ...(input.special_terms ? { special_conditions: input.special_terms } : {}),
+    },
   };
   const sellerSnapshot = { ...legalEntity };
   const counterpartySnapshot = { ...customer };
-  const context = {
+  const context = buildTemplateRenderContext({
     seller: sellerSnapshot,
     customer: counterpartySnapshot,
-    product: { id: product?.id ?? "Ingen produkt", name: product?.name ?? "Ingen produkt", sku: product?.sku ?? "—", description: product?.description ?? "—" },
+    product,
     price: {
-      currency: commercialTerms.currency, setup_fee: commercialTerms.setup_fee, recurring_fee: commercialTerms.recurring_fee,
-      variable_fee: commercialTerms.variable_fee, binding_months: commercialTerms.binding_months ?? "Ingen bindningstid",
-      notice_months: commercialTerms.notice_months ?? "Ej angivet", payment_terms_days: commercialTerms.payment_terms_days ?? "Ej angivet",
+      currency: commercialTerms.currency,
+      setup_fee: commercialTerms.setup_fee,
+      recurring_fee: commercialTerms.recurring_fee,
+      variable_fee: commercialTerms.variable_fee,
+      binding_months: commercialTerms.binding_months,
+      notice_months: commercialTerms.notice_months,
+      payment_terms_days: commercialTerms.payment_terms_days,
     },
-    contract: { title: input.title, sales_channel: "api", audience },
-    today: new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeZone: "Europe/Stockholm" }).format(new Date()),
-  };
+    contract: {
+      title: input.title,
+      sales_channel: "api",
+      audience,
+      starts_on: input.starts_on,
+      ends_on: input.ends_on,
+      language: input.language ?? "sv",
+      special_terms: input.special_terms,
+    },
+  });
   const renderedTitle = renderStrictTemplate(templateVersion.title_template, context);
   const renderedBody = renderStrictTemplate(templateVersion.body_template, context);
   const renderedTerms = renderStrictTemplate(templateVersion.terms_template ?? "", context);

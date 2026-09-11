@@ -6,6 +6,7 @@ import { z } from "zod";
 import { getAppContext } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { templateVariableNames } from "@/lib/domain/template";
+import { validateTemplateVariables, describeTemplateVariableProblem } from "@/lib/contracts/template-context";
 
 const value = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
 
@@ -37,9 +38,16 @@ export async function createContractTemplateVersion(form: FormData) {
   if (!parsed.success) redirect("/app/templates?error=Kontrollera mallens namn, målgrupp, juridiska bolag och fullständiga villkor");
 
   const variables = templateVariableNames(parsed.data.titleTemplate, parsed.data.bodyTemplate, parsed.data.termsTemplate);
-  const allowedRoots = new Set(["seller", "customer", "product", "price", "contract", "today"]);
-  const invalid = variables.filter((name) => !allowedRoots.has(name.split(".")[0]));
-  if (invalid.length) redirect(`/app/templates?error=${encodeURIComponent(`Ogiltiga mallvariabler: ${invalid.join(", ")}`)}`);
+  // Check the field, not just the group. `{{customer.address}}` is a plausible
+  // guess for a field actually called `address_line1`; accepting it here means
+  // the mistake surfaces weeks later, for every customer, in front of a seller
+  // rather than the person who wrote the template.
+  const problems = validateTemplateVariables(variables);
+  if (problems.length) {
+    const message = problems.slice(0, 4).map(describeTemplateVariableProblem).join(" ");
+    const more = problems.length > 4 ? ` (och ${problems.length - 4} till)` : "";
+    redirect(`/app/templates?error=${encodeURIComponent(message + more)}`);
+  }
 
   const supabase = await createClient();
   const { error } = await supabase.rpc("create_contract_template_version", {

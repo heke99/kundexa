@@ -8,6 +8,7 @@ import { DataTable } from "@/components/ui/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
 import { ContractTemplateDocumentUpload } from "@/components/contract-template-document-upload";
+import { templateContextFields, templateContextRoots, templateScalarRoots } from "@/lib/contracts/template-context";
 import { formatDate } from "@/lib/utils";
 
 type TemplateVersion = {
@@ -76,7 +77,14 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Pr
             <button className="button button-primary" disabled={!legalEntities?.length}>Spara som nytt utkast</button>
           </form>
           <div className="notice" style={{ marginTop: 16 }}>
-            Ladda upp avtalet från Word och markera sedan var kundens uppgifter ska in — systemet fyller i dem från kundkortet när säljaren skickar avtalet, och vägrar skapa avtalet om ett värde saknas. Tillåtna variabler: <code>{"{{seller.*}}"}</code>, <code>{"{{customer.*}}"}</code>, <code>{"{{product.*}}"}</code>, <code>{"{{price.*}}"}</code>, <code>{"{{contract.*}}"}</code> och <code>{"{{today}}"}</code>. Avtal skapas inte om ett obligatoriskt värde saknas.
+            Ladda upp avtalet från Word och markera sedan var kundens uppgifter ska in — systemet fyller i dem från kundkortet när säljaren skickar avtalet. Ett fält som inte finns avvisas redan när du sparar, och ett fält som är tomt på kundkortet stoppar avtalet innan det skickas, med namnet på det som fattas.</div>
+          <div className="notice" style={{ marginTop: 12 }}>
+            <strong>Alla tillgängliga fält</strong>
+            {templateContextRoots.map((root) => <p key={root} style={{ marginTop: 8 }}>
+              <strong>{root}</strong>{" · "}
+              {templateContextFields[root].map((field, index) => <span key={field}>{index ? ", " : ""}<code>{`{{${root}.${field}}}`}</code></span>)}
+            </p>)}
+            <p style={{ marginTop: 8 }}>{templateScalarRoots.map((root) => <code key={root}>{`{{${root}}}`}</code>)}</p>
           </div>
         </CardContent>
       </Card>

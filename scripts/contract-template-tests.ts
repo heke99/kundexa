@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { deflateRawSync, crc32 } from "node:zlib";
 import { extractDocumentText, DocumentTextError } from "../src/lib/contracts/document-text";
+import {
+  allTemplatePlaceholders, buildTemplateRenderContext, describeTemplateVariableProblem,
+  missingContextFields, templateContextFields, validateTemplateVariables,
+} from "../src/lib/contracts/template-context";
+import { renderStrictTemplate, templateVariableNames } from "../src/lib/domain/template";
 
 // Build a real .docx rather than a fixture file, so the test proves the reader
 // against the actual container format instead of against one saved example.
@@ -117,6 +122,63 @@ async function main() {
     () => extractDocumentText(buildDocx('<?xml version="1.0"?><w:document><w:body><w:p/></w:body></w:document>'), "blank.docx"),
     /ingen läsbar text/,
   );
+
+  // --- Placeholders -------------------------------------------------------
+  // The whole point is to fail at authoring time rather than at send time, so a
+  // correct template must pass untouched and a plausible wrong guess must not.
+  assert.deepEqual(
+    validateTemplateVariables(["customer.display_name", "seller.legal_name", "price.recurring_fee", "today"]),
+    [],
+  );
+
+  const guessed = validateTemplateVariables(["customer.address"]);
+  assert.equal(guessed.length, 1);
+  assert.equal(guessed[0].reason, "unknown_field");
+  assert.equal(guessed[0].suggestion, "customer.address_line1");
+  assert.match(describeTemplateVariableProblem(guessed[0]), /customer\.address_line1/);
+
+  assert.equal(validateTemplateVariables(["kund.namn"])[0].reason, "unknown_root");
+  assert.equal(validateTemplateVariables(["customer"])[0].reason, "root_is_not_a_value");
+  assert.equal(validateTemplateVariables(["customer.address_line1.street"])[0].reason, "too_deep");
+  assert.equal(validateTemplateVariables(["today.now"])[0].reason, "too_deep");
+  // A wrong field that resembles nothing gets no suggestion: a confident wrong
+  // hint is worse than none.
+  assert.equal(validateTemplateVariables(["customer.zzzzzzzzzz"])[0].suggestion, null);
+
+  // The seller's branding is a JSON object, and renderStrictTemplate refuses a
+  // non-scalar. Advertising it would hand the author a placeholder that always
+  // fails, so it must not be in the declaration.
+  assert.ok(!(templateContextFields.seller as readonly string[]).includes("branding"));
+
+  // --- One context for both paths -----------------------------------------
+  const context = buildTemplateRenderContext({
+    seller: { id: "s1", legal_name: "Kundexa AB", organization_number: "5560000000", address_line1: "Gatan 1",
+      postal_code: "21115", city: "Malmö", country_code: "SE", email: "avtal@example.test",
+      phone_e164: "+46401234567", website: "https://example.test" },
+    customer: { id: "c1", customer_type: "company", display_name: "Kund AB", first_name: "Anna", last_name: "Andersson",
+      company_name: "Kund AB", personal_identity_number: "19800101-0000", organization_number: "5569999999",
+      email: "kund@example.test", phone_e164: "+46700000000", address_line1: "Kundgatan 2",
+      postal_code: "11122", city: "Stockholm", country_code: "SE" },
+    product: null,
+    price: { currency: "SEK", setup_fee: 0, recurring_fee: 499, variable_fee: 0,
+      binding_months: null, notice_months: null, payment_terms_days: null },
+    contract: { title: "Avtal", sales_channel: "telephone", audience: "B2B", language: "sv" },
+  });
+  assert.deepEqual(missingContextFields(context), []);
+
+  // Every placeholder the authoring screen advertises must actually render. This
+  // is what stops the list on the page from promising a field that blows up.
+  const everyPlaceholder = allTemplatePlaceholders().map((name) => `{{${name}}}`).join(" ");
+  assert.deepEqual(templateVariableNames(everyPlaceholder), allTemplatePlaceholders());
+  const rendered = renderStrictTemplate(everyPlaceholder, context);
+  assert.match(rendered, /Kund AB/);
+  // An absent optional value arrives as readable Swedish rather than as nothing,
+  // or the strict renderer would refuse the whole template.
+  assert.match(rendered, /Ingen bindningstid/);
+  assert.match(rendered, /Ingen produkt/);
+  assert.match(rendered, /Inga särskilda villkor/);
+
+  console.log("Contract template placeholder tests passed: correct templates accepted, a misremembered field is rejected with the real name, no non-scalar field is advertised, one context serves both render paths, and every advertised placeholder renders.");
 
   console.log("Contract template document tests passed: docx paragraphs, tabs, line breaks, entities, stored entries, blank-line collapsing, plain text, HTML, and every refused format.");
 }
