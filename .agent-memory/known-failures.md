@@ -919,3 +919,35 @@ beteende och rör inte den här vyn, men det är värt att veta innan skarp impo
 
 **Regel:** En detektion utan en väg att agera på den är inte en funktion, och en
 destruktiv åtgärd ska inte erbjudas när dess ångra-funktion finns men är onåbar.
+
+## FAILURE-0064 — importen visade hur många nummer som krockade, aldrig vilka — FIXED 2026-09-11
+
+**Symptom:** En import rapporterar `updated: 37`. Vilka trettiosju nummer, och
+vad de skrev över, går inte att se.
+
+**Rotorsak:** `process_import_run` känner igen att en inkommande rad hör till en
+kund som redan finns — och **uppdaterar** då den kunden. Raden som tyst skrev
+över en befintlig kund ser i vyn exakt likadan ut som raden som skapade en ny.
+Resultatet är en siffra, och den kommer efter att beslutet redan är fattat.
+
+**Åtgärd:** `import_run_duplicate_report(uuid)` rapporterar samma krockar per rad
+— före commit — med radnummer, namnet i filen, värdet som krockar, vilken nyckel
+det är, och vad det krockar med: en tidigare rad i samma fil eller en namngiven
+befintlig kund. Panelen på importvyn visar dem och säger rakt ut att raderna
+skriver in sina värden på en befintlig kund i stället för att skapa en ny.
+
+Rapporten beräknas vid läsning, inte lagras, så den speglar de kunder som finns
+nu i stället för de som fanns när filen laddades upp.
+
+**Det jag först hade fel om, och som testet fångade:** jag skrev rapporten mot
+den *äldre* versionen av `process_import_run`, som markerade raden `duplicate`
+och hoppade över den. Den versionen är ersatt. Den körande matchar med
+**rangordnade** nycklar — bär raden ett organisationsnummer är det den enda
+nyckel som konsulteras, och telefon, e-post och källans eget id används bara när
+organisationsnumret saknas — och den *upsertar*. En rapport som matchat på
+telefon oavsett hade påstått krockar importen inte gör. Testet pinnar numera
+exakt det fallet: en rad med eget organisationsnummer och ett delat telefonnummer
+ska **inte** rapporteras.
+
+**Regel:** En rapport om vad ett system kommer att göra måste härledas ur samma
+regler som systemet faktiskt kör, och testet ska vara att de två är oense.

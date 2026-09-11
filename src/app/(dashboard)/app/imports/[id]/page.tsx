@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Import } from "@/components/icons";
+import { Import, Users } from "@/components/icons";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
@@ -9,6 +9,13 @@ import { createClient } from "@/lib/supabase/server";
 import { formatDate } from "@/lib/utils";
 import { processImport, rollbackImport } from "@/app/actions/imports";
 import type { Json } from "@/lib/supabase/database.types";
+
+const matchKeyLabels: Record<string, string> = {
+  phone_e164: "Telefonnummer",
+  email: "E-postadress",
+  organization_number: "Organisationsnummer",
+  source_external_id: "Källans eget id",
+};
 
 function preview(value: Json | null, limit = 180) {
   const text = JSON.stringify(value ?? {});
@@ -19,10 +26,14 @@ export default async function ImportDetailPage({ params, searchParams }: { param
   const { id } = await params;
   const query = await searchParams;
   const supabase = await createClient();
-  const [{ data: run }, { data: rows }, { data: conflicts }] = await Promise.all([
+  const [{ data: run }, { data: rows }, { data: conflicts }, { data: duplicates }] = await Promise.all([
     supabase.from("import_runs").select("*").eq("id", id).maybeSingle(),
     supabase.from("import_rows").select("id,row_number,row_status,decision,error_code,warning_codes,normalized_data,raw_data,matched_customer_id,matched_contact_person_id,processing_ms").eq("import_run_id", id).order("row_number").limit(200),
     supabase.from("import_merge_conflicts").select("id,reason,status,field_name,existing_value,incoming_value,created_at").eq("import_run_id", id).order("created_at", { ascending: false }).limit(50),
+    // Which numbers collide, computed the same way the commit will match them.
+    // Read rather than stored, so it reflects the customers you have right now
+    // instead of the ones you had when the file was uploaded.
+    supabase.rpc("import_run_duplicate_report", { p_import_run_id: id }),
   ]);
   if (!run) notFound();
   const canCommit = ["preview_ready", "validated", "queued"].includes(run.status);
@@ -48,6 +59,45 @@ export default async function ImportDetailPage({ params, searchParams }: { param
         </div>
       </CardContent>
     </Card>
+    {duplicates?.length ? <Card>
+      <CardHeader>
+        <h2><Users size={17} /> Nummer som redan finns</h2>
+        <Badge className="badge-warning">{duplicates.length}</Badge>
+      </CardHeader>
+      <CardContent>
+        <div className="notice warning" style={{ marginBottom: 14 }}>
+          {canCommit
+            ? "De här raderna skapar ingen ny kund. De skriver in sina värden på den kund som redan finns, eller på den tidigare raden i samma fil. Ta bort dem ur filen först om det inte är vad du vill."
+            : "De här raderna skapade ingen ny kund. De uppdaterade den kund som redan fanns, eller den tidigare raden i samma fil."}
+        </div>
+        <DataTable headers={["Rad", "Namn i filen", "Värde som krockar", "Krockar med"]}>
+          {duplicates.map((duplicate) => <tr key={`${duplicate.import_row_number}-${duplicate.match_key}`}>
+            <td>{duplicate.import_row_number}</td>
+            <td>{duplicate.display_name ?? "—"}</td>
+            <td>
+              <code>{duplicate.match_value}</code>
+              <div className="muted">{matchKeyLabels[duplicate.match_key] ?? duplicate.match_key}</div>
+            </td>
+            <td>
+              {duplicate.duplicate_of_row_number
+                ? <>Rad {duplicate.duplicate_of_row_number} i samma fil</>
+                : duplicate.matched_customer_id
+                  ? <>
+                      <Link href={`/app/customers/${duplicate.matched_customer_id}`}>
+                        {duplicate.matched_customer_name ?? "Befintlig kund"}
+                      </Link>
+                      {/* More than one match is not an update at all — the import
+                          refuses the row and writes a merge conflict instead. */}
+                      {duplicate.matched_customer_count > 1
+                        ? <div className="form-error">{duplicate.matched_customer_count} kunder matchar — raden avvisas som konflikt</div>
+                        : null}
+                    </>
+                  : "—"}
+            </td>
+          </tr>)}
+        </DataTable>
+      </CardContent>
+    </Card> : null}
     <Card>
       <CardHeader><h2>Förhandsgranskning och radresultat</h2><Badge>{rows?.length ?? 0} visade</Badge></CardHeader>
       <CardContent style={{ padding: 0 }}>

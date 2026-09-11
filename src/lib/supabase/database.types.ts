@@ -14450,6 +14450,19 @@ export type Database = {
         Args: { p_lat1: number; p_lat2: number; p_lon1: number; p_lon2: number }
         Returns: number
       }
+      import_run_duplicate_report: {
+        Args: { p_import_run_id: string }
+        Returns: {
+          display_name: string
+          duplicate_of_row_number: number
+          import_row_number: number
+          match_key: string
+          match_value: string
+          matched_customer_count: number
+          matched_customer_id: string
+          matched_customer_name: string
+        }[]
+      }
       increment_usage: {
         Args: { p_amount?: number; p_metric: string; p_tenant_id: string }
         Returns: undefined

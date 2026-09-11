@@ -2735,6 +2735,81 @@ console.log("Executed segment authority: only a tenant admin may create one, a t
 
 console.log("Executed contract template authorship: a team leader creates a draft, cannot release it, an owner approves it into the current version, and a seller is refused.");
 
+// An incoming row that belongs to a customer you already have does not get
+// rejected — it silently updates that customer, and all you see afterwards is a
+// count. These prove the report names the same collisions the import will act
+// on, and names them before the import runs rather than after.
+{
+  const tenant = "00000000-0000-0000-0000-000000000001";
+  const owner = "00000000-0000-0000-0000-000000000002";
+  const runId = "00000000-0000-0000-0000-0000000000d1";
+  await db.exec(`select set_config('request.jwt.claim.sub','${owner}',false)`);
+  await db.exec(`
+    insert into public.import_runs(id,tenant_id,name,source_type,status,uploaded_by,total_rows,simulation,scan_status,scan_provider,scan_sha256,scan_completed_at)
+    values('${runId}','${tenant}','Ringlista','csv','preview_ready','${owner}',5,true,'clean','verify','sha-dup',now());
+    insert into public.import_rows(tenant_id,import_run_id,row_number,raw_data,normalized_data,decision,row_status,errors) values
+      ('${tenant}','${runId}',1,'{}','{"display_name":"Nytt Bolag AB","customer_type":"company","phone_e164":"+46701110001"}','ready','valid','[]'),
+      ('${tenant}','${runId}',2,'{}','{"display_name":"Nytt Bolag AB igen","customer_type":"company","phone_e164":"+46701110001"}','ready','valid','[]'),
+      ('${tenant}','${runId}',3,'{}','{"display_name":"Redan Kund AB","customer_type":"company","phone_e164":"+46709999999"}','ready','valid','[]'),
+      ('${tenant}','${runId}',4,'{}','{"display_name":"Trasig rad","customer_type":"company","phone_e164":"+46701110001"}','error','invalid','[]'),
+      ('${tenant}','${runId}',5,'{}','{"display_name":"Eget Orgnr AB","customer_type":"company","organization_number":"5566778899","phone_e164":"+46701110001"}','ready','valid','[]');
+  `);
+
+  const report = (await db.query(`select * from public.import_run_duplicate_report('${runId}')`)).rows;
+
+  // Row 2 repeats row 1's number inside the same file.
+  const withinFile = report.find((row) => Number(row.import_row_number) === 2);
+  if (!withinFile || Number(withinFile.duplicate_of_row_number) !== 1 || withinFile.match_value !== "+46701110001") {
+    throw new Error(`The within-file duplicate was not reported: ${JSON.stringify(report)}`);
+  }
+  if (withinFile.matched_customer_id) throw new Error("A within-file duplicate was wrongly attributed to an existing customer");
+
+  // Row 3 repeats a number that is already a customer, from the earlier fixture.
+  const existing = report.find((row) => Number(row.import_row_number) === 3);
+  if (!existing || !existing.matched_customer_id || existing.matched_customer_name !== "Imported Runtime AB") {
+    throw new Error(`The collision with an existing customer was not reported: ${JSON.stringify(report)}`);
+  }
+  if (existing.duplicate_of_row_number !== null) throw new Error("An existing-customer match was wrongly reported as a within-file duplicate");
+
+  // Row 1 is the first occurrence and hits no customer, so it is not a duplicate.
+  if (report.some((row) => Number(row.import_row_number) === 1)) {
+    throw new Error(`The first occurrence of a number was reported as a duplicate: ${JSON.stringify(report)}`);
+  }
+  // Row 4 failed validation, so the import will never insert it and it cannot collide.
+  if (report.some((row) => Number(row.import_row_number) === 4)) {
+    throw new Error("A row that failed validation was reported as a duplicate");
+  }
+  // Row 5 carries the same phone as rows 1 and 2, but it also carries its own
+  // organisation number — and the import consults phone only when the
+  // organisation number is absent. Reporting it would claim a collision the
+  // import will not make, which is exactly the mistake this report exists to
+  // avoid making in the other direction.
+  if (report.some((row) => Number(row.import_row_number) === 5)) {
+    throw new Error(`A row with its own organisation number was reported as a phone duplicate: ${JSON.stringify(report)}`);
+  }
+
+  // The property that makes the report worth showing: it predicts the commit.
+  // A collision does not reject the row — it updates the customer that already
+  // exists. That is the fact the report has to convey, so it is the fact the
+  // test pins.
+  const committed = (await db.query(`select public.process_import_run('${runId}') as result`)).rows[0].result;
+  if (Number(committed.updated) !== 2 || Number(committed.new) !== 2) {
+    throw new Error(`The import did not act on the reported collisions: ${JSON.stringify(committed)}`);
+  }
+  const decisions = (await db.query(
+    `select row_number, decision from public.import_rows where import_run_id='${runId}' order by row_number`,
+  )).rows;
+  const reported = new Set(report.map((row) => Number(row.import_row_number)));
+  for (const row of decisions) {
+    // `updated` and `unchanged` both mean the row landed on an existing customer.
+    const hitExistingCustomer = ["updated", "unchanged"].includes(String(row.decision));
+    if (hitExistingCustomer !== reported.has(Number(row.row_number))) {
+      throw new Error(`The report and the import disagree about row ${row.row_number}: reported=${reported.has(Number(row.row_number))} decision=${row.decision}`);
+    }
+  }
+}
+console.log("Executed the import duplicate report: a number repeated inside the file names the earlier row, a number that is already a customer names that customer, a first occurrence and a failed row are not collisions, and every row the report names is exactly the row the import then lands on an existing customer.");
+
 // Duplicate detection has always run during ingestion — two master entities that
 // share an identity key become a pending candidate — but nothing read the queue
 // and nothing could act on it. These prove the whole loop: detection produces a
