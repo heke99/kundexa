@@ -50,6 +50,11 @@ jobs:
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
+            # A green check reads as "deployed" to anyone who does not open the
+            # run summary, which is most people most of the time. An annotation
+            # shows up on the run list and on the commit itself, so the gap is
+            # visible without failing main over a setup state.
+            echo "::warning title=Edge Functions were not deployed::supabase/functions changed but SUPABASE_ACCESS_TOKEN and SUPABASE_PROJECT_REF are not set, so production still runs the previous version."
             {
               echo "### Edge Functions were NOT deployed"
               echo
