@@ -1521,3 +1521,37 @@ jag renderade den verkliga markupen mot den verkliga CSS:en och tittade på den 
 ikonerna var oanvändbara. En bugg jag "såg" — att notisbrickan hamnade under
 klockan — visade sig vara ett fel i min egen testrigg, som bara laddade
 `globals.css` medan brickans regler ligger i `dialer.css`.
+
+## FAILURE-0087 — Ett vägrat serveranrop kraschade i stället för att svara
+
+`assertPermission` vägrar genom att kasta `Error("permission_denied:<perm>")`.
+Det fanns ingen `error.tsx` någonstans i appen, så vägran nådde användaren som
+Next standardskärm: engelsk text, ett digest-id och ingen väg tillbaka. Lagt
+till felgräns för `/app`, en svensk 404 och en `global-error.tsx` för fel i
+rotlayouten. Felgränsen känner igen `permission_denied:` och säger vilken
+behörighet som saknas.
+
+## FAILURE-0088 — Formulär visades för roller vars serveranrop alltid vägrar
+
+En sida öppnas av `routeAccessMap`; anropen inuti den kräver sin egen, smalare
+behörighet. Där de två skiljde sig kunde en roll nå ett formulär som alltid
+vägrades — och enligt FAILURE-0087 var det en krasch, inte ett svar.
+
+Grindat per anrop, inte per sida, eftersom en sida bär flera: kundlistan,
+kundkortet (åtta anrop), nytt avtal, avtalskortet (åtta anrop), efterarbetet på
+`/app/calls`, samt e-post- och SMS-formulären. Varje dolt block lämnar en mening
+om vem som kan i stället för att bara försvinna.
+
+`/app/callbacks` upprepade `["owner","admin","team_lead"]` för hand där anropet
+kräver `lists.manage`; frågar nu behörighetstabellen.
+
+**Falska träffar jag först trodde var fel.** `/app/lists/[id]` grindar hela
+hanteringskolumnen på RPC:n `can_manage_customer_list`, som frågar databasen vem
+som förvaltar *just den listan* — strängare än rollbehörigheten.
+`/app/compliance` och `/app/data-sources` grindar på `isAdmin(context.role)`.
+
+**Skyddet.** Revisionen ligger nu i `scripts/remediation-regression-tests.mjs`:
+för varje (sida, anrop) där någon som får öppna sidan vägras av anropet måste
+sidan bära motsvarande `can(role, "<behörighet>")`, `isAdmin(role)` eller en
+dokumenterad körtidsgrind. Ett nytt formulär på en ogrindad sida faller nu i
+`npm run verify`.
