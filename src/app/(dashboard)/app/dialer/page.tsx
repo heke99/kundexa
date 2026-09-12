@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { Clock3, ListFilter, PhoneCall, Plus, ShieldCheck } from "@/components/icons";
 import { createManualProspect } from "@/app/actions/customers";
@@ -17,10 +18,10 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
     params.customer
       ? supabase.from("customers").select("id,display_name,phone_e164,do_not_call").eq("id", params.customer).not("phone_e164", "is", null).is("deleted_at", null).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
-    supabase.from("calls").select("id,to_number,status,disposition,created_at,customers(display_name)").order("created_at", { ascending: false }).limit(8),
-    supabase.from("customer_lists").select("id,name,dialing_mode,priority,status").eq("status", "active").order("priority", { ascending: false }),
-    supabase.from("activities").select("id,customer_id,list_id,callback_scope,due_at,title,customers(display_name,phone_e164)").eq("type", "callback").eq("status", "open").lte("due_at", now).order("due_at").limit(20),
-    supabase.rpc("get_current_user_rinkel_numbers"),
+    ok(supabase.from("calls").select("id,to_number,status,disposition,created_at,customers(display_name)").order("created_at", { ascending: false }).limit(8)),
+    ok(supabase.from("customer_lists").select("id,name,dialing_mode,priority,status").eq("status", "active").order("priority", { ascending: false })),
+    ok(supabase.from("activities").select("id,customer_id,list_id,callback_scope,due_at,title,customers(display_name,phone_e164)").eq("type", "callback").eq("status", "open").lte("due_at", now).order("due_at").limit(20)),
+    ok(supabase.rpc("get_current_user_rinkel_numbers")),
   ]);
   return <>
     <PageHeader title="Dialer" description="Välj en tilldelad ringlista eller ring ett enskilt nummer från det kanoniska kundkortet." />

@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { setCallDisposition } from "@/app/actions/communications";
 import { Headphones } from "@/components/icons";
@@ -21,8 +22,8 @@ export default async function CallsPage({ searchParams }: { searchParams: Promis
   // saw a form the server action would always refuse.
   const mayLog = can(context.role, "calls.create");
   const [{ data }, { data: eligibleRows }] = await Promise.all([
-    supabase.from("calls").select("*,customers(display_name)").order("created_at", { ascending: false }).limit(100),
-    supabase.from("list_dispositions").select("key").eq("active", true).eq("contract_eligible", true),
+    ok(supabase.from("calls").select("*,customers(display_name)").order("created_at", { ascending: false }).limit(100)),
+    ok(supabase.from("list_dispositions").select("key").eq("active", true).eq("contract_eligible", true)),
   ]);
   const eligible = new Set([...(eligibleRows ?? []).map((row) => row.key), ...defaultContractEligible]);
 

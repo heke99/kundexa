@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { ArrowLeft, FileSignature, Phone, Plus } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
@@ -43,17 +44,17 @@ export default async function NewContractPage({ searchParams }: { searchParams: 
       .eq("id", params.customer_id).is("deleted_at", null).maybeSingle()).data as CustomerSearchOption | null
     : null;
   const [{ data: products }, { data: prices }, { data: versions }, { data: legalEntities }, { data: dispositions }, { data: members }, { data: teams }] = await Promise.all([
-    supabase.from("products").select("id,name").eq("active", true).order("name"),
-    supabase.from("product_price_versions").select("product_id,version,recurring_fee,currency,binding_months,notice_months,payment_terms_days").eq("active", true).order("version", { ascending: false }),
-    supabase.from("contract_template_versions").select("id,version,status,contract_templates(name,audience,active,current_version_id)").eq("status", "approved").order("created_at", { ascending: false }),
-    supabase.from("tenant_legal_entities").select("id,legal_name,organization_number,is_default").eq("active", true).order("is_default", { ascending: false }),
-    supabase.from("list_dispositions").select("key,label").eq("contract_eligible", true).order("sort_order"),
-    supabase.from("tenant_memberships").select("user_id,role,profiles:user_id(full_name)").eq("status", "active").in("role", ["owner", "admin", "team_lead", "sales", "contract_manager"]),
-    supabase.from("teams").select("id,name").eq("status", "active").order("name"),
+    ok(supabase.from("products").select("id,name").eq("active", true).order("name")),
+    ok(supabase.from("product_price_versions").select("product_id,version,recurring_fee,currency,binding_months,notice_months,payment_terms_days").eq("active", true).order("version", { ascending: false })),
+    ok(supabase.from("contract_template_versions").select("id,version,status,contract_templates(name,audience,active,current_version_id)").eq("status", "approved").order("created_at", { ascending: false })),
+    ok(supabase.from("tenant_legal_entities").select("id,legal_name,organization_number,is_default").eq("active", true).order("is_default", { ascending: false })),
+    ok(supabase.from("list_dispositions").select("key,label").eq("contract_eligible", true).order("sort_order")),
+    ok(supabase.from("tenant_memberships").select("user_id,role,profiles:user_id(full_name)").eq("status", "active").in("role", ["owner", "admin", "team_lead", "sales", "contract_manager"])),
+    ok(supabase.from("teams").select("id,name").eq("status", "active").order("name")),
   ]);
   let eligibleCalls: CallOption[] = [];
   if (selectedCustomer) {
-    const { data } = await supabase.rpc("resolve_contract_eligible_calls", { p_customer_id: selectedCustomer.id });
+    const { data } = await ok(supabase.rpc("resolve_contract_eligible_calls", { p_customer_id: selectedCustomer.id }));
     eligibleCalls = (data ?? []) as CallOption[];
   }
   const selectedCall = eligibleCalls.find((call) => call.id === params.source_call_id) ?? null;

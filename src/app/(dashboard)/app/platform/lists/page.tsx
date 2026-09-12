@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Import, ListFilter, ShieldCheck } from "@/components/icons";
@@ -17,9 +18,9 @@ export default async function PlatformListsPage({ searchParams }: { searchParams
   if (!canReadPlatformAdministration(context.platformRole)) redirect("/app");
   const admin = await createClient();
   const [{ data: lists }, { data: tenants }, { data: allocations }] = await Promise.all([
-    admin.from("platform_lists").select("id,name,description,source_provider,status,exclusivity_mode,total_entries,available_entries,allocated_entries,consumed_entries,created_at").order("created_at", { ascending: false }),
-    admin.from("tenants").select("id,name,legal_name,status").in("status", ["trial", "active"]).order("name"),
-    admin.from("platform_list_allocations").select("id,platform_list_id,tenant_id,target_list_id,name,status,allocated_count,exclusivity_mode,created_at,revoke_reason").order("created_at", { ascending: false }).limit(100),
+    ok(admin.from("platform_lists").select("id,name,description,source_provider,status,exclusivity_mode,total_entries,available_entries,allocated_entries,consumed_entries,created_at").order("created_at", { ascending: false })),
+    ok(admin.from("tenants").select("id,name,legal_name,status").in("status", ["trial", "active"]).order("name")),
+    ok(admin.from("platform_list_allocations").select("id,platform_list_id,tenant_id,target_list_id,name,status,allocated_count,exclusivity_mode,created_at,revoke_reason").order("created_at", { ascending: false }).limit(100)),
   ]);
   const listNames = new Map((lists ?? []).map((list) => [list.id, list.name]));
   const tenantNames = new Map((tenants ?? []).map((tenant) => [tenant.id, tenant.name]));

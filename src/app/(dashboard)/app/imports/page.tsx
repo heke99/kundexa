@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { Import, Upload } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
@@ -17,7 +18,7 @@ function statusClass(status: string) {
 export default async function ImportsPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string }> }) {
   const params = await searchParams;
   const supabase = await createClient();
-  const { data } = await supabase.from("import_runs").select("id,name,source_type,source_provider,source_website,scan_status,status,total_rows,new_count,updated_count,unchanged_count,new_contact_count,updated_contact_count,blocked_count,warning_count,error_count,created_at").order("created_at", { ascending: false }).limit(100);
+  const { data } = await ok(supabase.from("import_runs").select("id,name,source_type,source_provider,source_website,scan_status,status,total_rows,new_count,updated_count,unchanged_count,new_contact_count,updated_contact_count,blocked_count,warning_count,error_count,created_at").order("created_at", { ascending: false }).limit(100));
   return <>
     <PageHeader
       title="Importer"

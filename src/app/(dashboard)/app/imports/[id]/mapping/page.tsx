@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/ui/page-header";
@@ -15,8 +16,8 @@ export default async function ImportMappingPage({ params }: { params: Promise<{ 
   const { id } = await params;
   const supabase = await createClient();
   const [{ data: run }, { data: sample }] = await Promise.all([
-    supabase.from("import_runs").select("id,name,status,field_mapping,validation_report").eq("id", id).maybeSingle(),
-    supabase.from("import_rows").select("raw_data,normalized_data").eq("import_run_id", id).order("row_number").limit(1).maybeSingle(),
+    ok(supabase.from("import_runs").select("id,name,status,field_mapping,validation_report").eq("id", id).maybeSingle()),
+    ok(supabase.from("import_rows").select("raw_data,normalized_data").eq("import_run_id", id).order("row_number").limit(1).maybeSingle()),
   ]);
   if (!run) notFound();
   const validation = objectValue(run.validation_report);

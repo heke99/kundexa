@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { ArrowLeft, Download, FileSignature, LockKeyhole, Phone, Send, Upload } from "@/components/icons";
 import { notFound } from "next/navigation";
@@ -37,15 +38,15 @@ export default async function ContractDetail({ params, searchParams }: { params:
   // whole offset — on the contract's response deadline among other things.
   const localDateTime = (value?: string | null) => isoToZonedLocalDateTime(value ?? null, ctx.tenantTimezone);
   const [{ data: contract }, { data: versions }, { data: documents }, { data: deliveries }, { data: events }, { data: acceptances }, { data: requests }, { data: reminders }, { data: evidence }] = await Promise.all([
-    supabase.from("contracts").select("*,customers(display_name,email,phone_e164),products(name),tenant_legal_entities(legal_name,organization_number)").eq("id", id).single(),
-    supabase.from("contract_versions").select("*").eq("contract_id", id).order("version", { ascending: false }),
-    supabase.from("contract_documents").select("*").eq("contract_id", id).order("created_at", { ascending: false }),
-    supabase.from("contract_deliveries").select("*,contract_recipients(full_name,email,phone_e164)").eq("contract_id", id).order("created_at", { ascending: false }),
-    supabase.from("contract_events").select("*").eq("contract_id", id).order("occurred_at", { ascending: false }),
-    supabase.from("contract_acceptances").select("*").eq("contract_id", id).order("created_at", { ascending: false }),
-    supabase.from("contract_acceptance_requests").select("*").eq("contract_id", id).order("created_at", { ascending: false }),
-    supabase.from("contract_reminders").select("*").eq("contract_id", id).order("scheduled_at", { ascending: true }),
-    supabase.from("evidence_packages").select("*").eq("contract_id", id).order("created_at", { ascending: false }),
+    ok(supabase.from("contracts").select("*,customers(display_name,email,phone_e164),products(name),tenant_legal_entities(legal_name,organization_number)").eq("id", id).single()),
+    ok(supabase.from("contract_versions").select("*").eq("contract_id", id).order("version", { ascending: false })),
+    ok(supabase.from("contract_documents").select("*").eq("contract_id", id).order("created_at", { ascending: false })),
+    ok(supabase.from("contract_deliveries").select("*,contract_recipients(full_name,email,phone_e164)").eq("contract_id", id).order("created_at", { ascending: false })),
+    ok(supabase.from("contract_events").select("*").eq("contract_id", id).order("occurred_at", { ascending: false })),
+    ok(supabase.from("contract_acceptances").select("*").eq("contract_id", id).order("created_at", { ascending: false })),
+    ok(supabase.from("contract_acceptance_requests").select("*").eq("contract_id", id).order("created_at", { ascending: false })),
+    ok(supabase.from("contract_reminders").select("*").eq("contract_id", id).order("scheduled_at", { ascending: true })),
+    ok(supabase.from("evidence_packages").select("*").eq("contract_id", id).order("created_at", { ascending: false })),
   ]);
   if (!contract) notFound();
   const customer = Array.isArray(contract.customers) ? contract.customers[0] : contract.customers;
@@ -53,9 +54,9 @@ export default async function ContractDetail({ params, searchParams }: { params:
   const legalEntity = Array.isArray(contract.tenant_legal_entities) ? contract.tenant_legal_entities[0] : contract.tenant_legal_entities;
   const activeRequest = requests?.find((request) => request.status === "pending") ?? null;
   const { data: sourceCall } = contract.source_call_id ? await supabase.from("calls").select("id,started_at,answered_at,ended_at,duration_seconds,direction,disposition,notes,user_id,metadata").eq("id", contract.source_call_id).maybeSingle() : { data: null };
-  const { data: eligibleRaw } = await supabase.rpc("resolve_contract_eligible_calls", { p_customer_id: contract.customer_id });
+  const { data: eligibleRaw } = await ok(supabase.rpc("resolve_contract_eligible_calls", { p_customer_id: contract.customer_id }));
   const eligibleCalls = (eligibleRaw ?? []) as Array<{ id: string; ended_at: string; disposition: string; duration_seconds: number; registered_manually: boolean }>;
-  const { data: dispositions } = await supabase.from("list_dispositions").select("key,label").eq("contract_eligible", true).order("sort_order");
+  const { data: dispositions } = await ok(supabase.from("list_dispositions").select("key,label").eq("contract_eligible", true).order("sort_order"));
   const latestDelivery = deliveries?.[0] ?? null;
   const canonicalDocument = documents?.find((document) => ["generated_pdf", "source_pdf"].includes(document.document_type) && (document.metadata as Record<string, unknown> | null)?.canonical === true) ?? null;
   const accepted = acceptances?.[0] ?? null;

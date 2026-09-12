@@ -4,6 +4,7 @@ import { buildIlikeOrFilter, sanitizeFilterTerm } from "../src/lib/postgrest-fil
 import { publicHostAlignment, resolveRinkelWebhookBaseUrl } from "../src/lib/env";
 import { isoToZonedDateOnly, isoToZonedLocalDateTime, zonedLocalDateTimeToIso } from "../src/lib/domain/time";
 import { acceptanceCode } from "../src/lib/crypto";
+import { ok, SupabaseReadError } from "../src/lib/supabase/read";
 
 function withEnv(values: Record<string, string | undefined>, run: () => void) {
   const previous = new Map(Object.keys(values).map((key) => [key, process.env[key]]));
@@ -191,3 +192,33 @@ console.log("Contract date fields are pre-filled in the tenant's timezone, round
   assert.ok(new Set(samples).size > samples.length * 0.99, "Codes repeat far more than chance allows");
 }
 console.log("The acceptance code is six characters drawn uniformly from a 32-symbol alphabet with no confusable characters.");
+
+// `ok()` is what stops a failed read from rendering as an empty table. Its two
+// halves both matter: it has to raise a genuine failure, and it has to stay out
+// of the way of `.single()` reporting "no row", which pages answer with
+// notFound(). Getting the second half wrong would turn "kunden finns inte" into
+// "något gick fel" — a behaviour change dressed up as a fix.
+async function testOk() {
+  const failure = { data: null, error: { message: "relation does not exist", code: "42P01", details: "", hint: "", name: "PostgrestError" } };
+  await assert.rejects(() => ok(Promise.resolve(failure) as never), (thrown: unknown) => {
+    assert.ok(thrown instanceof SupabaseReadError, "a failed read raises SupabaseReadError");
+    assert.equal((thrown as SupabaseReadError).code, "42P01");
+    assert.ok(!(thrown as Error).message.includes("undefined"));
+    return true;
+  }, "a genuine read failure must not be rendered as emptiness");
+
+  const noRows = { data: null, error: { message: "no rows", code: "PGRST116", details: "", hint: "", name: "PostgrestError" } };
+  const passedThrough = await ok(Promise.resolve(noRows) as never) as unknown as typeof noRows;
+  assert.equal(passedThrough.data, null, "`.single()` finding no row stays a null row, not a crash");
+
+  // `count` is why ok() returns the whole result rather than just `{ data }`:
+  // the paginated customer list reads it.
+  const counted = await ok(Promise.resolve({ data: [1, 2], count: 97, error: null }) as never) as unknown as { data: number[]; count: number };
+  assert.equal(counted.count, 97, "ok() must not strip fields the page reads");
+  assert.deepEqual(counted.data, [1, 2]);
+
+  const clean = await ok(Promise.resolve({ data: { id: "x" }, error: null }) as never) as unknown as { data: { id: string } };
+  assert.deepEqual(clean.data, { id: "x" });
+}
+
+void testOk().then(() => console.log("ok() raises real read failures and passes a missing row through."));

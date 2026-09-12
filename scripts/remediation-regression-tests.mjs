@@ -680,3 +680,48 @@ console.log("Every role-restricted form is gated on the permission its action as
     `Server actions redirecting to a parameter the page never shows:\n${[...new Set(swallowed)].join("\n")}`);
 }
 console.log("Every action redirect lands on a page that renders the parameter.");
+
+// PostgREST does not throw. A read that fails comes back as `{ data: null,
+// error }`, so a page destructuring only `data` renders a broken query exactly
+// like a query that found nothing: "Inga poster ännu". On a tenant still being
+// filled that is the difference between "you have not added customers yet" and
+// "the customer list is broken", shown identically. Every page read must
+// therefore either bind `error` or go through `ok()` from
+// src/lib/supabase/read.ts, which turns the failure into a thrown error the
+// boundary can show.
+{
+  const { readdirSync, statSync, readFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { unguardedReads } = await import("./unguarded-reads.mjs");
+  const base = new URL("..", import.meta.url).pathname;
+
+  const pages = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walk(full);
+      else if (entry === "page.tsx") pages.push(full);
+    }
+  };
+  walk(join(base, "src/app"));
+  assert.ok(pages.length >= 40, `expected to find the app's pages, found ${pages.length}`);
+
+  const unguarded = pages.sort().flatMap((file) =>
+    unguardedReads(readFileSync(file, "utf8"), file.slice(base.length)));
+  assert.deepEqual(unguarded, [],
+    `Page reads that render a failure as emptiness:\n${unguarded.join("\n")}`);
+
+  // The checker is only worth having if it can see a read in the first place.
+  // Its first version hard-coded the client name `supabase`, so seven pages that
+  // call it `s` were invisible — to the fix and to the check that was meant to
+  // prove the fix. Pin that it follows the local name.
+  const { clientNames, unguardedReads: scan } = await import("./unguarded-reads.mjs");
+  assert.deepEqual([...clientNames("const s = await createClient();")], ["s"]);
+  assert.equal(scan(`const s = await createClient();\nconst { data } = await s.from("x").select("*");\n`, "t").length, 1,
+    "a read through a locally named client must still be seen");
+  assert.equal(scan(`const s = await createClient();\nconst { data } = await ok(s.from("x").select("*"));\n`, "t").length, 0,
+    "an ok()-wrapped read must be accepted");
+  assert.equal(scan(`const s = await createClient();\nconst { data, error } = await s.from("x").select("*");\n`, "t").length, 0,
+    "an error-checked read must be accepted");
+}
+console.log("Every page read is error-checked or wrapped in ok().");

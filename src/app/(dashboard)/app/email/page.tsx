@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import { Mail, Send } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
 import { getAppContext } from "@/lib/auth";
@@ -21,9 +22,9 @@ export default async function EmailPage({ searchParams }: { searchParams: Promis
       .select("id,customer_type,display_name,email,phone_e164,organization_number,do_not_call,do_not_sms,do_not_email")
       .eq("id", params.customer).not("email", "is", null).maybeSingle()).data as CustomerSearchOption | null
     : null;
-  const { data: messages } = await supabase.from("email_messages")
+  const { data: messages } = await ok(supabase.from("email_messages")
     .select("id,subject,to_addresses,status,created_at,customers(display_name)")
-    .order("created_at", { ascending: false }).limit(60);
+    .order("created_at", { ascending: false }).limit(60));
 
   return <>
     <PageHeader title="E-post" description="Transaktionella utskick med tenantens verifierade domän, mallar och leveranshändelser." />

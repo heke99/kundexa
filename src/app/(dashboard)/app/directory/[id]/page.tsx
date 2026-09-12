@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import { notFound } from "next/navigation";
 import { getAppContext } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -59,11 +60,11 @@ export default async function DirectoryEntityPage({ params }: { params: Promise<
     { data: quality },
     { data: conflicts },
   ] = await Promise.all([
-    admin.rpc("directory_entity_projection_for_tenant", { p_tenant_id: context.tenantId, p_entity_id: id }),
-    admin.rpc("directory_visible_fields_for_tenant", { p_tenant_id: context.tenantId, p_entity_id: id }),
-    admin.from("field_freshness").select("*").eq("master_entity_id", id),
-    admin.from("data_quality_scores").select("*").eq("master_entity_id", id).maybeSingle(),
-    admin.from("data_conflicts").select("id,field_key,candidate_values,status,created_at").eq("master_entity_id", id).order("created_at", { ascending: false }),
+    ok(admin.rpc("directory_entity_projection_for_tenant", { p_tenant_id: context.tenantId, p_entity_id: id })),
+    ok(admin.rpc("directory_visible_fields_for_tenant", { p_tenant_id: context.tenantId, p_entity_id: id })),
+    ok(admin.from("field_freshness").select("*").eq("master_entity_id", id)),
+    ok(admin.from("data_quality_scores").select("*").eq("master_entity_id", id).maybeSingle()),
+    ok(admin.from("data_conflicts").select("id,field_key,candidate_values,status,created_at").eq("master_entity_id", id).order("created_at", { ascending: false })),
   ]);
 
   const entity = projectionFrom(entityProjection);

@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import { Webhook } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
 import { createWebhookEndpoint } from "@/app/actions/admin";
@@ -14,8 +15,8 @@ export default async function WebhooksPage({ searchParams }: { searchParams: Pro
   const params = await searchParams;
   const supabase = await createClient();
   const [{ data: endpoints }, { data: deliveries }] = await Promise.all([
-    supabase.from("webhook_endpoints").select("*").order("created_at", { ascending: false }),
-    supabase.from("webhook_deliveries").select("*").order("created_at", { ascending: false }).limit(50),
+    ok(supabase.from("webhook_endpoints").select("*").order("created_at", { ascending: false })),
+    ok(supabase.from("webhook_deliveries").select("*").order("created_at", { ascending: false }).limit(50)),
   ]);
   return <>
     <PageHeader title="Webhooks" description="Signerade utgående events med deduplicering, HTTPS-krav, återförsök och leveranslogg." />

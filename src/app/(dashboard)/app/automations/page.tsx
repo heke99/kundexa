@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import { Bot, Plus } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
 import { activateAutomation, createAutomation, pauseAutomation } from "@/app/actions/admin";
@@ -11,9 +12,9 @@ type AutomationVersion = { version: number; test_mode: boolean; actions: Array<{
 
 export default async function AutomationsPage() {
   const supabase = await createClient();
-  const { data } = await supabase.from("automation_rules")
+  const { data } = await ok(supabase.from("automation_rules")
     .select("*,automation_versions(version,test_mode,actions)")
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false }));
 
   return <>
     <PageHeader title="Automatiseringar" description="Databasdrivna triggers, testläge, fördröjningar, idempotenta åtgärder, spärrkontroll och felkö." />

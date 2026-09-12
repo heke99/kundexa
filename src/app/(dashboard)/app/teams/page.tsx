@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import { Plus, Users } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
 import { getAppContext } from "@/lib/auth";
@@ -12,9 +13,9 @@ export default async function TeamsPage({ searchParams }: { searchParams: Promis
   const context = await getAppContext();
   const supabase = await createClient();
   const [{ data: teams }, { data: teamMembers }, { data: memberships }] = await Promise.all([
-    supabase.from("teams").select("id,name,description,department,office,code,status,is_default,invite_sellers_enabled,max_members,default_dialing_mode").order("name"),
-    supabase.from("team_members").select("team_id,user_id,role,is_primary,assignment_paused,daily_lead_limit,joined_at").order("joined_at"),
-    supabase.from("tenant_memberships").select("user_id,role,status,profiles:user_id(full_name,last_seen_at)").in("status", ["invited", "active"]).order("created_at"),
+    ok(supabase.from("teams").select("id,name,description,department,office,code,status,is_default,invite_sellers_enabled,max_members,default_dialing_mode").order("name")),
+    ok(supabase.from("team_members").select("team_id,user_id,role,is_primary,assignment_paused,daily_lead_limit,joined_at").order("joined_at")),
+    ok(supabase.from("tenant_memberships").select("user_id,role,status,profiles:user_id(full_name,last_seen_at)").in("status", ["invited", "active"]).order("created_at")),
   ]);
   const memberInfo = new Map((memberships ?? []).map((membership) => {
     const profile = Array.isArray(membership.profiles) ? membership.profiles[0] : membership.profiles;

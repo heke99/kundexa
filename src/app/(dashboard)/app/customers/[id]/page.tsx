@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, Ban, CalendarPlus, ClipboardList, FileSignature, Mail, MessageSquareText, Phone, PhoneOff, StickyNote, Users } from "@/components/icons";
@@ -25,16 +26,16 @@ export default async function CustomerDetail({ params, searchParams }: { params:
   const mayCreateContract = can(context.role, "contracts.write");
   const supabase = await createClient();
   const [{ data: customer }, { data: contacts }, { data: notes }, { data: activities }, { data: calls }, { data: contracts }, { data: deals }, { data: orders }, { data: lists }, { data: callerIdData }] = await Promise.all([
-    supabase.from("customers").select("*").eq("id", id).single(),
-    supabase.from("contact_people").select("id,full_name,title,role,email,phone_e164,alternate_phone_e164,is_primary,is_signatory,source_external_id").eq("customer_id", id).order("is_primary", { ascending: false }).order("full_name"),
-    supabase.from("notes").select("id,body,is_pinned,visibility,note_type,created_by,created_at,profiles:created_by(full_name)").eq("customer_id", id).is("archived_at", null).order("is_pinned", { ascending: false }).order("created_at", { ascending: false }).limit(30),
-    supabase.from("activities").select("id,title,description,status,callback_scope,due_at,created_at").eq("customer_id", id).order("created_at", { ascending: false }).limit(30),
-    supabase.from("calls").select("id,direction,status,disposition,duration_seconds,created_at").eq("customer_id", id).order("created_at", { ascending: false }).limit(15),
-    supabase.from("contracts").select("id,contract_number,title,status,value,currency").eq("customer_id", id).order("created_at", { ascending: false }).limit(10),
-    supabase.from("deals").select("id,name,status,probability,value,currency").eq("customer_id", id).order("created_at", { ascending: false }),
-    supabase.from("sales_orders").select("id,order_number,status,total,currency,created_at").eq("customer_id", id).order("created_at", { ascending: false }),
-    supabase.from("customer_lists").select("id,name,callback_policy,status").eq("status", "active").order("name"),
-    supabase.rpc("get_current_user_rinkel_numbers"),
+    ok(supabase.from("customers").select("*").eq("id", id).single()),
+    ok(supabase.from("contact_people").select("id,full_name,title,role,email,phone_e164,alternate_phone_e164,is_primary,is_signatory,source_external_id").eq("customer_id", id).order("is_primary", { ascending: false }).order("full_name")),
+    ok(supabase.from("notes").select("id,body,is_pinned,visibility,note_type,created_by,created_at,profiles:created_by(full_name)").eq("customer_id", id).is("archived_at", null).order("is_pinned", { ascending: false }).order("created_at", { ascending: false }).limit(30)),
+    ok(supabase.from("activities").select("id,title,description,status,callback_scope,due_at,created_at").eq("customer_id", id).order("created_at", { ascending: false }).limit(30)),
+    ok(supabase.from("calls").select("id,direction,status,disposition,duration_seconds,created_at").eq("customer_id", id).order("created_at", { ascending: false }).limit(15)),
+    ok(supabase.from("contracts").select("id,contract_number,title,status,value,currency").eq("customer_id", id).order("created_at", { ascending: false }).limit(10)),
+    ok(supabase.from("deals").select("id,name,status,probability,value,currency").eq("customer_id", id).order("created_at", { ascending: false })),
+    ok(supabase.from("sales_orders").select("id,order_number,status,total,currency,created_at").eq("customer_id", id).order("created_at", { ascending: false })),
+    ok(supabase.from("customer_lists").select("id,name,callback_policy,status").eq("status", "active").order("name")),
+    ok(supabase.rpc("get_current_user_rinkel_numbers")),
   ]);
   if (!customer) notFound();
   // The card is the canonical CRM record, so the person actually responsible has to be

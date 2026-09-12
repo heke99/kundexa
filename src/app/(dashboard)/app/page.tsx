@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import { Activity, FileSignature, PhoneCall, Target, TrendingUp, Users } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
 import { getAppContext } from "@/lib/auth";
@@ -25,7 +26,7 @@ export default async function DashboardPage() {
   const copy = dashboardCopy[context.role] ?? { title: "Dashboard", description: "Tenantens försäljning, aktiviteter och avtal inom ditt behörighetsscope.", customerLabel: "Kunder och prospekt" };
   // Alla nyckeltal aggregeras i databasen i ett anrop; inga obegränsade rådatamängder hämtas.
   const [{ data: overviewData }, recentContracts] = await Promise.all([
-    supabase.rpc("dashboard_overview"),
+    ok(supabase.rpc("dashboard_overview")),
     supabase.from("contracts").select("id,contract_number,title,status,value,currency,created_at,customers(display_name)").order("created_at", { ascending: false }).limit(6),
   ]);
   const overview = (overviewData ?? { customers: 0, callsToday: 0, pendingContracts: 0, openActivities: 0, openDeals: 0, wonDealValue: 0 }) as DashboardOverview;

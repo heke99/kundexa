@@ -15,16 +15,22 @@ export default async function OnboardingPage() {
   const securityState = Array.isArray(securityRows) ? securityRows[0] : securityRows;
   if (securityState?.must_change_password) redirect("/change-password");
 
-  const { data: platformMembership } = await supabase.from("platform_memberships").select("role").eq("user_id", user.id).eq("status", "active").maybeSingle();
+  // A failed read here is not "you have no membership". Treating it as one told
+  // a platform owner that their account was waiting for an organisation and left
+  // them there. The security check above already sets the precedent: say the
+  // check could not be made, rather than reporting its most pessimistic answer.
+  const { data: platformMembership, error: platformMembershipError } = await supabase.from("platform_memberships").select("role").eq("user_id", user.id).eq("status", "active").maybeSingle();
+  if (platformMembershipError) redirect("/login?error=Din behörighet kunde inte läsas. Försök igen om en stund.");
   if (platformMembership) redirect("/app/platform");
 
-  const { data: membership } = await supabase
+  const { data: membership, error: membershipError } = await supabase
     .from("tenant_memberships")
     .select("tenant_id,role,status,tenants(onboarding_status)")
     .eq("user_id", user.id)
     .eq("status", "active")
     .limit(1)
     .maybeSingle();
+  if (membershipError) redirect("/login?error=Din organisationstillhörighet kunde inte läsas. Försök igen om en stund.");
 
   const tenant = Array.isArray(membership?.tenants) ? membership.tenants[0] : membership?.tenants as TenantLifecycle | null | undefined;
   if (membership && tenant?.onboarding_status === "active") {

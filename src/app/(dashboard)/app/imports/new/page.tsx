@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { Upload } from "@/components/icons";
 import { PageHeader } from "@/components/ui/page-header";
@@ -8,8 +9,8 @@ import { createClient } from "@/lib/supabase/server";
 export default async function NewImportPage() {
   const supabase = await createClient();
   const [{ data: profiles }, { data: lists }] = await Promise.all([
-    supabase.from("import_profiles").select("id,name,source_provider,source_website,current_version,records_path,worksheet_name").eq("active", true).order("name"),
-    supabase.from("customer_lists").select("id,name,status,dialing_mode").in("status", ["draft", "active", "paused"]).order("name"),
+    ok(supabase.from("import_profiles").select("id,name,source_provider,source_website,current_version,records_path,worksheet_name").eq("active", true).order("name")),
+    ok(supabase.from("customer_lists").select("id,name,status,dialing_mode").in("status", ["draft", "active", "paused"]).order("name")),
   ]);
   return <>
     <PageHeader title="Ny import" description="Ladda upp resultat från ParseHub eller annan godkänd källa. Importen genomförs först efter förhandsgranskning." action={<div style={{ display: "flex", gap: 8 }}><Link className="button button-secondary" href="/app/imports/profiles">Skapa profil</Link><Link className="button button-secondary" href="/app/imports">Till översikten</Link></div>} />

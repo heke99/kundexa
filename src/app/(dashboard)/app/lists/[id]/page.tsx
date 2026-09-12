@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ListFilter, PhoneCall, Settings, Users } from "@/components/icons";
@@ -27,19 +28,19 @@ export default async function ListDetailPage({ params, searchParams }: {
   const memberOffset = (memberPage - 1) * memberPageSize;
   // Kandidatstatus och medlemsantal aggregeras i databasen i stället för att hämta alla rader.
   const [{ data: list }, { data: mayManage }, { data: members }, { data: assignments }, { data: memberships }, { data: teamMembers }, { data: dispositions }, { data: segments }, { data: candidateCounts }, { data: listOverview }, { data: sellerWorkloadData }, { data: phoneNumbers }, { data: teams }, { data: requeueCandidates }] = await Promise.all([
-    supabase.from("customer_lists").select("*").eq("id", id).single(),
-    supabase.rpc("can_manage_customer_list", { p_list_id: id }),
-    supabase.from("customer_list_members").select("id,customer_id,assigned_user_id,state,attempts,outcome,next_attempt_at,customers(display_name,phone_e164,city,do_not_call)").eq("list_id", id).order("priority", { ascending: false }).order("id").range(memberOffset, memberOffset + memberPageSize),
-    supabase.from("customer_list_seller_assignments").select("user_id,status,weight,daily_capacity,starts_at,ends_at").eq("list_id", id),
-    supabase.from("tenant_memberships").select("user_id,role,status,profiles:user_id(full_name)").eq("status", "active").in("role", ["owner", "admin", "team_lead", "sales"]),
-    supabase.from("team_members").select("team_id,user_id"),
-    supabase.from("list_dispositions").select("key,label,outcome_group,terminal,retry_after_minutes,requires_callback,requires_order").eq("list_id", id).eq("active", true).order("sort_order"),
-    supabase.from("segments").select("id,name,segment_type,last_refreshed_at").eq("active", true).order("name"),
-    supabase.rpc("customer_list_candidate_counts", { p_list_id: id }),
-    supabase.rpc("customer_list_overview", { p_list_id: id }),
-    supabase.rpc("customer_list_seller_workload", { p_list_id: id }),
-    supabase.from("phone_numbers").select("id,number_e164").eq("status", "active").eq("supports_voice", true).order("number_e164"),
-    supabase.from("teams").select("id,name,status").eq("status", "active").order("name"),
+    ok(supabase.from("customer_lists").select("*").eq("id", id).single()),
+    ok(supabase.rpc("can_manage_customer_list", { p_list_id: id })),
+    ok(supabase.from("customer_list_members").select("id,customer_id,assigned_user_id,state,attempts,outcome,next_attempt_at,customers(display_name,phone_e164,city,do_not_call)").eq("list_id", id).order("priority", { ascending: false }).order("id").range(memberOffset, memberOffset + memberPageSize)),
+    ok(supabase.from("customer_list_seller_assignments").select("user_id,status,weight,daily_capacity,starts_at,ends_at").eq("list_id", id)),
+    ok(supabase.from("tenant_memberships").select("user_id,role,status,profiles:user_id(full_name)").eq("status", "active").in("role", ["owner", "admin", "team_lead", "sales"])),
+    ok(supabase.from("team_members").select("team_id,user_id")),
+    ok(supabase.from("list_dispositions").select("key,label,outcome_group,terminal,retry_after_minutes,requires_callback,requires_order").eq("list_id", id).eq("active", true).order("sort_order")),
+    ok(supabase.from("segments").select("id,name,segment_type,last_refreshed_at").eq("active", true).order("name")),
+    ok(supabase.rpc("customer_list_candidate_counts", { p_list_id: id })),
+    ok(supabase.rpc("customer_list_overview", { p_list_id: id })),
+    ok(supabase.rpc("customer_list_seller_workload", { p_list_id: id })),
+    ok(supabase.from("phone_numbers").select("id,number_e164").eq("status", "active").eq("supports_voice", true).order("number_e164")),
+    ok(supabase.from("teams").select("id,name,status").eq("status", "active").order("name")),
     // Vad en omläggning skulle hämta tillbaka, innan någon trycker på något.
     // Spärrade poster räknas aldrig med — det avgörs i RPC:n, inte här.
     supabase.rpc("customer_list_requeue_candidates", { p_list_id: id }),

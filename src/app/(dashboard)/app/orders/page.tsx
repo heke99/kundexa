@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { ClipboardList } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
@@ -9,7 +10,7 @@ import { formatCurrency, formatDate } from "@/lib/utils";
 
 export default async function OrdersPage() {
   const supabase = await createClient();
-  const { data: orders } = await supabase.from("sales_orders").select("*").order("created_at", { ascending: false }).limit(250);
+  const { data: orders } = await ok(supabase.from("sales_orders").select("*").order("created_at", { ascending: false }).limit(250));
   const customerIds = [...new Set((orders ?? []).map((order) => order.customer_id))];
   const { data: customers } = customerIds.length ? await supabase.from("customers").select("id,display_name").in("id", customerIds) : { data: [] };
   const customerNames = new Map((customers ?? []).map((customer) => [customer.id, customer.display_name]));
