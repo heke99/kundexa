@@ -19,7 +19,12 @@ export async function POST(request: Request) {
     const admin = createAdminClient();
     const providerId = payload.id ?? null;
     providerEventId = providerId;
-    const { data: event } = await admin.from("provider_webhook_events").upsert({
+    // `ignoreDuplicates` returns no row for a redelivery — and also no row when
+    // the write fails. Conflating the two answered 204 to a database error, and
+    // 46elks does not redeliver a 2xx: an inbound SMS, contract acceptance
+    // included, was lost for good. The Resend webhook already separates the two;
+    // this one did not.
+    const { data: event, error: eventError } = await admin.from("provider_webhook_events").upsert({
       tenant_id: number.tenant_id,
       provider: "46elks",
       event_type: "sms.inbound",
@@ -28,6 +33,7 @@ export async function POST(request: Request) {
       payload,
       status: "received",
     }, { onConflict: "provider,provider_event_id", ignoreDuplicates: true }).select("id").maybeSingle();
+    if (eventError) throw eventError;
     if (providerId && !event) return new NextResponse(null, { status: 204 });
 
     const { data: customer } = await admin.from("customers")

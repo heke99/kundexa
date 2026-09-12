@@ -39,8 +39,26 @@ export function can(role: string, permission: Permission) {
   return rolePermissions[role]?.includes(permission) ?? false;
 }
 
+/**
+ * Refuses by throwing, so the nearest error boundary shows it. The marker has to
+ * travel on `digest`, not on the message: React replaces a server error's
+ * message with a generic English sentence in production builds and passes only
+ * the digest to the client. Next keeps a digest that is already set
+ * (`create-error-handler`: "If the error already has a digest, respect the
+ * original digest"), so this is the one field that survives the crossing.
+ */
+export const PERMISSION_DENIED_DIGEST = "permission_denied";
+
+export function permissionDeniedDigest(digest?: string | null): Permission | null {
+  if (!digest?.startsWith(`${PERMISSION_DENIED_DIGEST}:`)) return null;
+  return digest.slice(PERMISSION_DENIED_DIGEST.length + 1) as Permission;
+}
+
 export function assertPermission(role: string, permission: Permission) {
-  if (!can(role, permission)) throw new Error(`permission_denied:${permission}`);
+  if (can(role, permission)) return;
+  const error = new Error(`${PERMISSION_DENIED_DIGEST}:${permission}`) as Error & { digest?: string };
+  error.digest = `${PERMISSION_DENIED_DIGEST}:${permission}`;
+  throw error;
 }
 
 export const apiScopePermission: Record<string, Permission> = {

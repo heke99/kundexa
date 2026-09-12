@@ -624,3 +624,59 @@ console.log("Every dashboard page has an access rule and a navigation path.");
   assert.deepEqual(ungated, [], `Forms shown to roles whose server action refuses them:\n${ungated.join("\n")}`);
 }
 console.log("Every role-restricted form is gated on the permission its action asserts.");
+
+// A server action reports a refusal by bouncing back with `?error=`. If the page
+// it lands on does not read that parameter, the refusal is swallowed: the user
+// is returned to an unchanged screen with their work gone and nothing said.
+// `/app/dialer/lists/[id]` took no searchParams at all while
+// `setCallDisposition` redirected list-bound calls to it with exactly that.
+{
+  const { readdirSync, statSync, readFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const base = new URL("..", import.meta.url).pathname;
+
+  const pageSource = new Map();
+  const walkPages = (dir, prefix) => {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walkPages(full, `${prefix}/${entry}`);
+      else if (entry === "page.tsx") pageSource.set(prefix || "/app", readFileSync(full, "utf8"));
+    }
+  };
+  walkPages(join(base, "src/app/(dashboard)/app"), "/app");
+
+  // a literal target matches a dynamic route segment-for-segment
+  const routeFor = (target) => {
+    if (pageSource.has(target)) return target;
+    const segments = target.split("/");
+    for (const route of pageSource.keys()) {
+      const routeSegments = route.split("/");
+      if (routeSegments.length !== segments.length) continue;
+      if (routeSegments.every((segment, index) => segment.startsWith("[") || segment === segments[index])) return route;
+    }
+    return null;
+  };
+
+  const actionFiles = readdirSync(join(base, "src/app/actions")).filter((name) => /\.tsx?$/.test(name));
+  const swallowed = [];
+  for (const file of actionFiles) {
+    const source = readFileSync(join(base, "src/app/actions", file), "utf8");
+    for (const match of source.matchAll(/redirect\(\s*[`'"]([^`'"]*?)\?(\w+)=/g)) {
+      const target = match[1].replace(/\$\{[^}]*\}/g, "X");
+      const parameter = match[2];
+      if (!target.startsWith("/app")) continue; // public /accept pages are checked by the contract tests
+      const route = routeFor(target);
+      if (!route) { swallowed.push(`${file}: redirects to ${target} — no page matches that route`); continue; }
+      const page = pageSource.get(route);
+      // Must be an actual read — `query.error`, or a destructuring of the awaited
+      // searchParams. Accepting a bare `error?:` matched the *type annotation*,
+      // so the check passed for a page that renders nothing.
+      const renders = new RegExp(`\\.${parameter}\\b`).test(page)
+        || new RegExp(`\\{[^}]*\\b${parameter}\\b[^}]*\\}\\s*=\\s*await\\s+searchParams`).test(page);
+      if (!renders) swallowed.push(`${route} never renders ?${parameter}= (sent by ${file})`);
+    }
+  }
+  assert.deepEqual([...new Set(swallowed)].sort(), [],
+    `Server actions redirecting to a parameter the page never shows:\n${[...new Set(swallowed)].join("\n")}`);
+}
+console.log("Every action redirect lands on a page that renders the parameter.");

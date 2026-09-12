@@ -39,12 +39,18 @@ export async function respondPublicContract(formData: FormData) {
   if (!request.canonical_document_id || !request.canonical_document_sha256) redirect(`/accept/${token}?error=Avtalsdokumentets bindning saknas`);
   if (request.require_code && !parsed.data.acceptanceCode) redirect(`/accept/${token}?error=Ange acceptanskoden som skickades till dig`);
 
-  const { data: allowed } = await admin.rpc("consume_rate_limit", {
+  const { data: allowed, error: rateLimitError } = await admin.rpc("consume_rate_limit", {
     p_tenant_id: request.tenant_id,
     p_bucket: `public-accept:${request.id}`,
     p_limit: 10,
     p_window_seconds: 60,
   });
+  // Still refuses, but says which of the two it is. A customer told "för många
+  // försök" on their first attempt stops trying and nobody learns why.
+  if (rateLimitError) {
+    console.error("public_accept_rate_limit_unavailable", { requestId: request.id, code: rateLimitError.code ?? null });
+    redirect(`/accept/${token}?error=Tjänsten är tillfälligt otillgänglig. Försök igen om en stund.`);
+  }
   if (!allowed) redirect(`/accept/${token}?error=För många försök. Försök igen senare.`);
 
   const requestHeaders = await headers();
