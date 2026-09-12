@@ -1555,3 +1555,51 @@ för varje (sida, anrop) där någon som får öppna sidan vägras av anropet m�
 sidan bära motsvarande `can(role, "<behörighet>")`, `isAdmin(role)` eller en
 dokumenterad körtidsgrind. Ett nytt formulär på en ogrindad sida faller nu i
 `npm run verify`.
+
+## FAILURE-0089 — Behörighetsmarkören nådde aldrig felgränsen i produktion
+
+`assertPermission` kastade `permission_denied:<perm>` och `error.tsx` matchade på
+`error.message`. I ett produktionsbygge byter React ut serverfelets meddelande
+mot "An error occurred in the Server Components render…" och skickar bara vidare
+`digest`. Den svenska behörighetsskärmen fungerade alltså i `next dev` och
+matchade tyst aldrig i produktion — ett fel jag själv införde samma dag.
+
+Markören går nu på `digest`, som Next behåller när den redan är satt
+(`create-error-handler`: "If the error already has a digest, respect the original
+digest"). "Försök igen" döljs också vid en vägran: att försöka igen vägrar igen.
+
+## FAILURE-0090 — Ett inkommande SMS kunde förloras helt
+
+46elks-webhooken deduplicerade med `ignoreDuplicates`, som ger noll rader vid en
+omleverans — och noll rader även när skrivningen misslyckas. Båda svarade 204,
+och 46elks levererar inte om efter en 2xx. Avtalsaccept kommer in på den vägen.
+Resend-webhooken i samma kodbas skilde redan på de två fallen; den här gjorde
+det inte.
+
+## FAILURE-0091 — `/app/dialer/lists/[id]` svalde sitt `?error=`
+
+`setCallDisposition` skickar ett listbundet samtal dit med
+`?error=Listans efterarbete måste slutföras i ringsessionen`. Sidan tog inga
+searchParams alls, så säljaren kastades ut ur "Mina samtal" med sitt efterarbete
+borta och utan besked.
+
+**Skyddet, och en läxa om skyddet.** Kontrollen ligger nu i
+`remediation-regression-tests.mjs`. Första versionen var tandlös: den godtog att
+parametern förekom som `error?: string` — alltså i *typannotationen* — så den
+gick igenom för en sida som inte renderade någonting. Jag upptäckte det genom
+att ta bort rättningen och se att testet fortfarande gick igenom. Kräver nu en
+verklig läsning (`query.error` eller en destrukturering av awaitade
+searchParams), och är verifierad att falla på två oberoende sidor.
+
+## FAILURE-0092 — Ett databasfel rapporterades som "för många försök"
+
+Fyra anrop till `consume_rate_limit` band aldrig `error`. De felar stängt, vilket
+är rätt, men kallade ett databasfel för en rate limit: den som läser loggen letar
+efter trafik som aldrig funnits, och en kund som accepterar ett avtal fick veta
+att hen försökt för många gånger på sitt första försök.
+
+## FAILURE-0093 — Resend-webhooken drog slutsatser av misslyckade läsningar
+
+Svarade 404 när uppslaget av integrationen misslyckades, vilket säger åt Resend
+att sluta leverera om vid en databasstörning, och märkte en händelse "unmatched"
+— ett utlåtande — när läsningen som skulle nå det utlåtandet hade misslyckats.

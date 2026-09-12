@@ -109,3 +109,29 @@ Kvarstående, och det är den enda saken som hindrar ett riktigt utgående samta
   `callStart` och `callInsights` har fortfarande `test_received_at=null`; `incomingCall`,
   `outgoingCall` och `callEnd` har däremot tagits emot med HTTP 200, så webhookvägen in i appen
   fungerar numera (motsäger den äldre noteringen om apex-redirecten ovan).
+
+## Rinkel-nyckeln i Supabase Edge Functions har aldrig fungerat (mätt 2026-09-12)
+
+`platform_rinkel_jobs`: 244 jobb klara, **2 av 2 `rinkel.reconcile_call` i
+dead_letter** med "Rinkel API-nyckeln nekades" (10 försök vardera, senast
+2026-09-11 19:12).
+
+`reconcile_call` och `enrich_call` är de enda två ställen i
+`rinkel-platform-worker` som anropar Rinkels REST-API. `enrich_call` har aldrig
+körts. Allt annat som fungerar — uppringning från Vercel, samtalslivscykeln via
+`apply_rinkel_call_event` — är antingen Vercel-sidan eller rent databasarbete.
+
+Slutsats: `RINKEL_API_KEY` som **Supabase Edge Function-secret** är fel, utgången
+eller saknar CDR-behörighet. Den är en annan inställning än `RINKEL_API_KEY` i
+Vercel, som bevisligen fungerar (samtal har kopplats).
+
+Följd: `provider_call_id` är NULL på samtliga samtal; CDR-avstämning,
+inspelningar och transkribering kan inte hämtas.
+
+**Inte** en följd: avtalsgrundande samtal. `answered_at` sätts även av
+webhook-vägen (`apply_rinkel_call_event`), inte bara av avstämningen. Inget
+besvarat samtal finns ännu i produktion, så det är oprövat men inte blockerat.
+
+Syns för superowner på `/app/platform/telephony` (dead letter-räknare och
+felade jobb). En auth-vägran retryas dock 10 gånger innan den dead-letteras —
+`classifyJobError` har ingen gren för 401/403.
