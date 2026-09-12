@@ -7,13 +7,19 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Field } from "@/components/ui/form-field";
 import { createClient } from "@/lib/supabase/server";
+import { getAppContext } from "@/lib/auth";
+import { can } from "@/lib/permissions";
 import { formatDate } from "@/lib/utils";
 
 const defaultContractEligible = new Set(["interested", "contract", "contract_requested", "sale", "sold", "order"]);
 
 export default async function CallsPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string }> }) {
   const params = await searchParams;
-  const supabase = await createClient();
+  const [supabase, context] = await Promise.all([createClient(), getAppContext()]);
+  // `calls.read` opens the page, but registering efterarbete goes through
+  // setCallDisposition, which requires `calls.create`. Kvalitet and viewer
+  // saw a form the server action would always refuse.
+  const mayLog = can(context.role, "calls.create");
   const [{ data }, { data: eligibleRows }] = await Promise.all([
     supabase.from("calls").select("*,customers(display_name)").order("created_at", { ascending: false }).limit(100),
     supabase.from("list_dispositions").select("key").eq("active", true).eq("contract_eligible", true),
@@ -37,7 +43,7 @@ export default async function CallsPage({ searchParams }: { searchParams: Promis
             <td><Badge className={call.status === "completed" ? "badge-success" : "badge-info"}>{call.status}</Badge></td>
             <td>{call.disposition ?? "—"}{call.metadata && typeof call.metadata === "object" && (call.metadata as Record<string, unknown>).registered_manually === true ? <><br /><span className="muted">Manuellt registrerat</span></> : null}</td>
             <td>{formatDate(call.created_at)}</td>
-            <td>{call.disposition ? <div className="toolbar-left"><span>Klart</span>{contractEligible && call.customer_id ? <Link className="button button-secondary button-sm" href={`/app/contracts/new?customer_id=${call.customer_id}&source_call_id=${call.id}`}>Skapa avtal</Link> : null}</div> : <form action={setCallDisposition} className="after-call-inline">
+            <td>{call.disposition ? <div className="toolbar-left"><span>Klart</span>{contractEligible && call.customer_id ? <Link className="button button-secondary button-sm" href={`/app/contracts/new?customer_id=${call.customer_id}&source_call_id=${call.id}`}>Skapa avtal</Link> : null}</div> : mayLog ? <form action={setCallDisposition} className="after-call-inline">
               <input type="hidden" name="call_id" value={call.id} />
               {/* Exactly the set complete_manual_call_work accepts. "Avtal ska
                   skickas" is gone because the database refuses it — the contract
@@ -63,7 +69,7 @@ export default async function CallsPage({ searchParams }: { searchParams: Promis
                 <option value="global">Global teamkö</option>
               </select>
               <button className="button button-primary button-sm">Spara</button>
-            </form>}</td>
+            </form> : <span className="muted">Väntar på efterarbete</span>}</td>
           </tr>;
         })}
       </DataTable>

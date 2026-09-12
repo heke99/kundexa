@@ -520,3 +520,107 @@ console.log("Every Vercel-scheduled Edge worker records a heartbeat through the 
   assert.deepEqual(hidden, [], `Pages with no navigation path: ${hidden}`);
 }
 console.log("Every dashboard page has an access rule and a navigation path.");
+
+// A page opens on `routeAccessMap`, but the server actions inside it assert
+// their own, narrower permission. Where the two differ, a role that may open
+// the page sees a form that `assertPermission` will always refuse — and since
+// that refusal is a thrown Error, not a message, it was a crash rather than an
+// answer. Every such (page, action) pair must therefore be wrapped in a gate on
+// the page: `can(role, "<the action's permission>")` or `isAdmin(role)` for the
+// admin-context actions.
+{
+  const { readdirSync, statSync, readFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const base = new URL("..", import.meta.url).pathname;
+
+  const roleBlock = permissions.slice(permissions.indexOf("const rolePermissions"), permissions.indexOf("export const segmentCreateRoles"));
+  const rolePerms = {};
+  for (const match of roleBlock.matchAll(/^\s{2}(\w+):\s*\[([^\]]*)\],?$/gm)) {
+    rolePerms[match[1]] = [...match[2].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]);
+  }
+  const allRoles = Object.keys(rolePerms);
+  assert.ok(allRoles.length >= 8, "rolePermissions parsed");
+  const grants = (role, permission) => (rolePerms[role] ?? []).includes(permission);
+
+  const mapBlock = permissions.slice(permissions.indexOf("export const routeAccessMap"), permissions.indexOf("export type ResourceName"));
+  const routeRules = {};
+  for (const match of mapBlock.matchAll(/"(\/app[^"]*)":\s*\{([^}]*)\}/g)) {
+    const roles = /roles:\s*\[([^\]]*)\]/.exec(match[2]);
+    const anyPermission = /anyPermission:\s*\[([^\]]*)\]/.exec(match[2]);
+    routeRules[match[1]] = {
+      roles: roles ? [...roles[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]) : null,
+      anyPermission: anyPermission ? [...anyPermission[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]) : null,
+    };
+  }
+  const ruleFor = (route) => Object.entries(routeRules)
+    .sort(([a], [b]) => b.length - a.length)
+    .find(([rule]) => (rule === "/app" ? route === rule : route === rule || route.startsWith(`${rule}/`)))?.[1] ?? null;
+  const viewersOf = (route) => {
+    const rule = ruleFor(route);
+    if (!rule) return [];
+    return allRoles.filter((role) => rule.roles?.includes(role)
+      || (rule.anyPermission?.some((permission) => grants(role, permission)) ?? false));
+  };
+
+  // action name -> the permission or admin context it asserts
+  const actionGate = {};
+  for (const file of readdirSync(join(base, "src/app/actions")).filter((name) => name.endsWith(".ts"))) {
+    const source = readFileSync(join(base, "src/app/actions", file), "utf8");
+    for (const part of source.split(/export async function /).slice(1)) {
+      const name = /^([A-Za-z0-9_]+)/.exec(part)?.[1];
+      if (!name) continue;
+      const boundary = part.search(/\n(?=export )/);
+      const body = boundary === -1 ? part : part.slice(0, boundary);
+      actionGate[name] = {
+        permission: /assertPermission\([^,]+,\s*"([^"]+)"\)/.exec(body)?.[1] ?? null,
+        contextFn: /await (adminContext|tenantAdminContext|platformAdminContext)\(\)/.exec(body)?.[1] ?? null,
+      };
+    }
+  }
+
+  const pages = [];
+  const walk = (dir, prefix) => {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walk(full, `${prefix}/${entry}`);
+      else if (entry === "page.tsx") pages.push({ route: prefix || "/app", file: full });
+    }
+  };
+  walk(join(base, "src/app/(dashboard)/app"), "/app");
+
+  // `/app/lists/[id]` gates its whole management column on the RPC
+  // `can_manage_customer_list`, which asks the database who manages *this* list
+  // rather than what the role may do in general. That is a stricter gate than
+  // `can(role, "lists.manage")`, so the page is exempt from the textual check.
+  const runtimeGated = { "/app/lists/[id]": "can_manage_customer_list" };
+
+  const ungated = [];
+  for (const page of pages) {
+    const source = readFileSync(page.file, "utf8");
+    const imported = new Set();
+    for (const match of source.matchAll(/import\s*\{([^}]+)\}\s*from\s*"@\/app\/actions\/[^"]+"/g)) {
+      for (const name of match[1].split(",").map((entry) => entry.trim().split(" as ")[0]).filter(Boolean)) imported.add(name);
+    }
+    const used = [...imported].filter((name) => new RegExp(`action=\\{${name}\\}`).test(source));
+    const viewers = viewersOf(page.route);
+    if (!viewers.length) continue;
+    const runtimeGuard = runtimeGated[page.route];
+    for (const action of used) {
+      const gate = actionGate[action];
+      if (!gate) continue;
+      let allowed;
+      if (gate.permission) allowed = viewers.filter((role) => grants(role, gate.permission));
+      else if (gate.contextFn === "adminContext" || gate.contextFn === "platformAdminContext") allowed = viewers.filter((role) => ["owner", "admin"].includes(role));
+      else if (gate.contextFn === "tenantAdminContext") allowed = viewers.filter((role) => ["owner", "admin", "team_lead"].includes(role));
+      else continue;
+      if (allowed.length === viewers.length) continue; // every viewer may act
+      const gated = runtimeGuard ? source.includes(runtimeGuard)
+        : gate.permission ? source.includes(`can(${/can\((\w+)\.role/.exec(source)?.[1] ?? "context"}.role, "${gate.permission}")`)
+          || new RegExp(`can\\([\\w.]+\\.role,\\s*"${gate.permission.replace(".", "\\.")}"\\)`).test(source)
+        : /isAdmin\([\w.]+\.role\)/.test(source);
+      if (!gated) ungated.push(`${page.route} → ${action} (${gate.permission ?? gate.contextFn}) refused for ${viewers.filter((role) => !allowed.includes(role)).join(", ")}`);
+    }
+  }
+  assert.deepEqual(ungated, [], `Forms shown to roles whose server action refuses them:\n${ungated.join("\n")}`);
+}
+console.log("Every role-restricted form is gated on the permission its action asserts.");

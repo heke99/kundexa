@@ -1,5 +1,7 @@
 import { MessageSquareText, Send } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
+import { getAppContext } from "@/lib/auth";
+import { can } from "@/lib/permissions";
 import { queueSms } from "@/app/actions/communications";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -10,7 +12,10 @@ import { CustomerSearchSelect, type CustomerSearchOption } from "@/components/cu
 
 export default async function SmsPage({ searchParams }: { searchParams: Promise<{ customer?: string; error?: string }> }) {
   const params = await searchParams;
-  const supabase = await createClient();
+  const [supabase, context] = await Promise.all([createClient(), getAppContext()]);
+  // Same split as e-post: `messages.read` opens the page, `messages.send`
+  // is what queueSms requires.
+  const maySend = can(context.role, "messages.send");
   const initialCustomer = params.customer
     ? (await supabase.from("customers")
       .select("id,customer_type,display_name,email,phone_e164,organization_number,do_not_call,do_not_sms,do_not_email")
@@ -30,7 +35,7 @@ export default async function SmsPage({ searchParams }: { searchParams: Promise<
           return <div className="activity-line" key={message.id}><span className="activity-dot"><MessageSquareText size={14} /></span><div><strong>{customer?.display_name ?? (message.direction === "outbound" ? message.to_number : message.from_number)}</strong><p>{message.body}</p><small className="muted">{message.direction} · {message.status}</small></div><time>{formatDate(message.created_at)}</time></div>;
         })}
       </CardContent></Card>
-      <Card><CardHeader><h2><Send size={16} /> Nytt SMS</h2></CardHeader><CardContent>
+      {maySend ? <Card><CardHeader><h2><Send size={16} /> Nytt SMS</h2></CardHeader><CardContent>
         <form action={queueSms} className="form-stack">
           <input type="hidden" name="idempotency_key" value={crypto.randomUUID()} />
           <CustomerSearchSelect name="customer_id" channel="sms" defaultValue={params.customer ?? ""} initialCustomer={initialCustomer} required />
@@ -38,7 +43,7 @@ export default async function SmsPage({ searchParams }: { searchParams: Promise<
           <button className="button button-primary"><Send size={16} /> Lägg i säker sändkö</button>
         </form>
         <div className="notice warning" style={{ marginTop: 16 }}>För svar och avtalsaccept måste avsändaren vara ett SMS-kompatibelt telefonnummer, inte endast ett alfanumeriskt avsändarnamn.</div>
-      </CardContent></Card>
+      </CardContent></Card> : <Card><CardHeader><h2>Nytt SMS</h2></CardHeader><CardContent><p className="muted">Din roll kan läsa SMS men inte skicka. Be en teamledare eller administratör att skicka meddelandet.</p></CardContent></Card>}
     </div>
   </>;
 }

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { CalendarCheck2, PhoneCall } from "@/components/icons";
 import { claimCallback, completeCallback, reassignCallback, snoozeCallback } from "@/app/actions/callbacks";
 import { getAppContext } from "@/lib/auth";
+import { can } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -14,7 +15,10 @@ export default async function CallbacksPage({ searchParams }: { searchParams: Pr
   const params = await searchParams;
   const context = await getAppContext();
   const supabase = await createClient();
-  const canManage = ["owner", "admin", "team_lead"].includes(context.role);
+  // reassignCallback asserts `lists.manage`, so ask the permission table rather
+  // than repeating the role list here — a duplicate that can drift out of step
+  // with the action it is meant to mirror.
+  const canManage = can(context.role, "lists.manage");
   const [{ data }, { data: memberships }] = await Promise.all([
     supabase.from("activities").select("id,customer_id,list_id,title,description,callback_scope,due_at,snoozed_until,status,assigned_user_id,assigned_team_id,claimed_by,claim_expires_at,customers(display_name,phone_e164)").eq("type", "callback").in("status", ["open", "in_progress"]).order("due_at").limit(250),
     canManage ? supabase.from("tenant_memberships").select("user_id,role,profiles:user_id(full_name)").eq("status", "active").in("role", ["owner", "admin", "team_lead", "sales"]) : Promise.resolve({ data: [] }),
