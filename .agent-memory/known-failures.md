@@ -1603,3 +1603,43 @@ att hen försökt för många gånger på sitt första försök.
 Svarade 404 när uppslaget av integrationen misslyckades, vilket säger åt Resend
 att sluta leverera om vid en databasstörning, och märkte en händelse "unmatched"
 — ett utlåtande — när läsningen som skulle nå det utlåtandet hade misslyckats.
+
+## FAILURE-0094 — Ett misslyckat läsanrop renderades som tomhet
+
+PostgREST kastar inte. En läsning som misslyckas kommer tillbaka som
+`{ data: null, error }`, och varje sida i appen destrukturerade bara `data`. En
+trasig fråga och en fråga som inte hittade något renderades alltså identiskt:
+"Inga poster ännu". På en tenant som fortfarande fylls är det skillnaden mellan
+"du har inte lagt in några kunder än" och "kundlistan är trasig".
+
+**145 läsningar i 42 sidor** går nu genom `ok()` (`src/lib/supabase/read.ts`),
+som lyfter felet till felgränsen. Den returnerar resultatet oförändrat, så
+`count`, `status` och en legitimt tom rad når fortfarande sidan — inget anropsställe
+bytte form.
+
+`ok()` släpper medvetet igenom PGRST116. Det är `.single()` som säger "ingen rad
+matchade", vilket sidorna redan svarar på med `notFound()`. Att kasta där hade
+gjort "kunden finns inte" till "något gick fel" — en beteendeförändring utklädd
+till rättning. Det felet fanns i min egen första version och fångades innan
+leverans.
+
+Tre läsningar utanför dashboarden krävde beslut i stället för en wrapper:
+`/accept/[token]` svarade på ett misslyckat läsanrop med `notFound()` — alltså
+sa till en kund med en giltig acceptlänk att avtalet inte finns — och har nu en
+egen felgräns; `/onboarding` tolkade ett misslyckat medlemskapsanrop som "du har
+inget medlemskap".
+
+**Gör inte:** en RLS-policy som döljer rader ger ett tomt resultat, inte ett fel.
+Det här gör en trasig fråga hörbar, inte en policy som tyst utesluter rader.
+
+**Två fel i själva kontrollen, båda hittade genom att försöka bryta den.**
+Första versionen hårdkodade klientnamnet `supabase`, så sju sidor som döper den
+`s` var osynliga — både för rättningen och för kontrollen som skulle bevisa
+rättningen. Dess parentesläsare hoppade inte över kommentarer, så en `//`-rad
+med ett kommatecken fick två av de största sidorna att rapportera "kan inte
+verifieras" och hoppas över tyst. Kontrollen är nu fastspikad mot den verkliga
+koden före rättningen på fyra sidor, en per form.
+
+**Metodanteckning.** Två gånger den här sessionen har jag skrivit ett test som
+gick igenom av fel skäl. Båda gångerna upptäcktes det bara genom att återställa
+buggen och se om testet föll. Det steget är inte valfritt.
