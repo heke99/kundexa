@@ -110,7 +110,7 @@ Kvarstående, och det är den enda saken som hindrar ett riktigt utgående samta
   `outgoingCall` och `callEnd` har däremot tagits emot med HTTP 200, så webhookvägen in i appen
   fungerar numera (motsäger den äldre noteringen om apex-redirecten ovan).
 
-## Rinkel-nyckeln i Supabase Edge Functions har aldrig fungerat (mätt 2026-09-12)
+## ~~Rinkel-nyckeln i Supabase Edge Functions~~ — LÖST 2026-09-14
 
 `platform_rinkel_jobs`: 244 jobb klara, **2 av 2 `rinkel.reconcile_call` i
 dead_letter** med "Rinkel API-nyckeln nekades" (10 försök vardera, senast
@@ -135,3 +135,29 @@ besvarat samtal finns ännu i produktion, så det är oprövat men inte blockera
 Syns för superowner på `/app/platform/telephony` (dead letter-räknare och
 felade jobb). En auth-vägran retryas dock 10 gånger innan den dead-letteras —
 `classifyJobError` har ingen gren för 401/403.
+
+
+### Lösningen och vad den bevisade (2026-09-14)
+
+Nyckeln var **fel värde**, inte fel namn: felet "Rinkel API-nyckeln nekades" mappar
+i klienten bara mot HTTP 401, och en saknad nyckel hade gett `rinkel_api_key_missing`
+i stället. Ägaren satte rätt värde i Edge Function-hemligheten `RINKEL_API_KEY`.
+
+Verifierat genom att köa om båda `rinkel.reconcile_call`-jobben i produktionen:
+**båda klara på första försöket.** Avstämningen skrev verklig CDR-data — samtalet
+2026-08-18 fick sin längd korrigerad från 18 till 20 sekunder, vilket bevisar att
+Rinkels API svarade med riktigt innehåll.
+
+Produktionen är nu ren: 0 dead letter, 0 failed, 0 outbox-jobb kvar, 8/8 workers
+healthy.
+
+**Kvar, oprövat:** `provider_call_id`, `started_at` och `answered_at` är fortfarande
+null på alla tre samtal. Funktionen `reconcile_rinkel_call_from_cdr` sätter dem, och
+skrivvägen kördes bevisligen (längden ändrades), så den troligaste läsningen är att
+Rinkels CDR rapporterar att inget av samtalen besvarades — ett är `unanswered`, ett
+`failed`, och det tredje är ett 20-sekunders "completed" som kan ha varit ringsignal
+hela vägen. **Det är inte bevisat.**
+
+Det avgör om avtal kan skapas från samtal: `is_contract_call_eligible` kräver
+`answered_at is not null`. Testet som avgör saken är ett enda riktigt besvarat
+samtal — ring, svara, lägg på, och se om `answered_at` fylls i.
