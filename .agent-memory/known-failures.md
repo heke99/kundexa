@@ -1643,3 +1643,48 @@ koden före rättningen på fyra sidor, en per form.
 **Metodanteckning.** Två gånger den här sessionen har jag skrivit ett test som
 gick igenom av fel skäl. Båda gångerna upptäcktes det bara genom att återställa
 buggen och se om testet föll. Det steget är inte valfritt.
+
+## FAILURE-0095 — Fem flikar renderade som tomma på grund av dubblerade främmande nycklar
+
+**Första gången appen kördes mot en databas.** Supabase preview-branch, fyra
+seedade användare provisionerade genom appens egen inbjudningskedja, sedan varje
+flik hämtad som säljare, teamledare och ägare. Nio flikar föll för en säljare i
+första omgången.
+
+Nio tabellpar bar **två identiska främmande nycklar på samma kolumner**. Postgres
+tillåter det; PostgREST kan inte, utan vägrar varje inbäddning över ett sådant par
+med PGRST201 "more than one relationship was found". Det slog ut `/app/calls`,
+`/app/sms`, `/app/email`, `/app/contracts`, `/app/documents` samt kund- och
+avtalskorten. I varje par är `*_tenant_fk` lika strikt eller striktare än den
+automatnamngivna, så borttagningen tillåter aldrig en radering som tidigare
+vägrades.
+
+## FAILURE-0096 — Säljarlistan i "Nytt avtal" kunde aldrig fyllas
+
+`tenant_memberships.user_id` refererar `auth.users`, som PostgREST inte exponerar.
+Alltså kunde `profiles:user_id(full_name)` aldrig slå upp (PGRST200). Följden:
+rullgardinen "Ansvarig säljare" på `/app/contracts/new` var tom — **inget avtal
+kunde få en ansvarig** — liksom namnen på `/app/users`, omfördelningsväljaren på
+`/app/callbacks` och säljarlistan på `/app/lists/[id]`.
+
+`profiles.id` refererar redan `auth.users`, så den tillagda referensen uttalar ett
+samband som alltid varit sant utan att ändra vilka rader som är tillåtna.
+
+Dessutom: `contract_templates` och `contract_template_versions` refererar varandra,
+så den inbäddningen är tvetydig by design. Att namnge villkoret säger åt vilket
+håll. Rättat i `/app/contracts/new` och `/app/templates`.
+
+**Sambandet med FAILURE-0094.** Båda schemafelen hade renderats som en tom tabell
+före `ok()`-ändringen. Det var den som gjorde dem till något en förfrågan kunde
+visa. Utan den hade den här genomgången rapporterat "alla flikar fungerar".
+
+**Resultat:** 43 av 44 flikar renderar för alla tre roller. Den enda som faller är
+`/app/directory/duplicates`, som använder admin-klienten och bara föll för att
+genomgången kördes med en platshållar-servicenyckel.
+
+**Om schemat.** Migrationerna innehåller inga tabellrättigheter alls. Produktionen
+fungerar tack vare Supabases plattformsstandard (`anon`/`authenticated` har fulla
+rättigheter på 168 tabeller, RLS är enda grinden). En branch som spelar om
+migrationerna får 13 av 181 — alltså kan schemat **inte** återskapas från
+migrationerna ensamt. Inte ett fel i produktion, men "vi kan bygga om från
+migrationerna" är falskt. Oåtgärdat, kräver beslut om säkerhetshållning.
