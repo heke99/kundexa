@@ -3546,4 +3546,43 @@ if (columnDrift.length > 0) {
 }
 console.log(`Verified generated types match the migrated schema: ${schemaTables.size} tables, zero column drift.`);
 
+// Duplicate foreign keys are invisible in Postgres and fatal in PostgREST: asked
+// to embed one table in another it finds two candidate relationships and refuses
+// with PGRST201, which the pages then rendered as an empty table. Nine pairs
+// existed in production and broke /app/calls, /app/sms, /app/email,
+// /app/contracts and /app/documents without one error reaching the screen.
+const duplicateForeignKeys = await db.query(`
+  select from_table, to_table
+  from (
+    select c.conrelid::regclass::text as from_table,
+           c.confrelid::regclass::text as to_table,
+           regexp_replace(pg_get_constraintdef(c.oid), ' ON DELETE.*$', '') as cols
+    from pg_constraint c
+    join pg_namespace n on n.oid = c.connamespace
+    where c.contype = 'f' and n.nspname = 'public'
+  ) fks
+  group by from_table, to_table, cols
+  having count(*) > 1
+`);
+if (duplicateForeignKeys.rows.length > 0) {
+  throw new Error(`Duplicate foreign keys make PostgREST embeds ambiguous: ${
+    duplicateForeignKeys.rows.map((row) => `${row.from_table}->${row.to_table}`).join(", ")}`);
+}
+
+// The membership->profile relationship is what lets `profiles:user_id(full_name)`
+// resolve. Without it the "Ansvarig saljare" dropdown on a new contract is empty
+// and no contract can name an owner.
+const membershipProfileLink = await db.query(`
+  select count(*)::int as links
+  from pg_constraint c
+  join pg_namespace n on n.oid = c.connamespace
+  where n.nspname = 'public' and c.contype = 'f'
+    and c.conrelid = 'public.tenant_memberships'::regclass
+    and c.confrelid = 'public.profiles'::regclass
+`);
+if (membershipProfileLink.rows[0].links !== 1) {
+  throw new Error("tenant_memberships must reference public.profiles so PostgREST can embed it");
+}
+console.log("Schema relationships are unambiguous and memberships resolve to profiles.");
+
 await db.close();

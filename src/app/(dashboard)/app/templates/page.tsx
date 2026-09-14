@@ -24,7 +24,7 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Pr
   const params = await searchParams;
   const [ctx, supabase] = await Promise.all([getAppContext(), createClient()]);
   const [{ data: templates }, { data: legalEntities }] = await Promise.all([
-    ok(supabase.from("contract_templates").select("id,name,contract_type,audience,active,current_version_id,legal_entity_id,contract_template_versions(id,version,status,approved_at,created_at)").order("name")),
+    ok(supabase.from("contract_templates").select("id,name,contract_type,audience,active,current_version_id,legal_entity_id,contract_template_versions!contract_template_versions_tenant_id_template_id_fkey(id,version,status,approved_at,created_at)").order("name")),
     ok(supabase.from("tenant_legal_entities").select("id,legal_name,organization_number,is_default").eq("active", true).order("is_default", { ascending: false }).order("legal_name")),
   ]);
 

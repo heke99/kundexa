@@ -46,7 +46,11 @@ export default async function NewContractPage({ searchParams }: { searchParams: 
   const [{ data: products }, { data: prices }, { data: versions }, { data: legalEntities }, { data: dispositions }, { data: members }, { data: teams }] = await Promise.all([
     ok(supabase.from("products").select("id,name").eq("active", true).order("name")),
     ok(supabase.from("product_price_versions").select("product_id,version,recurring_fee,currency,binding_months,notice_months,payment_terms_days").eq("active", true).order("version", { ascending: false })),
-    ok(supabase.from("contract_template_versions").select("id,version,status,contract_templates(name,audience,active,current_version_id)").eq("status", "approved").order("created_at", { ascending: false })),
+    ok(supabase.from("contract_template_versions")// `contract_templates` and `contract_template_versions` reference each other —
+    // versions.template_id points at the template, templates.current_version_id
+    // points back at a version — so PostgREST finds two candidate relationships and
+    // refuses the embed with PGRST201. Naming the constraint says which way to walk.
+    .select("id,version,status,contract_templates!contract_template_versions_tenant_id_template_id_fkey(name,audience,active,current_version_id)").eq("status", "approved").order("created_at", { ascending: false })),
     ok(supabase.from("tenant_legal_entities").select("id,legal_name,organization_number,is_default").eq("active", true).order("is_default", { ascending: false })),
     ok(supabase.from("list_dispositions").select("key,label").eq("contract_eligible", true).order("sort_order")),
     ok(supabase.from("tenant_memberships").select("user_id,role,profiles:user_id(full_name)").eq("status", "active").in("role", ["owner", "admin", "team_lead", "sales", "contract_manager"])),
