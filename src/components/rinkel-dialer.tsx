@@ -20,11 +20,20 @@ export function RinkelDialer({
   callbackActivityId,
   callerIdOptions = [],
   lockedToCustomer = false,
+  mayManageIntegrations = false,
 }: {
   customers: Customer[];
   initialCustomer?: string;
   callbackActivityId?: string;
   callerIdOptions?: CallerIdOption[];
+  /**
+   * The dial-path warning used to end with 'kör "Rätta uppringningsvägen" under
+   * Integrationer'. That page sits in the Inställningar section, which is
+   * collapsed by default, so the instruction named a place the reader could not
+   * see — and a seller cannot open it at all. Whoever can act gets a link;
+   * whoever cannot gets told who to ask.
+   */
+  mayManageIntegrations?: boolean;
   /**
    * On the customer card the dialer belongs to the record it sits on. Locking
    * it removes the search and the picker rather than hiding them, so there is
@@ -231,7 +240,14 @@ export function RinkelDialer({
         {rinkel.dialPath.providerUserName ? ` · ${rinkel.dialPath.providerUserName}` : ""}
       </dd>
     </dl> : null}
-    {rinkel.dialPath?.issue ? <p className="notice warning">{rinkel.dialPath.issue}</p> : null}
+    {rinkel.dialPath?.issue ? <div className="notice warning">
+      {rinkel.dialPath.issue}
+      {mayManageIntegrations
+        ? <div style={{ marginTop: 10 }}>
+            <a className="button button-secondary button-sm" href="/app/integrations">Öppna Integrationer</a>
+          </div>
+        : null}
+    </div> : null}
     {rinkel.dialPath?.mapped && !rinkel.dialPath.issue && rinkel.dialPath.seatNameMatchesProfile === false ? <p className="notice warning">
       Telefoniplatsen som ringer upp dig står på {rinkel.dialPath.providerUserName}. Samtalet går då via
       den personens telefon i stället för din egen. Be administratören lägga upp en egen telefoniplats för dig.

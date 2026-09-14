@@ -2187,6 +2187,38 @@ if (!releasedAfterBound.reserved) {
 }
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
 await db.query(`update public.rinkel_call_attempts_v2 set status='failed' where tenant_id='00000000-0000-0000-0000-000000000001' and seller_user_id='00000000-0000-0000-0000-000000000002' and status<>'failed'`);
+// A connected call that ENDS must free the seller immediately, without waiting
+// for any sweeper. This is the defect that stranded a real seller for three
+// days: the call ended `unanswered` on 2026-09-11 and its attempt stayed
+// `matched`, so every later dial was refused with "Säljaren eller den valda
+// enheten har redan ett aktivt samtal".
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
+const endToEndLock = await reserveAgain('dial-lock-end-to-end');
+if (!endToEndLock.reserved) {
+  throw new Error(`Could not reserve a call to test the end-of-call release: ${endToEndLock.message}`);
+}
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+const liveAttempt = await db.query(`
+  select id, call_id from public.rinkel_call_attempts_v2
+  where tenant_id='00000000-0000-0000-0000-000000000001'
+    and seller_user_id='00000000-0000-0000-0000-000000000002'
+    and status <> 'failed'
+  order by requested_at desc limit 1`);
+await db.query(`update public.rinkel_call_attempts_v2 set status='matched' where id=$1`, [liveAttempt.rows[0].id]);
+await db.query(`update public.calls set status='unanswered' where id=$1`, [liveAttempt.rows[0].call_id]);
+const attemptAfterCallEnded = await db.query(`select status from public.rinkel_call_attempts_v2 where id=$1`, [liveAttempt.rows[0].id]);
+if (attemptAfterCallEnded.rows[0].status !== 'completed') {
+  throw new Error(`A finished call left its dial attempt active, which bricks the seller: ${JSON.stringify(attemptAfterCallEnded.rows[0])}`);
+}
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
+const freedAfterCallEnded = await reserveAgain('dial-lock-after-end');
+if (!freedAfterCallEnded.reserved) {
+  throw new Error(`The seller was still blocked after their call ended: ${freedAfterCallEnded.message}`);
+}
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.query(`update public.rinkel_call_attempts_v2 set status='failed' where tenant_id='00000000-0000-0000-0000-000000000001' and seller_user_id='00000000-0000-0000-0000-000000000002' and status<>'failed'`);
+console.log("A call that ends releases its seller immediately; a connected call is never released.");
+
 
 // Automatic ParseHub commit must take its tenant from the import run, never from whichever
 // tenant the profile's creator happens to have selected in the web UI.

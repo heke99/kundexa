@@ -143,6 +143,7 @@ export default async function CustomerDetail({ params, searchParams }: { params:
                   phone_e164: customer.phone_e164,
                   do_not_call: customer.do_not_call,
                 }]}
+                mayManageIntegrations={can(context.role, "integrations.manage")}
                 initialCustomer={customer.id}
                 callbackActivityId={query.callback}
                 lockedToCustomer
