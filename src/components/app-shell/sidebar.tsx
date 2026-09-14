@@ -106,12 +106,15 @@ export function Sidebar({
       return <div className="nav-group" key={section.id}>
         <button
           type="button"
-          className="nav-section-toggle"
+          className={cn("nav-section-toggle", !expanded && "nav-section-collapsed")}
           aria-expanded={expanded}
           aria-controls={`nav-section-${section.id}`}
           onClick={() => toggleSection(section.id, expanded)}
         >
-          <span>{section.label}</span>
+          {/* A collapsed section is the only thing standing between the reader and
+              a page they are looking for, so it says how many links it is hiding
+              rather than leaving the heading looking like a passive label. */}
+          <span>{section.label}{expanded ? "" : ` (${section.items.length})`}</span>
           <ChevronDown size={13} className={cn("nav-chevron", !expanded && "nav-chevron-collapsed")} />
         </button>
         <div id={`nav-section-${section.id}`} className="nav-section-items" hidden={!expanded}>
