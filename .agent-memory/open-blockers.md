@@ -109,3 +109,55 @@ Kvarstående, och det är den enda saken som hindrar ett riktigt utgående samta
   `callStart` och `callInsights` har fortfarande `test_received_at=null`; `incomingCall`,
   `outgoingCall` och `callEnd` har däremot tagits emot med HTTP 200, så webhookvägen in i appen
   fungerar numera (motsäger den äldre noteringen om apex-redirecten ovan).
+
+## ~~Rinkel-nyckeln i Supabase Edge Functions~~ — LÖST 2026-09-14
+
+`platform_rinkel_jobs`: 244 jobb klara, **2 av 2 `rinkel.reconcile_call` i
+dead_letter** med "Rinkel API-nyckeln nekades" (10 försök vardera, senast
+2026-09-11 19:12).
+
+`reconcile_call` och `enrich_call` är de enda två ställen i
+`rinkel-platform-worker` som anropar Rinkels REST-API. `enrich_call` har aldrig
+körts. Allt annat som fungerar — uppringning från Vercel, samtalslivscykeln via
+`apply_rinkel_call_event` — är antingen Vercel-sidan eller rent databasarbete.
+
+Slutsats: `RINKEL_API_KEY` som **Supabase Edge Function-secret** är fel, utgången
+eller saknar CDR-behörighet. Den är en annan inställning än `RINKEL_API_KEY` i
+Vercel, som bevisligen fungerar (samtal har kopplats).
+
+Följd: `provider_call_id` är NULL på samtliga samtal; CDR-avstämning,
+inspelningar och transkribering kan inte hämtas.
+
+**Inte** en följd: avtalsgrundande samtal. `answered_at` sätts även av
+webhook-vägen (`apply_rinkel_call_event`), inte bara av avstämningen. Inget
+besvarat samtal finns ännu i produktion, så det är oprövat men inte blockerat.
+
+Syns för superowner på `/app/platform/telephony` (dead letter-räknare och
+felade jobb). En auth-vägran retryas dock 10 gånger innan den dead-letteras —
+`classifyJobError` har ingen gren för 401/403.
+
+
+### Lösningen och vad den bevisade (2026-09-14)
+
+Nyckeln var **fel värde**, inte fel namn: felet "Rinkel API-nyckeln nekades" mappar
+i klienten bara mot HTTP 401, och en saknad nyckel hade gett `rinkel_api_key_missing`
+i stället. Ägaren satte rätt värde i Edge Function-hemligheten `RINKEL_API_KEY`.
+
+Verifierat genom att köa om båda `rinkel.reconcile_call`-jobben i produktionen:
+**båda klara på första försöket.** Avstämningen skrev verklig CDR-data — samtalet
+2026-08-18 fick sin längd korrigerad från 18 till 20 sekunder, vilket bevisar att
+Rinkels API svarade med riktigt innehåll.
+
+Produktionen är nu ren: 0 dead letter, 0 failed, 0 outbox-jobb kvar, 8/8 workers
+healthy.
+
+**Kvar, oprövat:** `provider_call_id`, `started_at` och `answered_at` är fortfarande
+null på alla tre samtal. Funktionen `reconcile_rinkel_call_from_cdr` sätter dem, och
+skrivvägen kördes bevisligen (längden ändrades), så den troligaste läsningen är att
+Rinkels CDR rapporterar att inget av samtalen besvarades — ett är `unanswered`, ett
+`failed`, och det tredje är ett 20-sekunders "completed" som kan ha varit ringsignal
+hela vägen. **Det är inte bevisat.**
+
+Det avgör om avtal kan skapas från samtal: `is_contract_call_eligible` kräver
+`answered_at is not null`. Testet som avgör saken är ett enda riktigt besvarat
+samtal — ring, svara, lägg på, och se om `answered_at` fylls i.

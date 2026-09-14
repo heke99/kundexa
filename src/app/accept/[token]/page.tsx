@@ -18,19 +18,25 @@ export default async function AcceptPage({ params, searchParams }: { params: Pro
   const env = serverEnv();
   const admin = createAdminClient();
   const tokenHash = sha256(token + env.KUNDEXA_WEBHOOK_PEPPER);
-  const { data: request } = await admin.from("contract_acceptance_requests")
+  // `.single()` reports "no such token" as an error too (PGRST116), and the old
+  // `if (!request) notFound()` collapsed both cases into one answer. A customer
+  // opening a valid acceptance link during a database failure was told the
+  // agreement does not exist — the one message that makes them stop trying.
+  const { data: request, error: requestError } = await admin.from("contract_acceptance_requests")
     .select("id,tenant_id,status,expires_at,opened_at,require_code,canonical_document_id,canonical_document_sha256,contracts(id,contract_number,title,value,currency,audience,source_call_id,seller_snapshot,tenants(name,legal_name),customers(display_name)),contract_versions(id,version,rendered_body,rendered_terms,snapshot_hash,document_hash)")
     .eq("public_token_hash", tokenHash).single();
+  if (requestError && requestError.code !== "PGRST116") throw new Error(`acceptance_request_read_failed:${requestError.code ?? "unknown"}`);
   if (!request) notFound();
   const contract = Array.isArray(request.contracts) ? request.contracts[0] : request.contracts;
   const version = Array.isArray(request.contract_versions) ? request.contract_versions[0] : request.contract_versions;
-  const { data: document } = request.canonical_document_id
+  const { data: document, error: documentError } = request.canonical_document_id
     ? await admin.from("contract_documents")
       .select("id,file_name,size_bytes,sha256")
       .eq("tenant_id", request.tenant_id)
       .eq("id", request.canonical_document_id)
       .maybeSingle()
-    : { data: null };
+    : { data: null, error: null };
+  if (documentError) throw new Error(`acceptance_document_read_failed:${documentError.code ?? "unknown"}`);
   const tenantRaw = contract?.tenants as unknown as { name?: string; legal_name?: string } | { name?: string; legal_name?: string }[] | null;
   const tenant = Array.isArray(tenantRaw) ? tenantRaw[0] : tenantRaw;
   const customerRaw = contract?.customers as unknown as { display_name?: string } | { display_name?: string }[] | null;

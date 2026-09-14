@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Headphones, Phone } from "@/components/icons";
@@ -18,11 +19,11 @@ export default async function CallDetailPage({ params }: { params: Promise<{ id:
     { data: transcript },
     { data: insights },
   ] = await Promise.all([
-    supabase.from("calls").select("*,customers(display_name)").eq("id", id).single(),
-    supabase.from("call_events").select("id,event_type,occurred_at,processing_status").eq("call_id", id).order("occurred_at"),
-    supabase.from("call_recordings").select("id,status,mime_type,duration_seconds,size_bytes,retention_delete_at,deleted_at").eq("call_id", id).is("deleted_at", null).order("created_at", { ascending: true }).limit(1).maybeSingle(),
-    supabase.from("call_transcripts").select("status,raw_transcript,structured_transcript,generated_at,deleted_at").eq("call_id", id).eq("provider", "rinkel").maybeSingle(),
-    supabase.from("call_insights").select("source,status,sentiment,topics,summary,generated_at").eq("call_id", id).order("generated_at", { ascending: false }),
+    ok(supabase.from("calls").select("*,customers(display_name)").eq("id", id).single()),
+    ok(supabase.from("call_events").select("id,event_type,occurred_at,processing_status").eq("call_id", id).order("occurred_at")),
+    ok(supabase.from("call_recordings").select("id,status,mime_type,duration_seconds,size_bytes,retention_delete_at,deleted_at").eq("call_id", id).is("deleted_at", null).order("created_at", { ascending: true }).limit(1).maybeSingle()),
+    ok(supabase.from("call_transcripts").select("status,raw_transcript,structured_transcript,generated_at,deleted_at").eq("call_id", id).eq("provider", "rinkel").maybeSingle()),
+    ok(supabase.from("call_insights").select("source,status,sentiment,topics,summary,generated_at").eq("call_id", id).order("generated_at", { ascending: false })),
   ]);
   if (!call) notFound();
   const customer = Array.isArray(call.customers) ? call.customers[0] : call.customers;

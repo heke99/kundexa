@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import { Settings } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
 import { ModuleOverview } from "@/components/module-overview";
@@ -75,10 +76,10 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
   const params = await searchParams;
   const supabase = await createClient();
   const [{ data: settings }, { data: features }, { data: limits }, { data: legalEntities }] = await Promise.all([
-    supabase.from("tenant_settings").select("*").single(),
-    supabase.from("tenant_features").select("*").order("feature_key"),
-    supabase.from("usage_limits").select("*").order("metric"),
-    supabase.from("tenant_legal_entities").select("*").eq("active", true).order("is_default", { ascending: false }).order("legal_name"),
+    ok(supabase.from("tenant_settings").select("*").single()),
+    ok(supabase.from("tenant_features").select("*").order("feature_key")),
+    ok(supabase.from("usage_limits").select("*").order("metric")),
+    ok(supabase.from("tenant_legal_entities").select("*").eq("active", true).order("is_default", { ascending: false }).order("legal_name")),
   ]);
 
   return <ModuleOverview title="Administration" description="Juridiska avsändare, funktionsspärrar, compliance, retention och användningsgränser." icon={Settings} features={["Feature policies per tenant och team", "Juridiska avsändarbolag", "Ringdagar och tillåtna tider", "Kostnadstak per kanal", "Branding och avtalsidentitet"]}>

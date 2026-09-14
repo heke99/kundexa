@@ -36,10 +36,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   const env = serverEnv();
   const admin = createAdminClient();
   const tokenHash = sha256(token + env.KUNDEXA_WEBHOOK_PEPPER);
-  const { data: integration } = await admin.from("tenant_integrations")
+  // A read failure here is not "no such webhook": answering 404 tells Resend to
+  // stop redelivering, so a database blip drops every delivery event for the
+  // tenant. The store and replay lookups below already separate the two.
+  const { data: integration, error: integrationError } = await admin.from("tenant_integrations")
     .select("id,tenant_id,status,credentials_ciphertext,configuration")
     .eq("provider_type", "email").eq("provider", "resend")
     .contains("configuration", { webhook_path_token_hash: tokenHash }).limit(1).maybeSingle();
+  if (integrationError) return Response.json({ error: "webhook_lookup_failed" }, { status: 500 });
   if (!integration?.credentials_ciphertext || integration.status === "revoked") return Response.json({ error: "webhook_not_found" }, { status: 404 });
   let credentials: ResendCredentials;
   try { credentials = decryptJson<ResendCredentials>(integration.credentials_ciphertext, env.KUNDEXA_ENCRYPTION_KEY); }
@@ -81,9 +85,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
     return Response.json({ ok: true, ignored: true });
   }
 
-  const { data: email } = await admin.from("email_messages")
+  const { data: email, error: emailError } = await admin.from("email_messages")
     .select("id,tenant_id,contract_id,customer_id,status")
     .eq("tenant_id", integration.tenant_id).eq("provider_message_id", providerEmailId).maybeSingle();
+  // "unmatched" is a verdict, and a failed read cannot reach one. Marking the
+  // event unmatched on a database error closed it permanently against a message
+  // that does exist.
+  if (emailError) {
+    await admin.from("provider_webhook_events").update({ last_error: "email_message_lookup_failed" }).eq("id", event.id);
+    return Response.json({ error: "email_message_lookup_failed" }, { status: 500 });
+  }
   if (!email) {
     await admin.from("provider_webhook_events").update({ status: "unmatched", processed_at: new Date().toISOString(), last_error: "email_message_not_found" }).eq("id", event.id);
     return Response.json({ ok: true, unmatched: true });

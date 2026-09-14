@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { FileSignature, Plus } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
@@ -39,9 +40,9 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
   const params = await searchParams;
   const supabase = await createClient();
   const [{ data: members }, { data: teams }, { data: products }] = await Promise.all([
-    supabase.from("tenant_memberships").select("user_id,profiles:user_id(full_name)").eq("status", "active").order("created_at"),
-    supabase.from("teams").select("id,name").eq("status", "active").order("name"),
-    supabase.from("products").select("id,name").eq("active", true).order("name"),
+    ok(supabase.from("tenant_memberships").select("user_id,profiles:user_id(full_name)").eq("status", "active").order("created_at")),
+    ok(supabase.from("teams").select("id,name").eq("status", "active").order("name")),
+    ok(supabase.from("products").select("id,name").eq("active", true).order("name")),
   ]);
   const ownerNames = new Map<string, string>();
   for (const member of members ?? []) {

@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Import, Users } from "@/components/icons";
@@ -27,9 +28,9 @@ export default async function ImportDetailPage({ params, searchParams }: { param
   const query = await searchParams;
   const supabase = await createClient();
   const [{ data: run }, { data: rows }, { data: conflicts }, { data: duplicates }] = await Promise.all([
-    supabase.from("import_runs").select("*").eq("id", id).maybeSingle(),
-    supabase.from("import_rows").select("id,row_number,row_status,decision,error_code,warning_codes,normalized_data,raw_data,matched_customer_id,matched_contact_person_id,processing_ms").eq("import_run_id", id).order("row_number").limit(200),
-    supabase.from("import_merge_conflicts").select("id,reason,status,field_name,existing_value,incoming_value,created_at").eq("import_run_id", id).order("created_at", { ascending: false }).limit(50),
+    ok(supabase.from("import_runs").select("*").eq("id", id).maybeSingle()),
+    ok(supabase.from("import_rows").select("id,row_number,row_status,decision,error_code,warning_codes,normalized_data,raw_data,matched_customer_id,matched_contact_person_id,processing_ms").eq("import_run_id", id).order("row_number").limit(200)),
+    ok(supabase.from("import_merge_conflicts").select("id,reason,status,field_name,existing_value,incoming_value,created_at").eq("import_run_id", id).order("created_at", { ascending: false }).limit(50)),
     // Which numbers collide, computed the same way the commit will match them.
     // Read rather than stored, so it reflects the customers you have right now
     // instead of the ones you had when the file was uploaded.

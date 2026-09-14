@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import { Package, Plus } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
 import { createProduct } from "@/app/actions/products";
@@ -12,9 +13,9 @@ import { readJsonObject } from "@/lib/supabase/json";
 export default async function ProductsPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const params = await searchParams;
   const supabase = await createClient();
-  const { data } = await supabase.from("products")
+  const { data } = await ok(supabase.from("products")
     .select("id,name,sku,product_type,active,product_price_versions(setup_fee,recurring_fee,variable_fees,binding_months,notice_months,payment_terms_days,version)")
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false }));
 
   return <>
     <PageHeader title="Produkter och priser" description="Versionshanterad produktkatalog som låses in i varje avtalsversion." />

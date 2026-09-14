@@ -1521,3 +1521,170 @@ jag renderade den verkliga markupen mot den verkliga CSS:en och tittade på den 
 ikonerna var oanvändbara. En bugg jag "såg" — att notisbrickan hamnade under
 klockan — visade sig vara ett fel i min egen testrigg, som bara laddade
 `globals.css` medan brickans regler ligger i `dialer.css`.
+
+## FAILURE-0087 — Ett vägrat serveranrop kraschade i stället för att svara
+
+`assertPermission` vägrar genom att kasta `Error("permission_denied:<perm>")`.
+Det fanns ingen `error.tsx` någonstans i appen, så vägran nådde användaren som
+Next standardskärm: engelsk text, ett digest-id och ingen väg tillbaka. Lagt
+till felgräns för `/app`, en svensk 404 och en `global-error.tsx` för fel i
+rotlayouten. Felgränsen känner igen `permission_denied:` och säger vilken
+behörighet som saknas.
+
+## FAILURE-0088 — Formulär visades för roller vars serveranrop alltid vägrar
+
+En sida öppnas av `routeAccessMap`; anropen inuti den kräver sin egen, smalare
+behörighet. Där de två skiljde sig kunde en roll nå ett formulär som alltid
+vägrades — och enligt FAILURE-0087 var det en krasch, inte ett svar.
+
+Grindat per anrop, inte per sida, eftersom en sida bär flera: kundlistan,
+kundkortet (åtta anrop), nytt avtal, avtalskortet (åtta anrop), efterarbetet på
+`/app/calls`, samt e-post- och SMS-formulären. Varje dolt block lämnar en mening
+om vem som kan i stället för att bara försvinna.
+
+`/app/callbacks` upprepade `["owner","admin","team_lead"]` för hand där anropet
+kräver `lists.manage`; frågar nu behörighetstabellen.
+
+**Falska träffar jag först trodde var fel.** `/app/lists/[id]` grindar hela
+hanteringskolumnen på RPC:n `can_manage_customer_list`, som frågar databasen vem
+som förvaltar *just den listan* — strängare än rollbehörigheten.
+`/app/compliance` och `/app/data-sources` grindar på `isAdmin(context.role)`.
+
+**Skyddet.** Revisionen ligger nu i `scripts/remediation-regression-tests.mjs`:
+för varje (sida, anrop) där någon som får öppna sidan vägras av anropet måste
+sidan bära motsvarande `can(role, "<behörighet>")`, `isAdmin(role)` eller en
+dokumenterad körtidsgrind. Ett nytt formulär på en ogrindad sida faller nu i
+`npm run verify`.
+
+## FAILURE-0089 — Behörighetsmarkören nådde aldrig felgränsen i produktion
+
+`assertPermission` kastade `permission_denied:<perm>` och `error.tsx` matchade på
+`error.message`. I ett produktionsbygge byter React ut serverfelets meddelande
+mot "An error occurred in the Server Components render…" och skickar bara vidare
+`digest`. Den svenska behörighetsskärmen fungerade alltså i `next dev` och
+matchade tyst aldrig i produktion — ett fel jag själv införde samma dag.
+
+Markören går nu på `digest`, som Next behåller när den redan är satt
+(`create-error-handler`: "If the error already has a digest, respect the original
+digest"). "Försök igen" döljs också vid en vägran: att försöka igen vägrar igen.
+
+## FAILURE-0090 — Ett inkommande SMS kunde förloras helt
+
+46elks-webhooken deduplicerade med `ignoreDuplicates`, som ger noll rader vid en
+omleverans — och noll rader även när skrivningen misslyckas. Båda svarade 204,
+och 46elks levererar inte om efter en 2xx. Avtalsaccept kommer in på den vägen.
+Resend-webhooken i samma kodbas skilde redan på de två fallen; den här gjorde
+det inte.
+
+## FAILURE-0091 — `/app/dialer/lists/[id]` svalde sitt `?error=`
+
+`setCallDisposition` skickar ett listbundet samtal dit med
+`?error=Listans efterarbete måste slutföras i ringsessionen`. Sidan tog inga
+searchParams alls, så säljaren kastades ut ur "Mina samtal" med sitt efterarbete
+borta och utan besked.
+
+**Skyddet, och en läxa om skyddet.** Kontrollen ligger nu i
+`remediation-regression-tests.mjs`. Första versionen var tandlös: den godtog att
+parametern förekom som `error?: string` — alltså i *typannotationen* — så den
+gick igenom för en sida som inte renderade någonting. Jag upptäckte det genom
+att ta bort rättningen och se att testet fortfarande gick igenom. Kräver nu en
+verklig läsning (`query.error` eller en destrukturering av awaitade
+searchParams), och är verifierad att falla på två oberoende sidor.
+
+## FAILURE-0092 — Ett databasfel rapporterades som "för många försök"
+
+Fyra anrop till `consume_rate_limit` band aldrig `error`. De felar stängt, vilket
+är rätt, men kallade ett databasfel för en rate limit: den som läser loggen letar
+efter trafik som aldrig funnits, och en kund som accepterar ett avtal fick veta
+att hen försökt för många gånger på sitt första försök.
+
+## FAILURE-0093 — Resend-webhooken drog slutsatser av misslyckade läsningar
+
+Svarade 404 när uppslaget av integrationen misslyckades, vilket säger åt Resend
+att sluta leverera om vid en databasstörning, och märkte en händelse "unmatched"
+— ett utlåtande — när läsningen som skulle nå det utlåtandet hade misslyckats.
+
+## FAILURE-0094 — Ett misslyckat läsanrop renderades som tomhet
+
+PostgREST kastar inte. En läsning som misslyckas kommer tillbaka som
+`{ data: null, error }`, och varje sida i appen destrukturerade bara `data`. En
+trasig fråga och en fråga som inte hittade något renderades alltså identiskt:
+"Inga poster ännu". På en tenant som fortfarande fylls är det skillnaden mellan
+"du har inte lagt in några kunder än" och "kundlistan är trasig".
+
+**145 läsningar i 42 sidor** går nu genom `ok()` (`src/lib/supabase/read.ts`),
+som lyfter felet till felgränsen. Den returnerar resultatet oförändrat, så
+`count`, `status` och en legitimt tom rad når fortfarande sidan — inget anropsställe
+bytte form.
+
+`ok()` släpper medvetet igenom PGRST116. Det är `.single()` som säger "ingen rad
+matchade", vilket sidorna redan svarar på med `notFound()`. Att kasta där hade
+gjort "kunden finns inte" till "något gick fel" — en beteendeförändring utklädd
+till rättning. Det felet fanns i min egen första version och fångades innan
+leverans.
+
+Tre läsningar utanför dashboarden krävde beslut i stället för en wrapper:
+`/accept/[token]` svarade på ett misslyckat läsanrop med `notFound()` — alltså
+sa till en kund med en giltig acceptlänk att avtalet inte finns — och har nu en
+egen felgräns; `/onboarding` tolkade ett misslyckat medlemskapsanrop som "du har
+inget medlemskap".
+
+**Gör inte:** en RLS-policy som döljer rader ger ett tomt resultat, inte ett fel.
+Det här gör en trasig fråga hörbar, inte en policy som tyst utesluter rader.
+
+**Två fel i själva kontrollen, båda hittade genom att försöka bryta den.**
+Första versionen hårdkodade klientnamnet `supabase`, så sju sidor som döper den
+`s` var osynliga — både för rättningen och för kontrollen som skulle bevisa
+rättningen. Dess parentesläsare hoppade inte över kommentarer, så en `//`-rad
+med ett kommatecken fick två av de största sidorna att rapportera "kan inte
+verifieras" och hoppas över tyst. Kontrollen är nu fastspikad mot den verkliga
+koden före rättningen på fyra sidor, en per form.
+
+**Metodanteckning.** Två gånger den här sessionen har jag skrivit ett test som
+gick igenom av fel skäl. Båda gångerna upptäcktes det bara genom att återställa
+buggen och se om testet föll. Det steget är inte valfritt.
+
+## FAILURE-0095 — Fem flikar renderade som tomma på grund av dubblerade främmande nycklar
+
+**Första gången appen kördes mot en databas.** Supabase preview-branch, fyra
+seedade användare provisionerade genom appens egen inbjudningskedja, sedan varje
+flik hämtad som säljare, teamledare och ägare. Nio flikar föll för en säljare i
+första omgången.
+
+Nio tabellpar bar **två identiska främmande nycklar på samma kolumner**. Postgres
+tillåter det; PostgREST kan inte, utan vägrar varje inbäddning över ett sådant par
+med PGRST201 "more than one relationship was found". Det slog ut `/app/calls`,
+`/app/sms`, `/app/email`, `/app/contracts`, `/app/documents` samt kund- och
+avtalskorten. I varje par är `*_tenant_fk` lika strikt eller striktare än den
+automatnamngivna, så borttagningen tillåter aldrig en radering som tidigare
+vägrades.
+
+## FAILURE-0096 — Säljarlistan i "Nytt avtal" kunde aldrig fyllas
+
+`tenant_memberships.user_id` refererar `auth.users`, som PostgREST inte exponerar.
+Alltså kunde `profiles:user_id(full_name)` aldrig slå upp (PGRST200). Följden:
+rullgardinen "Ansvarig säljare" på `/app/contracts/new` var tom — **inget avtal
+kunde få en ansvarig** — liksom namnen på `/app/users`, omfördelningsväljaren på
+`/app/callbacks` och säljarlistan på `/app/lists/[id]`.
+
+`profiles.id` refererar redan `auth.users`, så den tillagda referensen uttalar ett
+samband som alltid varit sant utan att ändra vilka rader som är tillåtna.
+
+Dessutom: `contract_templates` och `contract_template_versions` refererar varandra,
+så den inbäddningen är tvetydig by design. Att namnge villkoret säger åt vilket
+håll. Rättat i `/app/contracts/new` och `/app/templates`.
+
+**Sambandet med FAILURE-0094.** Båda schemafelen hade renderats som en tom tabell
+före `ok()`-ändringen. Det var den som gjorde dem till något en förfrågan kunde
+visa. Utan den hade den här genomgången rapporterat "alla flikar fungerar".
+
+**Resultat:** 43 av 44 flikar renderar för alla tre roller. Den enda som faller är
+`/app/directory/duplicates`, som använder admin-klienten och bara föll för att
+genomgången kördes med en platshållar-servicenyckel.
+
+**Om schemat.** Migrationerna innehåller inga tabellrättigheter alls. Produktionen
+fungerar tack vare Supabases plattformsstandard (`anon`/`authenticated` har fulla
+rättigheter på 168 tabeller, RLS är enda grinden). En branch som spelar om
+migrationerna får 13 av 181 — alltså kan schemat **inte** återskapas från
+migrationerna ensamt. Inte ett fel i produktion, men "vi kan bygga om från
+migrationerna" är falskt. Oåtgärdat, kräver beslut om säkerhetshållning.

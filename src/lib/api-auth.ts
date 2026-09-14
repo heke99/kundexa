@@ -39,12 +39,15 @@ export async function authenticateRequest(request: Request, requiredScope?: stri
       throw jsonError("insufficient_scope", 403);
     }
 
-    const { data: allowed } = await admin.rpc("consume_rate_limit", {
+    const { data: allowed, error: rateLimitError } = await admin.rpc("consume_rate_limit", {
       p_tenant_id: key.tenant_id,
       p_bucket: `api:${key.id}`,
       p_limit: key.rate_limit_per_minute,
       p_window_seconds: 60,
     });
+    // Fail closed either way, but do not call a database failure a rate limit:
+    // that sends whoever reads the log looking for traffic that never existed.
+    if (rateLimitError) throw jsonError("rate_limit_unavailable", 503, { "retry-after": "5" });
     if (!allowed) throw jsonError("rate_limit_exceeded", 429, { "retry-after": "60" });
 
     if (!key.created_by) throw jsonError("api_key_actor_missing", 403);
@@ -95,12 +98,13 @@ export async function authenticateRequest(request: Request, requiredScope?: stri
   }
 
   const rateLimit = 120;
-  const { data: allowed } = await admin.rpc("consume_rate_limit", {
+  const { data: allowed, error: rateLimitError } = await admin.rpc("consume_rate_limit", {
     p_tenant_id: profile.active_tenant_id,
     p_bucket: `session-api:${user.id}`,
     p_limit: rateLimit,
     p_window_seconds: 60,
   });
+  if (rateLimitError) throw jsonError("rate_limit_unavailable", 503, { "retry-after": "5" });
   if (!allowed) throw jsonError("rate_limit_exceeded", 429, { "retry-after": "60" });
 
   return {

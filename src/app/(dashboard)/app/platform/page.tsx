@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { ShieldCheck, ListFilter, Plus } from "@/components/icons";
 import { ModuleOverview } from "@/components/module-overview";
@@ -34,11 +35,11 @@ export default async function PlatformPage({ searchParams }: { searchParams: Pro
   }
   const admin = await createClient();
   const [{ data: tenants }, { data: memberships }, { data: platformMemberships }, { data: audits }, { data: platformLists }] = await Promise.all([
-    admin.from("tenants").select("id,name,legal_name,organization_number,status,created_at").order("created_at", { ascending: false }),
-    admin.from("tenant_memberships").select("tenant_id,status"),
-    admin.from("platform_memberships").select("user_id,role,status,created_at,updated_at").order("created_at"),
-    admin.from("platform_audit_logs").select("id,action,entity_type,entity_id,tenant_id,reason,created_at,actor_user_id").order("created_at", { ascending: false }).limit(50),
-    admin.from("platform_lists").select("id,status,total_entries,available_entries"),
+    ok(admin.from("tenants").select("id,name,legal_name,organization_number,status,created_at").order("created_at", { ascending: false })),
+    ok(admin.from("tenant_memberships").select("tenant_id,status")),
+    ok(admin.from("platform_memberships").select("user_id,role,status,created_at,updated_at").order("created_at")),
+    ok(admin.from("platform_audit_logs").select("id,action,entity_type,entity_id,tenant_id,reason,created_at,actor_user_id").order("created_at", { ascending: false }).limit(50)),
+    ok(admin.from("platform_lists").select("id,status,total_entries,available_entries")),
   ]);
   const emailByUser = await authUserEmailsById([
     ...(platformMemberships ?? []).map((member) => member.user_id),

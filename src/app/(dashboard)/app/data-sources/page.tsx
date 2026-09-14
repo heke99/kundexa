@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import { ClipboardList, Pause, Play, RefreshCw, ShieldCheck } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
 import { getAppContext, isAdmin } from "@/lib/auth";
@@ -13,13 +14,13 @@ import { SCRAPER_ADAPTERS } from "../../../../../supabase/functions/_shared/prov
 export default async function DataSourcesPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string }> }) {
   const params = await searchParams; const context = await getAppContext(); const supabase = await createClient();
   const [{ data: providers }, { data: accounts }, { data: permissions }, { data: enrichmentJobs }, { data: ingestionJobs }, { data: ingestionRuns }, { data: observations }] = await Promise.all([
-    supabase.from("data_providers").select("id,provider,name,status,adapter_key,integration_type,cache_scope,source_class,field_mapping,discovery_configuration,paused_reason,updated_at").order("name"),
-    supabase.from("provider_accounts").select("id,data_provider_id,name,status,configuration,updated_at").order("created_at", { ascending: false }),
-    supabase.from("provider_permissions").select("id,data_provider_id,permission_name,status,cache_scope,allowed_domains,allowed_entity_types,raw_storage_allowed,tenant_display_allowed,expires_at").order("created_at", { ascending: false }),
-    supabase.from("enrichment_jobs").select("id,status,estimated_cost,actual_cost,last_error,created_at,completed_at").order("created_at", { ascending: false }).limit(10),
-    supabase.from("ingestion_jobs").select("id,data_provider_id,name,entity_type,status,max_records,next_run_at,last_completed_at,schedule_interval_seconds").order("created_at", { ascending: false }).limit(50),
-    supabase.from("ingestion_runs").select("id,ingestion_job_id,status,requested_records,fetched_records,new_records,changed_records,unchanged_records,error_records,quarantined_records,attempts,max_attempts,next_attempt_at,current_page,next_page,last_error,started_at,completed_at").order("created_at", { ascending: false }).limit(30),
-    supabase.from("parser_observations").select("id,parser_version_id,status,match_rate,disappearance_rate,page_fingerprint,missing_fields,details,created_at").in("status", ["warning", "quarantined"]).order("created_at", { ascending: false }).limit(20),
+    ok(supabase.from("data_providers").select("id,provider,name,status,adapter_key,integration_type,cache_scope,source_class,field_mapping,discovery_configuration,paused_reason,updated_at").order("name")),
+    ok(supabase.from("provider_accounts").select("id,data_provider_id,name,status,configuration,updated_at").order("created_at", { ascending: false })),
+    ok(supabase.from("provider_permissions").select("id,data_provider_id,permission_name,status,cache_scope,allowed_domains,allowed_entity_types,raw_storage_allowed,tenant_display_allowed,expires_at").order("created_at", { ascending: false })),
+    ok(supabase.from("enrichment_jobs").select("id,status,estimated_cost,actual_cost,last_error,created_at,completed_at").order("created_at", { ascending: false }).limit(10)),
+    ok(supabase.from("ingestion_jobs").select("id,data_provider_id,name,entity_type,status,max_records,next_run_at,last_completed_at,schedule_interval_seconds").order("created_at", { ascending: false }).limit(50)),
+    ok(supabase.from("ingestion_runs").select("id,ingestion_job_id,status,requested_records,fetched_records,new_records,changed_records,unchanged_records,error_records,quarantined_records,attempts,max_attempts,next_attempt_at,current_page,next_page,last_error,started_at,completed_at").order("created_at", { ascending: false }).limit(30)),
+    ok(supabase.from("parser_observations").select("id,parser_version_id,status,match_rate,disappearance_rate,page_fingerprint,missing_fields,details,created_at").in("status", ["warning", "quarantined"]).order("created_at", { ascending: false }).limit(20)),
   ]);
   const accountByProvider = new Map((accounts ?? []).map((account) => [account.data_provider_id, account]));
   const permissionByProvider = new Map((permissions ?? []).map((permission) => [permission.data_provider_id, permission]));

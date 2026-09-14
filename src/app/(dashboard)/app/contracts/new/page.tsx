@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { ArrowLeft, FileSignature, Phone, Plus } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
@@ -8,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
 import { formatDate } from "@/lib/utils";
 import { getAppContext } from "@/lib/auth";
+import { can } from "@/lib/permissions";
 import { isoToZonedDateOnly, isoToZonedLocalDateTime } from "@/lib/domain/time";
 import { CustomerSearchSelect, type CustomerSearchOption } from "@/components/customer-search-select";
 
@@ -21,6 +23,20 @@ type ActivePrice = { product_id: string; version: number; recurring_fee: number;
 export default async function NewContractPage({ searchParams }: { searchParams: Promise<{ customer_id?: string; source_call_id?: string; error?: string; message?: string; warning?: string }> }) {
   const params = await searchParams;
   const ctx = await getAppContext();
+  // `/app/contracts` opens on contracts.read, so kvalitet, ekonomi and viewer
+  // could reach this page and every one of its three forms would be refused.
+  // The two inner forms have their own permissions again: a contract_manager
+  // may write contracts but not create customers or register calls.
+  const mayWrite = can(ctx.role, "contracts.write");
+  const mayCreateCustomer = can(ctx.role, "customers.write");
+  const mayRegisterCall = can(ctx.role, "calls.create");
+  if (!mayWrite) {
+    return <>
+      <Link href="/app/contracts" className="muted" style={{ display: "inline-flex", gap: 6, alignItems: "center", marginBottom: 16 }}><ArrowLeft size={15} /> Till avtal</Link>
+      <PageHeader title="Nytt avtal" description="Skapa avtal kräver behörighet att skriva avtal." />
+      <Card><CardContent><p className="muted">Din roll kan läsa avtal men inte skapa nya. Be en säljare, teamledare eller avtalsansvarig att lägga upp avtalet.</p></CardContent></Card>
+    </>;
+  }
   const supabase = await createClient();
   const selectedCustomer = params.customer_id
     ? (await supabase.from("customers")
@@ -28,17 +44,21 @@ export default async function NewContractPage({ searchParams }: { searchParams: 
       .eq("id", params.customer_id).is("deleted_at", null).maybeSingle()).data as CustomerSearchOption | null
     : null;
   const [{ data: products }, { data: prices }, { data: versions }, { data: legalEntities }, { data: dispositions }, { data: members }, { data: teams }] = await Promise.all([
-    supabase.from("products").select("id,name").eq("active", true).order("name"),
-    supabase.from("product_price_versions").select("product_id,version,recurring_fee,currency,binding_months,notice_months,payment_terms_days").eq("active", true).order("version", { ascending: false }),
-    supabase.from("contract_template_versions").select("id,version,status,contract_templates(name,audience,active,current_version_id)").eq("status", "approved").order("created_at", { ascending: false }),
-    supabase.from("tenant_legal_entities").select("id,legal_name,organization_number,is_default").eq("active", true).order("is_default", { ascending: false }),
-    supabase.from("list_dispositions").select("key,label").eq("contract_eligible", true).order("sort_order"),
-    supabase.from("tenant_memberships").select("user_id,role,profiles:user_id(full_name)").eq("status", "active").in("role", ["owner", "admin", "team_lead", "sales", "contract_manager"]),
-    supabase.from("teams").select("id,name").eq("status", "active").order("name"),
+    ok(supabase.from("products").select("id,name").eq("active", true).order("name")),
+    ok(supabase.from("product_price_versions").select("product_id,version,recurring_fee,currency,binding_months,notice_months,payment_terms_days").eq("active", true).order("version", { ascending: false })),
+    ok(supabase.from("contract_template_versions")// `contract_templates` and `contract_template_versions` reference each other —
+    // versions.template_id points at the template, templates.current_version_id
+    // points back at a version — so PostgREST finds two candidate relationships and
+    // refuses the embed with PGRST201. Naming the constraint says which way to walk.
+    .select("id,version,status,contract_templates!contract_template_versions_tenant_id_template_id_fkey(name,audience,active,current_version_id)").eq("status", "approved").order("created_at", { ascending: false })),
+    ok(supabase.from("tenant_legal_entities").select("id,legal_name,organization_number,is_default").eq("active", true).order("is_default", { ascending: false })),
+    ok(supabase.from("list_dispositions").select("key,label").eq("contract_eligible", true).order("sort_order")),
+    ok(supabase.from("tenant_memberships").select("user_id,role,profiles:user_id(full_name)").eq("status", "active").in("role", ["owner", "admin", "team_lead", "sales", "contract_manager"])),
+    ok(supabase.from("teams").select("id,name").eq("status", "active").order("name")),
   ]);
   let eligibleCalls: CallOption[] = [];
   if (selectedCustomer) {
-    const { data } = await supabase.rpc("resolve_contract_eligible_calls", { p_customer_id: selectedCustomer.id });
+    const { data } = await ok(supabase.rpc("resolve_contract_eligible_calls", { p_customer_id: selectedCustomer.id }));
     eligibleCalls = (data ?? []) as CallOption[];
   }
   const selectedCall = eligibleCalls.find((call) => call.id === params.source_call_id) ?? null;
@@ -77,7 +97,7 @@ export default async function NewContractPage({ searchParams }: { searchParams: 
             <CustomerSearchSelect name="customer_id" label="Befintlig kund" channel="contract" defaultValue={selectedCustomer?.id ?? ""} initialCustomer={selectedCustomer} required />
             <button className="button button-secondary">Välj kund</button>
           </form>
-          <details style={{ marginTop: 18 }}>
+          {mayCreateCustomer ? <details style={{ marginTop: 18 }}>
             <summary><strong><Plus size={15} /> Skapa ny kund</strong></summary>
             <form action={createContractCustomer} className="form-stack" style={{ marginTop: 14 }}>
               <SelectField label="Kundtyp" name="customer_type" defaultValue="person"><option value="person">Privatkund</option><option value="company">Företagskund</option></SelectField>
@@ -90,7 +110,7 @@ export default async function NewContractPage({ searchParams }: { searchParams: 
               <Field label="Landkod" name="country_code" defaultValue="SE" maxLength={2} />
               <button className="button button-secondary"><Plus size={15} /> Kontrollera dubblett och skapa</button>
             </form>
-          </details>
+          </details> : <p className="muted" style={{ marginTop: 18 }}>Din roll kan inte lägga upp nya kunder. Välj en befintlig kund ovan.</p>}
         </CardContent>
       </Card>
 
@@ -106,7 +126,7 @@ export default async function NewContractPage({ searchParams }: { searchParams: 
               </SelectField>
               <button className="button button-secondary"><Phone size={15} /> Använd samtalet</button>
             </form> : <div className="notice warning">Inget giltigt samtal hittades. Starta ett samtal i dialern eller registrera ett verkligt tidigare samtal nedan.</div>}
-            <details style={{ marginTop: 18 }} open={!eligibleCalls.length}>
+            {mayRegisterCall ? <details style={{ marginTop: 18 }} open={!eligibleCalls.length}>
               <summary><strong>Registrera tidigare samtal</strong></summary>
               <form action={registerExternalContractCall} className="form-stack" style={{ marginTop: 14 }}>
                 <input type="hidden" name="customer_id" value={selectedCustomer.id} />
@@ -119,7 +139,7 @@ export default async function NewContractPage({ searchParams }: { searchParams: 
                 <label><input type="checkbox" name="confirmed" required /> Jag bekräftar att ett riktigt kundsamtal har genomförts.</label>
                 <button className="button button-secondary">Registrera granskningsbart samtal</button>
               </form>
-            </details>
+            </details> : <p className="muted" style={{ marginTop: 18 }}>Din roll kan inte registrera tidigare samtal. Be säljaren som ringde att registrera samtalet.</p>}
           </>}
         </CardContent>
       </Card>

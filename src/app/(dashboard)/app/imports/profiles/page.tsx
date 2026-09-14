@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -7,8 +8,8 @@ import { createClient } from "@/lib/supabase/server";
 export default async function ImportProfilesPage() {
   const supabase = await createClient();
   const [{ data: profiles }, { data: lists }] = await Promise.all([
-    supabase.from("import_profiles").select("id,name,source_provider,source_website,format,worksheet_name,header_row,records_path,target_type,target_list_id,automatic_commit,current_version").eq("active", true).order("name"),
-    supabase.from("customer_lists").select("id,name").in("status", ["draft", "active", "paused"]).order("name"),
+    ok(supabase.from("import_profiles").select("id,name,source_provider,source_website,format,worksheet_name,header_row,records_path,target_type,target_list_id,automatic_commit,current_version").eq("active", true).order("name")),
+    ok(supabase.from("customer_lists").select("id,name").in("status", ["draft", "active", "paused"]).order("name")),
   ]);
   const profileIds = (profiles ?? []).map((profile) => profile.id);
   const { data: versions } = profileIds.length

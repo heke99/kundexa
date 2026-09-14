@@ -520,3 +520,208 @@ console.log("Every Vercel-scheduled Edge worker records a heartbeat through the 
   assert.deepEqual(hidden, [], `Pages with no navigation path: ${hidden}`);
 }
 console.log("Every dashboard page has an access rule and a navigation path.");
+
+// A page opens on `routeAccessMap`, but the server actions inside it assert
+// their own, narrower permission. Where the two differ, a role that may open
+// the page sees a form that `assertPermission` will always refuse — and since
+// that refusal is a thrown Error, not a message, it was a crash rather than an
+// answer. Every such (page, action) pair must therefore be wrapped in a gate on
+// the page: `can(role, "<the action's permission>")` or `isAdmin(role)` for the
+// admin-context actions.
+{
+  const { readdirSync, statSync, readFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const base = new URL("..", import.meta.url).pathname;
+
+  const roleBlock = permissions.slice(permissions.indexOf("const rolePermissions"), permissions.indexOf("export const segmentCreateRoles"));
+  const rolePerms = {};
+  for (const match of roleBlock.matchAll(/^\s{2}(\w+):\s*\[([^\]]*)\],?$/gm)) {
+    rolePerms[match[1]] = [...match[2].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]);
+  }
+  const allRoles = Object.keys(rolePerms);
+  assert.ok(allRoles.length >= 8, "rolePermissions parsed");
+  const grants = (role, permission) => (rolePerms[role] ?? []).includes(permission);
+
+  const mapBlock = permissions.slice(permissions.indexOf("export const routeAccessMap"), permissions.indexOf("export type ResourceName"));
+  const routeRules = {};
+  for (const match of mapBlock.matchAll(/"(\/app[^"]*)":\s*\{([^}]*)\}/g)) {
+    const roles = /roles:\s*\[([^\]]*)\]/.exec(match[2]);
+    const anyPermission = /anyPermission:\s*\[([^\]]*)\]/.exec(match[2]);
+    routeRules[match[1]] = {
+      roles: roles ? [...roles[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]) : null,
+      anyPermission: anyPermission ? [...anyPermission[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]) : null,
+    };
+  }
+  const ruleFor = (route) => Object.entries(routeRules)
+    .sort(([a], [b]) => b.length - a.length)
+    .find(([rule]) => (rule === "/app" ? route === rule : route === rule || route.startsWith(`${rule}/`)))?.[1] ?? null;
+  const viewersOf = (route) => {
+    const rule = ruleFor(route);
+    if (!rule) return [];
+    return allRoles.filter((role) => rule.roles?.includes(role)
+      || (rule.anyPermission?.some((permission) => grants(role, permission)) ?? false));
+  };
+
+  // action name -> the permission or admin context it asserts
+  const actionGate = {};
+  for (const file of readdirSync(join(base, "src/app/actions")).filter((name) => name.endsWith(".ts"))) {
+    const source = readFileSync(join(base, "src/app/actions", file), "utf8");
+    for (const part of source.split(/export async function /).slice(1)) {
+      const name = /^([A-Za-z0-9_]+)/.exec(part)?.[1];
+      if (!name) continue;
+      const boundary = part.search(/\n(?=export )/);
+      const body = boundary === -1 ? part : part.slice(0, boundary);
+      actionGate[name] = {
+        permission: /assertPermission\([^,]+,\s*"([^"]+)"\)/.exec(body)?.[1] ?? null,
+        contextFn: /await (adminContext|tenantAdminContext|platformAdminContext)\(\)/.exec(body)?.[1] ?? null,
+      };
+    }
+  }
+
+  const pages = [];
+  const walk = (dir, prefix) => {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walk(full, `${prefix}/${entry}`);
+      else if (entry === "page.tsx") pages.push({ route: prefix || "/app", file: full });
+    }
+  };
+  walk(join(base, "src/app/(dashboard)/app"), "/app");
+
+  // `/app/lists/[id]` gates its whole management column on the RPC
+  // `can_manage_customer_list`, which asks the database who manages *this* list
+  // rather than what the role may do in general. That is a stricter gate than
+  // `can(role, "lists.manage")`, so the page is exempt from the textual check.
+  const runtimeGated = { "/app/lists/[id]": "can_manage_customer_list" };
+
+  const ungated = [];
+  for (const page of pages) {
+    const source = readFileSync(page.file, "utf8");
+    const imported = new Set();
+    for (const match of source.matchAll(/import\s*\{([^}]+)\}\s*from\s*"@\/app\/actions\/[^"]+"/g)) {
+      for (const name of match[1].split(",").map((entry) => entry.trim().split(" as ")[0]).filter(Boolean)) imported.add(name);
+    }
+    const used = [...imported].filter((name) => new RegExp(`action=\\{${name}\\}`).test(source));
+    const viewers = viewersOf(page.route);
+    if (!viewers.length) continue;
+    const runtimeGuard = runtimeGated[page.route];
+    for (const action of used) {
+      const gate = actionGate[action];
+      if (!gate) continue;
+      let allowed;
+      if (gate.permission) allowed = viewers.filter((role) => grants(role, gate.permission));
+      else if (gate.contextFn === "adminContext" || gate.contextFn === "platformAdminContext") allowed = viewers.filter((role) => ["owner", "admin"].includes(role));
+      else if (gate.contextFn === "tenantAdminContext") allowed = viewers.filter((role) => ["owner", "admin", "team_lead"].includes(role));
+      else continue;
+      if (allowed.length === viewers.length) continue; // every viewer may act
+      const gated = runtimeGuard ? source.includes(runtimeGuard)
+        : gate.permission ? source.includes(`can(${/can\((\w+)\.role/.exec(source)?.[1] ?? "context"}.role, "${gate.permission}")`)
+          || new RegExp(`can\\([\\w.]+\\.role,\\s*"${gate.permission.replace(".", "\\.")}"\\)`).test(source)
+        : /isAdmin\([\w.]+\.role\)/.test(source);
+      if (!gated) ungated.push(`${page.route} → ${action} (${gate.permission ?? gate.contextFn}) refused for ${viewers.filter((role) => !allowed.includes(role)).join(", ")}`);
+    }
+  }
+  assert.deepEqual(ungated, [], `Forms shown to roles whose server action refuses them:\n${ungated.join("\n")}`);
+}
+console.log("Every role-restricted form is gated on the permission its action asserts.");
+
+// A server action reports a refusal by bouncing back with `?error=`. If the page
+// it lands on does not read that parameter, the refusal is swallowed: the user
+// is returned to an unchanged screen with their work gone and nothing said.
+// `/app/dialer/lists/[id]` took no searchParams at all while
+// `setCallDisposition` redirected list-bound calls to it with exactly that.
+{
+  const { readdirSync, statSync, readFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const base = new URL("..", import.meta.url).pathname;
+
+  const pageSource = new Map();
+  const walkPages = (dir, prefix) => {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walkPages(full, `${prefix}/${entry}`);
+      else if (entry === "page.tsx") pageSource.set(prefix || "/app", readFileSync(full, "utf8"));
+    }
+  };
+  walkPages(join(base, "src/app/(dashboard)/app"), "/app");
+
+  // a literal target matches a dynamic route segment-for-segment
+  const routeFor = (target) => {
+    if (pageSource.has(target)) return target;
+    const segments = target.split("/");
+    for (const route of pageSource.keys()) {
+      const routeSegments = route.split("/");
+      if (routeSegments.length !== segments.length) continue;
+      if (routeSegments.every((segment, index) => segment.startsWith("[") || segment === segments[index])) return route;
+    }
+    return null;
+  };
+
+  const actionFiles = readdirSync(join(base, "src/app/actions")).filter((name) => /\.tsx?$/.test(name));
+  const swallowed = [];
+  for (const file of actionFiles) {
+    const source = readFileSync(join(base, "src/app/actions", file), "utf8");
+    for (const match of source.matchAll(/redirect\(\s*[`'"]([^`'"]*?)\?(\w+)=/g)) {
+      const target = match[1].replace(/\$\{[^}]*\}/g, "X");
+      const parameter = match[2];
+      if (!target.startsWith("/app")) continue; // public /accept pages are checked by the contract tests
+      const route = routeFor(target);
+      if (!route) { swallowed.push(`${file}: redirects to ${target} — no page matches that route`); continue; }
+      const page = pageSource.get(route);
+      // Must be an actual read — `query.error`, or a destructuring of the awaited
+      // searchParams. Accepting a bare `error?:` matched the *type annotation*,
+      // so the check passed for a page that renders nothing.
+      const renders = new RegExp(`\\.${parameter}\\b`).test(page)
+        || new RegExp(`\\{[^}]*\\b${parameter}\\b[^}]*\\}\\s*=\\s*await\\s+searchParams`).test(page);
+      if (!renders) swallowed.push(`${route} never renders ?${parameter}= (sent by ${file})`);
+    }
+  }
+  assert.deepEqual([...new Set(swallowed)].sort(), [],
+    `Server actions redirecting to a parameter the page never shows:\n${[...new Set(swallowed)].join("\n")}`);
+}
+console.log("Every action redirect lands on a page that renders the parameter.");
+
+// PostgREST does not throw. A read that fails comes back as `{ data: null,
+// error }`, so a page destructuring only `data` renders a broken query exactly
+// like a query that found nothing: "Inga poster ännu". On a tenant still being
+// filled that is the difference between "you have not added customers yet" and
+// "the customer list is broken", shown identically. Every page read must
+// therefore either bind `error` or go through `ok()` from
+// src/lib/supabase/read.ts, which turns the failure into a thrown error the
+// boundary can show.
+{
+  const { readdirSync, statSync, readFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { unguardedReads } = await import("./unguarded-reads.mjs");
+  const base = new URL("..", import.meta.url).pathname;
+
+  const pages = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walk(full);
+      else if (entry === "page.tsx") pages.push(full);
+    }
+  };
+  walk(join(base, "src/app"));
+  assert.ok(pages.length >= 40, `expected to find the app's pages, found ${pages.length}`);
+
+  const unguarded = pages.sort().flatMap((file) =>
+    unguardedReads(readFileSync(file, "utf8"), file.slice(base.length)));
+  assert.deepEqual(unguarded, [],
+    `Page reads that render a failure as emptiness:\n${unguarded.join("\n")}`);
+
+  // The checker is only worth having if it can see a read in the first place.
+  // Its first version hard-coded the client name `supabase`, so seven pages that
+  // call it `s` were invisible — to the fix and to the check that was meant to
+  // prove the fix. Pin that it follows the local name.
+  const { clientNames, unguardedReads: scan } = await import("./unguarded-reads.mjs");
+  assert.deepEqual([...clientNames("const s = await createClient();")], ["s"]);
+  assert.equal(scan(`const s = await createClient();\nconst { data } = await s.from("x").select("*");\n`, "t").length, 1,
+    "a read through a locally named client must still be seen");
+  assert.equal(scan(`const s = await createClient();\nconst { data } = await ok(s.from("x").select("*"));\n`, "t").length, 0,
+    "an ok()-wrapped read must be accepted");
+  assert.equal(scan(`const s = await createClient();\nconst { data, error } = await s.from("x").select("*");\n`, "t").length, 0,
+    "an error-checked read must be accepted");
+}
+console.log("Every page read is error-checked or wrapped in ok().");

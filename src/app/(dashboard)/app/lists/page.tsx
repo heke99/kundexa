@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { ListFilter, Plus, Users, PhoneCall } from "@/components/icons";
 import { createCustomerList } from "@/app/actions/lists";
@@ -17,9 +18,9 @@ export default async function ListsPage({ searchParams }: { searchParams: Promis
   const supabase = await createClient();
   // Medlems- och säljarantal aggregeras i databasen; hela medlemstabellen hämtas inte längre.
   const [{ data: lists }, { data: overview }, { data: teams }] = await Promise.all([
-    supabase.from("customer_lists").select("id,name,description,list_type,team_id,dialing_mode,status,priority,created_at").order("priority", { ascending: false }).order("created_at", { ascending: false }).limit(200),
-    supabase.rpc("customer_list_overview"),
-    supabase.from("teams").select("id,name").order("name"),
+    ok(supabase.from("customer_lists").select("id,name,description,list_type,team_id,dialing_mode,status,priority,created_at").order("priority", { ascending: false }).order("created_at", { ascending: false }).limit(200)),
+    ok(supabase.rpc("customer_list_overview")),
+    ok(supabase.from("teams").select("id,name").order("name")),
   ]);
   type ListOverviewRow = { list_id: string; total_members: number; open_members: number; active_sellers: number };
   const counts = new Map<string, ListOverviewRow>(((overview ?? []) as ListOverviewRow[]).map((row) => [row.list_id, row]));

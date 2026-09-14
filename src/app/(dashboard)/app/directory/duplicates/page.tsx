@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -52,14 +53,14 @@ export default async function DirectoryDuplicatesPage({ searchParams }: { search
   const admin = createAdminClient();
 
   const [{ data: candidates }, { data: decisions }] = await Promise.all([
-    admin.from("duplicate_candidates")
+    ok(admin.from("duplicate_candidates")
       .select("id,left_entity_id,right_entity_id,match_method,confidence,created_at")
       .eq("tenant_id", context.tenantId).eq("status", "pending")
-      .order("confidence", { ascending: false }).order("created_at", { ascending: false }).limit(50),
-    admin.from("merge_decisions")
+      .order("confidence", { ascending: false }).order("created_at", { ascending: false }).limit(50)),
+    ok(admin.from("merge_decisions")
       .select("id,target_entity_id,source_entity_id,decision,decided_by,decided_at")
       .eq("tenant_id", context.tenantId).eq("decision", "merged").is("undone_at", null)
-      .order("decided_at", { ascending: false }).limit(15),
+      .order("decided_at", { ascending: false }).limit(15)),
   ]);
 
   // The projection is the licence-filtered view of an entity, so the queue shows
@@ -69,7 +70,7 @@ export default async function DirectoryDuplicatesPage({ searchParams }: { search
     ...(decisions ?? []).flatMap((row) => [row.target_entity_id, row.source_entity_id]),
   ])];
   const projections = new Map(await Promise.all(entityIds.map(async (id) => {
-    const { data } = await admin.rpc("directory_entity_projection_for_tenant", { p_tenant_id: context.tenantId, p_entity_id: id });
+    const { data } = await ok(admin.rpc("directory_entity_projection_for_tenant", { p_tenant_id: context.tenantId, p_entity_id: id }));
     return [id, entityFrom(id, data)] as const;
   })));
   const entity = (id: string) => projections.get(id) ?? entityFrom(id, null);

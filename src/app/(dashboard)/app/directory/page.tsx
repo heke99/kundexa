@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -32,10 +33,10 @@ export default async function DirectoryPage({ searchParams }: { searchParams: Pr
   const mayManageSegments = (segmentManageRoles as readonly string[]).includes(context.role); const input = inputFromParams(p); const shouldSearch = one(p.run) === "1";
   const result = shouldSearch ? await searchDirectoryForTenant(context.tenantId, input) : null; const supabase = await createClient();
   const [{ data: segments }, { data: campaigns }, { data: memberships }, { data: teams }, { count: pendingDuplicates }] = await Promise.all([
-    supabase.from("segments").select("id,name,segment_type,last_refreshed_at,segment_snapshots(member_count,generated_at)").eq("tenant_id", context.tenantId).order("created_at", { ascending: false }).limit(30),
-    supabase.from("campaigns").select("id,name,status").eq("tenant_id", context.tenantId).in("status", ["draft", "scheduled", "active"]).order("created_at", { ascending: false }),
-    supabase.from("tenant_memberships").select("user_id,profiles:user_id(full_name)").eq("status", "active").in("role", ["owner", "admin", "team_lead", "sales"]),
-    supabase.from("teams").select("id,name").order("name"),
+    ok(supabase.from("segments").select("id,name,segment_type,last_refreshed_at,segment_snapshots(member_count,generated_at)").eq("tenant_id", context.tenantId).order("created_at", { ascending: false }).limit(30)),
+    ok(supabase.from("campaigns").select("id,name,status").eq("tenant_id", context.tenantId).in("status", ["draft", "scheduled", "active"]).order("created_at", { ascending: false })),
+    ok(supabase.from("tenant_memberships").select("user_id,profiles:user_id(full_name)").eq("status", "active").in("role", ["owner", "admin", "team_lead", "sales"])),
+    ok(supabase.from("teams").select("id,name").order("name")),
     // Detection runs on every ingestion; without a count here the queue is a page
     // nobody knows to open.
     supabase.from("duplicate_candidates").select("id", { count: "exact", head: true }).eq("tenant_id", context.tenantId).eq("status", "pending"),

@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { Plus, Search, Users } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
+import { getAppContext } from "@/lib/auth";
+import { can } from "@/lib/permissions";
 import { createCustomer } from "@/app/actions/customers";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -15,7 +17,11 @@ const PAGE_SIZE = 50;
 export default async function CustomersPage({ searchParams }: { searchParams: Promise<{ q?: string; page?: string; error?: string }> }) {
   const params = await searchParams;
   const page = Math.max(1, Number(params.page ?? 1) || 1);
-  const supabase = await createClient();
+  const [supabase, context] = await Promise.all([createClient(), getAppContext()]);
+  // `customers.read` opens this page; `customers.write` is what the action
+  // requires. Four roles could reach the form and none of them could use it —
+  // and with no error boundary the refusal was a crash rather than a message.
+  const mayCreate = can(context.role, "customers.write");
   // Sidindelad query med totalantal i stället för hård 100-postersgräns.
   let query = supabase.from("customers")
     .select("id,display_name,customer_type,lifecycle,email,phone_e164,city,call_attempts,last_contact_at,customer_statuses(label,color)", { count: "exact" })
@@ -53,7 +59,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
         <CardHeader><h2><Plus size={16} /> Ny kund</h2></CardHeader>
         <CardContent>
           {params.error ? <p className="form-error">{params.error}</p> : null}
-          <form action={createCustomer} className="form-stack">
+          {mayCreate ? <form action={createCustomer} className="form-stack">
             <SelectField label="Kundtyp" name="customer_type" defaultValue="company"><option value="company">Företag</option><option value="person">Privatperson</option></SelectField>
             <Field label="Namn / företagsnamn" name="display_name" required />
             <Field label="Telefon" name="phone" placeholder="070-123 45 67" />
@@ -61,7 +67,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
             <Field label="Ort" name="city" />
             <SelectField label="Livscykel" name="lifecycle" defaultValue="prospect"><option value="prospect">Prospekt</option><option value="lead">Lead</option><option value="customer">Kund</option></SelectField>
             <button className="button button-primary"><Plus size={16} /> Skapa kund</button>
-          </form>
+          </form> : <p className="muted">Din roll kan läsa kunder men inte skapa nya. Be en teamledare eller administratör att lägga upp kunden.</p>}
         </CardContent>
       </Card>
     </div>

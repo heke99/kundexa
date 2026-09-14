@@ -11,7 +11,8 @@ export async function GET(requestUrl: Request, { params }: { params: Promise<{ t
     .eq("public_token_hash", sha256(token + env.KUNDEXA_WEBHOOK_PEPPER)).single();
   if (!request || !request.canonical_document_id) return Response.json({ error: "document_not_found" }, { status: 404 });
   const clientIp = requestUrl.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? requestUrl.headers.get("x-real-ip") ?? "unknown";
-  const { data: allowed } = await admin.rpc("consume_rate_limit", { p_tenant_id: request.tenant_id, p_bucket: `public-contract-document:${request.canonical_document_id}:${clientIp}`, p_limit: 20, p_window_seconds: 60 });
+  const { data: allowed, error: rateLimitError } = await admin.rpc("consume_rate_limit", { p_tenant_id: request.tenant_id, p_bucket: `public-contract-document:${request.canonical_document_id}:${clientIp}`, p_limit: 20, p_window_seconds: 60 });
+  if (rateLimitError) return Response.json({ error: "rate_limit_unavailable" }, { status: 503, headers: { "retry-after": "5" } });
   if (!allowed) return Response.json({ error: "rate_limited" }, { status: 429 });
   if (["cancelled", "superseded"].includes(request.status) || (request.status === "pending" && new Date(request.expires_at) <= new Date())) {
     return Response.json({ error: "acceptance_link_inactive" }, { status: 410 });

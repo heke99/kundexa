@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import { KeyRound, Phone, Plug } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
 import { addPhoneNumber, generateResendWebhookAddress, save46ElksIntegration, saveContractReminderPolicy, saveEmailIntegration, testResendIntegration } from "@/app/actions/admin";
@@ -78,14 +79,14 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
     { data: telephonyPolicy },
     { data: dialPathData },
   ] = await Promise.all([
-    supabase.from("tenant_integrations").select("id,provider_type,provider,name,status,last_verified_at,configuration,credentials_ciphertext").order("created_at"),
-    supabase.from("phone_numbers").select("*").order("number_e164"),
-    supabase.from("tenant_memberships").select("user_id,role,profiles:user_id(full_name)").eq("status", "active"),
-    supabase.from("tenant_features").select("feature_key,enabled").in("feature_key", ["outbound_email", "contract_delivery_email", "outbound_sms", "contract_delivery_sms"]),
-    supabase.from("contract_reminder_policies").select("*").maybeSingle(),
-    supabase.rpc("get_tenant_rinkel_resources"),
-    supabase.from("telephony_policies").select("*").maybeSingle(),
-    supabase.rpc("tenant_rinkel_dial_path_report"),
+    ok(supabase.from("tenant_integrations").select("id,provider_type,provider,name,status,last_verified_at,configuration,credentials_ciphertext").order("created_at")),
+    ok(supabase.from("phone_numbers").select("*").order("number_e164")),
+    ok(supabase.from("tenant_memberships").select("user_id,role,profiles:user_id(full_name)").eq("status", "active")),
+    ok(supabase.from("tenant_features").select("feature_key,enabled").in("feature_key", ["outbound_email", "contract_delivery_email", "outbound_sms", "contract_delivery_sms"])),
+    ok(supabase.from("contract_reminder_policies").select("*").maybeSingle()),
+    ok(supabase.rpc("get_tenant_rinkel_resources")),
+    ok(supabase.from("telephony_policies").select("*").maybeSingle()),
+    ok(supabase.rpc("tenant_rinkel_dial_path_report")),
   ]);
   const rinkelResources = (rinkelResourceData ?? {
     users: [], numbers: [], mappings: [],

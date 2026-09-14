@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import { UserPlus, Users } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
 import { getAppContext } from "@/lib/auth";
@@ -14,10 +15,10 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
   const context = await getAppContext();
   const supabase = await createClient();
   const [{ data: memberships }, { data: teams }, { data: teamMembers }, { data: invitations }] = await Promise.all([
-    supabase.from("tenant_memberships").select("user_id,role,status,joined_at,primary_team_id,profiles:user_id(full_name,last_seen_at)").order("created_at"),
-    supabase.from("teams").select("id,name,status,invite_sellers_enabled").neq("status", "archived").order("name"),
-    supabase.from("team_members").select("team_id,user_id,role,is_primary"),
-    supabase.from("tenant_invitations").select("id,email,role,status,team_ids,expires_at,created_at,orchestration_status").order("created_at", { ascending: false }).limit(50),
+    ok(supabase.from("tenant_memberships").select("user_id,role,status,joined_at,primary_team_id,profiles:user_id(full_name,last_seen_at)").order("created_at")),
+    ok(supabase.from("teams").select("id,name,status,invite_sellers_enabled").neq("status", "archived").order("name")),
+    ok(supabase.from("team_members").select("team_id,user_id,role,is_primary")),
+    ok(supabase.from("tenant_invitations").select("id,email,role,status,team_ids,expires_at,created_at,orchestration_status").order("created_at", { ascending: false }).limit(50)),
   ]);
   const mayCreate = ["owner", "admin", "team_lead"].includes(context.role);
   const mayManageMembers = ["owner", "admin"].includes(context.role);

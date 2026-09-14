@@ -1,3 +1,4 @@
+import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { BookUser } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
@@ -14,13 +15,13 @@ export default async function ProspectsPage({ searchParams }: { searchParams: Pr
   const page = Math.max(1, Number.parseInt(params.page ?? "1", 10) || 1);
   const offset = (page - 1) * PAGE_SIZE;
   const supabase = await createClient();
-  const { data } = await supabase.from("customers")
+  const { data } = await ok(supabase.from("customers")
     .select("id,display_name,customer_type,phone_e164,city,call_attempts,next_activity_at,do_not_call")
     .in("lifecycle", ["prospect", "lead"])
     .is("deleted_at", null)
     .order("next_activity_at", { ascending: true, nullsFirst: false })
     .order("id")
-    .range(offset, offset + PAGE_SIZE);
+    .range(offset, offset + PAGE_SIZE));
   const rows = (data ?? []).slice(0, PAGE_SIZE);
   const hasNext = (data?.length ?? 0) > PAGE_SIZE;
   return <>

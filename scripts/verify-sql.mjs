@@ -2187,6 +2187,38 @@ if (!releasedAfterBound.reserved) {
 }
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
 await db.query(`update public.rinkel_call_attempts_v2 set status='failed' where tenant_id='00000000-0000-0000-0000-000000000001' and seller_user_id='00000000-0000-0000-0000-000000000002' and status<>'failed'`);
+// A connected call that ENDS must free the seller immediately, without waiting
+// for any sweeper. This is the defect that stranded a real seller for three
+// days: the call ended `unanswered` on 2026-09-11 and its attempt stayed
+// `matched`, so every later dial was refused with "Säljaren eller den valda
+// enheten har redan ett aktivt samtal".
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
+const endToEndLock = await reserveAgain('dial-lock-end-to-end');
+if (!endToEndLock.reserved) {
+  throw new Error(`Could not reserve a call to test the end-of-call release: ${endToEndLock.message}`);
+}
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+const liveAttempt = await db.query(`
+  select id, call_id from public.rinkel_call_attempts_v2
+  where tenant_id='00000000-0000-0000-0000-000000000001'
+    and seller_user_id='00000000-0000-0000-0000-000000000002'
+    and status <> 'failed'
+  order by requested_at desc limit 1`);
+await db.query(`update public.rinkel_call_attempts_v2 set status='matched' where id=$1`, [liveAttempt.rows[0].id]);
+await db.query(`update public.calls set status='unanswered' where id=$1`, [liveAttempt.rows[0].call_id]);
+const attemptAfterCallEnded = await db.query(`select status from public.rinkel_call_attempts_v2 where id=$1`, [liveAttempt.rows[0].id]);
+if (attemptAfterCallEnded.rows[0].status !== 'completed') {
+  throw new Error(`A finished call left its dial attempt active, which bricks the seller: ${JSON.stringify(attemptAfterCallEnded.rows[0])}`);
+}
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
+const freedAfterCallEnded = await reserveAgain('dial-lock-after-end');
+if (!freedAfterCallEnded.reserved) {
+  throw new Error(`The seller was still blocked after their call ended: ${freedAfterCallEnded.message}`);
+}
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.query(`update public.rinkel_call_attempts_v2 set status='failed' where tenant_id='00000000-0000-0000-0000-000000000001' and seller_user_id='00000000-0000-0000-0000-000000000002' and status<>'failed'`);
+console.log("A call that ends releases its seller immediately; a connected call is never released.");
+
 
 // Automatic ParseHub commit must take its tenant from the import run, never from whichever
 // tenant the profile's creator happens to have selected in the web UI.
@@ -3545,5 +3577,44 @@ if (columnDrift.length > 0) {
   throw new Error(`Generated types drifted from the migrated schema (run npm run types:generate): ${columnDrift.join(" | ")}`);
 }
 console.log(`Verified generated types match the migrated schema: ${schemaTables.size} tables, zero column drift.`);
+
+// Duplicate foreign keys are invisible in Postgres and fatal in PostgREST: asked
+// to embed one table in another it finds two candidate relationships and refuses
+// with PGRST201, which the pages then rendered as an empty table. Nine pairs
+// existed in production and broke /app/calls, /app/sms, /app/email,
+// /app/contracts and /app/documents without one error reaching the screen.
+const duplicateForeignKeys = await db.query(`
+  select from_table, to_table
+  from (
+    select c.conrelid::regclass::text as from_table,
+           c.confrelid::regclass::text as to_table,
+           regexp_replace(pg_get_constraintdef(c.oid), ' ON DELETE.*$', '') as cols
+    from pg_constraint c
+    join pg_namespace n on n.oid = c.connamespace
+    where c.contype = 'f' and n.nspname = 'public'
+  ) fks
+  group by from_table, to_table, cols
+  having count(*) > 1
+`);
+if (duplicateForeignKeys.rows.length > 0) {
+  throw new Error(`Duplicate foreign keys make PostgREST embeds ambiguous: ${
+    duplicateForeignKeys.rows.map((row) => `${row.from_table}->${row.to_table}`).join(", ")}`);
+}
+
+// The membership->profile relationship is what lets `profiles:user_id(full_name)`
+// resolve. Without it the "Ansvarig saljare" dropdown on a new contract is empty
+// and no contract can name an owner.
+const membershipProfileLink = await db.query(`
+  select count(*)::int as links
+  from pg_constraint c
+  join pg_namespace n on n.oid = c.connamespace
+  where n.nspname = 'public' and c.contype = 'f'
+    and c.conrelid = 'public.tenant_memberships'::regclass
+    and c.confrelid = 'public.profiles'::regclass
+`);
+if (membershipProfileLink.rows[0].links !== 1) {
+  throw new Error("tenant_memberships must reference public.profiles so PostgREST can embed it");
+}
+console.log("Schema relationships are unambiguous and memberships resolve to profiles.");
 
 await db.close();
