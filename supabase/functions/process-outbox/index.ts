@@ -56,7 +56,11 @@ async function getEmailConfig(tenantId: string) {
     .eq("provider", "resend")
     .limit(1)
     .maybeSingle();
-  if (error || !data || data.status !== "active") throw new Error("permanent_email_resend_integration_not_active");
+  // A read that failed is not a verdict. Conflating the two dead-lettered the
+  // send permanently and reported "integration not active" for what was a
+  // database blip — sending whoever investigated to a setting that was correct.
+  if (error) throw new Error(`email_integration_read_failed:${error.code ?? "unknown"}`);
+  if (!data || data.status !== "active") throw new Error("permanent_email_resend_integration_not_active");
   const configuration = (data.configuration ?? {}) as Record<string, unknown>;
   const credentials = data.credentials_ciphertext
     ? await decryptJson<EmailCredentials>(data.credentials_ciphertext, encryptionKey)
@@ -116,10 +120,12 @@ async function processSms(job: Job) {
     .eq("tenant_id", job.tenant_id).eq("id", job.aggregate_id).single();
   if (error || !sms) throw new Error("sms_not_found");
   if (sms.provider_message_id || ["created", "sent", "delivered"].includes(sms.status)) return;
-  const [{ data: outboundSms }, { data: contractSms }] = await Promise.all([
+  const [{ data: outboundSms, error: outboundSmsError }, { data: contractSms, error: contractSmsError }] = await Promise.all([
     supabase.from("tenant_features").select("enabled").eq("tenant_id", job.tenant_id).eq("feature_key", "outbound_sms").maybeSingle(),
     supabase.from("tenant_features").select("enabled").eq("tenant_id", job.tenant_id).eq("feature_key", "contract_delivery_sms").maybeSingle(),
   ]);
+  if (outboundSmsError) throw new Error(`sms_feature_read_failed:${outboundSmsError.code ?? "unknown"}`);
+  if (contractSmsError) throw new Error(`sms_feature_read_failed:${contractSmsError.code ?? "unknown"}`);
   if (!outboundSms?.enabled) throw new Error("permanent_sms_outbound_feature_disabled");
   if (sms.contract_id && !contractSms?.enabled) throw new Error("permanent_sms_contract_delivery_feature_disabled");
 
@@ -209,10 +215,15 @@ async function processEmail(job: Job) {
   if (error || !email) throw new Error("email_not_found");
   if (email.provider_message_id || ["sent", "delivered", "opened", "clicked"].includes(email.status)) return;
 
-  const [{ data: outboundEmail }, { data: contractEmail }] = await Promise.all([
+  const [{ data: outboundEmail, error: outboundEmailError }, { data: contractEmail, error: contractEmailError }] = await Promise.all([
     supabase.from("tenant_features").select("enabled").eq("tenant_id", job.tenant_id).eq("feature_key", "outbound_email").maybeSingle(),
     supabase.from("tenant_features").select("enabled").eq("tenant_id", job.tenant_id).eq("feature_key", "contract_delivery_email").maybeSingle(),
   ]);
+  // `permanent_` means the job is dead-lettered and never retried. A failed read
+  // must therefore never reach one: it would kill a contract delivery for good
+  // and blame a feature flag that is switched on.
+  if (outboundEmailError) throw new Error(`email_feature_read_failed:${outboundEmailError.code ?? "unknown"}`);
+  if (contractEmailError) throw new Error(`email_feature_read_failed:${contractEmailError.code ?? "unknown"}`);
   if (!outboundEmail?.enabled) throw new Error("permanent_email_outbound_feature_disabled");
   if (email.contract_id && !contractEmail?.enabled) throw new Error("permanent_email_contract_delivery_feature_disabled");
 
@@ -248,13 +259,19 @@ async function processEmail(job: Job) {
     throw new Error(`${permanent ? "permanent_" : ""}email_${response.status}:${message}`);
   }
   const sentAt = new Date().toISOString();
-  await supabase.from("email_messages").update({
+  // The mail has left. If recording that fails, the row keeps `submitting` and no
+  // provider_message_id, so the delivery webhook has nothing to match and the
+  // contract reads as never sent. Raising it retries the job, and the
+  // Idempotency-Key above makes Resend return the same message instead of
+  // sending a second copy.
+  const { error: sentError } = await supabase.from("email_messages").update({
     provider_message_id: String(result.id ?? ""),
     status: "sent",
     provider_status: "email.sent",
     sent_at: sentAt,
     from_address: email.from_address === "pending@kundexa.local" ? config.address : email.from_address,
   }).eq("id", email.id);
+  if (sentError) throw new Error(`email_sent_state_write_failed:${sentError.code ?? "unknown"}`);
   await supabase.from("contract_deliveries").update({ status: "sent", provider_status: "email.sent", sent_at: sentAt }).eq("email_message_id", email.id);
   await supabase.from("contract_reminders").update({ status: "sent", sent_at: sentAt }).eq("tenant_id", job.tenant_id).eq("email_message_id", email.id).in("status", ["queued", "scheduled"]);
 }
