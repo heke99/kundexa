@@ -1688,3 +1688,54 @@ rättigheter på 168 tabeller, RLS är enda grinden). En branch som spelar om
 migrationerna får 13 av 181 — alltså kan schemat **inte** återskapas från
 migrationerna ensamt. Inte ett fel i produktion, men "vi kan bygga om från
 migrationerna" är falskt. Oåtgärdat, kräver beslut om säkerhetshållning.
+
+## FAILURE-0097 — "Rätta uppringningsvägen" lovade en fix den inte kunde ge
+
+Meddelandet i `current_user_dial_path` sade: *"Samtalet ringer upp +46704781927
+innan kunden kopplas. Be administratören köra 'Rätta uppringningsvägen' under
+Integrationer."* Administratören körde den. Den lyckades — `dial_policy_applied_at`
+2026-09-15 08:11:50, `dial_policy_error` null, `muteOtherDevicesOnWebphone: true`,
+rätt `defaultOutboundNumber`. Samtalet ringde ändå upp mobilen.
+
+Två skäl, båda utanför rättningens räckvidd:
+
+1. `POST /dial` kräver ett `deviceId`. API:et bär ingen ljudväg, så det *måste*
+   ringa upp en enhet först och koppla kunden när säljaren svarat. Att säljaren
+   rings först är inte ett felläge utan hur endpointen fungerar.
+2. `muteOtherDevicesOnWebphone` betyder "ring inte övriga enheter **när
+   webbtelefonen är online**". Kundexa har ingen webbtelefon — ingen SIP, ingen
+   WebRTC, inget ljud i hela kodbasen. Platsen har exakt en enhet
+   ("Standardenhet", från den skalära `deviceId`), och platsens nummer är
+   säljarens mobil. Flaggan är satt och biter på ingenting.
+
+Samma klass som raderaknappen som lovade vad databasen vägrade (FAILURE-0093):
+ett gränssnitt som föreslår en åtgärd utan att kontrollera att åtgärden kan
+lyckas. Regeln som följer: ett meddelande som säger "kör X" måste härledas ur
+att X faktiskt kan ändra tillståndet, inte ur att tillståndet är fel.
+
+## FAILURE-0098 — Jag rapporterade friska cronjobb som avstängda
+
+Jag såg `cron.job` med `active: false` på båda raderna och drog slutsatsen att
+allt bakgrundsarbete stod stilla. Fel. De två Supabase-jobben är en **dubblett
+som aldrig varit i drift** — de läser `vault.decrypted_secrets` för
+`kundexa_project_url` och `kundexa_cron_secret`, och vaultet är tomt (0 rader).
+Den riktiga schemaläggaren är Vercel Cron via `vercel.json`, och den går: 180
+träffar per väg på tre timmar, 1127 av 1128 svar är 200.
+
+Att slå på Supabase-jobben hade dubbelkört varje worker.
+
+Vad jag missade: jag läste en tabell som såg auktoritativ ut utan att fråga om
+den var den enda schemaläggaren. `vercel.json` låg i repot hela tiden. Regeln:
+innan "ingenting kör" rapporteras — räkna faktiska träffar i loggarna, inte
+konfigurationsrader.
+
+## FAILURE-0099 — Enkolumns-FK till `webphone_sessions` korsade tenantgränsen
+
+Första utkastet gav `rinkel_call_attempts_v2.webphone_session_id` en FK mot
+`webphone_sessions(id)`. Det hade låtit ett försök i en tenant peka på en session
+i en annan. `verify-sql.mjs` vägrade omedelbart — invarianten "varje
+tenant-till-tenant-nyckel är sammansatt" fanns redan och gjorde sitt jobb.
+Rättat till `(tenant_id, id)`.
+
+Värt att notera för att den är motsatsen till de flesta poster här: felet
+kostade ingenting, för kontrollen fanns före koden.
