@@ -35,6 +35,31 @@ async function getTenant(tenantId: string) {
   return data;
 }
 
+/**
+ * Vilket bolag avtalet faktiskt är utställt av.
+ *
+ * En tenant kan ha flera juridiska personer (`tenant_legal_entities`), och den
+ * som väljs vid utskicket fryses i `contracts.seller_snapshot`. Både
+ * avsändarnamnet och påminnelsens rubrik använde i stället `tenants.legal_name`,
+ * alltså koncernnamnet — så en kund som fått ett avtal från ett av bolagen fick
+ * påminnelsen från ett annat. Det är fel avsändare på ett bindande dokument.
+ *
+ * Ögonblicksbilden är rätt källa och inte den levande raden: ändras det juridiska
+ * namnet efter utskicket är det fortfarande det gamla som står på avtalet kunden
+ * har framför sig.
+ */
+async function contractIssuerName(tenantId: string, contractId: string | null, fallback: string) {
+  if (!contractId) return fallback;
+  const { data, error } = await supabase.from("contracts")
+    .select("seller_snapshot").eq("tenant_id", tenantId).eq("id", contractId).maybeSingle();
+  // Ett läsfel är inget besked. Att tyst falla tillbaka på koncernnamnet vore att
+  // återinföra precis den bug som rättas här, fast osynligt.
+  if (error) throw new Error(`contract_issuer_read_failed:${error.code ?? "unknown"}`);
+  const snapshot = (data?.seller_snapshot ?? {}) as Record<string, unknown>;
+  const legalName = typeof snapshot.legal_name === "string" ? snapshot.legal_name.trim() : "";
+  return legalName || fallback;
+}
+
 async function get46ElksCredentials(tenantId: string): Promise<ElksCredentials> {
   const { data, error } = await supabase.from("tenant_integrations")
     .select("credentials_ciphertext")
@@ -72,7 +97,7 @@ async function getEmailConfig(tenantId: string) {
   const replyTo = configuration.reply_to ? String(configuration.reply_to) : null;
   if (!apiKey) throw new Error("permanent_email_provider_not_configured");
   if (!/^\S+@\S+\.\S+$/.test(address)) throw new Error("permanent_email_from_address_invalid");
-  return { apiKey, address, replyTo, formattedFrom: `${fromName} <${address}>`, tenant, integrationId: data.id };
+  return { apiKey, address, replyTo, fromName, formattedFrom: `${fromName} <${address}>`, tenant, integrationId: data.id };
 }
 
 async function post46Elks(path: string, credentials: ElksCredentials, values: Record<string, string>) {
@@ -228,6 +253,11 @@ async function processEmail(job: Job) {
   if (email.contract_id && !contractEmail?.enabled) throw new Error("permanent_email_contract_delivery_feature_disabled");
 
   const config = await getEmailConfig(job.tenant_id);
+  // A contract is issued by one of the tenant's legal entities, not by the tenant
+  // as a whole. The customer must see the company that actually sent them the
+  // agreement, on the first delivery and on every reminder alike.
+  const issuerName = await contractIssuerName(job.tenant_id, email.contract_id ?? null, config.fromName);
+  const senderIdentity = `${cleanHeaderName(issuerName)} <${config.address}>`;
   const attachments = await resolveEmailAttachments(email as Record<string, unknown>, job.tenant_id);
   await supabase.from("email_messages").update({ status: "submitting", provider_status: "submitting" }).eq("id", email.id);
   const response = await fetch("https://api.resend.com/emails", {
@@ -238,7 +268,7 @@ async function processEmail(job: Job) {
       "Idempotency-Key": email.idempotency_key || `kundexa-email-${email.id}`,
     },
     body: JSON.stringify({
-      from: email.from_address === "pending@kundexa.local" ? config.formattedFrom : email.from_address,
+      from: email.from_address === "pending@kundexa.local" ? senderIdentity : email.from_address,
       to: email.to_addresses,
       cc: email.cc_addresses?.length ? email.cc_addresses : undefined,
       bcc: email.bcc_addresses?.length ? email.bcc_addresses : undefined,
@@ -326,8 +356,12 @@ async function processContractReminder(job: Job) {
     if (permanentFailureError) throw new Error(`reminder_suppression_check_failed:${permanentFailureError.code ?? "unknown"}`);
     if (!permanentFailure && recipient.email) {
       const subject = `Påminnelse om avtal ${contract.contract_number}`;
+      // The header must name the legal entity that issued this contract, not the
+      // tenant it belongs to. A tenant with several companies otherwise reminds
+      // the customer in the wrong company's name.
+      const issuerLegalName = await contractIssuerName(job.tenant_id, contract.id, tenant.legal_name);
       const personal = reminder.personal_message ? `<p style="font-size:15px;line-height:1.65">${escapeHtml(String(reminder.personal_message))}</p>` : "";
-      const html = `<!doctype html><html><body style="margin:0;background:#f3f6f5;font-family:Arial,sans-serif;color:#17202a"><table role="presentation" width="100%"><tr><td align="center" style="padding:28px 12px"><table role="presentation" width="100%" style="max-width:640px;background:#fff;border:1px solid #dfe7e5"><tr><td style="padding:26px 30px;background:#102b26;color:#fff"><strong>${escapeHtml(tenant.legal_name)}</strong></td></tr><tr><td style="padding:32px 30px"><h1>Påminnelse om avtal</h1><p>Hej ${escapeHtml(recipient.full_name)},</p><p>Avtal <strong>${escapeHtml(contract.contract_number)}</strong> väntar på ditt besked.</p>${personal}<p style="margin:28px 0"><a href="${escapeHtml(acceptUrl)}" style="background:#0d7d65;color:#fff;text-decoration:none;padding:13px 20px;border-radius:9px;font-weight:bold">Öppna avtalet</a></p><p>Ursprungligt utskick: ${escapeHtml(firstSentLabel)}<br>Sista svarsdatum: ${escapeHtml(expiresLabel)}</p><p style="word-break:break-all">${escapeHtml(acceptUrl)}</p></td></tr></table></td></tr></table></body></html>`;
+      const html = `<!doctype html><html><body style="margin:0;background:#f3f6f5;font-family:Arial,sans-serif;color:#17202a"><table role="presentation" width="100%"><tr><td align="center" style="padding:28px 12px"><table role="presentation" width="100%" style="max-width:640px;background:#fff;border:1px solid #dfe7e5"><tr><td style="padding:26px 30px;background:#102b26;color:#fff"><strong>${escapeHtml(issuerLegalName)}</strong></td></tr><tr><td style="padding:32px 30px"><h1>Påminnelse om avtal</h1><p>Hej ${escapeHtml(recipient.full_name)},</p><p>Avtal <strong>${escapeHtml(contract.contract_number)}</strong> väntar på ditt besked.</p>${personal}<p style="margin:28px 0"><a href="${escapeHtml(acceptUrl)}" style="background:#0d7d65;color:#fff;text-decoration:none;padding:13px 20px;border-radius:9px;font-weight:bold">Öppna avtalet</a></p><p>Ursprungligt utskick: ${escapeHtml(firstSentLabel)}<br>Sista svarsdatum: ${escapeHtml(expiresLabel)}</p><p style="word-break:break-all">${escapeHtml(acceptUrl)}</p></td></tr></table></td></tr></table></body></html>`;
       const text = `Hej ${recipient.full_name},\n\nPåminnelse om avtal ${contract.contract_number} – ${contract.title}.\n${acceptUrl}\nSista svarsdatum: ${expiresLabel}.`;
       const idempotencyKey = `${baseKey}/email`;
       const { data: email, error: emailError } = await supabase.from("email_messages").upsert({
@@ -576,11 +610,14 @@ async function processContractConfirmation(job: Job) {
     acceptanceId ? supabase.from("contract_acceptances").select("accepted_at,acceptance_phrase").eq("tenant_id", job.tenant_id).eq("id", acceptanceId).maybeSingle() : Promise.resolve({ data: null }),
   ]);
   if (!contract || !recipient || !tenant) throw new Error("confirmation_data_missing");
+  // Same rule as the reminder: the customer sees the company that issued the
+  // contract, not the tenant it belongs to.
+  const issuerLegalName = await contractIssuerName(job.tenant_id, request.contract_id, tenant.legal_name);
   if (!acceptedDocument) throw new Error("confirmation_waiting_for_signed_document");
   const acceptedAt = acceptance?.accepted_at ?? request.accepted_at ?? new Date().toISOString();
   const acceptedLabel = new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeStyle: "short", timeZone: "Europe/Stockholm" }).format(new Date(acceptedAt));
   const text = `Hej ${recipient.full_name},\n\nDitt besked för avtal ${contract.contract_number} (${contract.title}) hos ${tenant.legal_name} registrerades ${acceptedLabel}. Den accepterade avtalskopian finns bifogad. Detta är en dokumenterad acceptans.\n\n${tenant.legal_name}`;
-  const html = `<!doctype html><html><body style="margin:0;background:#f3f6f5;font-family:Arial,sans-serif;color:#17202a"><table role="presentation" width="100%"><tr><td align="center" style="padding:28px 12px"><table role="presentation" width="100%" style="max-width:640px;background:#fff;border:1px solid #dfe7e5"><tr><td style="padding:26px 30px;background:#102b26;color:#fff"><strong>${escapeHtml(tenant.legal_name)}</strong></td></tr><tr><td style="padding:32px 30px"><h1>Din acceptans är registrerad</h1><p>Hej ${escapeHtml(recipient.full_name)},</p><p>Ditt besked för avtal <strong>${escapeHtml(contract.contract_number)}</strong> registrerades ${escapeHtml(acceptedLabel)}.</p><p>Den accepterade avtalskopian finns bifogad. Detta är en dokumenterad acceptans.</p></td></tr></table></td></tr></table></body></html>`;
+  const html = `<!doctype html><html><body style="margin:0;background:#f3f6f5;font-family:Arial,sans-serif;color:#17202a"><table role="presentation" width="100%"><tr><td align="center" style="padding:28px 12px"><table role="presentation" width="100%" style="max-width:640px;background:#fff;border:1px solid #dfe7e5"><tr><td style="padding:26px 30px;background:#102b26;color:#fff"><strong>${escapeHtml(issuerLegalName)}</strong></td></tr><tr><td style="padding:32px 30px"><h1>Din acceptans är registrerad</h1><p>Hej ${escapeHtml(recipient.full_name)},</p><p>Ditt besked för avtal <strong>${escapeHtml(contract.contract_number)}</strong> registrerades ${escapeHtml(acceptedLabel)}.</p><p>Den accepterade avtalskopian finns bifogad. Detta är en dokumenterad acceptans.</p></td></tr></table></td></tr></table></body></html>`;
 
   if (recipient.email) {
     const idempotencyKey = `contract-confirmation/${acceptanceId || request.id}/email`;
@@ -644,12 +681,15 @@ async function processSignedContractConfirmation(job: Job) {
   for (const recipient of recipients ?? []) {
     if (!recipient.email) continue;
     const idempotencyKey = `contract-signed/${contract.id}/${generation}/${recipient.id}/email`;
+    // Same rule again: the company that issued the contract is the one that
+    // tells the customer it is signed.
+    const issuerLegalName = await contractIssuerName(job.tenant_id, contract.id, tenant.legal_name);
     const text = `Hej ${recipient.full_name},
 
-Avtal ${contract.contract_number} (${contract.title}) hos ${tenant.legal_name} är fullständigt signerat sedan ${signedLabel}. Det slutligt signerade dokumentet finns bifogat.
+Avtal ${contract.contract_number} (${contract.title}) hos ${issuerLegalName} är fullständigt signerat sedan ${signedLabel}. Det slutligt signerade dokumentet finns bifogat.
 
 ${tenant.legal_name}`;
-    const html = `<!doctype html><html><body style="margin:0;background:#f3f6f5;font-family:Arial,sans-serif;color:#17202a"><table role="presentation" width="100%"><tr><td align="center" style="padding:28px 12px"><table role="presentation" width="100%" style="max-width:640px;background:#fff;border:1px solid #dfe7e5"><tr><td style="padding:26px 30px;background:#102b26;color:#fff"><strong>${escapeHtml(tenant.legal_name)}</strong></td></tr><tr><td style="padding:32px 30px"><h1>Avtalet är fullständigt signerat</h1><p>Hej ${escapeHtml(recipient.full_name)},</p><p>Avtal <strong>${escapeHtml(contract.contract_number)}</strong> är fullständigt signerat sedan ${escapeHtml(signedLabel)}.</p><p>Det slutligt signerade dokumentet finns bifogat.</p></td></tr></table></td></tr></table></body></html>`;
+    const html = `<!doctype html><html><body style="margin:0;background:#f3f6f5;font-family:Arial,sans-serif;color:#17202a"><table role="presentation" width="100%"><tr><td align="center" style="padding:28px 12px"><table role="presentation" width="100%" style="max-width:640px;background:#fff;border:1px solid #dfe7e5"><tr><td style="padding:26px 30px;background:#102b26;color:#fff"><strong>${escapeHtml(issuerLegalName)}</strong></td></tr><tr><td style="padding:32px 30px"><h1>Avtalet är fullständigt signerat</h1><p>Hej ${escapeHtml(recipient.full_name)},</p><p>Avtal <strong>${escapeHtml(contract.contract_number)}</strong> är fullständigt signerat sedan ${escapeHtml(signedLabel)}.</p><p>Det slutligt signerade dokumentet finns bifogat.</p></td></tr></table></td></tr></table></body></html>`;
     const { data: email, error: emailError } = await supabase.from("email_messages").upsert({
       tenant_id: job.tenant_id,
       customer_id: contract.customer_id,

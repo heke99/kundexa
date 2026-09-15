@@ -61,6 +61,9 @@ export function RinkelDialer({
     rinkel.markEnded();
     setAfterCall(true);
   });
+  // Once the customer has picked up, Kundexa can no longer end anything: the
+  // provider exposes no hangup, so all that is left is releasing the seat.
+  const callAnswered = callState.status === "answered" || callState.status === "in_progress";
 
   useEffect(() => {
     if (lockedToCustomer) return;
@@ -254,15 +257,20 @@ export function RinkelDialer({
     </p> : null}
     {rinkel.calling ? <p className="notice">Samtalet hanteras på din telefonienhet. Kundexa uppdaterar status automatiskt.</p> : null}
     {callId && (rinkel.calling || callState.recovering) ? <div className="dialer-end">
+      {/* The label carries the truth, not the footnote under it. The provider has
+          no hangup endpoint at all, so a button offering to end the call is a
+          promise the system cannot keep — the owner pressed the old one on
+          2026-09-15 and the phone went on ringing. Answered and unanswered are
+          different claims, so they get different words. */}
       <button type="button" className="button button-danger" onClick={endCurrentCall} disabled={rinkel.ending}>
-        <PhoneOff size={15} /> {rinkel.ending ? "Avslutar…" : "Avsluta samtalet"}
+        <PhoneOff size={15} /> {rinkel.ending
+          ? "Släpper…"
+          : callAnswered ? "Frigör för nästa samtal" : "Avbryt uppringningen"}
       </button>
-      {/* Say what the button does, because it cannot do the other thing:
-          telefonitjänsten har inget API för att koppla ned ett uppkopplat
-          samtal. Ett påstående om motsatsen skulle vara osant. */}
       <small className="muted">
-        Har kunden svarat lägger du på i webbtelefonen eller appen — telefonitjänsten kan inte kopplas ned
-        härifrån. Kundexa släpper samtalsförsöket direkt så att du kan ringa nästa nummer.
+        {callAnswered
+          ? "Samtalet pågår på din telefon och måste läggas på där — telefonitjänsten kan inte kopplas ned härifrån. Kundexa släpper samtalsförsöket direkt så att du kan ringa nästa nummer."
+          : "Kundexa avbryter uppringningen och släpper samtalsförsöket. Ringer telefonen fortfarande avvisar du samtalet där; telefonitjänsten kan inte kopplas ned härifrån."}
       </small>
     </div> : null}
     {endMessage ? <p className="notice">{endMessage}</p> : null}
