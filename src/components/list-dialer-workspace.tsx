@@ -85,6 +85,9 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
     voice.markEnded();
     void handleCallEnded(status);
   });
+  // Once the customer has picked up, Kundexa can no longer end anything: the
+  // provider exposes no hangup, so all that is left is releasing the seat.
+  const callAnswered = callState.status === "answered" || callState.status === "in_progress";
 
   useEffect(() => { if (voice.calling) setPhase("calling"); }, [voice.calling]);
   useEffect(() => { if (selectedDisposition?.requires_order) setCreateOrder(true); }, [selectedDisposition]);
@@ -305,12 +308,17 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
           {callState.recovering ? <div className="notice">Samtalets slutstatus är osäker och avstäms automatiskt. Ring inte nästa prospekt ännu.</div> : null}
           {callId && callState.connectionState === "degraded" ? <div className="notice">Realtime är frånkopplat. Kundexa använder statuspolling tills anslutningen är återställd.</div> : null}
           {callId && (phase === "calling" || phase === "dialing" || callState.recovering) ? <div className="dialer-end">
+            {/* The label carries the truth, not the footnote under it — see the
+                same change in rinkel-dialer.tsx. */}
             <button className="button button-danger" type="button" onClick={endCurrentCall} disabled={voice.ending}>
-              <PhoneOff size={15} /> {voice.ending ? "Avslutar…" : "Avsluta samtalet"}
+              <PhoneOff size={15} /> {voice.ending
+                ? "Släpper…"
+                : callAnswered ? "Frigör för nästa samtal" : "Avbryt uppringningen"}
             </button>
             <small className="muted">
-              Har kunden svarat lägger du på i webbtelefonen eller appen — telefonitjänsten kan inte kopplas ned
-              härifrån. Kundexa släpper samtalsförsöket direkt så att listan kan fortsätta.
+              {callAnswered
+                ? "Samtalet pågår på din telefon och måste läggas på där — telefonitjänsten kan inte kopplas ned härifrån. Kundexa släpper samtalsförsöket direkt så att listan kan fortsätta."
+                : "Kundexa avbryter uppringningen och släpper samtalsförsöket. Ringer telefonen fortfarande avvisar du samtalet där; telefonitjänsten kan inte kopplas ned härifrån."}
             </small>
           </div> : null}
           {phase === "ready" && claim.allowSkip ? <button className="button button-ghost button-sm" type="button" onClick={() => pause("skip")}>Hoppa över</button> : null}

@@ -36,10 +36,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # A missing credential is a setup state, not a failure. Skipping keeps main
-      # green while still saying plainly, in the run summary, that nothing was
-      # deployed — silence here would recreate the exact blindness this workflow
-      # exists to remove.
+      # A missing credential used to be treated as a setup state: the job skipped,
+      # main stayed green, and a warning annotation carried the truth. That was
+      # not enough, and the measurement says so. On 2026-09-15, four functions
+      # were running older code than main while every check was green:
+      #
+      #   process-outbox          deployed 09-11 08:14, changed 09-14 17:04
+      #   rinkel-platform-worker  deployed 09-10 13:38, changed 09-15 08:37
+      #   maintenance-worker      deployed 09-10 11:26, changed 09-11 16:36
+      #   automation-runner       deployed 09-11 14:56, changed 09-11 16:36
+      #
+      # One of them carried a contract-delivery fix that had been reported as
+      # shipped on the strength of a green Vercel deployment — a different deploy
+      # path entirely (FAILURE-0100). A warning nobody reads is indistinguishable
+      # from no warning at all.
+      #
+      # So this now fails. A commit that changes a function and does not deploy it
+      # is not a setup state; it is production running code nobody chose. Red here
+      # costs five minutes of setup once. The alternative cost 34 days the last
+      # time it happened (FAILURE-0055).
       - name: Check deploy credentials
         id: credentials
         env:
@@ -48,21 +63,22 @@ jobs:
         run: |
           if [ -n "$SUPABASE_ACCESS_TOKEN" ] && [ -n "$SUPABASE_PROJECT_REF" ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            # A green check reads as "deployed" to anyone who does not open the
-            # run summary, which is most people most of the time. An annotation
-            # shows up on the run list and on the commit itself, so the gap is
-            # visible without failing main over a setup state.
-            echo "::warning title=Edge Functions were not deployed::supabase/functions changed but SUPABASE_ACCESS_TOKEN and SUPABASE_PROJECT_REF are not set, so production still runs the previous version."
-            {
-              echo "### Edge Functions were NOT deployed"
-              echo
-              echo "Set the repository secrets \`SUPABASE_ACCESS_TOKEN\` and"
-              echo "\`SUPABASE_PROJECT_REF\` to enable this workflow. Until then the"
-              echo "functions running in production can silently fall behind main."
-            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+          echo "::error title=Edge Functions were not deployed::supabase/functions changed but SUPABASE_ACCESS_TOKEN and SUPABASE_PROJECT_REF are not set, so production still runs the previous version."
+          {
+            echo "### Edge Functions were NOT deployed"
+            echo
+            echo "This commit changed \`supabase/functions/**\`, so production is now"
+            echo "running code that is not in main. Set the repository secrets"
+            echo "\`SUPABASE_ACCESS_TOKEN\` and \`SUPABASE_PROJECT_REF\` under"
+            echo "Settings → Secrets and variables → Actions, then re-run this workflow."
+            echo
+            echo "This check fails rather than warns because a warning on a green run"
+            echo "let four functions drift behind main unnoticed."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
 
       - name: Setup Node
         if: steps.credentials.outputs.ready == 'true'

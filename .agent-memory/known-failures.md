@@ -1739,3 +1739,36 @@ Rättat till `(tenant_id, id)`.
 
 Värt att notera för att den är motsatsen till de flesta poster här: felet
 kostade ingenting, för kontrollen fanns före koden.
+
+## FAILURE-0100 — Fyra Edge Functions körde äldre kod än main, och jag rapporterade en av dem som levererad
+
+`deploy-edge-functions.yml` finns just för att stänga den här luckan — dess egen
+kommentar beskriver hur `_shared/rinkel.ts` kördes 34 dagar gammal i produktion
+medan allt var grönt (FAILURE-0055). Workflowen byggdes. Hemligheterna
+`SUPABASE_ACCESS_TOKEN` och `SUPABASE_PROJECT_REF` sattes aldrig. Så varje
+körning tar `skipped`-grenen, blir **grön**, och lämnar en varningsannotering som
+ingen läser.
+
+Mätt 2026-09-15 efter mergen av PR #14:
+
+| funktion | deployad | ändrad i repot |
+|---|---|---|
+| `process-outbox` | 2026-09-11 08:14 | 2026-09-14 17:04 |
+| `rinkel-platform-worker` | 2026-09-10 13:38 | 2026-09-15 08:37 |
+| `maintenance-worker` | 2026-09-10 11:26 | 2026-09-11 16:36 |
+| `automation-runner` | 2026-09-11 14:56 | 2026-09-11 16:36 |
+
+**Mitt fel ovanpå det:** när PR #13 rapporterades som levererad angavs Vercel-
+deployen READY på exakt den commiten som bevis. Det stämde, men Vercel deployar
+Next.js-appen — inte Supabase Edge Functions. Fixen i `process-outbox`, som
+hindrar att ett läsfel dödar en avtalsleverans permanent, låg i main och var
+aldrig live. Två olika deploy-vägar, en kontrollerad, båda rapporterade som en.
+
+Regeln som följer: "mergat och deployat" är två påståenden när systemet har två
+deploy-vägar. Kontrollera varje väg mot vad den faktiskt kör — för Edge Functions
+`list_edge_functions.updated_at` mot `git log` för katalogen — och lita aldrig på
+att en grön workflow betyder att den gjorde något. Ett hoppat steg och ett utfört
+steg ser likadana ut utifrån.
+
+Åtgärd: kräver att ägaren sätter de två repo-hemligheterna; kan inte göras från
+en session utan administratörsrättigheter på repot.

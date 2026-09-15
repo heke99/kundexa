@@ -725,3 +725,92 @@ console.log("Every action redirect lands on a page that renders the parameter.")
     "an error-checked read must be accepted");
 }
 console.log("Every page read is error-checked or wrapped in ok().");
+
+// The telephony service has no hangup endpoint — `POST /dial` is its only
+// call-control surface. A control labelled "Avsluta samtalet" therefore promises
+// something the system cannot do, and on 2026-09-15 the owner pressed it and the
+// phone went on ringing. Kundexa releases the seat; the leg is dropped on the
+// device. Explaining that in small print under the button was not enough: people
+// act on the label.
+{
+  const { readFileSync } = await import("node:fs");
+  const base = new URL("..", import.meta.url).pathname;
+  const dialers = [
+    "src/components/rinkel-dialer.tsx",
+    "src/components/list-dialer-workspace.tsx",
+  ];
+  for (const file of dialers) {
+    const source = readFileSync(base + file, "utf8");
+    assert.ok(!source.includes("Avsluta samtalet"),
+      `${file} labels a control "Avsluta samtalet", which the telephony service cannot do`);
+    // The honest pair: cancel while it is still ringing, release once answered.
+    assert.ok(source.includes("Avbryt uppringningen") && source.includes("Frigör för nästa samtal"),
+      `${file} must distinguish cancelling an unanswered dial from releasing an answered one`);
+    assert.ok(source.includes("kan inte kopplas ned härifrån"),
+      `${file} must say that the call is hung up on the device`);
+  }
+}
+console.log("No dialer offers to end a call the telephony service cannot end.");
+
+// A commit that changes an Edge Function and does not deploy it leaves production
+// running code nobody chose. That used to pass as a warning on a green run, and
+// four functions drifted behind main unnoticed until someone compared timestamps
+// by hand. The deploy workflow must fail on missing credentials, not warn.
+{
+  const { readFileSync } = await import("node:fs");
+  const base = new URL("..", import.meta.url).pathname;
+  const workflow = readFileSync(base + ".github/workflows/deploy-edge-functions.yml", "utf8");
+  assert.ok(workflow.includes("::error title=Edge Functions were not deployed"),
+    "a skipped Edge Function deploy must be an error annotation, not a warning");
+  assert.ok(!workflow.includes("::warning title=Edge Functions were not deployed"),
+    "the skipped-deploy warning must not come back: a warning on a green run is what let four functions drift");
+  assert.ok(/echo "ready=false" >> "\$GITHUB_OUTPUT"[\s\S]*?\n\s*exit 1\n/.test(workflow),
+    "the credential check must exit non-zero when the deploy cannot run");
+}
+console.log("A skipped Edge Function deploy fails the run instead of passing as a warning.");
+
+// A contract is issued by one of the tenant's legal entities, and which one is
+// frozen into contracts.seller_snapshot at send time. The reminder header and the
+// From name both used tenants.legal_name — the group name — so a tenant with more
+// than one company reminded the customer in the wrong company's name, on a
+// binding document.
+{
+  const { readFileSync } = await import("node:fs");
+  const base = new URL("..", import.meta.url).pathname;
+  const source = readFileSync(base + "supabase/functions/process-outbox/index.ts", "utf8");
+
+  assert.ok(source.includes("async function contractIssuerName("),
+    "process-outbox must resolve the issuing legal entity for contract e-mail");
+  assert.ok(!/escapeHtml\(tenant\.legal_name\)/.test(source),
+    "the reminder header must name the issuing legal entity, not the tenant");
+  assert.ok(source.includes("escapeHtml(issuerLegalName)"),
+    "the reminder header must render the issuer resolved from the contract snapshot");
+  assert.ok(source.includes("const senderIdentity = `${cleanHeaderName(issuerName)} <${config.address}>`"),
+    "the From name on a contract e-mail must be the issuing legal entity");
+  assert.ok(!/from: email\.from_address === "pending@kundexa\.local" \? config\.formattedFrom/.test(source),
+    "the tenant-wide From name must not be used for a contract-bound message");
+  // A failed read is not a verdict. Falling back to the group name on an error
+  // would reintroduce the same wrong sender, invisibly.
+  assert.ok(source.includes("contract_issuer_read_failed"),
+    "a failed issuer lookup must raise rather than silently fall back to the tenant name");
+}
+console.log("Contract e-mail is sent in the name of the legal entity that issued the contract.");
+
+// Kundexa contains no webphone — no SIP, no WebRTC, no audio — and the provider's
+// muteOtherDevicesOnWebphone only silences other devices while one is online. So a
+// correct dial policy does not mean the call rings in the browser: it rings the
+// phone on the seat. Telling the seller "Webbtelefonen" is the same false claim
+// that was just removed from the warning beneath it, and with the warning gone
+// there would be nothing left to contradict it.
+{
+  const { readFileSync } = await import("node:fs");
+  const base = new URL("..", import.meta.url).pathname;
+  for (const file of ["src/components/rinkel-dialer.tsx", "src/components/list-dialer-workspace.tsx"]) {
+    const source = readFileSync(base + file, "utf8");
+    const claims = source.split("\n").filter((line) =>
+      /["'`]Webbtelefonen/.test(line) && !line.trimStart().startsWith("//") && !line.trimStart().startsWith("*"));
+    assert.deepEqual(claims, [],
+      `${file} tells the seller the call rings a webphone that does not exist:\n${claims.join("\n")}`);
+  }
+}
+console.log("No dialer claims the call rings a webphone Kundexa does not have.");

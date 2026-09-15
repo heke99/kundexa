@@ -969,13 +969,50 @@ await db.exec(`
   where id='00000000-0000-0000-0000-000000000052';
 `);
 const uncorrectedPath = await db.query(`select public.current_user_dial_path() as path`);
+// The seller is still told which phone rings — that fact is the point of the
+// field. What it must NOT do is offer a repair for it: the provider's /dial
+// carries no audio path, so it always rings a device first, and the repair
+// cannot change that. Measured in production on 2026-09-15: the repair
+// succeeded, applied_at was set, and the mobile still rang.
 if (
   uncorrectedPath.rows[0].path.dialPathCorrect !== false
   || uncorrectedPath.rows[0].path.webphoneOnly !== false
-  || !String(uncorrectedPath.rows[0].path.issue ?? "").includes('+46709999999')
+  || uncorrectedPath.rows[0].path.deviceRingsPhone !== '+46709999999'
+  || uncorrectedPath.rows[0].path.ringsSellerFirst !== true
 ) {
   throw new Error(`The seller was not told which phone rings: ${JSON.stringify(uncorrectedPath.rows[0].path)}`);
 }
+if (
+  uncorrectedPath.rows[0].path.repairChangesAnything !== false
+  || uncorrectedPath.rows[0].path.issue !== null
+) {
+  throw new Error(`The seller was told to run a repair that cannot change the ringing: ${JSON.stringify(uncorrectedPath.rows[0].path)}`);
+}
+// The other half is genuinely repairable, and there the repair must still be
+// offered: the outbound number decides what the customer sees.
+await db.exec(`
+  update public.platform_rinkel_users
+  set raw_provider_data=jsonb_build_object(
+    'preferences', jsonb_build_object('muteOtherDevicesOnWebphone', false, 'ringDevices', 'all', 'defaultOutboundNumber', 'platform-number-b'),
+    'phoneNumber', jsonb_build_object('e164','+46709999999')
+  )
+  where id='00000000-0000-0000-0000-000000000052';
+`);
+const wrongNumberPath = await db.query(`select public.current_user_dial_path() as path`);
+if (
+  wrongNumberPath.rows[0].path.repairChangesAnything !== true
+  || !String(wrongNumberPath.rows[0].path.issue ?? "").includes('Rätta uppringningsvägen')
+) {
+  throw new Error(`A seat dialling out on the wrong number was not offered the repair: ${JSON.stringify(wrongNumberPath.rows[0].path)}`);
+}
+await db.exec(`
+  update public.platform_rinkel_users
+  set raw_provider_data=jsonb_build_object(
+    'preferences', jsonb_build_object('muteOtherDevicesOnWebphone', false, 'ringDevices', 'all', 'defaultOutboundNumber', 'platform-number-a'),
+    'phoneNumber', jsonb_build_object('e164','+46709999999')
+  )
+  where id='00000000-0000-0000-0000-000000000052';
+`);
 // A tenant admin sees every seat the company dials through, and only its own.
 const dialPathReport = await db.query(`select public.tenant_rinkel_dial_path_report() as report`);
 if (
@@ -1025,7 +1062,7 @@ const failedRepairPath = await db.query(`select public.current_user_dial_path() 
 if (failedRepairPath.rows[0].path.dialPolicyError !== 'Telefonitjänsten nekade ändringen.') {
   throw new Error(`A failed repair left no reason behind: ${JSON.stringify(failedRepairPath.rows[0].path)}`);
 }
-console.log("Executed the dial path repair: a seat that rings a mobile is reported incorrect, webphone-only on the wrong number is still incorrect, the seller is told which phone rings, the tenant report sees only its own seat, a signed-in user may not record a repair, a recorded repair clears the warning, and a failed one leaves its reason.");
+console.log("Executed the dial path repair: a seat that rings a mobile is reported incorrect, the seller is told which phone rings but never offered a repair that cannot change it, a wrong outbound number is offered the repair that can, the tenant report sees only its own seat, a signed-in user may not record a repair, a recorded repair clears the warning, and a failed one leaves its reason.");
 
 await db.exec(`
   update public.platform_rinkel_users set raw_provider_data='{}'::jsonb
