@@ -1372,6 +1372,117 @@ await db.exec(`
 `);
 console.log("Executed the webphone session: a registration is only registered once SIP says so, a second tab replaces the first, another tenant cannot see or close the session, a lost session releases the call leg it carried, and neither closing nor sweeping ever touches a provider /dial attempt.");
 
+// --- Webbtelefonens egen rapport om samtalsbenet -------------------------
+// The browser knows first, but it is an interested party. It may move the call
+// forward through states it genuinely sees first, and free the seat when the leg
+// dies; it may never write a final outcome onto an answered call, because the
+// duration and cause are the provider's and a terminal status here would freeze
+// the projection before they land.
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
+const legSession = (await db.query(`select public.open_webphone_session('rinkel',null) as result`)).rows[0].result;
+const legCall = (await db.query(`
+  select public.rinkel_reserve_platform_outbound_call(
+    '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
+    gen_random_uuid(),'webphone-leg-answered','customer_service'
+  ) as result
+`)).rows[0].result;
+
+// Reporting a leg for a session that is not yours is refused outright.
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000050',false)`);
+let foreignLegRefused = false;
+try {
+  await db.query(`select public.record_webphone_leg_event($1,$2,'ringing',now())`, [legCall.callId, legSession.sessionId]);
+} catch (error) {
+  foreignLegRefused = String(error).includes('webphone_session_not_found');
+}
+if (!foreignLegRefused) {
+  throw new Error("A seller in another tenant reported a call leg on this tenant's webphone session.");
+}
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
+
+// The first event binds the attempt to the session. Without that binding the
+// sweeper could not tell this leg from a provider /dial and would never release
+// it when the tab dies.
+await db.query(`select public.record_webphone_leg_event($1,$2,'ringing',now())`, [legCall.callId, legSession.sessionId]);
+const boundAttempt = await db.query(`select webphone_session_id,status from public.rinkel_call_attempts_v2 where call_id=$1`, [legCall.callId]);
+if (boundAttempt.rows[0].webphone_session_id !== legSession.sessionId) {
+  throw new Error(`The first leg event did not bind the attempt to the webphone session: ${JSON.stringify(boundAttempt.rows[0])}`);
+}
+const legRingingRow = await db.query(`select status from public.calls where id=$1`, [legCall.callId]);
+if (legRingingRow.rows[0].status !== 'ringing') {
+  throw new Error(`A reported ringing leg did not move the call to ringing: ${JSON.stringify(legRingingRow.rows[0])}`);
+}
+
+// answered_at is the whole point: it must stop depending on a webhook that may
+// never arrive, while staying honest about where it came from.
+const answeredLeg = (await db.query(`select public.record_webphone_leg_event($1,$2,'answered',now()) as result`, [legCall.callId, legSession.sessionId])).rows[0].result;
+if (answeredLeg.advancedTo !== 'answered' || answeredLeg.authoritative !== false) {
+  throw new Error(`A reported answer was not recorded as a non-authoritative advance: ${JSON.stringify(answeredLeg)}`);
+}
+const legAnsweredRow = await db.query(`select status,answered_at,metadata->>'answered_at_source' as source from public.calls where id=$1`, [legCall.callId]);
+if (
+  legAnsweredRow.rows[0].status !== 'answered'
+  || legAnsweredRow.rows[0].answered_at === null
+  || legAnsweredRow.rows[0].source !== 'webphone_client'
+) {
+  throw new Error(`A reported answer did not fill answered_at with its provenance: ${JSON.stringify(legAnsweredRow.rows[0])}`);
+}
+// Every client row is labelled, so reconciliation can always tell a browser's
+// word from the provider's.
+const legEvents = await db.query(`
+  select count(*)::int as total, count(*) filter (where payload->>'source'='client_reported')::int as labelled
+  from public.call_events where call_id=$1 and event_type like 'webphone.leg.%'
+`, [legCall.callId]);
+if (legEvents.rows[0].total !== 2 || legEvents.rows[0].labelled !== 2) {
+  throw new Error(`Client-reported leg events are not all labelled: ${JSON.stringify(legEvents.rows[0])}`);
+}
+
+// Ending an answered call frees the seat but must not write an outcome.
+const endedAnsweredLeg = (await db.query(`select public.record_webphone_leg_event($1,$2,'ended',now()) as result`, [legCall.callId, legSession.sessionId])).rows[0].result;
+if (endedAnsweredLeg.attemptReleased !== true || endedAnsweredLeg.advancedTo !== null) {
+  throw new Error(`Ending an answered leg wrote an outcome the provider owns: ${JSON.stringify(endedAnsweredLeg)}`);
+}
+const answeredAfterEnd = await db.query(`select status,ended_at from public.calls where id=$1`, [legCall.callId]);
+if (answeredAfterEnd.rows[0].status !== 'answered' || answeredAfterEnd.rows[0].ended_at !== null) {
+  throw new Error(`A client ended an answered call instead of leaving it to the provider: ${JSON.stringify(answeredAfterEnd.rows[0])}`);
+}
+// And the provider's own outcome still lands afterwards, which is why the row
+// was left open.
+await db.exec(`update public.calls set status='completed',ended_at=now(),duration_seconds=94 where id='${legCall.callId}'`);
+const providerAfterLeg = await db.query(`select status,duration_seconds from public.calls where id=$1`, [legCall.callId]);
+if (providerAfterLeg.rows[0].status !== 'completed' || providerAfterLeg.rows[0].duration_seconds !== 94) {
+  throw new Error(`The provider outcome could not land after a client leg report: ${JSON.stringify(providerAfterLeg.rows[0])}`);
+}
+
+// An unanswered call is a different claim: nothing is lost by closing it,
+// because there was never a duration or an outcome to lose.
+const unansweredCall = (await db.query(`
+  select public.rinkel_reserve_platform_outbound_call(
+    '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
+    gen_random_uuid(),'webphone-leg-unanswered','customer_service'
+  ) as result
+`)).rows[0].result;
+const endedUnansweredLeg = (await db.query(`select public.record_webphone_leg_event($1,$2,'ended',now()) as result`, [unansweredCall.callId, legSession.sessionId])).rows[0].result;
+if (endedUnansweredLeg.advancedTo !== 'unanswered' || endedUnansweredLeg.attemptReleased !== true) {
+  throw new Error(`Ending an unanswered leg did not close the call: ${JSON.stringify(endedUnansweredLeg)}`);
+}
+// The seat is free again straight away, which is the point of reporting at all.
+const dialAfterLeg = (await db.query(`
+  select public.rinkel_reserve_platform_outbound_call(
+    '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
+    gen_random_uuid(),'webphone-leg-next','customer_service'
+  ) as result
+`)).rows[0].result;
+if (!dialAfterLeg.callId || dialAfterLeg.callId === unansweredCall.callId) {
+  throw new Error(`Reporting the leg end did not free the seller to dial again: ${JSON.stringify(dialAfterLeg)}`);
+}
+await db.exec(`
+  update public.rinkel_call_attempts_v2 set status='completed' where call_id='${dialAfterLeg.callId}';
+  select public.close_webphone_session('${legSession.sessionId}','klar');
+`);
+console.log("Executed the webphone leg report: a foreign session is refused, the first event binds the attempt so the sweeper can see the leg, a reported answer fills answered_at with its provenance, every client row is labelled, ending an answered call frees the seat without writing the provider's outcome, and ending an unanswered one closes it.");
+
+
 
 await db.exec(`
   update public.rinkel_number_allocations set status='revoked',valid_to=now()

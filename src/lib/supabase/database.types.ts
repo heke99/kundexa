@@ -15039,6 +15039,15 @@ export type Database = {
         }
         Returns: Json
       }
+      record_webphone_leg_event: {
+        Args: {
+          p_call_id: string
+          p_event: string
+          p_occurred_at?: string
+          p_session_id: string
+        }
+        Returns: Json
+      }
       refresh_due_dynamic_customer_lists: {
         Args: { p_limit?: number }
         Returns: Json

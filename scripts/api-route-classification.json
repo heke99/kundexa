@@ -139,6 +139,10 @@
     "classification": "internal",
     "reason": "Liveness for the signed-in seller's own webphone registration; the session is resolved from auth.uid() and means nothing to another caller"
   },
+  "/telephony/webphone/leg": {
+    "classification": "internal",
+    "reason": "The signed-in seller's own browser reporting its call leg; it is never authoritative and means nothing from another caller"
+  },
   "/telephony/webphone/session": {
     "classification": "internal",
     "reason": "Mints short-lived SIP credentials for the signed-in seller's own browser; publishing it would invite callers to request credentials they cannot use"
