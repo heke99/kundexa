@@ -236,10 +236,14 @@ export function RinkelDialer({
       <dt>Kunden ser</dt>
       <dd>{rinkel.dialPath.callerIdNumber ?? "—"}</dd>
       <dt>Ringer upp dig</dt>
+      {/* Never name a webphone here. Kundexa has none — no SIP, no WebRTC — and
+          the provider's `muteOtherDevicesOnWebphone` only silences the other
+          devices while one is online. A correct dial policy therefore does not
+          mean the call rings in the browser; it rings the phone on the seat, and
+          saying otherwise is the same false claim this change removed from the
+          warning one line below. */}
       <dd>
-        {rinkel.dialPath.dialPathCorrect
-          ? "Webbtelefonen"
-          : rinkel.dialPath.deviceRingsPhone ?? "Webbtelefonen"}
+        {rinkel.dialPath.deviceRingsPhone ?? "Telefonienheten på din plats"}
         {rinkel.dialPath.providerUserName ? ` · ${rinkel.dialPath.providerUserName}` : ""}
       </dd>
     </dl> : null}

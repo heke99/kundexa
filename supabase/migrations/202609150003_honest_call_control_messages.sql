@@ -106,7 +106,10 @@ begin
   -- Den enda halvan rättningen faktiskt kan ändra: vilket nummer kunden ser.
   -- `false` betyder fel nummer; `null` betyder att företaget inte har någon
   -- nummertilldelning alls, och då finns inget att peka platsen på.
-  v_number_wrong := (v_state->>'outboundNumberMatches') = 'false';
+  -- coalesce, inte bara jämförelsen: har företaget ingen nummertilldelning alls
+  -- är `outboundNumberMatches` null, och utan det här hade `repairChangesAnything`
+  -- blivit en tredje sanningsvärde som klienten fått tolka själv.
+  v_number_wrong := coalesce((v_state->>'outboundNumberMatches') = 'false', false);
 
   return jsonb_build_object(
     'mapped', true,

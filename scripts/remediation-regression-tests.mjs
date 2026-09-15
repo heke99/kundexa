@@ -795,3 +795,22 @@ console.log("A skipped Edge Function deploy fails the run instead of passing as 
     "a failed issuer lookup must raise rather than silently fall back to the tenant name");
 }
 console.log("Contract e-mail is sent in the name of the legal entity that issued the contract.");
+
+// Kundexa contains no webphone — no SIP, no WebRTC, no audio — and the provider's
+// muteOtherDevicesOnWebphone only silences other devices while one is online. So a
+// correct dial policy does not mean the call rings in the browser: it rings the
+// phone on the seat. Telling the seller "Webbtelefonen" is the same false claim
+// that was just removed from the warning beneath it, and with the warning gone
+// there would be nothing left to contradict it.
+{
+  const { readFileSync } = await import("node:fs");
+  const base = new URL("..", import.meta.url).pathname;
+  for (const file of ["src/components/rinkel-dialer.tsx", "src/components/list-dialer-workspace.tsx"]) {
+    const source = readFileSync(base + file, "utf8");
+    const claims = source.split("\n").filter((line) =>
+      /["'`]Webbtelefonen/.test(line) && !line.trimStart().startsWith("//") && !line.trimStart().startsWith("*"));
+    assert.deepEqual(claims, [],
+      `${file} tells the seller the call rings a webphone that does not exist:\n${claims.join("\n")}`);
+  }
+}
+console.log("No dialer claims the call rings a webphone Kundexa does not have.");
