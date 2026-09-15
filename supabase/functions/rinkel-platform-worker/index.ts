@@ -583,6 +583,17 @@ async function processReconciliation() {
   });
   if (releaseError) throw new Error(releaseError.message);
 
+  // The webphone's own leg is a different claim, and a much stronger one. A browser
+  // that has stopped sending heartbeats is not a call whose outcome is merely late:
+  // the browser *was* the call leg, so the audio is already gone. Ninety seconds of
+  // silence is therefore enough, where the bound above needs an hour. This touches
+  // only attempts carrying a webphone_session_id, never a provider /dial attempt.
+  const { error: webphoneReleaseError } = await supabase.rpc("release_lost_webphone_sessions", {
+    p_max_silence: "00:01:30",
+    p_limit: 200,
+  });
+  if (webphoneReleaseError) throw new Error(webphoneReleaseError.message);
+
   const incompleteQuery = () => supabase.from("calls")
     .select("id,tenant_id,external_call_id,created_at")
     .eq("provider", "rinkel")

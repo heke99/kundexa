@@ -30,6 +30,19 @@ const ipAllowlistSchema = z.string().default("82.199.77.220,188.122.73.177").tra
   return addresses;
 });
 
+// stun:/turns:-adresser, kommaseparerade. Tom lista är giltigt: den betyder att
+// webbtelefonen inte är uppsatt än, och det ska sägas som ett nej i gränssnittet
+// och inte som ett startfel i hela appen.
+const urlListSchema = z.string().default("").transform((value, context) => {
+  const urls = [...new Set(value.split(",").map((entry) => entry.trim()).filter(Boolean))];
+  const invalid = urls.find((entry) => !/^(stun|stuns|turn|turns):/i.test(entry));
+  if (invalid) {
+    context.addIssue({ code: "custom", message: `Ogiltig STUN/TURN-adress: ${invalid}` });
+    return z.NEVER;
+  }
+  return urls;
+});
+
 function isDeployedRuntime() {
   // VERCEL_ENV/NODE_ENV are server-only, so this is false in the browser and the
   // deployment guards below apply exactly where the value is actually used to
@@ -146,6 +159,15 @@ const serverSchema = publicObject.extend({
   RINKEL_ENFORCE_WEBHOOK_IP_ALLOWLIST: z.enum(["true", "false"]).default("true").transform((value) => value === "true"),
   RINKEL_TRUST_X_REAL_IP: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
   RINKEL_RECONCILIATION_ENABLED: z.enum(["true", "false"]).default("true").transform((value) => value === "true"),
+  // Webbtelefonen. STUN räcker för att hitta sin egen adress; TURN är det som
+  // faktiskt bär ljudet igenom en företagsbrandvägg, och utan relä blir felet
+  // "kunden hör mig inte" i stället för ett ärligt fel vid uppkoppling.
+  WEBPHONE_STUN_URLS: urlListSchema,
+  WEBPHONE_TURN_URLS: urlListSchema,
+  // Den delade TURN-hemligheten lämnar aldrig servern; webbläsaren får bara en
+  // tidsstämplad signatur räknad ur den.
+  WEBPHONE_TURN_SECRET: z.string().min(20).optional(),
+  WEBPHONE_CREDENTIAL_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(600),
 }).superRefine((env, context) => {
   if (env.RESEND_API_KEY && !env.DEFAULT_EMAIL_FROM_ADDRESS) {
     context.addIssue({ code: "custom", path: ["DEFAULT_EMAIL_FROM_ADDRESS"], message: "Plattformshanterad Resend kräver en verifierad avsändaradress." });
@@ -196,5 +218,9 @@ export function serverEnv() {
     RINKEL_ENFORCE_WEBHOOK_IP_ALLOWLIST: process.env.RINKEL_ENFORCE_WEBHOOK_IP_ALLOWLIST ?? "true",
     RINKEL_TRUST_X_REAL_IP: process.env.RINKEL_TRUST_X_REAL_IP ?? "false",
     RINKEL_RECONCILIATION_ENABLED: process.env.RINKEL_RECONCILIATION_ENABLED ?? "true",
+    WEBPHONE_STUN_URLS: process.env.WEBPHONE_STUN_URLS ?? "",
+    WEBPHONE_TURN_URLS: process.env.WEBPHONE_TURN_URLS ?? "",
+    WEBPHONE_TURN_SECRET: process.env.WEBPHONE_TURN_SECRET,
+    WEBPHONE_CREDENTIAL_TTL_SECONDS: process.env.WEBPHONE_CREDENTIAL_TTL_SECONDS ?? "600",
   });
 }
