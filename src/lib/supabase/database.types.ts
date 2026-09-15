@@ -143,24 +143,10 @@ export type Database = {
             referencedColumns: ["tenant_id", "id"]
           },
           {
-            foreignKeyName: "activities_tenant_id_contract_id_fkey"
-            columns: ["tenant_id", "contract_id"]
-            isOneToOne: false
-            referencedRelation: "contracts"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
             foreignKeyName: "activities_tenant_id_customer_id_fkey"
             columns: ["tenant_id", "customer_id"]
             isOneToOne: false
             referencedRelation: "customers"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "activities_tenant_id_deal_id_fkey"
-            columns: ["tenant_id", "deal_id"]
-            isOneToOne: false
-            referencedRelation: "deals"
             referencedColumns: ["tenant_id", "id"]
           },
           {
@@ -1236,13 +1222,6 @@ export type Database = {
             referencedColumns: ["tenant_id", "id"]
           },
           {
-            foreignKeyName: "calls_tenant_id_customer_id_fkey"
-            columns: ["tenant_id", "customer_id"]
-            isOneToOne: false
-            referencedRelation: "customers"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
             foreignKeyName: "calls_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
@@ -2203,13 +2182,6 @@ export type Database = {
             referencedColumns: ["tenant_id", "id"]
           },
           {
-            foreignKeyName: "contract_documents_tenant_id_contract_id_fkey"
-            columns: ["tenant_id", "contract_id"]
-            isOneToOne: false
-            referencedRelation: "contracts"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
             foreignKeyName: "contract_documents_tenant_id_contract_version_id_fkey"
             columns: ["tenant_id", "contract_version_id"]
             isOneToOne: false
@@ -2752,13 +2724,6 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "contract_versions_contract_tenant_fk"
-            columns: ["tenant_id", "contract_id"]
-            isOneToOne: false
-            referencedRelation: "contracts"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "contract_versions_tenant_id_contract_id_fkey"
             columns: ["tenant_id", "contract_id"]
             isOneToOne: false
             referencedRelation: "contracts"
@@ -4776,20 +4741,6 @@ export type Database = {
           },
           {
             foreignKeyName: "email_messages_customer_tenant_fk"
-            columns: ["tenant_id", "customer_id"]
-            isOneToOne: false
-            referencedRelation: "customers"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "email_messages_tenant_id_contract_id_fkey"
-            columns: ["tenant_id", "contract_id"]
-            isOneToOne: false
-            referencedRelation: "contracts"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "email_messages_tenant_id_customer_id_fkey"
             columns: ["tenant_id", "customer_id"]
             isOneToOne: false
             referencedRelation: "customers"
@@ -10032,6 +9983,7 @@ export type Database = {
           tenant_id: string
           updated_at: string
           user_allocation_id: string
+          webphone_session_id: string | null
         }
         Insert: {
           call_id: string
@@ -10064,6 +10016,7 @@ export type Database = {
           tenant_id: string
           updated_at?: string
           user_allocation_id: string
+          webphone_session_id?: string | null
         }
         Update: {
           call_id?: string
@@ -10096,6 +10049,7 @@ export type Database = {
           tenant_id?: string
           updated_at?: string
           user_allocation_id?: string
+          webphone_session_id?: string | null
         }
         Relationships: [
           {
@@ -10173,6 +10127,13 @@ export type Database = {
             columns: ["tenant_id", "user_allocation_id"]
             isOneToOne: false
             referencedRelation: "rinkel_user_allocations"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "rinkel_call_attempts_v2_webphone_session_tenant_fk"
+            columns: ["tenant_id", "webphone_session_id"]
+            isOneToOne: false
+            referencedRelation: "webphone_sessions"
             referencedColumns: ["tenant_id", "id"]
           },
         ]
@@ -11753,24 +11714,10 @@ export type Database = {
             referencedColumns: ["tenant_id", "id"]
           },
           {
-            foreignKeyName: "sms_messages_tenant_id_contract_id_fkey"
-            columns: ["tenant_id", "contract_id"]
-            isOneToOne: false
-            referencedRelation: "contracts"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
             foreignKeyName: "sms_messages_tenant_id_conversation_id_fkey"
             columns: ["tenant_id", "conversation_id"]
             isOneToOne: false
             referencedRelation: "sms_conversations"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "sms_messages_tenant_id_customer_id_fkey"
-            columns: ["tenant_id", "customer_id"]
-            isOneToOne: false
-            referencedRelation: "customers"
             referencedColumns: ["tenant_id", "id"]
           },
           {
@@ -12682,6 +12629,13 @@ export type Database = {
             referencedRelation: "tenants"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "tenant_memberships_user_profile_fk"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
         ]
       }
       tenant_settings: {
@@ -12973,6 +12927,72 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "webhook_endpoints_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      webphone_sessions: {
+        Row: {
+          close_reason: string | null
+          closed_at: string | null
+          created_at: string
+          id: string
+          last_heartbeat_at: string
+          provider: string
+          registered_at: string | null
+          registration_id: string | null
+          seller_user_id: string
+          started_at: string
+          status: string
+          tenant_id: string
+          updated_at: string
+          user_agent: string | null
+        }
+        Insert: {
+          close_reason?: string | null
+          closed_at?: string | null
+          created_at?: string
+          id?: string
+          last_heartbeat_at?: string
+          provider: string
+          registered_at?: string | null
+          registration_id?: string | null
+          seller_user_id: string
+          started_at?: string
+          status?: string
+          tenant_id: string
+          updated_at?: string
+          user_agent?: string | null
+        }
+        Update: {
+          close_reason?: string | null
+          closed_at?: string | null
+          created_at?: string
+          id?: string
+          last_heartbeat_at?: string
+          provider?: string
+          registered_at?: string | null
+          registration_id?: string | null
+          seller_user_id?: string
+          started_at?: string
+          status?: string
+          tenant_id?: string
+          updated_at?: string
+          user_agent?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "webphone_sessions_seller_user_id_fkey"
+            columns: ["seller_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "webphone_sessions_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
@@ -13585,6 +13605,14 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      close_webphone_session: {
+        Args: { p_reason?: string; p_session_id: string }
+        Returns: Json
+      }
+      close_webphone_session_internal: {
+        Args: { p_reason: string; p_session_id: string; p_status: string }
+        Returns: number
+      }
       complete_customer_callback: {
         Args: { p_activity_id: string; p_notes?: string }
         Returns: undefined
@@ -13751,7 +13779,13 @@ export type Database = {
           audience: string
           contract_number: string
           created_at: string
+          customer_email: string
+          customer_id: string
           customer_name: string
+          customer_organization_number: string
+          customer_phone: string
+          customer_type: string
+          deletable: boolean
           expires_at: string
           id: string
           latest_delivery_channel: string
@@ -14471,6 +14505,10 @@ export type Database = {
         Args: { p_lat1: number; p_lat2: number; p_lon1: number; p_lon2: number }
         Returns: number
       }
+      heartbeat_webphone_session: {
+        Args: { p_registration_id?: string; p_session_id: string }
+        Returns: Json
+      }
       import_run_duplicate_report: {
         Args: { p_import_run_id: string }
         Returns: {
@@ -14593,6 +14631,10 @@ export type Database = {
       }
       normalize_master_entity_geography: {
         Args: { p_entity_id: string }
+        Returns: Json
+      }
+      open_webphone_session: {
+        Args: { p_provider: string; p_user_agent?: string }
         Returns: Json
       }
       populate_geometry_columns:
@@ -15050,6 +15092,10 @@ export type Database = {
         Args: { p_reason?: string; p_session_id: string }
         Returns: undefined
       }
+      release_lost_webphone_sessions: {
+        Args: { p_limit?: number; p_max_silence?: string }
+        Returns: Json
+      }
       remove_managed_team_member: {
         Args: { p_team_id: string; p_user_id: string }
         Returns: undefined
@@ -15182,6 +15228,10 @@ export type Database = {
           p_resource_type: string
         }
         Returns: undefined
+      }
+      rinkel_attempt_holds_seat: {
+        Args: { p_status: string }
+        Returns: boolean
       }
       rinkel_effective_provider_device: {
         Args: { p_rinkel_user_id: string; p_selected_device_id?: string }
