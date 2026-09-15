@@ -663,3 +663,121 @@ export async function activateContract(form: FormData) {
   revalidatePath(`/app/contracts/${contractId}`);
   revalidatePath("/app/contracts");
 }
+
+/**
+ * Statuses a contract can no longer be withdrawn from. An accepted or signed
+ * agreement is a concluded one: cancelling it in the register would not undo
+ * what the customer agreed to, it would only make the record disagree with
+ * reality. Those are terminated through their own flow, not here.
+ */
+const CONCLUDED_CONTRACT_STATUSES = ["accepted", "signed", "active", "terminated", "superseded"] as const;
+
+export async function cancelContract(form: FormData) {
+  const ctx = await getAppContext();
+  assertPermission(ctx.role, "contracts.write");
+  const contractId = z.uuid().parse(value(form, "contract_id"));
+  const back = value(form, "return_to") || "/app/contracts";
+  const admin = createAdminClient();
+
+  const { data: contract, error: readError } = await admin.from("contracts")
+    .select("id,status,contract_number").eq("tenant_id", ctx.tenantId).eq("id", contractId).maybeSingle();
+  if (readError) redirect(`${back}?error=${encodeURIComponent("Avtalet kunde inte läsas. Försök igen.")}`);
+  if (!contract) redirect(`${back}?error=${encodeURIComponent("Avtalet finns inte.")}`);
+  if (contract.status === "cancelled") redirect(`${back}?message=${encodeURIComponent(`${contract.contract_number} är redan avbrutet.`)}`);
+  if ((CONCLUDED_CONTRACT_STATUSES as readonly string[]).includes(contract.status)) {
+    redirect(`${back}?error=${encodeURIComponent(`${contract.contract_number} är redan ingånget och kan inte avbrytas.`)}`);
+  }
+
+  // The customer is holding a live link. Killing the acceptance request and the
+  // queued reminders is the part that actually reaches them; leaving them would
+  // let someone accept a contract the seller has withdrawn.
+  const { data: requests, error: requestError } = await admin.from("contract_acceptance_requests")
+    .select("id").eq("tenant_id", ctx.tenantId).eq("contract_id", contractId).eq("status", "pending");
+  if (requestError) redirect(`${back}?error=${encodeURIComponent("Acceptbegäran kunde inte läsas. Inget avbröts.")}`);
+  for (const request of requests ?? []) {
+    const { error } = await admin.rpc("cancel_contract_reminders", { p_acceptance_request_id: request.id, p_reason: "contract_cancelled" });
+    if (error) redirect(`${back}?error=${encodeURIComponent(error.message)}`);
+  }
+  if (requests?.length) {
+    const { error: closeError } = await admin.from("contract_acceptance_requests")
+      .update({ status: "cancelled" }).eq("tenant_id", ctx.tenantId).eq("contract_id", contractId).eq("status", "pending");
+    if (closeError) redirect(`${back}?error=${encodeURIComponent("Acceptlänken kunde inte stängas. Avtalet är inte avbrutet.")}`);
+  }
+
+  const { error: cancelError } = await admin.from("contracts")
+    .update({ status: "cancelled" }).eq("tenant_id", ctx.tenantId).eq("id", contractId);
+  if (cancelError) redirect(`${back}?error=${encodeURIComponent(cancelError.message)}`);
+
+  const now = new Date().toISOString();
+  await admin.from("audit_logs").insert({ tenant_id: ctx.tenantId, actor_user_id: ctx.userId, action: "contract.cancelled", entity_type: "contract", entity_id: contractId, before_data: { status: contract.status }, after_data: { status: "cancelled", cancelled_at: now } });
+  await admin.from("contract_events").insert({ tenant_id: ctx.tenantId, contract_id: contractId, event_type: "contract.cancelled", actor_user_id: ctx.userId, payload: { previous_status: contract.status, cancelled_at: now } });
+  revalidatePath("/app/contracts");
+  revalidatePath(`/app/contracts/${contractId}`);
+  redirect(`${back}?message=${encodeURIComponent(`${contract.contract_number} är avbrutet. Acceptlänken gäller inte längre.`)}`);
+}
+
+/**
+ * Deletion is deliberately narrow, and the database is the one enforcing it:
+ * `contracts_admin_delete` admits only a tenant admin, and only a contract in
+ * `draft` or `cancelled`. Anything that was sent and answered is a business
+ * record with an evidence package behind it, and destroying it would leave the
+ * acceptance without the agreement it belongs to.
+ *
+ * The audit row is written before the delete, because afterwards there is no
+ * contract left to describe.
+ */
+export async function deleteContract(form: FormData) {
+  const ctx = await getAppContext();
+  assertPermission(ctx.role, "contracts.write");
+  const contractId = z.uuid().parse(value(form, "contract_id"));
+  const back = value(form, "return_to") || "/app/contracts";
+  const admin = createAdminClient();
+
+  const { data: contract, error: readError } = await admin.from("contracts")
+    .select("id,status,contract_number,title,customer_id,owner_user_id").eq("tenant_id", ctx.tenantId).eq("id", contractId).maybeSingle();
+  if (readError) redirect(`${back}?error=${encodeURIComponent("Avtalet kunde inte läsas. Inget raderades.")}`);
+  if (!contract) redirect(`${back}?error=${encodeURIComponent("Avtalet finns inte.")}`);
+  if (!["owner", "admin"].includes(ctx.role)) {
+    redirect(`${back}?error=${encodeURIComponent("Endast ägare och administratör kan radera avtal.")}`);
+  }
+  if (!["draft", "cancelled"].includes(contract.status)) {
+    redirect(`${back}?error=${encodeURIComponent(`${contract.contract_number} är ${contract.status} och kan inte raderas. Avbryt det först — ett ingånget avtal kan aldrig raderas.`)}`);
+  }
+
+  // Six child tables refuse the delete on purpose: they are the record of what
+  // was sent and what the customer answered. Asking them first turns a raw
+  // foreign-key constraint name into a sentence that says which record is in
+  // the way — and stops the button from promising something the database will
+  // not do.
+  const blockers: Array<{ table: "contract_acceptance_requests" | "contract_acceptances" | "contract_deliveries" | "evidence_packages" | "email_messages" | "sms_messages"; label: string }> = [
+    { table: "contract_acceptance_requests", label: "en acceptbegäran" },
+    { table: "contract_acceptances", label: "en registrerad acceptans" },
+    { table: "contract_deliveries", label: "ett utskick" },
+    { table: "evidence_packages", label: "ett bevispaket" },
+    { table: "email_messages", label: "ett e-postmeddelande" },
+    { table: "sms_messages", label: "ett SMS" },
+  ];
+  const found: string[] = [];
+  for (const blocker of blockers) {
+    const { count, error } = await admin.from(blocker.table)
+      .select("id", { count: "exact", head: true })
+      .eq("tenant_id", ctx.tenantId).eq("contract_id", contractId);
+    if (error) redirect(`${back}?error=${encodeURIComponent("Kunde inte kontrollera avtalets historik. Inget raderades.")}`);
+    if ((count ?? 0) > 0) found.push(blocker.label);
+  }
+  if (found.length) {
+    redirect(`${back}?error=${encodeURIComponent(`${contract.contract_number} har ${found.join(", ")} kopplat till sig och kan därför inte raderas. Historiken över vad som skickats och besvarats får inte förstöras.`)}`);
+  }
+
+  await admin.from("audit_logs").insert({
+    tenant_id: ctx.tenantId, actor_user_id: ctx.userId, action: "contract.deleted",
+    entity_type: "contract", entity_id: contractId,
+    before_data: { contract_number: contract.contract_number, title: contract.title, status: contract.status, customer_id: contract.customer_id, owner_user_id: contract.owner_user_id },
+  });
+
+  const { error: deleteError } = await admin.from("contracts").delete().eq("tenant_id", ctx.tenantId).eq("id", contractId);
+  if (deleteError) redirect(`${back}?error=${encodeURIComponent(deleteError.message)}`);
+
+  revalidatePath("/app/contracts");
+  redirect(`${back}?message=${encodeURIComponent(`${contract.contract_number} är raderat.`)}`);
+}

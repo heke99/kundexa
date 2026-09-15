@@ -125,5 +125,22 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
     ? projection.data as Record<string, unknown>
     : {};
   const applied = projectionResult.applied === true;
+
+  // Nothing here ever wrote "processed", so every handled event stayed at
+  // "received" and the duplicate short-circuit above — which only recognises
+  // "processed" and "ignored" — could never fire. The dedupe machinery existed
+  // and did nothing, and the events table read as though none had been handled.
+  // The inbound 46elks route already closes its events this way.
+  //
+  // A declined projection still counts as handled: the RPC looked at the event
+  // and decided not to apply it, most often because a later state already
+  // arrived. Its reason is kept so that decision stays inspectable.
+  const { error: closeError } = await admin.from("provider_webhook_events").update({
+    status: "processed",
+    processed_at: new Date().toISOString(),
+    last_error: applied ? null : `not_applied:${String(projectionResult.reason ?? "unknown").slice(0, 200)}`,
+  }).eq("id", event.id);
+  if (closeError) console.error("resend_webhook_event_close_failed", { eventId: event.id, code: closeError.code ?? null });
+
   return Response.json({ ok: true, applied, projectionReason: projectionResult.reason ?? null });
 }

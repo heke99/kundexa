@@ -1,4 +1,7 @@
 import { ok } from "@/lib/supabase/read";
+import { getAppContext } from "@/lib/auth";
+import { can } from "@/lib/permissions";
+import { cancelContract, deleteContract } from "@/app/actions/contracts";
 import Link from "next/link";
 import { FileSignature, Plus } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
@@ -30,15 +33,37 @@ type Search = {
 type ContractRegistryRow = {
   id: string; contract_number: string; title: string; status: ContractStatus; audience: string; source_call_id: string | null;
   owner_user_id: string | null; team_id: string | null; product_id: string | null; expires_at: string | null; created_at: string; updated_at: string;
-  customer_name: string; product_name: string | null; latest_delivery_status: string | null; latest_delivery_channel: string | null;
+  customer_id: string; customer_name: string; customer_email: string | null; customer_phone: string | null;
+  customer_type: string | null; customer_organization_number: string | null; deletable: boolean;
+  product_name: string | null; latest_delivery_status: string | null; latest_delivery_channel: string | null;
   latest_delivery_failure: string | null; reminders_sent: number; reminders_overdue: number;
 };
+
+const quickViews: Array<{ label: string; status: string }> = [
+  { label: "Alla", status: "" },
+  { label: "Utkast", status: "draft" },
+  { label: "Väntar på svar", status: "sent" },
+  { label: "Signerade", status: "signed" },
+  { label: "Aktiva", status: "active" },
+];
+
+// Concluded: the customer has agreed, so there is nothing left to withdraw.
+const concludedStatuses = new Set(["accepted", "signed", "active", "terminated", "superseded"]);
+// The same window `sendContract` accepts — anything else has either not been
+// built yet or has already been answered.
+const resendableStatuses = new Set(["ready", "sent", "delivered", "opened", "expired"]);
 
 const PAGE_SIZE = 100;
 
 export default async function ContractsPage({ searchParams }: { searchParams: Promise<Search> }) {
   const params = await searchParams;
-  const supabase = await createClient();
+  const [supabase, ctx] = await Promise.all([createClient(), getAppContext()]);
+  const mayWrite = can(ctx.role, "contracts.write");
+  const maySend = can(ctx.role, "contracts.send");
+  // Deletion is a tenant-admin act and the database enforces it too
+  // (`contracts_admin_delete`). Showing the button to anyone else would offer
+  // something the row-level policy refuses.
+  const mayDelete = ["owner", "admin"].includes(ctx.role);
   const [{ data: members }, { data: teams }, { data: products }] = await Promise.all([
     ok(supabase.from("tenant_memberships").select("user_id,profiles:user_id(full_name)").eq("status", "active").order("created_at")),
     ok(supabase.from("teams").select("id,name").eq("status", "active").order("name")),
@@ -82,6 +107,15 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
     <PageHeader title="Avtal" description="Spårbara avtalsversioner med källsamtal, kanonisk PDF, leveransstatus och påminnelser." action={<Link href="/app/contracts/new" className="button button-primary"><Plus size={16} /> Nytt avtal</Link>} />
     {params.error ? <p className="form-error">{params.error}</p> : null}
     {params.message ? <p className="notice">{params.message}</p> : null}
+    {/* The status dropdown covers all fourteen statuses; these five are the
+        questions people actually arrive with, so they get one click. */}
+    <div className="tabs" role="navigation" aria-label="Snabbfilter för status">
+      {quickViews.map((view) => {
+        const active = (params.status ?? "") === view.status;
+        return <Link key={view.label} href={view.status ? `/app/contracts?status=${view.status}` : "/app/contracts"}
+          className={active ? "tab active" : "tab"} aria-current={active ? "page" : undefined}>{view.label}</Link>;
+      })}
+    </div>
     <Card style={{ marginBottom: 16 }}><CardContent><form method="get" className="form-stack">
       <div className="grid grid-2"><Field label="Sök avtal eller kund" name="q" defaultValue={params.q ?? ""} placeholder="Avtalsnummer, titel eller kund" />
         <SelectField label="Status" name="status" defaultValue={params.status ?? ""}><option value="">Alla statusar</option>{Object.entries(statusLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</SelectField></div>
@@ -96,18 +130,48 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
       <div><button className="button button-secondary">Filtrera</button> <Link href="/app/contracts" className="button button-ghost">Rensa</Link></div>
     </form></CardContent></Card>
     <Card><CardHeader><h2><FileSignature size={17} /> Avtalsregister</h2><Badge>{filteredContracts.length}</Badge></CardHeader><CardContent style={{ padding: 0 }}>
-      <DataTable headers={["Avtal", "Kund", "Produkt", "Säljare / team", "Källsamtal", "Status", "Senaste leverans", "Påminnelser", "Sista svar", "Senaste aktivitet"]}>
+      <DataTable headers={["Avtal", "Kund", "Produkt", "Säljare / team", "Källsamtal", "Status", "Senaste leverans", "Påminnelser", "Sista svar", "Senaste aktivitet", "Åtgärd"]}>
         {filteredContracts.map((contract) => {
           const stats = { sent: Number(contract.reminders_sent ?? 0), overdue: Number(contract.reminders_overdue ?? 0) };
           return <tr key={contract.id}>
             <td><Link href={`/app/contracts/${contract.id}`}><strong>{contract.contract_number}</strong><br /><span className="muted">{contract.title}</span></Link></td>
-            <td>{contract.customer_name ?? "—"}</td><td>{contract.product_name ?? "—"}</td>
+            <td>
+              <Link href={`/app/customers/${contract.customer_id}`}><strong>{contract.customer_name}</strong></Link>
+              <br /><span className="muted">
+                {contract.customer_type === "company" ? "Företag" : "Privatperson"}
+                {contract.customer_organization_number ? ` · ${contract.customer_organization_number}` : ""}
+              </span>
+              {contract.customer_email || contract.customer_phone
+                ? <><br /><span className="muted">{contract.customer_email ?? contract.customer_phone}</span></>
+                : null}
+            </td>
+            <td>{contract.product_name ?? "—"}</td>
             <td>{contract.owner_user_id ? ownerNames.get(contract.owner_user_id) ?? contract.owner_user_id : "—"}<br /><span className="muted">{contract.team_id ? teamNames.get(contract.team_id) ?? "Team" : "Inget team"}</span></td>
             <td>{contract.source_call_id ? <Badge className="badge-success">Kopplat</Badge> : <Badge className="badge-warning">Saknas</Badge>}</td>
             <td><Badge className={["accepted", "signed", "active"].includes(contract.status) ? "badge-success" : ["declined", "expired", "cancelled"].includes(contract.status) ? "badge-warning" : "badge-info"}>{statusLabel[contract.status] ?? contract.status}</Badge></td>
             <td>{contract.latest_delivery_status ? <><span>{contract.latest_delivery_channel ?? "—"}</span><br /><Badge className={["failed", "bounced", "complained", "suppressed", "dead_letter"].includes(contract.latest_delivery_status) ? "badge-warning" : ""}>{contract.latest_delivery_status}</Badge>{contract.latest_delivery_failure ? <div className="form-error">{contract.latest_delivery_failure}</div> : null}</> : "—"}</td>
             <td>{stats.sent}{stats.overdue ? <><br /><Badge className="badge-warning">{stats.overdue} förfallen</Badge></> : null}</td>
             <td>{formatDate(contract.expires_at)}</td><td>{formatDate(contract.updated_at)}</td>
+            <td><div className="toolbar-left">
+              {/* Sending again goes through the contract's own send form rather
+                  than a one-click resend: mottagare, kanal and svarsdatum are
+                  choices, and a list row cannot make them on the seller's behalf. */}
+              {maySend && resendableStatuses.has(contract.status)
+                ? <Link className="button button-secondary button-sm" href={`/app/contracts/${contract.id}`}>Skicka igen</Link>
+                : null}
+              {mayWrite && !concludedStatuses.has(contract.status) && contract.status !== "cancelled"
+                ? <form action={cancelContract}>
+                    <input type="hidden" name="contract_id" value={contract.id} />
+                    <button className="button button-ghost button-sm">Avbryt</button>
+                  </form>
+                : null}
+              {mayDelete && contract.deletable
+                ? <form action={deleteContract}>
+                    <input type="hidden" name="contract_id" value={contract.id} />
+                    <button className="button button-ghost button-sm" style={{ color: "#a72d37" }}>Radera</button>
+                  </form>
+                : null}
+            </div></td>
           </tr>;
         })}
       </DataTable>

@@ -3617,4 +3617,56 @@ if (membershipProfileLink.rows[0].links !== 1) {
 }
 console.log("Schema relationships are unambiguous and memberships resolve to profiles.");
 
+
+// Deleting a contract is narrow on purpose, and two separate things enforce it.
+// `contracts_admin_delete` limits the status to draft or cancelled; six child
+// tables then refuse the delete outright, because they are the record of what
+// was sent and what the customer answered. A contract that produced any of them
+// can never be deleted — not even after it is cancelled.
+//
+// The register computes `deletable` from exactly that, so the Radera button only
+// appears where the database will actually go through with it. Writing this test
+// is what caught the first version promising otherwise.
+{
+  await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
+  await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
+
+  const sentContract = '00000000-0000-0000-0000-000000000086';
+  const sentDelete = await db.query(`
+    with gone as (
+      delete from public.contracts
+      where id=$1 and status in ('draft','cancelled')
+      returning id
+    ) select count(*)::int as removed from gone`, [sentContract]);
+  if (Number(sentDelete.rows[0].removed) !== 0) {
+    throw new Error("A contract past draft was deletable; an answered agreement must not be destroyable.");
+  }
+
+  // Cancelling it does not make its history disappear, so it still cannot go.
+  await db.query(`update public.contracts set status='cancelled' where id=$1`, [sentContract]);
+  let cancelledStillBlocked = false;
+  try {
+    await db.query(`delete from public.contracts where id=$1`, [sentContract]);
+  } catch (error) {
+    cancelledStillBlocked = /foreign key|violates/i.test(String(error?.message ?? ""));
+  }
+  if (!cancelledStillBlocked) {
+    throw new Error("A cancelled contract with an evidence package was deleted; the record of what happened was destroyed.");
+  }
+
+  // A draft that never produced anything is the one case that may be removed.
+  await db.query(`
+    insert into public.contracts(id,tenant_id,contract_number,customer_id,owner_user_id,audience,status,title)
+    values('00000000-0000-0000-0000-0000000000d1','00000000-0000-0000-0000-000000000001','VERIFY-DRAFT-DEL',
+           '10000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000002','B2B','draft','Raderbart utkast')`);
+  const draftDelete = await db.query(`
+    with gone as (
+      delete from public.contracts where id='00000000-0000-0000-0000-0000000000d1' returning id
+    ) select count(*)::int as removed from gone`);
+  if (Number(draftDelete.rows[0].removed) !== 1) {
+    throw new Error("An untouched draft could not be deleted, so nothing can ever be cleaned up.");
+  }
+  console.log("Only an untouched draft is deletable; anything that was sent or answered stays.");
+}
+
 await db.close();

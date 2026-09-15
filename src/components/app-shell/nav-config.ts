@@ -51,7 +51,7 @@ export const navSections: NavSection[] = [
     { href: "/app/pipeline", label: "Pipeline", icon: LayoutList },
     { href: "/app/products", label: "Produkter & priser", icon: Package },
     { href: "/app/templates", label: "Avtalsmallar", icon: ScrollText },
-    { href: "/app/documents", label: "PDF-dokument", icon: FileText },
+    { href: "/app/documents", label: "PDF-arkiv", icon: FileText },
   ]},
   { id: "kommunikation", label: "Kommunikation", items: [
     { href: "/app/sms", label: "SMS", icon: MessageSquareText },

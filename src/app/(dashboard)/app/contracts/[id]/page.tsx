@@ -3,7 +3,7 @@ import Link from "next/link";
 import { ArrowLeft, Download, FileSignature, LockKeyhole, Phone, Send, Upload } from "@/components/icons";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { activateContract, cancelFutureContractReminders, extendContractExpiry, linkContractSourceCall, registerExternalContractCall, sendContract, sendContractReminder, uploadContractPdf } from "@/app/actions/contracts";
+import { activateContract, cancelContract, cancelFutureContractReminders, deleteContract, extendContractExpiry, linkContractSourceCall, registerExternalContractCall, sendContract, sendContractReminder, uploadContractPdf } from "@/app/actions/contracts";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +31,10 @@ export default async function ContractDetail({ params, searchParams }: { params:
   const mayRemind = can(ctx.role, "contracts.remind");
   const mayExtend = can(ctx.role, "contracts.manage_expiry");
   const mayActivate = can(ctx.role, "contracts.activate");
+  // Same two acts as the register offers, so the card and the list agree about
+  // what is possible rather than each having its own half.
+  const mayDelete = ["owner", "admin"].includes(ctx.role);
+  const concluded = ["accepted", "signed", "active", "terminated", "superseded"];
   const supabase = await createClient();
   // Every datetime-local field below is read back by an action that parses it with
   // `zonedLocalDateTimeToIso(..., ctx.tenantTimezone)`. Pre-filling from the
@@ -95,6 +99,29 @@ export default async function ContractDetail({ params, searchParams }: { params:
 
         {activeRequest ? <Card><CardHeader><h3>Acceptans</h3><Badge>{labels[activeRequest.status] ?? activeRequest.status}</Badge></CardHeader><CardContent><dl className="key-value"><dt>Skapad</dt><dd>{formatDate(activeRequest.created_at)}</dd><dt>Öppnad</dt><dd>{formatDate(activeRequest.opened_at)}</dd><dt>Giltig till</dt><dd>{formatDate(activeRequest.expires_at)}</dd><dt>Dokumenthash</dt><dd><code>{activeRequest.canonical_document_sha256?.slice(0, 24)}…</code></dd></dl>{mayExtend ? <form action={extendContractExpiry} className="form-stack"><input type="hidden" name="contract_id" value={id} /><Field label="Förläng sista svarsdatum" name="expires_at" type="datetime-local" defaultValue={localDateTime(activeRequest.expires_at)} required /><button className="button button-secondary">Förläng med audit</button></form> : null}</CardContent></Card> : null}
         {accepted ? <Card><CardHeader><h3><LockKeyhole size={16} /> Dokumenterad acceptans</h3><Badge className="badge-success">{labels[accepted.status] ?? accepted.status}</Badge></CardHeader><CardContent><dl className="key-value"><dt>Tidpunkt</dt><dd>{formatDate(accepted.accepted_at)}</dd><dt>Metod</dt><dd>{accepted.method}</dd><dt>Namn/fras</dt><dd>{accepted.acceptance_phrase ?? accepted.normalized_response ?? "—"}</dd><dt>IP</dt><dd>{accepted.ip_address == null ? "—" : String(accepted.ip_address)}</dd><dt>Dokumenthash</dt><dd><code>{accepted.canonical_document_sha256?.slice(0, 24)}…</code></dd></dl><p>Bevispaket: {evidence?.[0]?.status ?? "väntar"}</p>{contract.status === "accepted" && mayActivate ? <form action={activateContract}><input type="hidden" name="contract_id" value={id} /><button className="button button-primary"><LockKeyhole size={16} /> Aktivera efter beviskontroll</button></form> : null}</CardContent></Card> : null}
+        {mayWrite && (!concluded.includes(contract.status) || (mayDelete && ["draft", "cancelled"].includes(contract.status)))
+          ? <Card><CardHeader><h3>Avsluta avtalet</h3></CardHeader><CardContent>
+              {!concluded.includes(contract.status) && contract.status !== "cancelled"
+                ? <><p className="muted">Avbryter avtalet och stänger kundens acceptlänk. Historiken ligger kvar.</p>
+                    <form action={cancelContract}>
+                      <input type="hidden" name="contract_id" value={id} />
+                      <input type="hidden" name="return_to" value={`/app/contracts/${id}`} />
+                      <button className="button button-secondary">Avbryt avtalet</button>
+                    </form></>
+                : null}
+              {mayDelete && ["draft", "cancelled"].includes(contract.status)
+                ? <><p className="muted" style={{ marginTop: 14 }}>
+                      Radering går bara om avtalet aldrig skickat något. Har det utskick, acceptbegäran
+                      eller bevispaket kopplat till sig stannar det kvar — den historiken får inte förstöras.
+                    </p>
+                    <form action={deleteContract}>
+                      <input type="hidden" name="contract_id" value={id} />
+                      <input type="hidden" name="return_to" value="/app/contracts" />
+                      <button className="button button-danger">Radera avtalet</button>
+                    </form></>
+                : null}
+            </CardContent></Card>
+          : null}
       </div>
     </div>
   </>;
