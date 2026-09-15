@@ -1205,6 +1205,285 @@ await db.exec(`
 `);
 console.log("Executed ending a call: an open attempt blocks the next dial, another tenant may not end the call, ending an unanswered call closes it and frees the seat at once, ending an answered call releases only the attempt so the provider's duration still lands, and the dial path separates the phone that rings from the number the customer sees.");
 
+// --- Webbtelefonens session ---------------------------------------------
+// The browser is the call leg here, so a dead tab means dead audio and the
+// attempt must be released. The hard part is the boundary: an attempt that
+// came from the provider's own /dial has no session, and closing a tab says
+// nothing about whether that call is still live. These tests hold that line.
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
+const openedSession = await db.query(`select public.open_webphone_session('rinkel','TestAgent/1.0') as result`);
+const firstSession = openedSession.rows[0].result;
+if (!firstSession.sessionId || firstSession.status !== 'registering' || firstSession.heartbeatSeconds !== 15) {
+  throw new Error(`Opening a webphone session returned the wrong shape: ${JSON.stringify(firstSession)}`);
+}
+// `registered` must mean a SIP registration actually succeeded, not merely that
+// a tab is open. Only a heartbeat carrying a registration id may promote it.
+const beatWithoutRegistration = await db.query(`select public.heartbeat_webphone_session($1,null) as result`, [firstSession.sessionId]);
+if (beatWithoutRegistration.rows[0].result.alive !== true || beatWithoutRegistration.rows[0].result.status !== 'registering') {
+  throw new Error(`A heartbeat without a registration id wrongly promoted the session: ${JSON.stringify(beatWithoutRegistration.rows[0].result)}`);
+}
+const beatWithRegistration = await db.query(`select public.heartbeat_webphone_session($1,'sip-reg-1') as result`, [firstSession.sessionId]);
+if (beatWithRegistration.rows[0].result.status !== 'registered' || beatWithRegistration.rows[0].result.registrationId !== 'sip-reg-1') {
+  throw new Error(`A registered webphone was not recorded as registered: ${JSON.stringify(beatWithRegistration.rows[0].result)}`);
+}
+// A second tab replaces the first. Two live registrations would be two phones
+// that can both ring, which is exactly what the reservation guard exists to stop.
+const secondSession = (await db.query(`select public.open_webphone_session('rinkel',null) as result`)).rows[0].result;
+const liveSessions = await db.query(`
+  select count(*)::int as live from public.webphone_sessions
+  where seller_user_id='00000000-0000-0000-0000-000000000002' and status in ('registering','registered')
+`);
+if (liveSessions.rows[0].live !== 1) {
+  throw new Error(`A seller ended up with ${liveSessions.rows[0].live} live webphone sessions; exactly one may be live.`);
+}
+const replacedRow = await db.query(`select status,close_reason from public.webphone_sessions where id=$1`, [firstSession.sessionId]);
+if (replacedRow.rows[0].status !== 'closed') {
+  throw new Error(`Opening a new webphone session left the old one live: ${JSON.stringify(replacedRow.rows[0])}`);
+}
+// Another tenant's seller may not reach this session at all.
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000050',false)`);
+let crossTenantSessionRefused = false;
+try {
+  await db.query(`select public.close_webphone_session($1,'inte min')`, [secondSession.sessionId]);
+} catch (error) {
+  crossTenantSessionRefused = String(error).includes('webphone_session_not_found');
+}
+if (!crossTenantSessionRefused) {
+  throw new Error("A seller in another tenant was able to close this tenant's webphone session.");
+}
+// RLS only binds a non-superuser, and `set local role` lives for one
+// transaction, so the visibility probe runs inside a DO block like the others.
+await db.exec(`grant usage on schema public to authenticated;`);
+await db.query(`
+do $webphone$
+declare
+  v_foreign integer;
+  v_own integer;
+begin
+  perform set_config('request.jwt.claim.role','authenticated',true);
+  set local role authenticated;
+
+  perform set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000050',true);
+  select count(*) into v_foreign from public.webphone_sessions where id='${secondSession.sessionId}';
+  if v_foreign <> 0 then
+    raise exception 'Another tenant''s seller can read this tenant''s webphone session';
+  end if;
+
+  perform set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',true);
+  select count(*) into v_own from public.webphone_sessions where id='${secondSession.sessionId}';
+  if v_own <> 1 then
+    raise exception 'The seller could not read their own webphone session back';
+  end if;
+
+  reset role;
+end
+$webphone$;
+`);
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
+
+// A call carried by the session: closing the session releases the attempt and
+// fails the call, because the audio left with the tab.
+const webphoneCall = (await db.query(`
+  select public.rinkel_reserve_platform_outbound_call(
+    '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
+    gen_random_uuid(),'webphone-session-call','customer_service'
+  ) as result
+`)).rows[0].result;
+await db.exec(`update public.rinkel_call_attempts_v2 set webphone_session_id='${secondSession.sessionId}' where call_id='${webphoneCall.callId}'`);
+const closedCarrying = (await db.query(`select public.close_webphone_session($1,'Fliken stängdes') as result`, [secondSession.sessionId])).rows[0].result;
+if (closedCarrying.releasedAttempts !== 1) {
+  throw new Error(`Closing a webphone session did not release the attempt it carried: ${JSON.stringify(closedCarrying)}`);
+}
+const carriedRow = await db.query(`
+  select a.status attempt_status,a.error_code,c.status call_status,c.end_cause
+  from public.rinkel_call_attempts_v2 a join public.calls c on c.id=a.call_id where a.call_id=$1
+`, [webphoneCall.callId]);
+if (
+  carriedRow.rows[0].attempt_status !== 'failed'
+  || carriedRow.rows[0].error_code !== 'WEBPHONE_SESSION_ENDED'
+  || carriedRow.rows[0].call_status !== 'failed'
+  || carriedRow.rows[0].end_cause !== 'webphone_session_lost'
+) {
+  throw new Error(`A lost webphone session left the call in the wrong state: ${JSON.stringify(carriedRow.rows[0])}`);
+}
+
+// The line that matters most. A provider-side /dial attempt has no session, and
+// a closed tab is no evidence that its call ended — releasing it would let the
+// seller start a second call while the first is still connected.
+const providerCall = (await db.query(`
+  select public.rinkel_reserve_platform_outbound_call(
+    '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
+    gen_random_uuid(),'webphone-boundary-dial','customer_service'
+  ) as result
+`)).rows[0].result;
+const boundarySession = (await db.query(`select public.open_webphone_session('rinkel',null) as result`)).rows[0].result;
+const closedEmpty = (await db.query(`select public.close_webphone_session($1,'Fliken stängdes') as result`, [boundarySession.sessionId])).rows[0].result;
+if (closedEmpty.releasedAttempts !== 0) {
+  throw new Error(`Closing a webphone session released a provider /dial attempt that it never carried: ${JSON.stringify(closedEmpty)}`);
+}
+const untouched = await db.query(`select status from public.rinkel_call_attempts_v2 where call_id=$1`, [providerCall.callId]);
+if (!['requested','dial_requested','awaiting_provider_event'].includes(untouched.rows[0].status)) {
+  throw new Error(`A provider /dial attempt was released by the webphone session sweeper: ${JSON.stringify(untouched.rows[0])}`);
+}
+
+// The sweeper: only service_role, never a bound short enough that a network
+// hiccup reads as a dropped call, and it must leave the provider attempt alone.
+let sweepRequiresServiceRole = false;
+try {
+  await db.query(`select public.release_lost_webphone_sessions(interval '2 minutes',200)`);
+} catch (error) {
+  sweepRequiresServiceRole = String(error).includes('service_role_required');
+}
+if (!sweepRequiresServiceRole) {
+  throw new Error('A signed-in user was able to run the webphone session sweeper.');
+}
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+let sweepFloorHeld = false;
+try {
+  await db.query(`select public.release_lost_webphone_sessions(interval '10 seconds',200)`);
+} catch (error) {
+  sweepFloorHeld = String(error).includes('webphone_silence_bound_too_short');
+}
+if (!sweepFloorHeld) {
+  throw new Error('The webphone sweeper accepted a silence bound short enough to read a network hiccup as a dropped call.');
+}
+const silentSession = (await db.query(`
+  select set_config('request.jwt.claim.role','authenticated',false),
+         public.open_webphone_session('rinkel',null) as result
+`)).rows[0].result;
+await db.exec(`update public.rinkel_call_attempts_v2 set webphone_session_id='${silentSession.sessionId}' where call_id='${providerCall.callId}' and false`);
+await db.exec(`update public.webphone_sessions set last_heartbeat_at=now()-interval '10 minutes' where id='${silentSession.sessionId}'`);
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+const swept = (await db.query(`select public.release_lost_webphone_sessions(interval '1 minute',200) as result`)).rows[0].result;
+if (swept.sessionsClosed !== 1) {
+  throw new Error(`The webphone sweeper did not close the silent session: ${JSON.stringify(swept)}`);
+}
+const sweptRow = await db.query(`select status,close_reason from public.webphone_sessions where id=$1`, [silentSession.sessionId]);
+if (sweptRow.rows[0].status !== 'lost') {
+  throw new Error(`A silent webphone session was not marked lost: ${JSON.stringify(sweptRow.rows[0])}`);
+}
+const stillUntouched = await db.query(`select status from public.rinkel_call_attempts_v2 where call_id=$1`, [providerCall.callId]);
+if (!['requested','dial_requested','awaiting_provider_event'].includes(stillUntouched.rows[0].status)) {
+  throw new Error(`The webphone sweeper released a provider /dial attempt: ${JSON.stringify(stillUntouched.rows[0])}`);
+}
+await db.exec(`
+  select set_config('request.jwt.claim.role','authenticated',false);
+  update public.rinkel_call_attempts_v2 set status='completed' where call_id='${providerCall.callId}';
+`);
+console.log("Executed the webphone session: a registration is only registered once SIP says so, a second tab replaces the first, another tenant cannot see or close the session, a lost session releases the call leg it carried, and neither closing nor sweeping ever touches a provider /dial attempt.");
+
+// --- Webbtelefonens egen rapport om samtalsbenet -------------------------
+// The browser knows first, but it is an interested party. It may move the call
+// forward through states it genuinely sees first, and free the seat when the leg
+// dies; it may never write a final outcome onto an answered call, because the
+// duration and cause are the provider's and a terminal status here would freeze
+// the projection before they land.
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
+const legSession = (await db.query(`select public.open_webphone_session('rinkel',null) as result`)).rows[0].result;
+const legCall = (await db.query(`
+  select public.rinkel_reserve_platform_outbound_call(
+    '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
+    gen_random_uuid(),'webphone-leg-answered','customer_service'
+  ) as result
+`)).rows[0].result;
+
+// Reporting a leg for a session that is not yours is refused outright.
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000050',false)`);
+let foreignLegRefused = false;
+try {
+  await db.query(`select public.record_webphone_leg_event($1,$2,'ringing',now())`, [legCall.callId, legSession.sessionId]);
+} catch (error) {
+  foreignLegRefused = String(error).includes('webphone_session_not_found');
+}
+if (!foreignLegRefused) {
+  throw new Error("A seller in another tenant reported a call leg on this tenant's webphone session.");
+}
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
+
+// The first event binds the attempt to the session. Without that binding the
+// sweeper could not tell this leg from a provider /dial and would never release
+// it when the tab dies.
+await db.query(`select public.record_webphone_leg_event($1,$2,'ringing',now())`, [legCall.callId, legSession.sessionId]);
+const boundAttempt = await db.query(`select webphone_session_id,status from public.rinkel_call_attempts_v2 where call_id=$1`, [legCall.callId]);
+if (boundAttempt.rows[0].webphone_session_id !== legSession.sessionId) {
+  throw new Error(`The first leg event did not bind the attempt to the webphone session: ${JSON.stringify(boundAttempt.rows[0])}`);
+}
+const legRingingRow = await db.query(`select status from public.calls where id=$1`, [legCall.callId]);
+if (legRingingRow.rows[0].status !== 'ringing') {
+  throw new Error(`A reported ringing leg did not move the call to ringing: ${JSON.stringify(legRingingRow.rows[0])}`);
+}
+
+// answered_at is the whole point: it must stop depending on a webhook that may
+// never arrive, while staying honest about where it came from.
+const answeredLeg = (await db.query(`select public.record_webphone_leg_event($1,$2,'answered',now()) as result`, [legCall.callId, legSession.sessionId])).rows[0].result;
+if (answeredLeg.advancedTo !== 'answered' || answeredLeg.authoritative !== false) {
+  throw new Error(`A reported answer was not recorded as a non-authoritative advance: ${JSON.stringify(answeredLeg)}`);
+}
+const legAnsweredRow = await db.query(`select status,answered_at,metadata->>'answered_at_source' as source from public.calls where id=$1`, [legCall.callId]);
+if (
+  legAnsweredRow.rows[0].status !== 'answered'
+  || legAnsweredRow.rows[0].answered_at === null
+  || legAnsweredRow.rows[0].source !== 'webphone_client'
+) {
+  throw new Error(`A reported answer did not fill answered_at with its provenance: ${JSON.stringify(legAnsweredRow.rows[0])}`);
+}
+// Every client row is labelled, so reconciliation can always tell a browser's
+// word from the provider's.
+const legEvents = await db.query(`
+  select count(*)::int as total, count(*) filter (where payload->>'source'='client_reported')::int as labelled
+  from public.call_events where call_id=$1 and event_type like 'webphone.leg.%'
+`, [legCall.callId]);
+if (legEvents.rows[0].total !== 2 || legEvents.rows[0].labelled !== 2) {
+  throw new Error(`Client-reported leg events are not all labelled: ${JSON.stringify(legEvents.rows[0])}`);
+}
+
+// Ending an answered call frees the seat but must not write an outcome.
+const endedAnsweredLeg = (await db.query(`select public.record_webphone_leg_event($1,$2,'ended',now()) as result`, [legCall.callId, legSession.sessionId])).rows[0].result;
+if (endedAnsweredLeg.attemptReleased !== true || endedAnsweredLeg.advancedTo !== null) {
+  throw new Error(`Ending an answered leg wrote an outcome the provider owns: ${JSON.stringify(endedAnsweredLeg)}`);
+}
+const answeredAfterEnd = await db.query(`select status,ended_at from public.calls where id=$1`, [legCall.callId]);
+if (answeredAfterEnd.rows[0].status !== 'answered' || answeredAfterEnd.rows[0].ended_at !== null) {
+  throw new Error(`A client ended an answered call instead of leaving it to the provider: ${JSON.stringify(answeredAfterEnd.rows[0])}`);
+}
+// And the provider's own outcome still lands afterwards, which is why the row
+// was left open.
+await db.exec(`update public.calls set status='completed',ended_at=now(),duration_seconds=94 where id='${legCall.callId}'`);
+const providerAfterLeg = await db.query(`select status,duration_seconds from public.calls where id=$1`, [legCall.callId]);
+if (providerAfterLeg.rows[0].status !== 'completed' || providerAfterLeg.rows[0].duration_seconds !== 94) {
+  throw new Error(`The provider outcome could not land after a client leg report: ${JSON.stringify(providerAfterLeg.rows[0])}`);
+}
+
+// An unanswered call is a different claim: nothing is lost by closing it,
+// because there was never a duration or an outcome to lose.
+const unansweredCall = (await db.query(`
+  select public.rinkel_reserve_platform_outbound_call(
+    '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
+    gen_random_uuid(),'webphone-leg-unanswered','customer_service'
+  ) as result
+`)).rows[0].result;
+const endedUnansweredLeg = (await db.query(`select public.record_webphone_leg_event($1,$2,'ended',now()) as result`, [unansweredCall.callId, legSession.sessionId])).rows[0].result;
+if (endedUnansweredLeg.advancedTo !== 'unanswered' || endedUnansweredLeg.attemptReleased !== true) {
+  throw new Error(`Ending an unanswered leg did not close the call: ${JSON.stringify(endedUnansweredLeg)}`);
+}
+// The seat is free again straight away, which is the point of reporting at all.
+const dialAfterLeg = (await db.query(`
+  select public.rinkel_reserve_platform_outbound_call(
+    '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
+    gen_random_uuid(),'webphone-leg-next','customer_service'
+  ) as result
+`)).rows[0].result;
+if (!dialAfterLeg.callId || dialAfterLeg.callId === unansweredCall.callId) {
+  throw new Error(`Reporting the leg end did not free the seller to dial again: ${JSON.stringify(dialAfterLeg)}`);
+}
+await db.exec(`
+  update public.rinkel_call_attempts_v2 set status='completed' where call_id='${dialAfterLeg.callId}';
+  select public.close_webphone_session('${legSession.sessionId}','klar');
+`);
+console.log("Executed the webphone leg report: a foreign session is refused, the first event binds the attempt so the sweeper can see the leg, a reported answer fills answered_at with its provenance, every client row is labelled, ending an answered call frees the seat without writing the provider's outcome, and ending an unanswered one closes it.");
+
+
+
 await db.exec(`
   update public.rinkel_number_allocations set status='revoked',valid_to=now()
     where id='00000000-0000-0000-0000-000000000058';
