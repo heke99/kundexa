@@ -695,12 +695,18 @@ console.log("Every action redirect lands on a page that renders the parameter.")
 }
 console.log("Every page read is error-checked or wrapped in ok().");
 
-// The telephony service has no hangup endpoint — `POST /dial` is its only
-// call-control surface. A control labelled "Avsluta samtalet" therefore promises
-// something the system cannot do, and on 2026-09-15 the owner pressed it and the
-// phone went on ringing. Kundexa releases the seat; the leg is dropped on the
-// device. Explaining that in small print under the button was not enough: people
-// act on the label.
+// Knappen som avslutar samtalet.
+//
+// Regeln här var tidigare den omvända: leverantören hade ingen hangup-endpoint,
+// samtalet låg på en bordstelefon, och en knapp som lovade att avsluta det var
+// en osanning -- ägaren tryckte på den 2026-09-15 och telefonen fortsatte ringa.
+// Nu ligger samtalet i fliken och `hangupWebphone` river ned det på riktigt.
+//
+// Det som måste hålla är att knappen gör det den säger, i rätt ordning: lägg på
+// först, släpp platsen sedan. Omvänd ordning lämnar ett fönster där platsen är
+// fri medan ljudet fortfarande går, och då kan säljaren ringa nästa nummer med
+// kunden kvar i luren. Och den gamla texten om en telefon att lägga på i får
+// inte stå kvar -- den pekar på en app säljaren aldrig loggat in i.
 {
   const { readFileSync } = await import("node:fs");
   const base = new URL("..", import.meta.url).pathname;
@@ -710,16 +716,20 @@ console.log("Every page read is error-checked or wrapped in ok().");
   ];
   for (const file of dialers) {
     const source = readFileSync(base + file, "utf8");
-    assert.ok(!source.includes("Avsluta samtalet"),
-      `${file} labels a control "Avsluta samtalet", which the telephony service cannot do`);
-    // The honest pair: cancel while it is still ringing, release once answered.
-    assert.ok(source.includes("Avbryt uppringningen") && source.includes("Frigör för nästa samtal"),
-      `${file} must distinguish cancelling an unanswered dial from releasing an answered one`);
-    assert.ok(source.includes("kan inte kopplas ned härifrån"),
-      `${file} must say that the call is hung up on the device`);
+    assert.ok(!source.includes("kan inte kopplas ned härifrån"),
+      `${file} still tells the seller to hang up somewhere else; the browser is the phone now`);
+    assert.ok(!source.includes("pågår på din telefon"),
+      `${file} still points the seller at a device that no longer carries the call`);
+    assert.ok(source.includes("hangupWebphone()"),
+      `${file} releases the seat without hanging up the call the browser is carrying`);
+    const body = source.slice(source.indexOf("async function endCurrentCall"));
+    assert.ok(body.indexOf("hangupWebphone()") < body.indexOf("endCall("),
+      `${file} frees the seat before hanging up, which lets the next call start mid-conversation`);
+    assert.ok(source.includes("Avbryt uppringningen"),
+      `${file} must still distinguish cancelling a dial that is only ringing`);
   }
 }
-console.log("No dialer offers to end a call the telephony service cannot end.");
+console.log("Ending a call hangs up the browser leg first, then frees the seat.");
 
 // A commit that changes an Edge Function and does not deploy it leaves production
 // running code nobody chose. That used to pass as a warning on a green run, and

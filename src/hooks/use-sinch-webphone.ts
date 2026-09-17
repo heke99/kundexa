@@ -33,6 +33,25 @@ type SinchCredentials = {
 
 type LegEvent = "ringing" | "answered" | "ended";
 
+/**
+ * Vad det pågående samtalet faktiskt går att göra.
+ *
+ * Kontrollerat på samtalsobjektet, inte antaget. En knapp som ser ut att stänga
+ * av mikrofonen men inte gör det är värre än ingen knapp: säljaren tror att
+ * kunden inte hör henne.
+ */
+export type CallAudioCapabilities = { mute: boolean; dtmf: boolean };
+
+type ProviderCall = {
+  id: string;
+  hangup: () => void;
+  addListener: (listener: unknown) => void;
+  mute?: () => void;
+  unmute?: () => void;
+  setMuted?: (muted: boolean) => void;
+  sendDTMF?: (digit: string) => void;
+};
+
 async function postJson(url: string, body: unknown) {
   const response = await fetch(url, {
     method: "POST",
@@ -47,7 +66,9 @@ export function useSinchWebphone() {
   const [state, setState] = useState<WebphoneState>({ phase: "idle" });
   const clientRef = useRef<unknown>(null);
   const sessionRef = useRef<string | null>(null);
-  const callRef = useRef<{ id: string; hangup: () => void } | null>(null);
+  const callRef = useRef<ProviderCall | null>(null);
+  const [muted, setMutedState] = useState(false);
+  const [capabilities, setCapabilities] = useState<CallAudioCapabilities>({ mute: false, dtmf: false });
   // Registreringen startas en gång. Utan den här spärren bygger en omrendering
   // en andra klient mot samma användare, och den första tappar sin plats utan
   // att någon får veta.
@@ -164,9 +185,9 @@ export function useSinchWebphone() {
       throw new Error("webphone_not_ready");
     }
 
-    let call: { id: string; hangup: () => void; addListener: (l: unknown) => void };
+    let call: ProviderCall;
     try {
-      call = await client.callClient.callPhoneNumber(input.to) as typeof call;
+      call = await client.callClient.callPhoneNumber(input.to) as ProviderCall;
     } catch (error) {
       await postJson("/api/v1/calls/dialing", {
         callId: input.callId, attemptId: input.attemptId, outcome: "failed",
@@ -176,7 +197,12 @@ export function useSinchWebphone() {
       throw error;
     }
 
-    callRef.current = { id: call.id, hangup: () => call.hangup() };
+    callRef.current = call;
+    setMutedState(false);
+    setCapabilities({
+      mute: typeof call.setMuted === "function" || (typeof call.mute === "function" && typeof call.unmute === "function"),
+      dtmf: typeof call.sendDTMF === "function",
+    });
     setState({ phase: "calling", callId: input.callId });
 
     // Samtalets identitet hos leverantören. Utan den går inkommande ace och dice
@@ -195,6 +221,8 @@ export function useSinchWebphone() {
       onCallEstablished: () => void reportLeg(input.callId, "answered"),
       onCallEnded: () => {
         callRef.current = null;
+        setMutedState(false);
+        setCapabilities({ mute: false, dtmf: false });
         setState({ phase: "ready" });
         void reportLeg(input.callId, "ended");
       },
@@ -206,6 +234,38 @@ export function useSinchWebphone() {
   /** Lägger på. Samtalet ligger i webbläsaren, så knappen avslutar det på riktigt. */
   const hangup = useCallback(() => {
     callRef.current?.hangup();
+  }, []);
+
+  /**
+   * Stänger av mikrofonen mot kunden.
+   *
+   * Tillståndet sätts först när anropet gått igenom. Att sätta det i förväg och
+   * hoppas hade visat "mikrofonen av" för en säljare som fortfarande hörs.
+   */
+  const toggleMute = useCallback(() => {
+    const call = callRef.current;
+    if (!call) return false;
+    const next = !muted;
+    if (typeof call.setMuted === "function") call.setMuted(next);
+    else if (next && typeof call.mute === "function") call.mute();
+    else if (!next && typeof call.unmute === "function") call.unmute();
+    else return false;
+    setMutedState(next);
+    return true;
+  }, [muted]);
+
+  /**
+   * Knappval under samtalet, för växlar och telefonsvarare.
+   *
+   * Returnerar false när leverantörens klient inte kan skicka tonen, så att
+   * gränssnittet kan säga det i stället för att låtsas att den gick fram.
+   */
+  const sendDtmf = useCallback((digit: string) => {
+    const call = callRef.current;
+    if (!call || typeof call.sendDTMF !== "function") return false;
+    if (!/^[0-9*#]$/.test(digit)) return false;
+    call.sendDTMF(digit);
+    return true;
   }, []);
 
   useEffect(() => () => {
@@ -223,5 +283,8 @@ export function useSinchWebphone() {
     }
   }, []);
 
-  return { state, start, placeCall, hangup, providerCallId: callRef.current?.id ?? null };
+  return {
+    state, start, placeCall, hangup, toggleMute, sendDtmf, muted, capabilities,
+    providerCallId: callRef.current?.id ?? null,
+  };
 }

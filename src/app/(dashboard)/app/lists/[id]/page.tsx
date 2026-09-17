@@ -13,6 +13,7 @@ import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
 import { Badge } from "@/components/ui/badge";
 import { CustomerMultiSearchSelect } from "@/components/customer-multi-search-select";
 import { formatDate } from "@/lib/utils";
+import { CallerIdPicker } from "@/components/caller-id-picker";
 import { isoToZonedLocalDateTime } from "@/lib/domain/time";
 
 export default async function ListDetailPage({ params, searchParams }: {
@@ -27,7 +28,7 @@ export default async function ListDetailPage({ params, searchParams }: {
   const memberPageSize = 100;
   const memberOffset = (memberPage - 1) * memberPageSize;
   // Kandidatstatus och medlemsantal aggregeras i databasen i stället för att hämta alla rader.
-  const [{ data: list }, { data: mayManage }, { data: members }, { data: assignments }, { data: memberships }, { data: teamMembers }, { data: dispositions }, { data: segments }, { data: candidateCounts }, { data: listOverview }, { data: sellerWorkloadData }, { data: phoneNumbers }, { data: teams }, { data: requeueCandidates }] = await Promise.all([
+  const [{ data: list }, { data: mayManage }, { data: members }, { data: assignments }, { data: memberships }, { data: teamMembers }, { data: dispositions }, { data: segments }, { data: candidateCounts }, { data: listOverview }, { data: sellerWorkloadData }, { data: phoneNumbers }, { data: telephonyPolicy }, { data: teams }, { data: requeueCandidates }] = await Promise.all([
     ok(supabase.from("customer_lists").select("*").eq("id", id).single()),
     ok(supabase.rpc("can_manage_customer_list", { p_list_id: id })),
     ok(supabase.from("customer_list_members").select("id,customer_id,assigned_user_id,state,attempts,outcome,next_attempt_at,customers(display_name,phone_e164,city,do_not_call)").eq("list_id", id).order("priority", { ascending: false }).order("id").range(memberOffset, memberOffset + memberPageSize)),
@@ -40,6 +41,7 @@ export default async function ListDetailPage({ params, searchParams }: {
     ok(supabase.rpc("customer_list_overview", { p_list_id: id })),
     ok(supabase.rpc("customer_list_seller_workload", { p_list_id: id })),
     ok(supabase.from("phone_numbers").select("id,number_e164").eq("status", "active").eq("supports_voice", true).order("number_e164")),
+    ok(supabase.from("telephony_policies").select("default_caller_id_phone_number_id").maybeSingle()),
     ok(supabase.from("teams").select("id,name,status").eq("status", "active").order("name")),
     // Vad en omläggning skulle hämta tillbaka, innan någon trycker på något.
     // Spärrade poster räknas aldrig med — det avgörs i RPC:n, inte här.
@@ -56,6 +58,10 @@ export default async function ListDetailPage({ params, searchParams }: {
   const memberRows = (members ?? []).slice(0, memberPageSize);
   const settings = list.settings && typeof list.settings === "object" && !Array.isArray(list.settings) ? list.settings as Record<string, unknown> : {};
   const allowedDays = new Set(list.allowed_days ?? [1, 2, 3, 4, 5]);
+  // Numret som gäller när listan inte har något eget, så att "Inget valt" kan
+  // säga vad det faktiskt betyder i stället för att se ut som att ingen ringer.
+  const tenantDefaultNumber = (phoneNumbers ?? [])
+    .find((number) => number.id === telephonyPolicy?.default_caller_id_phone_number_id)?.number_e164 ?? null;
 
   return <>
     <Link href="/app/lists" className="muted back-link"><ArrowLeft size={15} /> Till listor</Link>
@@ -108,7 +114,6 @@ export default async function ListDetailPage({ params, searchParams }: {
               <Field label="Ring från" name="start_time" type="time" defaultValue={String(list.allowed_start_time).slice(0, 5)} />
               <Field label="Ring till" name="end_time" type="time" defaultValue={String(list.allowed_end_time).slice(0, 5)} />
               <Field label="Tidszon" name="timezone" defaultValue={list.timezone} placeholder="Europe/Stockholm" required />
-              <SelectField label="Utgående nummer" name="outbound_phone_number_id" defaultValue={list.outbound_phone_number_id ?? ""}><option value="">Tenantens standardnummer</option>{phoneNumbers?.map((number) => <option key={number.id} value={number.id}>{number.number_e164}</option>)}</SelectField>
               <Field label="Liststart (valfritt)" name="starts_at" type="datetime-local" defaultValue={isoToZonedLocalDateTime(list.starts_at, list.timezone)} />
               <Field label="Listslut (valfritt)" name="ends_at" type="datetime-local" defaultValue={isoToZonedLocalDateTime(list.ends_at, list.timezone)} />
               <Field label="Max försök" name="max_attempts" type="number" min="1" max="100" defaultValue={list.max_attempts} />
@@ -122,7 +127,22 @@ export default async function ListDetailPage({ params, searchParams }: {
             <label className="check-row"><input type="checkbox" name="lock_to_seller" defaultChecked={list.lock_to_seller} /> Lås bearbetat prospekt till säljaren</label>
             <label className="check-row"><input type="checkbox" name="recording_enabled" defaultChecked={settings.recordingEnabled === true} /> Spela in samtal enligt tenantens policy och retention</label>
             <button className="button button-primary">Spara inställningar</button>
-          </form></CardContent>
+          </form>
+          <hr className="section-divider" />
+          <p className="muted" style={{ marginBottom: 10 }}>
+            Numret mottagaren ser när någon ringer ur den här listan. Listans val vinner över
+            teamets och företagets.
+          </p>
+          <CallerIdPicker
+            scope="list"
+            scopeId={id}
+            label="Utgående nummer för listan"
+            current={list.caller_id_phone_number_id}
+            numbers={(phoneNumbers ?? []).map((number) => ({ id: number.id, number_e164: number.number_e164 }))}
+            inherits={tenantDefaultNumber ? { number: tenantDefaultNumber, source: "företagets förval" } : null}
+            returnTo={`/app/lists/${id}`}
+          />
+          </CardContent>
         </Card>
         <Card>
           <CardHeader><h3><ListFilter size={16} /> Prospektering till lista</h3></CardHeader>

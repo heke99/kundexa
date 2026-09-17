@@ -617,7 +617,10 @@ const defaultTeam = await db.query(`select id from public.teams where tenant_id=
 const runtimeTeamId = String(defaultTeam.rows[0].id);
 const runtimeList = await db.query(`select public.create_managed_customer_list('Runtime Dialer','Full runtime path','static',$1,'automatic',100,'00:00','23:59:59',7,60,0,'both',true,false,'Runtime script') as id`, [runtimeTeamId]);
 const runtimeListId = String(runtimeList.rows[0].id);
-await db.query(`select public.update_customer_list_configuration($1,'Runtime Dialer','Full runtime path','active','automatic',100,'00:00','23:59:59',7,60,0,'both',true,false,true,'Runtime script','Europe/Stockholm','{1,2,3,4,5,6,7}','00000000-0000-0000-0000-000000000022',true,null,null)`, [runtimeListId]);
+// Listans utgående nummer sätts inte här längre: det väljs med samma formulär
+// som teamets och kampanjens, och skrivs direkt till caller_id_phone_number_id.
+await db.query(`select public.update_customer_list_configuration($1,'Runtime Dialer','Full runtime path','active','automatic',100,'00:00','23:59:59',7,60,0,'both',true,false,true,'Runtime script','Europe/Stockholm','{1,2,3,4,5,6,7}',true,null,null)`, [runtimeListId]);
+await db.query(`update public.customer_lists set caller_id_phone_number_id='00000000-0000-0000-0000-000000000022' where id=$1`, [runtimeListId]);
 await db.query(`select public.set_customer_list_sellers($1,array['00000000-0000-0000-0000-000000000020']::uuid[])`, [runtimeListId]);
 await db.query(`select public.add_customers_to_list($1,array['00000000-0000-0000-0000-000000000021','00000000-0000-0000-0000-000000000025']::uuid[])`, [runtimeListId]);
 await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000020',false)`);

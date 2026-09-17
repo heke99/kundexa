@@ -7,8 +7,27 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 const value = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
 
-function go(kind: "message" | "error", message: string): never {
-  redirect(`/app/integrations?${kind}=${encodeURIComponent(message)}`);
+function go(kind: "message" | "error", message: string, path = "/app/integrations"): never {
+  redirect(`${path}?${kind}=${encodeURIComponent(message)}`);
+}
+
+/**
+ * Var formuläret ska hamna efteråt.
+ *
+ * Numret kan väljas på fyra ställen, och den som byter nummer för ett team ska
+ * hamna tillbaka på teamsidan och inte på Integrationer. Sökvägen kommer från
+ * ett dolt fält, alltså från klienten, så den måste prövas: en öppen
+ * omdirigering är en riktig sårbarhet och inte en skönhetsfråga. Den prövas mot
+ * en form, inte mot en lista, eftersom listsidorna har id i sökvägen.
+ */
+function safeReturnPath(raw: string) {
+  const fallback = "/app/integrations";
+  if (!raw) return fallback;
+  // Måste börja med en enda snedstreck. `//evil.example` är en protokollrelativ
+  // adress och tar användaren ut ur produkten.
+  if (!/^\/app\/[a-z0-9\-/]*$/i.test(raw)) return fallback;
+  if (raw.startsWith("//")) return fallback;
+  return raw;
 }
 
 async function adminContext() {
@@ -90,12 +109,13 @@ export async function saveTelephonyPolicy(form: FormData) {
  */
 export async function saveCallerIdDefault(form: FormData) {
   const context = await adminContext();
+  const back = safeReturnPath(value(form, "return_to"));
   const scope = value(form, "scope");
   const scopeId = value(form, "scope_id") || null;
   const phoneNumberId = value(form, "phone_number_id") || null;
 
-  if (!["tenant", "team", "list", "campaign"].includes(scope)) go("error", "Okänd nivå för utgående nummer.");
-  if (scope !== "tenant" && !scopeId) go("error", "Valet saknar vilket team, lista eller kampanj det gäller.");
+  if (!["tenant", "team", "list", "campaign"].includes(scope)) go("error", "Okänd nivå för utgående nummer.", back);
+  if (scope !== "tenant" && !scopeId) go("error", "Valet saknar vilket team, lista eller kampanj det gäller.", back);
 
   const admin = createAdminClient();
 
@@ -106,9 +126,9 @@ export async function saveCallerIdDefault(form: FormData) {
     const { data: number } = await admin.from("phone_numbers")
       .select("id,status,supports_voice")
       .eq("tenant_id", context.tenantId).eq("id", phoneNumberId).maybeSingle();
-    if (!number) go("error", "Numret tillhör inte företaget.");
+    if (!number) go("error", "Numret tillhör inte företaget.", back);
     if (number.status !== "active" || !number.supports_voice) {
-      go("error", "Numret är inte aktivt för utgående samtal och kan inte visas för mottagaren.");
+      go("error", "Numret är inte aktivt för utgående samtal och kan inte visas för mottagaren.", back);
     }
   }
 
@@ -130,7 +150,7 @@ export async function saveCallerIdDefault(form: FormData) {
         : await admin.from("campaigns")
           .update({ caller_id_phone_number_id: phoneNumberId })
           .eq("tenant_id", context.tenantId).eq("id", scopeId!);
-  if (error) go("error", "Det utgående numret kunde inte sparas.");
+  if (error) go("error", "Det utgående numret kunde inte sparas.", back);
 
   const { error: auditError } = await admin.from("audit_logs").insert({
     tenant_id: context.tenantId,
@@ -140,8 +160,8 @@ export async function saveCallerIdDefault(form: FormData) {
     entity_id: scopeId ?? context.tenantId,
     after_data: { scope, scope_id: scopeId, phone_number_id: phoneNumberId },
   });
-  if (auditError) go("error", "Numret sparades men ändringen kunde inte loggas. Kontakta plattformsadministratören.");
+  if (auditError) go("error", "Numret sparades men ändringen kunde inte loggas. Kontakta plattformsadministratören.", back);
 
-  revalidatePath("/app/integrations");
-  go("message", phoneNumberId ? "Det utgående numret är sparat." : "Valet av utgående nummer är rensat.");
+  revalidatePath(back);
+  go("message", phoneNumberId ? "Det utgående numret är sparat." : "Valet av utgående nummer är rensat.", back);
 }

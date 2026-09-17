@@ -12,4 +12,4 @@
  * paketet för att kunna välja mellan dem vid körning.
  */
 export { useSinchWebphone as useWebphone } from "./use-sinch-webphone";
-export type { WebphoneState } from "./use-sinch-webphone";
+export type { WebphoneState, CallAudioCapabilities } from "./use-sinch-webphone";

@@ -7,13 +7,15 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
 import { Badge } from "@/components/ui/badge";
+import { CallerIdPicker } from "@/components/caller-id-picker";
+import { callerIdChoices } from "@/lib/telephony/caller-id";
 
 export default async function TeamsPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string }> }) {
   const params = await searchParams;
   const context = await getAppContext();
   const supabase = await createClient();
   const [{ data: teams }, { data: teamMembers }, { data: memberships }] = await Promise.all([
-    ok(supabase.from("teams").select("id,name,description,department,office,code,status,is_default,invite_sellers_enabled,max_members,default_dialing_mode").order("name")),
+    ok(supabase.from("teams").select("id,name,description,department,office,code,status,is_default,invite_sellers_enabled,max_members,default_dialing_mode,caller_id_phone_number_id").order("name")),
     ok(supabase.from("team_members").select("team_id,user_id,role,is_primary,assignment_paused,daily_lead_limit,joined_at").order("joined_at")),
     ok(supabase.from("tenant_memberships").select("user_id,role,status,profiles:user_id(full_name,last_seen_at)").in("status", ["invited", "active"]).order("created_at")),
   ]);
@@ -21,6 +23,7 @@ export default async function TeamsPage({ searchParams }: { searchParams: Promis
     const profile = Array.isArray(membership.profiles) ? membership.profiles[0] : membership.profiles;
     return [membership.user_id, { name: profile?.full_name || "Inbjuden användare", membershipRole: membership.role, status: membership.status }];
   }));
+  const callerIds = await callerIdChoices();
   const managedTeamIds = new Set(context.role === "owner" || context.role === "admin"
     ? (teams ?? []).map((team) => team.id)
     : (teamMembers ?? []).filter((member) => member.user_id === context.userId && member.role === "manager").map((member) => member.team_id));
@@ -48,6 +51,21 @@ export default async function TeamsPage({ searchParams }: { searchParams: Promis
                 <label className="check-row"><input type="checkbox" name="invite_sellers_enabled" defaultChecked={team.invite_sellers_enabled} /> Teamledare får bjuda in säljare</label>
                 <button className="button button-secondary">Spara teaminställningar</button>
               </form></details> : null}
+              {mayManage ? <details className="assignment-settings"><summary>Utgående nummer</summary>
+                <p className="muted" style={{ marginBottom: 10 }}>
+                  Numret mottagaren ser när någon i teamet ringer. En lista eller kampanj med eget
+                  nummer vinner över teamets.
+                </p>
+                <CallerIdPicker
+                  scope="team"
+                  scopeId={team.id}
+                  label={`Utgående nummer för ${team.name}`}
+                  current={team.caller_id_phone_number_id}
+                  numbers={callerIds.numbers}
+                  inherits={callerIds.tenantDefaultNumber ? { number: callerIds.tenantDefaultNumber, source: "företagets förval" } : null}
+                  returnTo="/app/teams"
+                />
+              </details> : null}
               <div className="grid">
                 {members.map((member) => {
                   const info = memberInfo.get(member.user_id);
@@ -67,6 +85,21 @@ export default async function TeamsPage({ searchParams }: { searchParams: Promis
                 <label className="check-row"><input type="checkbox" name="assignment_paused" /> Pausa automatisk leadtilldelning</label>
                 <button className="button button-secondary">Spara teammedlem</button>
               </form></details> : null}
+              {mayManage ? <details className="assignment-settings"><summary>Utgående nummer</summary>
+                <p className="muted" style={{ marginBottom: 10 }}>
+                  Numret mottagaren ser när någon i teamet ringer. En lista eller kampanj med eget
+                  nummer vinner över teamets.
+                </p>
+                <CallerIdPicker
+                  scope="team"
+                  scopeId={team.id}
+                  label={`Utgående nummer för ${team.name}`}
+                  current={team.caller_id_phone_number_id}
+                  numbers={callerIds.numbers}
+                  inherits={callerIds.tenantDefaultNumber ? { number: callerIds.tenantDefaultNumber, source: "företagets förval" } : null}
+                  returnTo="/app/teams"
+                />
+              </details> : null}
             </CardContent>
           </Card>;
         })}

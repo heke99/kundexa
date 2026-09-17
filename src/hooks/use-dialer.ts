@@ -242,5 +242,9 @@ export function useDialerPanel() {
     registered, automaticReady, calling, ending, status,
     startCall, markEnded, endCall,
     webphone: webphone.state, startWebphone: webphone.start, hangupWebphone: webphone.hangup,
+    // Ljudkontrollerna kommer från webbtelefonen och inte härifrån: det är den
+    // som håller samtalet, och bara den vet vad det går att göra med det.
+    muted: webphone.muted, audioCapabilities: webphone.capabilities,
+    toggleMute: webphone.toggleMute, sendDtmf: webphone.sendDtmf,
   };
 }

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Phone, PhoneOff, Radio } from "@/components/icons";
 import { useDialerPanel } from "@/hooks/use-dialer";
 import { useCallRealtime } from "@/hooks/use-call-realtime";
+import { WebphoneAudioPanel } from "@/components/webphone-audio-panel";
 
 type Customer = { id: string; display_name: string; phone_e164: string | null; do_not_call: boolean };
 // Numret som visas för mottagaren, ur företagets egna nummer. Tidigare kom det
@@ -135,6 +136,9 @@ export function DialerPanel({
     if (!callId || dialer.ending) return;
     setError(null);
     try {
+      // Lägg på först, släpp platsen sedan. Omvänd ordning lämnar ett halvt
+      // sekunds fönster där platsen är fri medan ljudet fortfarande går.
+      dialer.hangupWebphone();
       const result = await dialer.endCall(callId);
       setEndMessage(result.message);
       // An unanswered call is closed here and now, so the after-call form must
@@ -232,22 +236,28 @@ export function DialerPanel({
         därefter kunden, så "numret kunden ser" säger ingenting om vilken telefon
         som faktiskt ringer. Står fel telefon här går samtalet via fel person. */}
 
-    {dialer.calling ? <p className="notice">Samtalet hanteras på din telefonienhet. Kundexa uppdaterar status automatiskt.</p> : null}
+    {dialer.calling ? <p className="notice">Samtalet är uppkopplat i webbläsaren. Kundexa uppdaterar status automatiskt.</p> : null}
+    <WebphoneAudioPanel
+      inCall={dialer.calling}
+      muted={dialer.muted}
+      capabilities={dialer.audioCapabilities}
+      onToggleMute={dialer.toggleMute}
+      onSendDtmf={dialer.sendDtmf}
+    />
     {callId && (dialer.calling || callState.recovering) ? <div className="dialer-end">
-      {/* The label carries the truth, not the footnote under it. The provider has
-          no hangup endpoint at all, so a button offering to end the call is a
-          promise the system cannot keep — the owner pressed the old one on
-          2026-09-15 and the phone went on ringing. Answered and unanswered are
-          different claims, so they get different words. */}
+      {/* Knappen lägger på på riktigt nu: samtalet ligger i den här fliken, och
+          `hangupWebphone` river ned det innan platsen släpps. Texten under är
+          omskriven därför att den beskrev en telefon som inte längre finns i
+          bilden — den bad säljaren lägga på i en app hon aldrig loggat in i. */}
       <button type="button" className="button button-danger" onClick={endCurrentCall} disabled={dialer.ending}>
         <PhoneOff size={15} /> {dialer.ending
-          ? "Släpper…"
-          : callAnswered ? "Frigör för nästa samtal" : "Avbryt uppringningen"}
+          ? "Lägger på…"
+          : callAnswered ? "Lägg på" : "Avbryt uppringningen"}
       </button>
       <small className="muted">
         {callAnswered
-          ? "Samtalet pågår på din telefon och måste läggas på där — telefonitjänsten kan inte kopplas ned härifrån. Kundexa släpper samtalsförsöket direkt så att du kan ringa nästa nummer."
-          : "Kundexa avbryter uppringningen och släpper samtalsförsöket. Ringer telefonen fortfarande avvisar du samtalet där; telefonitjänsten kan inte kopplas ned härifrån."}
+          ? "Samtalet läggs på här och platsen släpps, så du kan ringa nästa nummer direkt."
+          : "Uppringningen avbryts och samtalsförsöket släpps."}
       </small>
     </div> : null}
     {endMessage ? <p className="notice">{endMessage}</p> : null}
