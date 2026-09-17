@@ -1399,6 +1399,7 @@ export type Database = {
           allowed_end_time: string
           allowed_start_time: string
           budget: number | null
+          caller_id_phone_number_id: string | null
           cost_limit: number | null
           created_at: string
           created_by: string | null
@@ -1422,6 +1423,7 @@ export type Database = {
           allowed_end_time?: string
           allowed_start_time?: string
           budget?: number | null
+          caller_id_phone_number_id?: string | null
           cost_limit?: number | null
           created_at?: string
           created_by?: string | null
@@ -1445,6 +1447,7 @@ export type Database = {
           allowed_end_time?: string
           allowed_start_time?: string
           budget?: number | null
+          caller_id_phone_number_id?: string | null
           cost_limit?: number | null
           created_at?: string
           created_by?: string | null
@@ -1464,6 +1467,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "campaigns_caller_id_phone_number_tenant_fk"
+            columns: ["tenant_id", "caller_id_phone_number_id"]
+            isOneToOne: false
+            referencedRelation: "phone_numbers"
+            referencedColumns: ["tenant_id", "id"]
+          },
           {
             foreignKeyName: "campaigns_rinkel_number_allocation_fk"
             columns: ["tenant_id", "rinkel_number_allocation_id"]
@@ -3410,6 +3420,7 @@ export type Database = {
           archived_at: string | null
           auto_next_delay_seconds: number
           callback_policy: string
+          caller_id_phone_number_id: string | null
           created_at: string
           description: string | null
           dialing_mode: string
@@ -3452,6 +3463,7 @@ export type Database = {
           archived_at?: string | null
           auto_next_delay_seconds?: number
           callback_policy?: string
+          caller_id_phone_number_id?: string | null
           created_at?: string
           description?: string | null
           dialing_mode?: string
@@ -3494,6 +3506,7 @@ export type Database = {
           archived_at?: string | null
           auto_next_delay_seconds?: number
           callback_policy?: string
+          caller_id_phone_number_id?: string | null
           created_at?: string
           description?: string | null
           dialing_mode?: string
@@ -3527,6 +3540,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "customer_lists_caller_id_phone_number_tenant_fk"
+            columns: ["tenant_id", "caller_id_phone_number_id"]
+            isOneToOne: false
+            referencedRelation: "phone_numbers"
+            referencedColumns: ["tenant_id", "id"]
+          },
           {
             foreignKeyName: "customer_lists_parent_tenant_fk"
             columns: ["tenant_id", "parent_list_id"]
@@ -12068,6 +12088,7 @@ export type Database = {
       teams: {
         Row: {
           archived_at: string | null
+          caller_id_phone_number_id: string | null
           code: string | null
           created_at: string
           default_dialing_mode: string
@@ -12089,6 +12110,7 @@ export type Database = {
         }
         Insert: {
           archived_at?: string | null
+          caller_id_phone_number_id?: string | null
           code?: string | null
           created_at?: string
           default_dialing_mode?: string
@@ -12110,6 +12132,7 @@ export type Database = {
         }
         Update: {
           archived_at?: string | null
+          caller_id_phone_number_id?: string | null
           code?: string | null
           created_at?: string
           default_dialing_mode?: string
@@ -12130,6 +12153,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "teams_caller_id_phone_number_tenant_fk"
+            columns: ["tenant_id", "caller_id_phone_number_id"]
+            isOneToOne: false
+            referencedRelation: "phone_numbers"
+            referencedColumns: ["tenant_id", "id"]
+          },
           {
             foreignKeyName: "teams_department_tenant_fk"
             columns: ["tenant_id", "department_id"]
@@ -12171,6 +12201,7 @@ export type Database = {
           allowed_start_time: string
           automatic_dialer_enabled: boolean
           created_at: string
+          default_caller_id_phone_number_id: string | null
           default_number_allocation_id: string | null
           delete_provider_recording_on_retention: boolean
           disposition_required: boolean
@@ -12196,6 +12227,7 @@ export type Database = {
           allowed_start_time?: string
           automatic_dialer_enabled?: boolean
           created_at?: string
+          default_caller_id_phone_number_id?: string | null
           default_number_allocation_id?: string | null
           delete_provider_recording_on_retention?: boolean
           disposition_required?: boolean
@@ -12221,6 +12253,7 @@ export type Database = {
           allowed_start_time?: string
           automatic_dialer_enabled?: boolean
           created_at?: string
+          default_caller_id_phone_number_id?: string | null
           default_number_allocation_id?: string | null
           delete_provider_recording_on_retention?: boolean
           disposition_required?: boolean
@@ -12237,6 +12270,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "telephony_policies_default_caller_id_phone_number_tenant_fk"
+            columns: ["tenant_id", "default_caller_id_phone_number_id"]
+            isOneToOne: false
+            referencedRelation: "phone_numbers"
+            referencedColumns: ["tenant_id", "id"]
+          },
           {
             foreignKeyName: "telephony_policies_default_rinkel_number_allocation_fk"
             columns: ["tenant_id", "default_number_allocation_id"]
