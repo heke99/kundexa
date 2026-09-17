@@ -1,7 +1,12 @@
 /// <reference lib="deno.ns" />
 
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import assert from "node:assert/strict";
+import {
+  sinchCallbackStringToSign,
+  verifySinchCallback,
+  SINCH_CALLBACK_MAX_AGE_SECONDS,
+} from "../src/lib/telephony/sinch/callback-signature.ts";
 import {
   mintSinchRegistrationToken,
   sinchKeyDate,
@@ -128,6 +133,94 @@ Deno.test("two tokens minted in the same second differ", () => {
 const a = mintSinchRegistrationToken({ applicationKey, applicationSecret: secret, userId, ttlSeconds: 3600, now: at });
 const b = mintSinchRegistrationToken({ applicationKey, applicationSecret: secret, userId, ttlSeconds: 3600, now: at });
 assert.notEqual(a.token, b.token, "two tokens minted in the same second are identical");
+});
+
+// Webhookens signatur. Utan den kan vem som helst som känner till adressen posta
+// en `dice` och stänga ett pågående samtal, eller en `ace` och få Kundexa att
+// tro att ett samtal besvarades. Adressen står i klartext i Sinch-dashboarden.
+const cbSecret = Buffer.from("kundexa-callback-secret-abcdefgh").toString("base64");
+const cbKey = "669E367E-6BBA-48AB-AF15-266871C28135";
+const cbPath = "/api/webhooks/sinch";
+const cbBody = JSON.stringify({ event: "ace", callid: "abc123", custom: "attempt-1" });
+const cbAt = new Date("2026-09-17T13:40:00.000Z");
+const cbStamp = cbAt.toISOString();
+
+const sign = (body: string, timestamp: string, secret = cbSecret) =>
+  createHmac("sha256", Buffer.from(secret, "base64"))
+    .update(sinchCallbackStringToSign({
+      method: "POST", body, contentType: "application/json", timestamp, path: cbPath,
+    }), "utf8")
+    .digest("base64");
+
+const verify = (over: Record<string, unknown> = {}) => verifySinchCallback({
+  applicationKey: cbKey,
+  applicationSecret: cbSecret,
+  authorization: `application ${cbKey}:${sign(cbBody, cbStamp)}`,
+  timestamp: cbStamp,
+  contentType: "application/json",
+  method: "POST",
+  path: cbPath,
+  body: cbBody,
+  now: cbAt,
+  ...over,
+});
+
+Deno.test("a correctly signed callback is accepted", () => {
+  const result = verify();
+  assert.equal(result.valid, true, `a valid signature was rejected: ${JSON.stringify(result)}`);
+});
+
+Deno.test("the string to sign has the five documented lines in order", () => {
+  const lines = sinchCallbackStringToSign({
+    method: "post", body: cbBody, contentType: "application/json",
+    timestamp: cbStamp, path: cbPath,
+  }).split("\n");
+  assert.equal(lines.length, 5);
+  assert.equal(lines[0], "POST");
+  assert.equal(lines[1], createHash("md5").update(cbBody, "utf8").digest("base64"));
+  assert.equal(lines[2], "application/json");
+  assert.equal(lines[3], `x-timestamp:${cbStamp}`);
+  assert.equal(lines[4], cbPath);
+});
+
+Deno.test("a forged or replayed callback is refused", () => {
+  // A body changed after signing -- the whole point of the check.
+  const tampered = verify({ body: JSON.stringify({ event: "dice", callid: "abc123" }) });
+  assert.equal(tampered.valid, false);
+  assert.equal((tampered as { reason: string }).reason, "signature_mismatch");
+
+  // Signed with a different secret.
+  const otherSecret = Buffer.from("not-the-kundexa-callback-secret!").toString("base64");
+  const wrongKey = verifySinchCallback({
+    applicationKey: cbKey, applicationSecret: cbSecret,
+    authorization: `application ${cbKey}:${sign(cbBody, cbStamp, otherSecret)}`,
+    timestamp: cbStamp, contentType: "application/json",
+    method: "POST", path: cbPath, body: cbBody, now: cbAt,
+  });
+  assert.equal(wrongKey.valid, false);
+
+  // Posted to a different path with a signature made for ours.
+  const wrongPath = verify({ path: "/api/webhooks/rinkel" });
+  assert.equal(wrongPath.valid, false);
+
+  // Captured and replayed tomorrow. The signature is still valid; the age is not.
+  const replayed = verify({ now: new Date(cbAt.getTime() + (SINCH_CALLBACK_MAX_AGE_SECONDS + 1) * 1000) });
+  assert.equal(replayed.valid, false);
+  assert.equal((replayed as { reason: string }).reason, "timestamp_stale");
+
+  // And the same request just inside the window still passes, so the check above
+  // is measuring staleness and not simply refusing everything.
+  const fresh = verify({ now: new Date(cbAt.getTime() + (SINCH_CALLBACK_MAX_AGE_SECONDS - 1) * 1000) });
+  assert.equal(fresh.valid, true);
+
+  for (const [label, over] of [
+    ["no authorization header", { authorization: null }],
+    ["no timestamp header", { timestamp: null }],
+    ["a bearer token instead of the application scheme", { authorization: `Bearer ${sign(cbBody, cbStamp)}` }],
+    ["another application's key", { authorization: `application other-key:${sign(cbBody, cbStamp)}` }],
+  ] as const) {
+    assert.equal(verify(over).valid, false, `accepted a callback with ${label}`);
+  }
 });
 
 console.log("Verified the Sinch registration token: UTC key date, the key derived from the base64-decoded secret and not the other way round, documented header and claims, base64url output, and no silent widening of a too-short lifetime.");
