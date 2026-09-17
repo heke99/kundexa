@@ -2689,6 +2689,37 @@ if (!crossTenantWriteRefused) {
 }
 console.log("Verified tenant-scoped reference integrity: every tenant-to-tenant foreign key is composite and a cross-tenant reference is refused.");
 
+// The caller-ID selection that replaces Rinkel's number model is the same boundary, on a
+// column a seller can reach through the UI: the number shown when calling from a team,
+// campaign or list. A team must not be able to borrow another tenant's number as its
+// caller ID, so prove the composite key refuses it rather than trusting the catalog shape.
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+let foreignCallerIdRefused = false;
+try {
+  await db.query(`
+    update public.teams set caller_id_phone_number_id='00000000-0000-0000-0000-000000000022'
+    where id='00000000-0000-0000-0000-000000000076'
+  `);
+} catch (error) {
+  foreignCallerIdRefused = /foreign key|violates/i.test(error instanceof Error ? error.message : String(error));
+}
+if (!foreignCallerIdRefused) {
+  throw new Error("A team accepted another tenant's phone number as its caller ID.");
+}
+
+// And the same write inside one tenant has to succeed, or the probe above would pass for
+// the wrong reason -- a column nothing can ever be written to refuses everything.
+await db.query(`
+  update public.teams set caller_id_phone_number_id='00000000-0000-0000-0000-000000000022'
+  where id='00000000-0000-0000-0000-000000000026'
+`);
+const ownCallerId = await db.query(`select caller_id_phone_number_id from public.teams where id='00000000-0000-0000-0000-000000000026'`);
+if (ownCallerId.rows[0].caller_id_phone_number_id !== '00000000-0000-0000-0000-000000000022') {
+  throw new Error("A team could not take its own tenant's phone number as its caller ID.");
+}
+await db.exec(`update public.teams set caller_id_phone_number_id=null where id='00000000-0000-0000-0000-000000000026'`);
+console.log("Verified caller-ID selection: a team takes its own tenant's number and is refused another tenant's.");
+
 // The seller's whole journey, executed against the migrated schema: register the call that
 // grounds a contract, draft it, send it, let the customer accept on the public page, and
 // activate it once the evidence package exists. These are the exact RPCs the application
