@@ -3302,7 +3302,6 @@ export type Database = {
           lock_to_seller: boolean
           max_attempts: number
           name: string
-          outbound_phone_number_id: string | null
           owner_user_id: string | null
           parent_list_id: string | null
           priority: number
@@ -3344,7 +3343,6 @@ export type Database = {
           lock_to_seller?: boolean
           max_attempts?: number
           name: string
-          outbound_phone_number_id?: string | null
           owner_user_id?: string | null
           parent_list_id?: string | null
           priority?: number
@@ -3386,7 +3384,6 @@ export type Database = {
           lock_to_seller?: boolean
           max_attempts?: number
           name?: string
-          outbound_phone_number_id?: string | null
           owner_user_id?: string | null
           parent_list_id?: string | null
           priority?: number
@@ -3446,13 +3443,6 @@ export type Database = {
             columns: ["tenant_id", "team_id"]
             isOneToOne: false
             referencedRelation: "teams"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "customer_lists_tenant_outbound_number_fk"
-            columns: ["tenant_id", "outbound_phone_number_id"]
-            isOneToOne: false
-            referencedRelation: "phone_numbers"
             referencedColumns: ["tenant_id", "id"]
           },
         ]
@@ -14533,7 +14523,6 @@ export type Database = {
           p_lock_to_seller: boolean
           p_max_attempts: number
           p_name: string
-          p_outbound_phone_number_id: string
           p_priority: number
           p_recording_enabled: boolean
           p_retry_delay_minutes: number
