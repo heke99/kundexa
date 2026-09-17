@@ -276,12 +276,15 @@ for (const pattern of [
 ]) {
   assert.match(rinkelWebhookRepairMigration, pattern, `Rinkel webhook ingest invariant missing: ${pattern}`);
 }
-const rinkelCalls = await readFile(join(root, "src/app/api/v1/calls/route.ts"), "utf8");
-assert.match(rinkelCalls, /rinkel_reserve_platform_outbound_call/, "Rinkel calls require a central atomic local reservation before provider dial");
-assert.match(rinkelCalls, /createPlatformRinkelClient/, "Rinkel calls must use the environment-owned platform credential");
-assert.match(rinkelCalls, /client\.dial/, "Rinkel calls must use the canonical provider client");
-assert.doesNotMatch(rinkelCalls, /fetch\([^)]*api\.rinkel/, "Rinkel route must not bypass the canonical provider client");
-assert.match(rinkelCalls, /provider_status,provider_outcome,provider_cause/, "Call APIs must expose technical provider state separately from CRM disposition");
+const dialRoute = await readFile(join(root, "src/app/api/v1/calls/route.ts"), "utf8");
+// The seat and the call row must exist before anything can be dialled. That has
+// not changed with the provider; what changed is who dials. The browser places
+// the call now, so the route reserves and stops -- and must not grow a dial of
+// its own, which would put a call outside the seat that guards it.
+assert.match(dialRoute, /reserve_outbound_call/, "The dial route requires an atomic local reservation before the call can be placed");
+assert.doesNotMatch(dialRoute, /fetch\([^)]*sinch/i, "The dial route must not call the provider directly; the browser places the call");
+assert.doesNotMatch(dialRoute, /callPhoneNumber|callouts\./, "The dial route must not place calls; that is the webphone's job");
+assert.match(dialRoute, /provider_status,provider_outcome,provider_cause/, "Call APIs must expose technical provider state separately from CRM disposition");
 const rinkelMigration = await readFile(join(root, "supabase/migrations/202607300002_central_rinkel_platform.sql"), "utf8");
 assert.match(rinkelMigration, /RINKEL_WEBHOOKS_NOT_READY/, "Automatic Rinkel calls need a database-enforced webhook health gate");
 assert.match(rinkelMigration, /revoke all on public\.platform_integrations,public\.platform_rinkel_users,public\.platform_rinkel_numbers/, "Raw central Rinkel provider data must not be table-readable by authenticated clients");
@@ -407,9 +410,9 @@ assert.match(rinkelDialerComponent, /initialCallerId/, "The manual dialer must s
 assert.match(rinkelDialerComponent, /numberAllocationId,/, "The manual dialer must always send the selected number allocation explicitly");
 assert.match(rinkelDialerComponent, /!numberAllocationId/, "The dial button must not submit without a caller-ID allocation");
 assert.match(rinkelClient, /return "data" in root \? root\.data : root/, "Rinkel directory parsing must accept direct and data-wrapped API payloads");
-assert.match(rinkelCalls, /internalDialFailure/, "Local database and finalization errors must not be mislabeled as provider failures");
-assert.match(rinkelCalls, /getCorrelationId\(request\)/, "Dial failures must use a stable correlation id for support tracing");
-assert.match(rinkelCalls, /apiJson\(correlationId/, "Dial responses must expose the correlation id as a response header");
+assert.match(dialRoute, /internalDialFailure/, "Local database and finalization errors must not be mislabeled as provider failures");
+assert.match(dialRoute, /getCorrelationId\(request\)/, "Dial failures must use a stable correlation id for support tracing");
+assert.match(dialRoute, /apiJson\(correlationId/, "Dial responses must expose the correlation id as a response header");
 assert.match(rinkelDialerHook, /Referens:/, "Seller-visible dial errors must include a neutral support reference");
 const exampleEnv = await readFile(join(root, ".env.example"), "utf8");
 assert.doesNotMatch(exampleEnv, /SUPABASE_SERVICE_ROLE_KEY=eyJ/, "Tracked environment examples must not contain a live service-role JWT");

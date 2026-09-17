@@ -4,8 +4,6 @@ import { getAppContext } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { assertPermission } from "@/lib/permissions";
-import { createPlatformRinkelClient, isPlatformRinkelRuntimeConfigured } from "@/lib/integrations/rinkel/client";
-import { safeRinkelError } from "@/lib/integrations/rinkel/errors";
 import { apiJson, getCorrelationId } from "@/lib/api-correlation";
 
 const callDirectionSchema = z.enum(["inbound", "outbound"]);
@@ -17,7 +15,8 @@ const bodySchema = z.object({
   callbackActivityId: z.uuid().nullable().optional(),
   contactPersonId: z.uuid().nullable().optional(),
   targetPhone: z.string().regex(/^\+[1-9][0-9]{7,14}$/),
-  numberAllocationId: z.uuid().nullable().optional(),
+  callerIdPhoneNumberId: z.uuid().nullable().optional(),
+  webphoneSessionId: z.uuid().nullable().optional(),
   clientRequestId: z.uuid(),
   idempotencyKey: z.string().min(8).max(200),
   purpose: z.enum(["direct_marketing", "customer_service", "contract_followup"]).default("direct_marketing"),
@@ -30,9 +29,9 @@ const bodySchema = z.object({
 type Reservation = {
   callId: string;
   attemptId: string;
-  deviceId?: string;
-  numberId?: string;
   to?: string;
+  callerId?: string;
+  callerIdSource?: string;
   status: string;
   attemptStatus?: string;
   providerStatus?: string;
@@ -43,16 +42,15 @@ type Reservation = {
 
 function publicTelephonyMessage(message: string) {
   return message
-    .replace(/rinkel/gi, "telefonitjänsten")
+    .replace(/sinch/gi, "telefonitjänsten")
     .replace(/provider/gi, "telefonitjänsten")
     .replace(/leverantör/gi, "telefonitjänst");
 }
 
-// Rinkel refuses a dial to the seller's own line, and the assigned caller-ID
-// number would loop back to the same trunk. The reservation refuses both before
-// any call row exists; say which number is the problem rather than "reservation
-// failed".
-const selfDialMessage = "Numret är säljarens eget telefonnummer eller det utgående numret. Telefonitjänsten kan inte ringa den egna linjen — ange kundens nummer i stället.";
+// Dialling the tenant's own caller-ID number loops the call back to the same
+// trunk. The reservation refuses it before any call row exists; say which number
+// is the problem rather than "reservation failed".
+const selfDialMessage = "Numret är detsamma som företagets utgående nummer. Ett samtal till det egna numret kopplas tillbaka till samma linje — ange kundens nummer i stället.";
 
 // The reservation raises `exact_call_policy_denied:<reason>`. Report which rule
 // actually stopped the call: "spärr- och samtyckesreglerna" is true but tells the
@@ -116,8 +114,8 @@ function reservationFailure(rawMessage: string, databaseCode?: string | null) {
   if (normalized.includes("SELF_DIAL_NOT_ALLOWED")) {
     return { code: "SELF_DIAL_NOT_ALLOWED", message: selfDialMessage, status: 422 };
   }
-  if (normalized.includes("RINKEL_PLATFORM_NOT_CONFIGURED") || normalized.includes("RINKEL_API_NOT_VERIFIED")) {
-    return { code: "RINKEL_API_NOT_VERIFIED", message: "Telefoni är inte konfigurerad och verifierad av plattformsadministratören.", status: 409 };
+  if (normalized.includes("CALLER_ID_MISSING")) {
+    return { code: "CALLER_ID_MISSING", message: "Företaget har inget nummer att visa för mottagaren. En administratör behöver välja företagets utgående nummer innan samtal kan ringas.", status: 409 };
   }
   if (normalized.includes("DIAL_CONFIGURATION_INCOMPLETE")) {
     return {
@@ -141,8 +139,8 @@ function reservationFailure(rawMessage: string, databaseCode?: string | null) {
   }
   if (normalized.includes("TELEPHONY_DISABLED")) return { code: "TELEPHONY_DISABLED", message: "Telefoni är pausad för företaget.", status: 409 };
   if (normalized.includes("MANUAL_DIALER_DISABLED")) return { code: "MANUAL_DIALER_DISABLED", message: "Manuell uppringning är avstängd för företaget.", status: 409 };
-  if (normalized.includes("AUTOMATIC_DIALER_DISABLED") || normalized.includes("RINKEL_AUTODIALER_NOT_READY")) {
-    return { code: "RINKEL_AUTODIALER_NOT_READY", message: "Auto-dialern är inte redo. Kontrollera kärnwebhookar och workerstatus.", status: 409 };
+  if (normalized.includes("AUTOMATIC_DIALER_DISABLED")) {
+    return { code: "AUTOMATIC_DIALER_DISABLED", message: "Automatisk uppringning är avstängd för företaget.", status: 409 };
   }
   if (normalized.includes("ACTIVE_CALL")) return { code: "ACTIVE_CALL_EXISTS", message: "Säljaren eller den valda enheten har redan ett aktivt samtal.", status: 409 };
   if (normalized.includes("DO_NOT_CALL") || normalized.includes("NIX") || normalized.includes("CONTACT_NOT_ALLOWED")) {
@@ -160,7 +158,7 @@ function reservationFailure(rawMessage: string, databaseCode?: string | null) {
 function internalDialFailure(error: unknown) {
   const code = error instanceof Error ? error.message : "";
   switch (code) {
-    case "rinkel_reservation_contract_invalid":
+    case "reservation_contract_invalid":
       return {
         code: "DIAL_RESERVATION_CONTRACT_INVALID",
         message: "Samtalsreservationen saknade en giltig enhet, ett utgående nummer eller ett måltelefonnummer.",
@@ -172,7 +170,6 @@ function internalDialFailure(error: unknown) {
         message: "Samtalsförsöket kunde inte förberedas i databasen.",
         status: 503,
       };
-    case "rinkel_dial_finalize_failed":
       return {
         code: "DIAL_FINALIZATION_FAILED",
         message: "Samtalet skickades men den lokala statusen kunde inte bekräftas.",
@@ -220,20 +217,18 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const correlationId = getCorrelationId(request);
   let reserved: Reservation | null = null;
-  let dialSubmitted = false;
   try {
     const context = await getAppContext();
     assertPermission(context.role, "calls.create");
-    if (!isPlatformRinkelRuntimeConfigured()) {
-      return apiJson(correlationId, {
-        error: "RINKEL_RUNTIME_API_KEY_MISSING",
-        message: "Telefonitjänstens serverkonfiguration saknas. Kontakta plattformsadministratören.",
-        correlationId,
-      }, { status: 503 });
-    }
     const parsed = bodySchema.parse(await request.json());
     const supabase = await createClient();
-    const result = await supabase.rpc("rinkel_reserve_platform_outbound_call_v2", {
+
+    // Reservationen är allt servern gör. Samtalet kopplas av säljarens
+    // webbtelefon, inte härifrån: det är hela skillnaden mot den gamla vägen,
+    // där servern bad telefonitjänsten ringa upp en enhet som sedan ringde
+    // vidare. Raden och platsen finns innan webbläsaren får något att ringa,
+    // så ett samtal utan spår är inte möjligt.
+    const result = await supabase.rpc("reserve_outbound_call", {
       p_customer_id: parsed.customerId,
       p_contact_person_id: parsed.contactPersonId ?? null,
       p_target_phone: parsed.targetPhone,
@@ -243,25 +238,23 @@ export async function POST(request: Request) {
       p_client_request_id: parsed.clientRequestId,
       p_idempotency_key: parsed.idempotencyKey,
       p_purpose: parsed.purpose,
-      p_number_allocation_id: parsed.numberAllocationId ?? null,
+      p_caller_id_phone_number_id: parsed.callerIdPhoneNumberId ?? null,
+      p_webphone_session_id: parsed.webphoneSessionId ?? null,
     });
     if (result.error || !result.data) {
-      const failure = reservationFailure(result.error?.message ?? "rinkel_call_reservation_failed", result.error?.code ?? null);
-      console.error("rinkel_call_reservation_failed", {
+      const failure = reservationFailure(result.error?.message ?? "call_reservation_failed", result.error?.code ?? null);
+      console.error("call_reservation_failed", {
         correlationId,
         databaseCode: result.error?.code ?? null,
         failureCode: failure.code,
       });
       return apiJson(correlationId, { error: failure.code, message: failure.message, correlationId }, { status: failure.status });
     }
-    reserved = result.data as Reservation;
+    reserved = result.data as unknown as Reservation;
     if (reserved.idempotentReplay) {
       const uncertain = ["provider_outcome_unknown", "reconciliation_required", "unknown"]
         .includes(reserved.attemptStatus ?? reserved.providerStatus ?? reserved.status);
-      const active = reserved.callActive ?? [
-        "requested", "dial_requested", "awaiting_provider_event", "matched",
-        "provider_outcome_unknown", "reconciliation_required",
-      ].includes(reserved.attemptStatus ?? reserved.status);
+      const active = reserved.callActive ?? false;
       return apiJson(correlationId, {
         callId: reserved.callId,
         status: reserved.status,
@@ -273,57 +266,48 @@ export async function POST(request: Request) {
         correlationId,
       }, { status: active || uncertain ? 202 : 409 });
     }
-    if (!reserved.deviceId || !reserved.numberId || !reserved.to) {
-      throw new Error("rinkel_reservation_contract_invalid");
+    if (!reserved.to || !reserved.callerId) {
+      throw new Error("reservation_contract_invalid");
     }
 
-    const admin = createAdminClient();
-    const { error: requestStateError } = await admin.from("rinkel_call_attempts_v2").update({
-      status: "dial_requested",
-      provider_request_started_at: new Date().toISOString(),
-    }).eq("tenant_id", context.tenantId).eq("id", reserved.attemptId).eq("call_id", reserved.callId);
-    if (requestStateError) throw new Error("DATABASE_CALL_ATTEMPT_UPDATE_FAILED");
-
-    const client = createPlatformRinkelClient(reserved.attemptId);
-    await client.dial({
-      deviceId: reserved.deviceId,
-      to: reserved.to,
-      numberId: reserved.numberId,
-      anonymous: false,
-    });
-    dialSubmitted = true;
-    const { error: finalizeError } = await admin.rpc("rinkel_finalize_platform_dial", {
-      p_call_id: reserved.callId,
-      p_attempt_id: reserved.attemptId,
-      p_outcome: "accepted",
-      p_error_code: null,
-      p_error_message: null,
-    });
-    if (finalizeError) throw new Error("rinkel_dial_finalize_failed");
+    // Webbläsaren får numret att ringa och numret att visa. Samtalets identitet
+    // hos leverantören rapporteras tillbaka när den finns, genom
+    // POST /api/v1/calls/dialing.
     return apiJson(correlationId, {
       callId: reserved.callId,
-      status: "dial_requested",
-      message: "Samtalet initieras på din telefonienhet.",
+      attemptId: reserved.attemptId,
+      to: reserved.to,
+      callerId: reserved.callerId,
+      callerIdSource: reserved.callerIdSource ?? null,
+      status: "requested",
+      message: "Samtalet är reserverat. Webbtelefonen kopplar upp det.",
       correlationId,
     }, { status: 202 });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return apiJson(correlationId, { error: "validation_error", details: error.issues, correlationId }, { status: 422 });
     }
+    // Servern ringer inte längre. Det enda som kan gå fel här är reservationen,
+    // och den är en databastransaktion: den lyckas eller rullar tillbaka. Det
+    // "okända utfall" den gamla vägen behövde -- ett anrop som gick ut men vars
+    // svar aldrig kom -- uppstår nu i webbläsaren i stället, och rapporteras
+    // genom POST /api/v1/calls/dialing.
     const internal = internalDialFailure(error);
-    const providerFailure = internal ? null : safeRinkelError(error);
-    const safe = internal ?? providerFailure!;
-    const outcomeUnknown = dialSubmitted
-      || providerFailure?.outcomeUnknown === true
-      || internal?.status === 202;
+    const code = internal?.code ?? "call_reservation_failed";
+    const message = internal
+      ? publicTelephonyMessage(internal.message)
+      : "Samtalet kunde inte reserveras.";
     if (reserved) {
+      // Reservationen gick igenom men något efter den föll. Platsen måste
+      // släppas, annars kan säljaren inte ringa nästa nummer.
       const admin = createAdminClient();
-      const { error: finalizeFailure } = await admin.rpc("rinkel_finalize_platform_dial", {
+      const { error: finalizeFailure } = await admin.rpc("finalize_dial", {
         p_call_id: reserved.callId,
         p_attempt_id: reserved.attemptId,
-        p_outcome: outcomeUnknown ? "unknown" : "failed",
-        p_error_code: safe.code,
-        p_error_message: safe.message,
+        p_outcome: "failed",
+        p_external_call_id: null,
+        p_error_code: code,
+        p_error_message: message,
       });
       if (finalizeFailure) {
         console.error("dial_failure_finalization_failed", {
@@ -333,29 +317,13 @@ export async function POST(request: Request) {
         });
       }
     }
-    const status = outcomeUnknown ? 202
-      : internal ? internal.status
-        : safe.code === "RINKEL_AUTHENTICATION_ERROR" || safe.code === "RINKEL_FORBIDDEN" ? 502
-          : safe.code === "RINKEL_RATE_LIMITED" ? 429
-            : safe.code === "RINKEL_UPSTREAM_ERROR" || safe.code === "RINKEL_NETWORK_ERROR" || safe.code === "RINKEL_TIMEOUT" ? 503
-              : safe.code === "RINKEL_DIALING_SELF" || safe.code === "RINKEL_DESTINATION_REJECTED" ? 422
-                : 409;
-    console.error("dial_start_failed", {
-      correlationId,
-      callId: reserved?.callId ?? null,
-      errorCode: safe.code,
-      // Redacted provider body; kept out of the seller-facing message.
-      providerDetail: providerFailure?.providerDetail ?? null,
-      outcomeUnknown,
-    });
+    console.error("dial_start_failed", { correlationId, callId: reserved?.callId ?? null, errorCode: code });
     return apiJson(correlationId, {
-      error: safe.code,
-      message: outcomeUnknown
-        ? "Samtalsstartens utfall är oklart. Försök inte igen; Kundexa inväntar säker avstämning."
-        : publicTelephonyMessage(safe.message),
+      error: code,
+      message,
       callId: reserved?.callId ?? null,
-      status: outcomeUnknown ? "provider_outcome_unknown" : "failed",
+      status: "failed",
       correlationId,
-    }, { status });
+    }, { status: internal?.status ?? 409 });
   }
 }

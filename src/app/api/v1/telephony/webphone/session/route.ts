@@ -10,7 +10,7 @@ import { turnConfigured } from "@/lib/telephony/webphone/ice";
 // leverantör är densamma för alla. Den skrivs ändå på sessionsraden, eftersom
 // hela webbtelefonen är byggd för att kunna byta leverantör utan att gammal
 // historik blir tvetydig.
-const TELEPHONY_PROVIDER = "rinkel";
+const TELEPHONY_PROVIDER = "sinch";
 
 const openSchema = z.object({
   userAgent: z.string().trim().max(400).nullable().optional(),

@@ -12,6 +12,9 @@ const [
   telephonyStatus,
   openapi,
   dialerHook,
+  webphoneSession,
+  webphoneAdapter,
+  callsMigration,
   platformPage,
   platformListsPage,
   authUsers,
@@ -63,6 +66,9 @@ const [
   read("src/app/api/v1/telephony/status/route.ts"),
   read("src/app/api/openapi.json/route.ts"),
   read("src/hooks/use-rinkel-dialer.ts"),
+  read("src/app/api/v1/telephony/webphone/session/route.ts"),
+  read("src/lib/telephony/webphone/sinch.ts"),
+  read("supabase/migrations/202609170003_dial_on_sinch.sql"),
   read("src/app/(dashboard)/app/platform/page.tsx"),
   read("src/app/(dashboard)/app/platform/lists/page.tsx"),
   read("src/lib/supabase/auth-admin-users.ts"),
@@ -170,10 +176,22 @@ assert.match(products, /_initial_price/);
 assert.doesNotMatch(products, /from\("products"\)\.delete\(/);
 assert.doesNotMatch(products, /from\("product_price_versions"\)\.insert\(/);
 
-for (const source of [calls, telephonyStatus, dialerHook]) {
-  assert.match(source, /RINKEL_RUNTIME_API_KEY_MISSING|runtimeConfigured/);
-}
-assert.match(calls, /if \(!isPlatformRinkelRuntimeConfigured\(\)\)/);
+// Telephony that is not configured must be said out loud, not discovered as a
+// call that never connects. The refusal used to live on the dial route, which
+// asked the provider to ring a device; now the browser places the call, so the
+// route that hands out the webphone's credentials is where "not configured" is
+// known and where it has to be refused.
+assert.match(webphoneSession, /webphone_provider_not_configured|provisioned\.available/);
+assert.match(webphoneAdapter, /webphone_provider_not_configured/);
+
+// A call with no caller ID gets a call id from Sinch and never reaches anyone.
+// Both the reservation and the route that reports its failures have to name it.
+assert.match(callsMigration, /CALLER_ID_MISSING/);
+assert.match(calls, /CALLER_ID_MISSING/);
+
+// The dial route no longer asks a provider to ring anything, so nothing about a
+// provider runtime key belongs in it.
+assert.doesNotMatch(calls, /isPlatformRinkelRuntimeConfigured/);
 
 // Platform control-plane authorization must never depend on tenant workspace state.
 const platformContextBody = auth.slice(auth.indexOf("export const getPlatformContext"));

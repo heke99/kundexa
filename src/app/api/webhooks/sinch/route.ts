@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { serverEnv } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { verifySinchCallback } from "@/lib/telephony/sinch/callback-signature";
+import type { Json } from "@/lib/supabase/database.types";
 
 export const runtime = "nodejs";
 
@@ -48,9 +49,16 @@ export async function POST(request: Request) {
     return new NextResponse(null, { status: 403 });
   }
 
-  let payload: Record<string, unknown>;
+  // Typad som Json och inte Record<string, unknown>: värdet kom ur JSON.parse,
+  // och det är Json som ska vidare till databasen. Att gå omvägen över unknown
+  // och tvinga tillbaka det senare hade bara flyttat lögnen ett steg.
+  let payload: Record<string, Json>;
   try {
-    payload = JSON.parse(raw) as Record<string, unknown>;
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return NextResponse.json({ error: "invalid_json" }, { status: 400 });
+    }
+    payload = parsed as Record<string, Json>;
   } catch {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }

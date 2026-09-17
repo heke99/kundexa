@@ -150,5 +150,9 @@
   "/voice-client": {
     "classification": "internal",
     "reason": "410 legacy endpoint"
+  },
+  "/calls/dialing": {
+    "classification": "internal",
+    "reason": "Browser reports the provider call id for the seat it already holds"
   }
 }
