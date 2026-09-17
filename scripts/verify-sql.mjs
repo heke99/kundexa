@@ -1519,6 +1519,66 @@ await db.exec(`
 `);
 console.log("Executed the webphone leg report: a foreign session is refused, the first event binds the attempt so the sweeper can see the leg, a reported answer fills answered_at with its provenance, every client row is labelled, ending an answered call frees the seat without writing the provider's outcome, and ending an unanswered one closes it.");
 
+// --- Ett släppt försök stannar släppt ------------------------------------
+// A late provider event must never take the seller's seat back. Measured in
+// production on 2026-09-15: the seller ended the call at 10:57:21, the attempt
+// was releasedAttempt, and the CDR reconciliation set it back to `matched` at 10:59:02
+// because the CDR carried no end time. `matched` is a status the reservation
+// refuses and the sweeper deliberately will not release, so the seller was locked
+// out for ninety minutes.
+await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
+const terminalCall = (await db.query(`
+  select public.rinkel_reserve_platform_outbound_call(
+    '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
+    gen_random_uuid(),'terminal-attempt-guard','customer_service'
+  ) as result
+`)).rows[0].result;
+await db.query(`select public.end_active_call($1,'klar') as result`, [terminalCall.callId]);
+const releasedAttempt = await db.query(`select status,error_code from public.rinkel_call_attempts_v2 where call_id=$1`, [terminalCall.callId]);
+if (releasedAttempt.rows[0].status !== 'failed') {
+  throw new Error(`The attempt was not releasedAttempt before the guard was tested: ${JSON.stringify(releasedAttempt.rows[0])}`);
+}
+
+// This is the exact write the CDR reconciliation performs.
+await db.exec(`
+  update public.rinkel_call_attempts_v2
+  set external_call_id=coalesce(external_call_id,'cdr-late-1'),
+      status='matched', updated_at=now()
+  where call_id='${terminalCall.callId}';
+`);
+const afterCdr = await db.query(`select status,error_code,external_call_id from public.rinkel_call_attempts_v2 where call_id=$1`, [terminalCall.callId]);
+if (afterCdr.rows[0].status !== 'failed') {
+  throw new Error(`A late provider event took the seller's seat back: ${JSON.stringify(afterCdr.rows[0])}`);
+}
+// The rest of the write must still land — the provider may enrich the row, it
+// just may not reopen it.
+if (afterCdr.rows[0].external_call_id !== 'cdr-late-1') {
+  throw new Error(`The guard blocked provider enrichment it should have allowed: ${JSON.stringify(afterCdr.rows[0])}`);
+}
+if (afterCdr.rows[0].error_code !== 'ENDED_BY_SELLER') {
+  throw new Error(`The guard lost the reason the attempt was releasedAttempt: ${JSON.stringify(afterCdr.rows[0])}`);
+}
+// And the seller can dial again, which is the whole point.
+const dialAfterGuard = (await db.query(`
+  select public.rinkel_reserve_platform_outbound_call(
+    '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
+    gen_random_uuid(),'terminal-attempt-guard-next','customer_service'
+  ) as result
+`)).rows[0].result;
+if (!dialAfterGuard.callId || dialAfterGuard.callId === terminalCall.callId) {
+  throw new Error(`A reopened attempt still blocked the next dial: ${JSON.stringify(dialAfterGuard)}`);
+}
+// A terminal attempt may still move between terminal statuses; only the way back
+// to a seat-holding status is refused.
+await db.exec(`update public.rinkel_call_attempts_v2 set status='completed' where call_id='${terminalCall.callId}';`);
+const terminalToTerminal = await db.query(`select status from public.rinkel_call_attempts_v2 where call_id=$1`, [terminalCall.callId]);
+if (terminalToTerminal.rows[0].status !== 'completed') {
+  throw new Error(`The guard blocked a legitimate terminal-to-terminal transition: ${JSON.stringify(terminalToTerminal.rows[0])}`);
+}
+await db.exec(`update public.rinkel_call_attempts_v2 set status='completed' where call_id='${dialAfterGuard.callId}';`);
+console.log("Executed the released-attempt guard: a late CDR cannot take the seller's seat back, the provider may still enrich the row, the release reason survives, the next dial is free, and a terminal-to-terminal transition is still allowed.");
+
+
 
 
 await db.exec(`
