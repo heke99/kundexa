@@ -1,50 +1,50 @@
 # Next actions
 
-Uppdaterad 2026-09-15. Webbtelefonens leverantörsoberoende halva är byggd, verifierad och
-mergad-klar. Det som återstår på den delen kräver ett svar från telefonitjänsten.
-
-## Blockerat på ett externt svar
-
-1. **Skicka förfrågan i `docs/integrations/RINKEL_WEBPHONE_FORFRAGAN.md`.** Fyra frågor,
-   varje svar ett ja eller ett nej. Fråga 1 — får vi SIP-registreringsuppgifter per plats —
-   avgör vilken väg webbtelefonen tar.
-   - **Ja** → byt ut `src/lib/telephony/webphone/rinkel.ts`. Inget annat.
-   - **Nej** → flytta utgående röst till en leverantör med WebRTC-SDK (Twilio, Telnyx,
-     Sinch, Vonage) och porta numret. Adapterlagret gör det till en fil.
-2. Sätt `WEBPHONE_STUN_URLS`, `WEBPHONE_TURN_URLS` och `WEBPHONE_TURN_SECRET` när
-   TURN finns. Utan relä blir felet "kunden hör mig inte" i stället för ett ärligt
-   uppkopplingsfel.
-
-## Kvar att bygga när uppgifterna finns
-
-3. Webbtelefonens gränssnitt: mikrofontillstånd, headsetväljare, mute, hold, DTMF via
-   `RTCDTMFSender`, nivåmätare före första samtalet, dolt `<audio playsInline>` och en
-   AudioContext som låses upp av en användargest.
-4. `sip.js`-registreringen som anropar `/api/v1/telephony/webphone/session`, slår hjärtslag
-   var 15:e sekund och rapportar benet till `/api/v1/telephony/webphone/leg`.
-5. Beslut: ska inkommande samtal ringa i Kundexa? Kräver ringläge, svara/avvisa och en
-   regel för vem som får samtalet.
-
-## Oberoende av webbtelefonen
-
-6. **Webhookarna är inte verifierade.** `platform_rinkel_capabilities.webhooks: false`,
-   `core_webhooks_verified: false`. Det är därför samtal hänger och `answered_at` aldrig
-   fylls i på `/dial`-vägen. Högsta prioritet av det som återstår.
-7. Ta bort de två döda Supabase-cronjobben (`kundexa-workers-every-minute`,
-   `kundexa-maintenance-hourly`). De är avstängda dubbletter av Vercel Cron vars
-   vault-hemligheter aldrig skapats, och de har redan fått en läsare att felrapportera
-   friska jobb som stillastående (FAILURE-0098).
-8. Skriv om meddelandet i `current_user_dial_path` som ber administratören köra
-   "Rätta uppringningsvägen". Rättningen kan inte ge det meddelandet lovar (FAILURE-0097).
-9. Migrationerna saknar table grants — schemat kan inte byggas om från dem ensamt
-   (13 av 181 tabeller läsbara på en färsk branch). Kräver beslut om säkerhetshållning.
-10. Påminnelsemailets rubrik använder `tenant.legal_name` i stället för den valda
-    `tenant_legal_entities`-raden, och visar fel bolag för en tenant med flera juridiska
-    personer.
+Uppdaterad 2026-09-17. Bytet till Sinch är genomfört: Rinkel och 46elks finns varken i
+källkoden, i schemat eller i driftdokumentationen, och `npm run verify` är grön i sin
+helhet. Det som återstår kräver leverantörskonto eller ett riktigt samtal.
 
 ## Användarens egna steg
 
-11. Testsamtalet: ring, svara, lägg på. Enda sättet att se om `answered_at` fylls i.
-12. Resend: verifiera `kundexa.se`, sätt `RESEND_API_KEY`, `DEFAULT_EMAIL_FROM_ADDRESS`,
-    `DEFAULT_EMAIL_FROM_NAME` i Vercel, lägg till Gridex domän.
-13. Godkänn en avtalsmall; rätta de två ogiltiga organisationsnumren.
+1. **Registrera callback-adressen** i Sinch kontrollpanel:
+   `https://kundexa.se/api/webhooks/sinch`. Den går inte att läsa tillbaka via API, så
+   `GET /api/ready` rapporterar vilken adress den borde vara (`checks.webhookUrl`).
+2. **Köp eller porta numren med svensk originering.** Ett svenskt nummer som origineras
+   utomlands blockeras av operatörerna enligt PTS föreskrift — det avgör både om samtalet
+   kopplas och minutpriset (originerings­prefixet är ungefär elva gånger i skillnad).
+3. **Sätt SMS-nycklarna** i Vercel och Supabase Edge Secrets: `SMS_SERVICE_PLAN_ID`,
+   `SMS_API_TOKEN`, `SMS_REGION`. Utan dem dödbrevas varje avtals-SMS med
+   `permanent_sms_provider_not_configured`.
+4. **Testsamtalet.** Ring, svara, lägg på. Det är enda sättet att se att webbtelefonen
+   registrerar sig, att A-numret syns hos mottagaren och att händelserna når webhooken.
+5. **Test-SMS med ett avtal.** Skicka, svara "JA", kontrollera att acceptansen registreras.
+6. Resend: verifiera `kundexa.se`, sätt `RESEND_API_KEY`, `DEFAULT_EMAIL_FROM_ADDRESS`,
+   `DEFAULT_EMAIL_FROM_NAME` i Vercel, lägg till Gridex domän.
+7. Godkänn en avtalsmall; rätta de två ogiltiga organisationsnumren.
+8. Sätt `NEXT_PUBLIC_APP_URL` och `APP_URL` till `https://kundexa.se`, och gör apex till
+   primär domän i Vercel. Callback-adressen härleds ur app-URL:en, så de två kan inte
+   längre glida isär — men appen ligger i dag på `www` medan produkten ska ligga på apex.
+
+## Kvar att bygga
+
+9. Webbtelefonens gränssnitt: mikrofontillstånd, headsetväljare, mute, hold, DTMF,
+   nivåmätare före första samtalet och en AudioContext som låses upp av en användargest.
+10. Nummertilldelning per team, lista och kampanj i gränssnittet. Kolumnerna och
+    resolvern finns (`caller_id_phone_number_id`, `resolve_caller_id_phone_number`);
+    det som saknas är formulären. Företagets förval går redan att sätta.
+11. Hyra nya nummer från leverantören inifrån Kundexa. I dag köps de i deras panel och
+    läggs in för hand i `phone_numbers`.
+12. Beslut: ska inkommande samtal ringa i Kundexa? Kräver ringläge, svara/avvisa och en
+    regel för vem som får samtalet.
+13. Migrationerna saknar table grants — schemat kan inte byggas om från dem ensamt.
+    Kräver beslut om säkerhetshållning.
+
+## Skulder som är värda att veta om
+
+14. `release_stale_dial_attempts` och `release_lost_webphone_sessions` var skrivna men
+    aldrig schemalagda, alltså skyddsnät som aldrig fångat någon. De körs nu ur
+    maintenance-workern. Ingen av dem har ännu släppt ett försök i produktion.
+15. Inspelningar hämtas inte från leverantören. `/api/v1/calls/[id]/recording` kastar
+    `recording_not_fetched_from_provider` i stället för att dela ut en trasig länk, och
+    gallringens leverantörshalva vägrar med `permanent_provider_recording_delete_unsupported`
+    hellre än att märka en inspelning som gallrad medan kopian lever kvar.

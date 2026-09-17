@@ -665,7 +665,9 @@ const PROVIDER_NAME_EXEMPT = new Set([
   "src/lib/supabase/runtime-database.types.ts",
 ]);
 const SCANNED_ROOTS = ["src", "scripts", "supabase/functions"];
-const SCANNED_EXTENSIONS = [".ts", ".tsx", ".mjs", ".mts", ".sql"];
+// .json ingår: ruttklassificeringen är en JSON-fil, och där stod en borttagen
+// leverantörs namn kvar i både en rutt och tre motiveringar.
+const SCANNED_EXTENSIONS = [".ts", ".tsx", ".mjs", ".mts", ".sql", ".json"];
 
 async function sourceFiles(relative) {
   const absolute = join(root, relative);

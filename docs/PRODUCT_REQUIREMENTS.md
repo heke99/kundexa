@@ -382,8 +382,8 @@ Den ska stödja:
 * Inkommande samtal
 * Utgående samtal
 * Blandade inkommande och utgående kampanjer
-* Rinkel click-to-call från webbläsaren utan providerhemligheter i klienten
-* Rinkel-enheter och SIP-/mobilklienter som konfigureras hos providern
+* Click-to-call från webbläsaren utan providerhemligheter i klienten
+* Enheter och SIP-/mobilklienter som konfigureras hos providern
 * Mobil vidarekoppling
 * Samtalsköer
 * Svarsgrupper
@@ -1105,7 +1105,7 @@ Kan användas som:
 
 36. Referensalternativ för telefoni
 
-Kundexas implementerade och kanoniska telefoniprovider är Rinkel. Följande lösningar är endast framtida referensalternativ och får inte aktiveras som parallella voicevägar utan en ny arkitektur- och säkerhetsprövning.
+Kundexas implementerade och kanoniska telefoniprovider är Sinch. Följande lösningar är endast framtida referensalternativ och får inte aktiveras som parallella voicevägar utan en ny arkitektur- och säkerhetsprövning.
 
 Asterisk
 Asterisk kan användas som underliggande telefonimotor för:

@@ -64,9 +64,9 @@ Repositoryt innehåller även ett idempotent server-side-kommando som använder 
 npm run platform:bootstrap-owner -- --email=DIN-EPOST@EXEMPEL.SE
 ```
 
-Kommandot kräver `NEXT_PUBLIC_SUPABASE_URL` och `SUPABASE_SERVICE_ROLE_KEY` i shellmiljön eller `.env.local`. Användaren måste redan finnas i Supabase Auth. När kommandot är klart ska användaren logga ut och in igen. Därefter visas länken **Rinkeltelefoni** i sidomenyn och `/app/platform/telephony` kan öppnas.
+Kommandot kräver `NEXT_PUBLIC_SUPABASE_URL` och `SUPABASE_SERVICE_ROLE_KEY` i shellmiljön eller `.env.local`. Användaren måste redan finnas i Supabase Auth. När kommandot är klart ska användaren logga ut och in igen. Därefter är plattformsvyerna öppna.
 
-Om routen öppnas utan rätt plattformsroll visas nu ett tydligt åtkomstmeddelande i stället för en tyst omdirigering. Om Rinkel-tabellerna saknas visas ett tydligt migrationsfel i stället för en tom sida.
+Om en plattformsvy öppnas utan rätt plattformsroll visas ett tydligt åtkomstmeddelande i stället för en tyst omdirigering. Telefonin administreras numera per företag under Integrationer: numren ligger i `phone_numbers` och företagets utgående nummer väljs där.
 
 ## Idempotent onboarding
 

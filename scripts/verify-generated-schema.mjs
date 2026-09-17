@@ -21,7 +21,6 @@ const requiredFunctions = [
   "resolve_caller_id_phone_number",
   "caller_id_options_for_current_user",
   "release_stale_dial_attempts",
-  "protect_call_projection",
   "apply_resend_delivery_event",
   "finalize_signing_envelope",
   "mark_acceptance_opened",

@@ -7,7 +7,6 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { createClient } from "@/lib/supabase/server";
 import { formatDate } from "@/lib/utils";
-import { TranscriptionRetryButton } from "@/components/transcription-retry-button";
 
 export default async function CallDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -56,7 +55,7 @@ export default async function CallDetailPage({ params }: { params: Promise<{ id:
 
       <Card><CardHeader><h2>Transkribering</h2><Badge>{transcript?.status ?? call.transcription_status}</Badge></CardHeader><CardContent>
         {transcriptText ? <pre style={{ whiteSpace: "pre-wrap", maxHeight: 420, overflow: "auto" }}>{transcriptText}</pre> : <p>Transkribering är inte tillgänglig ännu.</p>}
-        {transcript?.status === "pending" ? <TranscriptionRetryButton callId={id} /> : null}
+        
       </CardContent></Card>
 
       <Card><CardHeader><h2>AI Insights</h2><Badge>{insights?.[0]?.status ?? call.insights_status}</Badge></CardHeader><CardContent>

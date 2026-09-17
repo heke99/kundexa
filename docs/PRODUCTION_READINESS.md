@@ -16,9 +16,9 @@ Produkten körs på **kundexa.se**. `app.kundexa.se` är utfasat och finns inte 
 - [x] Ingen kodväg, env-mall eller aktuell driftdokumentation refererar `app.kundexa.se`
       Evidens: `grep -rn "app\.kundexa\.se" src supabase scripts docs .env.example` ger noll träffar.
 - [x] Webhookvärden kan inte glida isär från appvärden
-      Evidens: `resolveRinkelWebhookBaseUrl()` i `src/lib/env.ts` ärver `NEXT_PUBLIC_APP_URL`
-      när `RINKEL_WEBHOOK_PUBLIC_BASE_URL` är osatt; explicit override vinner fortfarande.
-      Testat i `scripts/api-core-tests.ts` (arv, trailing slash, override, oanvändbar app-URL).
+      Evidens: `expectedWebhookUrl()` i `src/lib/env.ts` härleds ur `NEXT_PUBLIC_APP_URL`
+      och ingenting annat, så de två kan inte längre sättas oberoende av varandra.
+      Testat i `scripts/api-core-tests.ts` (arv, trailing slash, värdnamn, oanvändbar app-URL).
       Tidigare föll den tillbaka på literalen `"https://kundexa.se"`, vilket är hur
       produktion kunde servera länkar för `www` medan webhookarna pekade på apex.
 - [x] `NEXT_PUBLIC_APP_URL` kan inte längre tyst falla tillbaka på `http://localhost:3000`
@@ -34,7 +34,7 @@ Produkten körs på **kundexa.se**. `app.kundexa.se` är utfasat och finns inte 
       Evidens: `checks.appBaseUrl` och `checks.appBaseUrlUsable` i `GET /api/ready`.
 - [ ] `kundexa.se` serveras direkt i stället för att 308-omdirigera till `www.kundexa.se`
       Kräver Vercel-dashboard, se *Externa åtgärder*.
-- [ ] `NEXT_PUBLIC_APP_URL`, `APP_URL` och `RINKEL_WEBHOOK_PUBLIC_BASE_URL` är satta till
+- [ ] `NEXT_PUBLIC_APP_URL` och `APP_URL` är satta till
       `https://kundexa.se` i Vercel Production och Supabase Edge Secrets
       Kräver dashboard-access, se *Externa åtgärder*.
 
@@ -78,54 +78,45 @@ oautentiserat via `/rest/v1/rpc/<namn>` med definierarens rättigheter, förbi R
 - [ ] Tvåtenant-negativtest med riktiga JWT-sessioner mot live
       Kör i PGlite-replayen (`npm run test`), men inte mot hostad instans med riktiga sessioner.
 
-## 4. Rinkel
+## 4. Telefoni (Sinch)
 
-Central plattformsintegration: exakt en server-side API-nyckel, centralt ägda resurser,
-ingen Rinkel-credential per tenant.
+Central integration: serverns nycklar, företagets egna nummer, ingen
+telefonicredential per tenant och ingenting att provisionera per säljare.
+Uppsättningen i detalj står i `docs/integrations/telefoni.md`.
 
-- [x] Autentisering använder `x-rinkel-api-key`
-      Evidens: `supabase/functions/_shared/rinkel.ts`; matchar developers.rinkel.com.
-- [x] Webhookeventen matchar leverantörens aktuella dokumentation
-      Evidens: `incomingCall`, `outgoingCall`, `callStart`, `callEnd`, `callInsights` med
-      dokumenterade fält (`RINKEL_WEBHOOK_EVENTS`, `parseRinkelWebhookPayload`).
-- [x] Ingen påhittad webhooksignatur
-      Evidens: Rinkel dokumenterar ingen signering. Autenticitet vilar i stället på
-      ogissningsbar hemlighet i URL:en, IP-allowlist, schemavalidering och dedup.
-- [x] Nyckeln når aldrig webbläsaren
-      Evidens: endast `serverEnv()`; ingen `NEXT_PUBLIC_`-variant; redaktion av
-      `x-rinkel-api-key` i felutskrifter.
-- [x] Alla fem webhookar är registrerade hos Rinkel
-      Evidens: `platform_rinkel_webhook_subscriptions` — fem rader, `status='registered'`,
-      `provider_active=true`, mot `https://kundexa.se/api/webhooks/rinkel/.../<event>`,
-      registrerade `2026-08-10`.
-- [ ] Webhookvärden matchar den värd appen faktiskt serveras på
-      Evidens: `GET /api/ready` i production ger `"appBaseUrl":"https://www.kundexa.se"`,
-      `"webhookHost":"kundexa.se"`, `"webhookHostAligned":false`. Prenumerationerna pekar
-      alltså på apex, som svarar `308`, medan appen ligger på `www`. En webhookavsändare som
-      inte följer redirect tappar eventet. Se *Externa åtgärder*.
-- [ ] **Rinkel-kontot har ingen device — dial är blockerat (men tilldelning är det inte längre).**
-      Uppdatering `2026-09-07`: den saknade device blockerade tidigare även *tilldelning*, vilket
-      var en kodbugg. Rinkel har inget device-endpoint och `deviceId: null` är ett normalt
-      leverantörstillstånd, så tilldelning och säljarmappning är nu öppna och device löses vid
-      ringtillfället via `rinkel_effective_provider_device`. En torrkörning av
-      `assign_platform_rinkel_number` mot produktionsdata (rullad tillbaka) ger
-      `linked_seller_count=1`, `unresolved_seller_count=0`,
-      `telephony_activated_tenant_count=1` och `provider_device_missing_count=1`: hela kedjan
-      utom device är alltså klar. Endast punkten nedan återstår, och den är extern.
-      Evidens: `platform_rinkel_devices` har noll rader, och leverantörens egen payload för
-      användaren (`hekmat.h@gridex.se`, `6a6b1c70faafaa92a04a7d6b`) har `"deviceId": null` och
-      `"deskPhoneAccount": null`. `platform_rinkel_capabilities` visar `api_access=true`,
-      `users_catalog=true`, `numbers_catalog=true`, `webhooks_registration=true` men
-      `dial=false`, `dial_configured=false`, `dial_endpoint_reachable=false`, `webhooks=false`,
-      `recordings=false`, `transcription=false`.
-      `POST /dial` kräver `deviceId`. Koden failar korrekt stängt i stället för att hitta på ett
-      device-id, så detta är en kontokapabilitet, inte en kodbugg. Se *Externa åtgärder*.
-- [ ] Webhooktestet mot leverantören har aldrig gått igenom
-      Evidens: samtliga fem prenumerationer har `last_error_code='RINKEL_INVALID_REQUEST'`,
-      `test_received_at=null`, `last_verified_at=null`, `received_count=0`. Noll webhookevent har
-      någonsin tagits emot (`platform_rinkel_webhook_events` är tom), vilket är väntat eftersom
-      noll samtal ringts, men det betyder också att kedjan aldrig är liveverifierad.
-- [ ] Live dial, CDR-reparation och recording mot riktigt Rinkel-konto
+- [x] Webbläsaren är telefonen, servern kopplar aldrig själv
+      Evidens: `reserve_outbound_call` reserverar och stannar; `scripts/verify.mjs`
+      fäller en dialrutt som växer ett eget `fetch` eller anropar leverantörens klient.
+- [x] Applikationshemligheten når aldrig webbläsaren
+      Evidens: endast `serverEnv()`, ingen `NEXT_PUBLIC_`-variant. Klienten får en
+      kortlivad JWT som servern signerat (`src/lib/telephony/sinch/registration-token.ts`).
+- [x] Callbacken är signaturverifierad
+      Evidens: `verifySinchCallback` i `src/lib/telephony/sinch/callback-signature.ts`,
+      HMAC-SHA256 över de fem dokumenterade raderna, tidsgräns 300 sekunder,
+      tidskonstant jämförelse. Prövat i `scripts/sinch-unit-tests.mts`, inklusive en
+      förfalskad och en återuppspelad callback.
+- [x] En händelse som inte kan prövas behandlas inte
+      Evidens: 403 utan orsak när signaturen inte håller, 503 när nycklarna saknas så
+      att leverantören gör om leveransen, 200 för händelser vi inte behandlar.
+- [x] Ett samtal utan A-nummer startas aldrig
+      Evidens: adaptern vägrar med `webphone_caller_id_missing`. Leverantören svarar
+      annars med ett samtals-id för ett samtal som aldrig når mottagaren.
+- [x] En säljare har en plats i taget, och platsen går alltid att få tillbaka
+      Evidens: `dial_attempts_one_open_per_seller_uidx`, och fyra vägar ur den —
+      säljaren avslutar, webbtelefonen rapporterar att benet dog, sessionen tappar
+      registreringen, och `release_stale_dial_attempts` i maintenance-workern.
+      Den sista rör aldrig ett uppkopplat samtal.
+- [ ] Callback-adressen är registrerad i leverantörens kontrollpanel och matchar
+      den värd appen faktiskt serveras på
+      Adressen skrivs in för hand och går inte att läsa tillbaka. `GET /api/ready`
+      rapporterar `checks.webhookUrl` — den adress den borde vara. Se *Externa åtgärder*.
+- [ ] Ett riktigt samtal har ringts och dess händelser tagits emot
+      Kedjan är verifierad i replay och i enhetstest, men inte live. Ett testsamtal
+      räknas först när webbtelefonen registrerat sig, destinationen faktiskt ringt och
+      händelserna observerats på `/api/webhooks/sinch`.
+- [ ] Numren är köpta eller portade med svensk originering
+      Ett svenskt nummer som origineras utomlands blockeras av operatörerna enligt
+      PTS föreskrift. Det avgör både om samtalet kopplas och minutpriset.
       Se *Externa åtgärder*.
 
 ## 5. Resend
@@ -150,7 +141,7 @@ ingen Rinkel-credential per tenant.
 
 - [x] `npm run verify` grön i sin helhet
       Kedja: `types:verify` → `typecheck:edge` → `test` → `openapi:verify` → `build`.
-      `test` = regressionstester, PGlite-runtime, Rinkel-, kontrakts-, import- och
+      `test` = regressionstester, PGlite-runtime, telefoni-, kontrakts-, import- och
       API-sviter samt SQL-replay av samtliga migrationer.
 
 ## Externa åtgärder
@@ -169,57 +160,55 @@ Detta kan inte lösas med kod- eller databasaccess härifrån.
 - **Verifiering efteråt:** `curl -sI https://kundexa.se/api/health` ska ge `200`, och
   `curl -sI https://www.kundexa.se/` ska ge `308` mot `https://kundexa.se/`.
 
-Redirecten är inte kosmetisk. De fem Rinkel-webhookarna är registrerade mot
-`https://kundexa.se/...`, så varje inkommande webhookleverans möter i dag en 308. En
-webhookavsändare som inte följer redirect tappar eventet.
+Redirecten är inte kosmetisk. Callback-adressen registreras för hand hos leverantören,
+och en leverans som möter en 308 tappas av varje avsändare som inte följer redirect.
+Då får samtalet aldrig sitt utfall.
 
 ### 2. Sätt bas-URL:erna till `https://kundexa.se`
 
-- **Vad saknas:** värdena är nu avlästa mot körande production i stället för antagna.
-  `GET /api/ready` svarar `"appBaseUrl":"https://www.kundexa.se"` och
-  `"webhookHost":"kundexa.se"`, alltså `"webhookHostAligned":false`. Appen bygger länkar för
-  `www` medan de fem Rinkel-prenumerationerna pekar på apex. Att `webhookHost` stannar på
-  apex trots att app-URL:en är `www` visar att `RINKEL_WEBHOOK_PUBLIC_BASE_URL` är satt
-  explicit i Vercel — hade den varit osatt hade den ärvt app-URL:en efter PR #6.
-  Ingen av dem är `https://app.kundexa.se`, så den domänen är utfasad även i miljön.
+- **Vad saknas:** `GET /api/ready` svarar `"appBaseUrl":"https://www.kundexa.se"`. Appen
+  bygger alltså länkar för `www` medan produkten ska ligga på apex.
 - **Varför kod inte löser det:** det är miljövariabler i Vercel och Supabase, inte i repot.
 - **Åtgärd:** sätt `NEXT_PUBLIC_APP_URL` till `https://kundexa.se` i Vercel
-  Production/Preview och `APP_URL` via `supabase secrets set`. Ta samtidigt bort den
-  explicita `RINKEL_WEBHOOK_PUBLIC_BASE_URL` — utan den ärver webhookvärden app-URL:en och
-  kan inte glida isär igen. Deploya om och registrera om webhookarna.
+  Production/Preview och `APP_URL` via `supabase secrets set`. Callback-adressen härleds
+  numera ur app-URL:en och kan inte sättas oberoende, så det finns ingen andra variabel
+  att hålla i synk.
 - **Verifiering efteråt:** `curl -s https://kundexa.se/api/ready` ska visa
-  `"appBaseUrl":"https://kundexa.se"`, `"appBaseUrlUsable":true` och
-  `"webhookHostAligned":true`.
+  `"appBaseUrl":"https://kundexa.se"` och `"appBaseUrlUsable":true`.
 
-### 3. Provisionera en Rinkel-device för säljaranvändaren
+### 3. Registrera callback-adressen hos leverantören
 
-- **Vad saknas:** `POST /dial` kräver `deviceId`, och Rinkels egen payload för användaren
-  `hekmat.h@gridex.se` innehåller `"deviceId": null` och `"deskPhoneAccount": null`. Kontot har
-  alltså ingen device. `platform_rinkel_capabilities` bekräftar `dial=false`,
-  `dial_endpoint_reachable=false` och `webhooks=false` trots `api_access=true`.
-- **Varför kod inte löser det:** Kundexa kan inte skapa en device åt Rinkel, och att hitta på ett
-  device-id skulle bara flytta felet till ett provider-400. Koden failar medvetet stängt med en
-  device-inventeringsdiagnostik i stället.
-- **Åtgärd:** aktivera en device för användaren i My Rinkel (webphone, desk phone eller mobil-app)
-  och bekräfta med Rinkel att abonnemanget täcker `/dial` och webhookfunktionen — deras publika
-  villkor anger webhooks endast för Expert-abonnemanget, vilket är förenligt med att
-  webhooktestet svarar `RINKEL_INVALID_REQUEST`.
-- **Verifiering efteråt:** kör den centrala katalogsynken; `platform_rinkel_devices` ska få minst
-  en aktiv rad och `platform_rinkel_capabilities.dial` ska bli `true`. Därefter går
-  `docs/RINKEL_STAGING_PROTOCOL.md` att köra.
+- **Vad saknas:** adressen skrivs in för hand i leverantörens kontrollpanel och går inte
+  att läsa tillbaka via deras API.
+- **Varför kod inte löser det:** det finns ingen endpoint att registrera den med, så
+  koden kan bara rapportera vilken adress den borde vara.
+- **Åtgärd:** sätt callback-URL:en till värdet i `checks.webhookUrl` från
+  `GET /api/ready`, alltså `https://kundexa.se/api/webhooks/sinch`.
+- **Verifiering efteråt:** ett testsamtal ska ge rader i `provider_webhook_events` med
+  `provider='sinch'`, och samtalets status ska röra sig utan att någon rör databasen.
 
-### 4. Live-verifiering av Rinkel och Resend
+### 4. Nummer med svensk originering
 
-- **Vad saknas:** riktigt dial, CDR-reparation, recording-access och ett skarpt Resend-utskick
-  mot verifierad avsändardomän.
+- **Vad saknas:** numren behöver köpas eller portas hos leverantören så att de origineras
+  i Sverige.
+- **Varför kod inte löser det:** det är ett avtals- och nummerärende hos leverantören.
+- **Åtgärd:** köp eller porta numren. Detta avgör två saker: ett svenskt nummer som
+  origineras utomlands blockeras av de svenska operatörerna enligt PTS föreskrift, och
+  originerings­prefixet styr minutpriset.
+- **Verifiering efteråt:** ett testsamtal till ett svenskt mobilnummer kopplas och visar
+  rätt A-nummer hos mottagaren.
+
+### 5. Live-verifiering av telefoni och Resend
+
+- **Vad saknas:** ett riktigt samtal hela vägen, och ett skarpt Resend-utskick mot
+  verifierad avsändardomän.
 - **Varför kod inte löser det:** kräver leverantörskonto, ett säkert testnummer och en
   testmottagare. Utan ett uttryckligen anvisat testmål går det inte att köra utan att
   riskera samtal eller e-post till riktiga kunder.
-- **Åtgärd:** följ `docs/RINKEL_STAGING_PROTOCOL.md` med ett dedikerat testnummer och
+- **Åtgärd:** ring från dialern till ett dedikerat testnummer, och skicka ett avtal till
   Resends testadresser.
-- **Verifiering efteråt:** `platform_rinkel_webhook_events` och `email_delivery_events` ska
-  innehålla de förväntade eventen, och `provider_webhook_events` ska inte ha rader i
-  `failed`.
+- **Verifiering efteråt:** `provider_webhook_events` och `email_delivery_events` ska
+  innehålla de förväntade eventen, och inga rader i `failed`.
 
 ## Produktionsdata vid granskningen
 

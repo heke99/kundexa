@@ -11,7 +11,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...
 KUNDEXA_ENCRYPTION_KEY=...
 KUNDEXA_WEBHOOK_PEPPER=...
-ENFORCE_46ELKS_IP_ALLOWLIST=false
+ENFORCE_SMS_IP_ALLOWLIST=false
 CRON_SECRET=...
 RESEND_API_KEY=
 DEFAULT_EMAIL_FROM_NAME=Kundexa
@@ -59,7 +59,6 @@ Deployskriptet publicerar åtta funktioner:
 
 ```text
 process-outbox
-rinkel-platform-worker
 automation-runner
 data-worker
 ingestion-worker
@@ -76,7 +75,6 @@ Anropa med `POST` och headern `x-cron-secret`:
 
 ```text
 /functions/v1/process-outbox          varje minut
-/functions/v1/rinkel-platform-worker varje minut
 /functions/v1/automation-runner      varje minut
 /functions/v1/data-worker            varje minut
 /functions/v1/ingestion-worker       varje minut
@@ -111,4 +109,4 @@ I produktion ska `REQUIRE_IMPORT_MALWARE_SCAN=true`. Scanner-endpointen ska retu
 
 ## Telefoni och SMS
 
-Rinkel är enda telefoniprovider. Sätt Kundexas enda centrala `RINKEL_API_KEY` som server-/Edge-secret, synkronisera det centrala användar- och nummerinventariet, allokera resurser till tenants, mappa varje säljare och registrera alla fem centrala webhookevent enligt `docs/integrations/rinkel.md`. Tenants får inte ange eller lagra egna Rinkel-credentials. 46elks används endast för SMS-callbackar; dess äldre voice-endpoints svarar permanent `410 Gone`.
+Telefonin kör mot Sinch. Sätt `SINCH_APPLICATION_KEY` och `SINCH_APPLICATION_SECRET` som server- och Edge-secret, lägg upp företagets nummer i `phone_numbers`, välj företagets utgående nummer under Integrationer och registrera callback-adressen i leverantörens kontrollpanel. Säljare provisioneras inte: webbläsaren är telefonen. Hela uppsättningen står i `docs/integrations/telefoni.md`.
