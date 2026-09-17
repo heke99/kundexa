@@ -4,6 +4,9 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getAppContext, isAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { serverEnv } from "@/lib/env";
+import { encryptJson, randomToken, sha256 } from "@/lib/crypto";
+import { NumberProviderError, numberProvider } from "@/lib/telephony/numbers";
 
 const value = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
 
@@ -164,4 +167,81 @@ export async function saveCallerIdDefault(form: FormData) {
 
   revalidatePath(back);
   go("message", phoneNumberId ? "Det utgående numret är sparat." : "Valet av utgående nummer är rensat.", back);
+}
+
+/**
+ * Hyr ett nummer hos leverantören och lägg det hos företaget.
+ *
+ * Ett anrop, en faktura. Därför sker hyrningen först och databasraden sedan --
+ * omvänd ordning hade lämnat ett nummer i `phone_numbers` som ingen äger om
+ * leverantören sa nej.
+ *
+ * Och om databasen sviker efter att numret hyrts går det inte att ångra:
+ * numret är betalt. Det sägs då rakt ut, med numret i klartext, så att en
+ * administratör kan lägga in det för hand i stället för att hyra ett till.
+ */
+export async function rentPhoneNumber(form: FormData) {
+  const context = await adminContext();
+  const phoneNumber = value(form, "phone_number");
+  if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber)) go("error", "Numret har inte ett giltigt E.164-format.");
+
+  const provider = numberProvider();
+  if (!provider.isConfigured()) {
+    go("error", "Nummerhyra är inte uppsatt. Plattformsadministratören behöver lägga in leverantörens projekt-id och nyckel.");
+  }
+
+  // Ett nummer företaget redan har ska inte hyras en gång till.
+  const admin = createAdminClient();
+  const { data: existing } = await admin.from("phone_numbers")
+    .select("id").eq("tenant_id", context.tenantId).eq("number_e164", phoneNumber).maybeSingle();
+  if (existing) go("error", "Företaget har redan det numret.");
+
+  let rented;
+  try {
+    // Fråga innan vi hyr. Ett tidigare försök vars svar tappades kan ha lyckats,
+    // och då är numret redan betalt -- att hyra igen vore en andra faktura för
+    // samma nummer. Leverantören dokumenterar uttryckligen den här ordningen för
+    // debiterbara anrop.
+    rented = await provider.findActive(phoneNumber) ?? await provider.rent(phoneNumber);
+  } catch (error) {
+    if (error instanceof NumberProviderError) go("error", error.message);
+    console.error("number_rent_failed", { name: error instanceof Error ? error.name : "unknown" });
+    go("error", "Numret kunde inte hyras. Ingen debitering har skett.");
+  }
+
+  const env = serverEnv();
+  const token = randomToken();
+  const { data: integration } = await admin.from("tenant_integrations").select("id")
+    .eq("tenant_id", context.tenantId).eq("provider_type", "sms").eq("status", "active").limit(1).maybeSingle();
+
+  const { error } = await admin.from("phone_numbers").insert({
+    tenant_id: context.tenantId,
+    integration_id: integration?.id,
+    number_e164: rented.phoneNumber,
+    // Kapabiliteterna kommer från leverantörens svar, inte från en kryssruta.
+    // Ett nummer som markeras för röst utan att bära röst ger ett samtal som
+    // avvisas med ett fel som inte pekar tillbaka hit.
+    supports_voice: rented.capabilities.includes("voice"),
+    supports_sms: rented.capabilities.includes("sms"),
+    webhook_token_hash: sha256(token + env.KUNDEXA_WEBHOOK_PEPPER),
+    webhook_token_ciphertext: encryptJson({ token }, env.KUNDEXA_ENCRYPTION_KEY),
+  });
+  if (error) {
+    console.error("number_rented_but_not_stored", { code: error.code });
+    go("error", `Numret ${rented.phoneNumber} hyrdes hos leverantören men kunde inte sparas i Kundexa. Lägg in det för hand under Nummer — hyr inte ett nytt.`);
+  }
+
+  const { error: auditError } = await admin.from("audit_logs").insert({
+    tenant_id: context.tenantId,
+    actor_user_id: context.userId,
+    action: "telephony.number_rented",
+    entity_type: "phone_number",
+    entity_id: rented.phoneNumber,
+    after_data: { number_e164: rented.phoneNumber, capabilities: rented.capabilities, provider: provider.id },
+  });
+  // En hyrning är en kostnad. Den ska gå att härleda till den som tryckte.
+  if (auditError) go("error", "Numret hyrdes och sparades, men ändringen kunde inte loggas. Kontakta plattformsadministratören.");
+
+  revalidatePath("/app/integrations");
+  redirect(`/app/integrations?webhookToken=${encodeURIComponent(token)}`);
 }

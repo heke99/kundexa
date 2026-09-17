@@ -15,6 +15,8 @@ helhet. Det som återstår kräver leverantörskonto eller ett riktigt samtal.
 3. **Sätt SMS-nycklarna** i Vercel och Supabase Edge Secrets: `SMS_SERVICE_PLAN_ID`,
    `SMS_API_TOKEN`, `SMS_REGION`. Utan dem dödbrevas varje avtals-SMS med
    `permanent_sms_provider_not_configured`.
+   Sätt även `SINCH_PROJECT_ID`, `SINCH_KEY_ID` och `SINCH_KEY_SECRET` om ni vill
+   hyra nummer inifrån Kundexa i stället för i leverantörens panel.
 4. **Testsamtalet.** Ring, svara, lägg på. Det är enda sättet att se att webbtelefonen
    registrerar sig, att A-numret syns hos mottagaren och att händelserna når webhooken.
 5. **Test-SMS med ett avtal.** Skicka, svara "JA", kontrollera att acceptansen registreras.
@@ -29,14 +31,12 @@ helhet. Det som återstår kräver leverantörskonto eller ett riktigt samtal.
 
 9. Webbtelefonens gränssnitt: mikrofontillstånd, headsetväljare, mute, hold, DTMF,
    nivåmätare före första samtalet och en AudioContext som låses upp av en användargest.
-10. Nummertilldelning per team, lista och kampanj i gränssnittet. Kolumnerna och
-    resolvern finns (`caller_id_phone_number_id`, `resolve_caller_id_phone_number`);
-    det som saknas är formulären. Företagets förval går redan att sätta.
-11. Hyra nya nummer från leverantören inifrån Kundexa. I dag köps de i deras panel och
-    läggs in för hand i `phone_numbers`.
-12. Beslut: ska inkommande samtal ringa i Kundexa? Kräver ringläge, svara/avvisa och en
+10. Beslut: ska inkommande samtal ringa i Kundexa? Kräver ringläge, svara/avvisa och en
     regel för vem som får samtalet.
-13. Migrationerna saknar table grants — schemat kan inte byggas om från dem ensamt.
+11. Säga upp ett nummer inifrån Kundexa. Medvetet utelämnat: det har uppsägningstid
+    och fakturaföljd, så det görs i leverantörens panel tills någon bestämt hur
+    bekräftelsen ska se ut.
+12. Migrationerna saknar table grants — schemat kan inte byggas om från dem ensamt.
     Kräver beslut om säkerhetshållning.
 
 ## Skulder som är värda att veta om

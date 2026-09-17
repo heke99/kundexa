@@ -124,6 +124,11 @@ const serverSchema = publicObject.extend({
   SINCH_APPLICATION_KEY: z.string().min(1).optional(),
   SINCH_APPLICATION_SECRET: z.string().min(1).optional(),
   SINCH_RTC_ENVIRONMENT_HOST: z.string().min(1).default("ocra.api.sinch.com"),
+  // Nummerhyra. Egna nycklar, därför att Numbers API autentiseras med OAuth2 mot
+  // projektet och inte med applikationsnyckeln webbtelefonen använder.
+  SINCH_PROJECT_ID: z.string().min(1).optional(),
+  SINCH_KEY_ID: z.string().min(1).optional(),
+  SINCH_KEY_SECRET: z.string().min(1).optional(),
   // Webbtelefonen. STUN räcker för att hitta sin egen adress; TURN är det som
   // faktiskt bär ljudet igenom en företagsbrandvägg, och utan relä blir felet
   // "kunden hör mig inte" i stället för ett ärligt fel vid uppkoppling.
@@ -157,6 +162,9 @@ export function serverEnv() {
     DEFAULT_EMAIL_FROM_ADDRESS: process.env.DEFAULT_EMAIL_FROM_ADDRESS,
     RESEND_WEBHOOK_SECRET: process.env.RESEND_WEBHOOK_SECRET,
     SINCH_APPLICATION_KEY: process.env.SINCH_APPLICATION_KEY,
+    SINCH_PROJECT_ID: process.env.SINCH_PROJECT_ID,
+    SINCH_KEY_ID: process.env.SINCH_KEY_ID,
+    SINCH_KEY_SECRET: process.env.SINCH_KEY_SECRET,
     SINCH_APPLICATION_SECRET: process.env.SINCH_APPLICATION_SECRET,
     SINCH_RTC_ENVIRONMENT_HOST: process.env.SINCH_RTC_ENVIRONMENT_HOST ?? "ocra.api.sinch.com",
     WEBPHONE_STUN_URLS: process.env.WEBPHONE_STUN_URLS ?? "",

@@ -123,6 +123,10 @@
   "/segments/{id}/refresh": {
     "classification": "public"
   },
+  "/telephony/numbers/available": {
+    "classification": "internal",
+    "reason": "Admin-only search against the platform's own provider account; it exposes which account Kundexa runs on and what numbers cost, and the next button after it sends an invoice"
+  },
   "/telephony/status": {
     "classification": "internal",
     "reason": "Current-user readiness projection depends on auth.uid() and the tenant this session is acting in"

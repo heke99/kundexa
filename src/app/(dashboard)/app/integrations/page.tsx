@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Field, SelectField } from "@/components/ui/form-field";
 import { Badge } from "@/components/ui/badge";
+import { NumberRental } from "@/components/number-rental";
 import { formatDate } from "@/lib/utils";
 import { saveCallerIdDefault, saveTelephonyPolicy } from "@/app/actions/telephony";
 
@@ -119,7 +120,19 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
       <Card><CardHeader><h2><KeyRound size={17} /> SMS</h2></CardHeader><CardContent><div className="notice">SMS bär avtalsutskick och kundsvar. Kör i Kundexas konto om ni inte har ett eget avtal med leverantören.</div><form action={saveSmsIntegration} className="form-stack" style={{ marginTop: 14 }}><SelectField label="Kontomodell" name="account_mode"><option value="platform_managed">Kundexas konto</option><option value="tenant_owned">Eget konto</option></SelectField><Field label="Service plan-id (endast eget konto)" name="service_plan_id" /><Field label="API-token (endast eget konto)" name="api_token" type="password" /><SelectField label="Region" name="region"><option value="eu">EU</option><option value="us">US</option></SelectField><button className="button button-primary">Kryptera och spara</button></form></CardContent></Card>
 
       <Card><CardHeader><h2><Phone size={17} /> Telefonnummer</h2><Badge>{numbers?.length ?? 0}</Badge></CardHeader><CardContent style={{ padding: 0 }}><DataTable headers={["Nummer", "Voice", "SMS", "MMS", "Status"]}>{numbers?.map((number) => <tr key={number.id}><td><strong>{number.number_e164}</strong></td><td>{number.supports_voice ? "Ja" : "Nej"}</td><td>{number.supports_sms ? "Ja" : "Nej"}</td><td>{number.supports_mms ? "Ja" : "Nej"}</td><td><Badge className={number.status === "active" ? "badge-success" : ""}>{number.status}</Badge></td></tr>)}</DataTable></CardContent></Card>
-      <Card><CardHeader><h2>Lägg till SMS-nummer</h2></CardHeader><CardContent><form action={addPhoneNumber} className="form-stack"><Field label="E.164-nummer" name="number_e164" placeholder="+46700000000" required /><input type="hidden" name="voice" value="" /><label><input type="checkbox" name="sms" /> SMS-capability</label><button className="button button-secondary">Registrera nummer</button></form></CardContent></Card>
+      <Card><CardHeader><h2><Phone size={17} /> Hyr ett nytt nummer</h2></CardHeader><CardContent><NumberRental /></CardContent></Card>
+
+      <Card><CardHeader><h2>Lägg till ett nummer ni redan har</h2></CardHeader><CardContent>
+        <p className="muted" style={{ marginBottom: 12 }}>
+          För nummer som är köpta någon annanstans. Ett nummer som hyrs här ovanför läggs in automatiskt.
+        </p>
+        <form action={addPhoneNumber} className="form-stack">
+          <Field label="E.164-nummer" name="number_e164" placeholder="+46700000000" required />
+          <label><input type="checkbox" name="voice" /> Kan bära samtal</label>
+          <label><input type="checkbox" name="sms" /> Kan bära SMS</label>
+          <button className="button button-secondary">Registrera nummer</button>
+        </form>
+      </CardContent></Card>
     </div>
   </>;
 }

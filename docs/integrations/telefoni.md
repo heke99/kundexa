@@ -16,6 +16,7 @@ källträdet och fäller bygget om det står någon annanstans.
 | Callback-signatur | `src/lib/telephony/sinch/callback-signature.ts` |
 | Klientens SDK-hook | `src/hooks/use-sinch-webphone.ts` |
 | SMS-adaptrar | `supabase/functions/_shared/sms-provider.ts`, `src/lib/messaging/provider.ts` |
+| Nummerhyra | `src/lib/telephony/numbers/sinch.ts`, `src/lib/telephony/numbers/index.ts` |
 
 Allt annat -- reservationen, platsmodellen, ringtiderna, NIX-spärren,
 efterarbetet, avtalsutskicket -- talar om "en telefonitjänst" och "ett SMS".
@@ -104,6 +105,26 @@ Kostnaden lämnas tom när den inte rapporteras — den läses som fakturaunderl
 Båda webhookarna autentiseras med en token per nummer. En läckt callback-URL
 kan därför inte rapportera för ett annat nummer eller ett annat företag.
 
+## Att skaffa ett nummer
+
+Numren hyrs under Integrationer: sök på land, typ och siffror, se priset per
+rad, bekräfta. Numret hamnar direkt i `phone_numbers` med sin callback-token och
+med de kapabiliteter leverantören faktiskt rapporterar -- inte de kryssrutor
+någon råkade fylla i.
+
+Två saker som är medvetet gjorda så här:
+
+- **Hyrningen kontrollerar först om vi redan äger numret.** Anropet är
+  debiterbart, och ett försök vars svar tappades kan ha lyckats. Att hyra igen
+  vore en andra faktura för samma nummer.
+- **Ett nummer som kräver identitetshandlingar går inte att hyra härifrån.**
+  Det kräver leverantörens beställningsflöde med KYC, så raden visar "Kräver
+  dokumentation" i stället för en knapp som alltid misslyckas.
+
+Att säga upp ett nummer finns inte i gränssnittet. Det är ett beslut med
+uppsägningstid och fakturaföljd, och en knapp är fel ställe att fatta det på --
+det görs i leverantörens panel.
+
 ## Serverinställningar
 
 Ingen av dem får ha prefixet `NEXT_PUBLIC_`, lagras i databasen eller visas i
@@ -119,6 +140,10 @@ SMS_PROVIDER                 vilken SMS-adapter som används
 SMS_SERVICE_PLAN_ID          plattformens eget SMS-konto
 SMS_API_TOKEN                plattformens eget SMS-konto
 SMS_REGION                   eu eller us
+
+SINCH_PROJECT_ID             nummerhyra: projektet numren hyrs i
+SINCH_KEY_ID                 nummerhyra: OAuth2-nyckel
+SINCH_KEY_SECRET             nummerhyra: OAuth2-hemlighet
 ENFORCE_SMS_IP_ALLOWLIST     valfri IP-spärr framför SMS-webhookarna, av som standard
 
 WEBPHONE_STUN_URLS           används bara av SIP-vägen; leverantörens SDK sköter ICE själv
@@ -133,7 +158,8 @@ Integrationer; de krypteras innan de lämnar servern.
 
 1. Skriv adaptern. För röst: `WebphoneProvider` (`key`, `isConfigured`,
    `provision`). För SMS: `SmsProvider` (`send`, `findSubmitted`) och
-   `SmsWebhookAdapter` (`parseInbound`, `parseDeliveryReport`).
+   `SmsWebhookAdapter` (`parseInbound`, `parseDeliveryReport`). För nummer:
+   `NumberProvider` (`isConfigured`, `search`, `findActive`, `rent`).
 2. Registrera den i `src/lib/telephony/webphone/index.ts` respektive i
    registren i SMS-portarna.
 3. Lägg till en webhookrutt om nyttolastens form skiljer sig.

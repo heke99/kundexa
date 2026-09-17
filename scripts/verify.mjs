@@ -302,6 +302,38 @@ assert.match(callerIdOptionsMigration, /order by \(n\.id = v_default\) desc/, "T
 const telephonyActions = await readFile(join(root, "src/app/actions/telephony.ts"), "utf8");
 assert.match(telephonyActions, /export async function saveCallerIdDefault/, "An administrator must be able to change the outgoing number without a deploy");
 assert.match(telephonyActions, /supports_voice/, "Assigning a caller ID must verify the number can actually carry a call");
+// Nummerhyra. Ett anrop kostar pengar varje månad tills någon säger upp numret,
+// så ordningen och ärligheten i den här vägen är inte kosmetisk.
+const numberPort = await readFile(join(root, "src/lib/telephony/numbers/provider.ts"), "utf8");
+assert.doesNotMatch(numberPort, /release|cancel|delete/i, "The number port must not offer to give a number up; that decision has an invoice and a notice period behind it");
+const numberAdapter = await readFile(join(root, "src/lib/telephony/numbers/sinch.ts"), "utf8");
+assert.match(numberAdapter, /smsConfiguration/, "A rented number must be bound to our messaging account at rent time, or it costs money while receiving nothing");
+// Fältnamnen är avlästa ur leverantörens OpenAPI-spec. De tre nedan var fel när
+// de skrevs ur minnet, och två av dem hade felat tyst: en söksida som ignoreras
+// och ett pris som alltid visas som okänt.
+assert.match(numberAdapter, /voiceConfiguration = \{ type: "RTC", appId/, "voiceConfiguration is a union discriminated on type; without it the payload is ambiguous");
+assert.match(numberAdapter, /\bsize: String\(/, "The available-number search takes `size`, not `pageSize`; the wrong name is silently ignored");
+// Kommentarerna får nämna det gamla namnet -- de är protokollet över vad som var
+// fel. Koden får inte.
+const numberAdapterCode = numberAdapter.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
+assert.match(numberAdapterCode, /readMoney\(number\.monthlyPrice\)/, "The monthly price must be read from the field the provider actually sends");
+assert.doesNotMatch(numberAdapterCode, /monthlyCost/, "The provider reports `monthlyPrice`; reading the other name shows every number as priceless");
+assert.match(numberAdapter, /supportingDocumentationRequired/, "A number needing identity documents cannot be rented in one call and must not be offered as if it could");
+assert.match(numberAdapter, /async findActive\(/, "Renting is billable, so owning the number must be checkable before a retry");
+const numberSearchRoute = await readFile(join(root, "src/app/api/v1/telephony/numbers/available/route.ts"), "utf8");
+assert.match(numberSearchRoute, /isAdmin\(context\.role\)/, "Number search must be admin-only; the next button after it sends an invoice");
+assert.match(numberSearchRoute, /number_provider_not_configured/, "Missing provider credentials must be a named refusal, not an empty result list");
+const telephonyActionsSource = await readFile(join(root, "src/app/actions/telephony.ts"), "utf8");
+const rentBody = telephonyActionsSource.slice(telephonyActionsSource.indexOf("export async function rentPhoneNumber"));
+// Hyr först, spara sedan. Omvänd ordning lämnar ett nummer i databasen som
+// ingen äger när leverantören säger nej.
+assert.ok(rentBody.indexOf("provider.rent(") < rentBody.indexOf('from("phone_numbers").insert'),
+  "The number must be rented before the row is written, or a refused rental leaves a number nobody owns");
+assert.ok(rentBody.indexOf("provider.findActive(") < rentBody.indexOf("provider.rent("),
+  "A billable rental must check whether we already own the number before paying for it again");
+assert.match(rentBody, /hyrdes hos leverantören men kunde inte sparas/, "A rental that succeeds and then fails to store must say so with the number, since it cannot be undone");
+assert.match(rentBody, /telephony\.number_rented/, "Renting a number is a cost and must be attributable to whoever pressed the button");
+
 const dropMigration = await readFile(join(root, "supabase/migrations/202609170009_drop_rinkel_schema.sql"), "utf8");
 assert.match(dropMigration, /rinkel_schema_removal_incomplete/, "The removal must fail loudly rather than leave half a provider behind");
 assert.match(dropMigration, /create trigger calls_projection_monotonic/, "Call-state monotonicity must survive the removal, and apply to every provider");
@@ -641,6 +673,8 @@ const PROVIDER_NAME_EXEMPT = new Set([
   "src/lib/telephony/sinch/registration-token.ts",
   "src/lib/telephony/sinch/callback-signature.ts",
   "src/lib/telephony/webphone/sinch.ts",
+  "src/lib/telephony/numbers/sinch.ts",
+  "src/lib/telephony/numbers/index.ts",
   "src/hooks/use-sinch-webphone.ts",
   "src/hooks/use-webphone.ts",
   "src/lib/telephony/webphone/index.ts",
