@@ -4228,21 +4228,60 @@ if (duplicateForeignKeys.rows.length > 0) {
     duplicateForeignKeys.rows.map((row) => `${row.from_table}->${row.to_table}`).join(", ")}`);
 }
 
-// The membership->profile relationship is what lets `profiles:user_id(full_name)`
-// resolve. Without it the "Ansvarig saljare" dropdown on a new contract is empty
-// and no contract can name an owner.
-const membershipProfileLink = await db.query(`
-  select count(*)::int as links
+// Every `profiles:<column>(...)` embed in the application needs a foreign key to
+// public.profiles on the table it reads. Without one PostgREST answers PGRST200
+// and the whole query fails -- when the query is parsed, not per row, so an empty
+// table does not save it.
+//
+// This used to assert only tenant_memberships, which is how notes.created_by
+// slipped through: it points at auth.users, public.profiles was never linked, and
+// every customer card in production was unreachable with digest 1819667757 --
+// taking "Ring ett nytt nummer" with it, since that lands on the same card.
+//
+// So assert the rule rather than the one case. Read the embeds out of the source
+// and require the key for each.
+const { readdirSync: listDir, readFileSync: readSource } = await import("node:fs");
+const sourceRoot = new URL("../src/", import.meta.url).pathname;
+const sourceFiles = [];
+const walkSource = (dir) => {
+  for (const entry of listDir(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) walkSource(`${dir}${entry.name}/`);
+    else if (/\.tsx?$/.test(entry.name)) sourceFiles.push(`${dir}${entry.name}`);
+  }
+};
+walkSource(sourceRoot);
+
+const profileEmbeds = new Map();
+for (const file of sourceFiles) {
+  const source = readSource(file, "utf8");
+  // .from("table") ... .select("... profiles:column(...) ...") on one statement.
+  for (const match of source.matchAll(/\.from\(\s*["'`](\w+)["'`]\s*\)[\s\S]{0,400}?\.select\(\s*["'`]([^"'`]*)["'`]/g)) {
+    const [, table, selection] = match;
+    for (const embed of selection.matchAll(/profiles\s*[:!]\s*(\w+)\s*\(/g)) {
+      profileEmbeds.set(`${table}.${embed[1]}`, { table, column: embed[1], file: file.slice(sourceRoot.length) });
+    }
+  }
+}
+if (profileEmbeds.size === 0) {
+  throw new Error("No profiles embeds were found in the source, so this invariant is measuring nothing.");
+}
+
+const profileLinks = await db.query(`
+  select c.conrelid::regclass::text as table_name,
+         (select string_agg(a.attname, ',') from unnest(c.conkey) k
+          join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k) as cols
   from pg_constraint c
   join pg_namespace n on n.oid = c.connamespace
-  where n.nspname = 'public' and c.contype = 'f'
-    and c.conrelid = 'public.tenant_memberships'::regclass
-    and c.confrelid = 'public.profiles'::regclass
+  where n.nspname = 'public' and c.contype = 'f' and c.confrelid = 'public.profiles'::regclass
 `);
-if (membershipProfileLink.rows[0].links !== 1) {
-  throw new Error("tenant_memberships must reference public.profiles so PostgREST can embed it");
+const linked = new Set(profileLinks.rows.map((row) => `${row.table_name.replace(/^public\./, "")}.${row.cols}`));
+const unresolvable = [...profileEmbeds.values()]
+  .filter((embed) => !linked.has(`${embed.table}.${embed.column}`))
+  .map((embed) => `${embed.table}.${embed.column} (${embed.file})`);
+if (unresolvable.length > 0) {
+  throw new Error(`PostgREST cannot embed profiles for: ${unresolvable.join(", ")} -- the query fails with PGRST200 and the whole page with it`);
 }
-console.log("Schema relationships are unambiguous and memberships resolve to profiles.");
+console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size} profiles embeds resolve to a foreign key.`);
 
 
 // Deleting a contract is narrow on purpose, and two separate things enforce it.
