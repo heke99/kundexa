@@ -2720,6 +2720,108 @@ if (ownCallerId.rows[0].caller_id_phone_number_id !== '00000000-0000-0000-0000-0
 await db.exec(`update public.teams set caller_id_phone_number_id=null where id='00000000-0000-0000-0000-000000000026'`);
 console.log("Verified caller-ID selection: a team takes its own tenant's number and is refused another tenant's.");
 
+// The neutral dial attempt is the seat model without the provider baked in, and a
+// seat that can be held twice is not a seat. Exercise it directly rather than
+// through the reservation RPC, so the table's own guarantees are what is measured.
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+const neutralCalls = await db.query(`
+  insert into public.calls(tenant_id,customer_id,direction,from_number,to_number,status,callback_token_hash,purpose)
+  values
+    ('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000021','outbound','+46401234567','+46702222241','queued','neutral-probe-a','direct_marketing'),
+    ('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000021','outbound','+46401234567','+46702222242','queued','neutral-probe-b','direct_marketing')
+  returning id
+`);
+const [neutralCallA, neutralCallB] = neutralCalls.rows.map((row) => row.id);
+const neutralSeller = '00000000-0000-0000-0000-000000000020';
+
+const insertNeutralAttempt = (callId, key, status) => db.query(`
+  insert into public.dial_attempts(
+    tenant_id,call_id,seller_user_id,provider,caller_id_phone_number_id,caller_id_source,
+    source_number_e164,destination_number_e164,client_request_id,idempotency_key,status,expires_at)
+  values('00000000-0000-0000-0000-000000000001',$1,$2,'sinch',
+    '00000000-0000-0000-0000-000000000022','tenant_default','+46401234567','+46702222241',
+    gen_random_uuid(),$3,$4,now()+interval '5 minutes')
+  returning id
+`, [callId, neutralSeller, key, status]);
+
+const firstNeutralAttempt = (await insertNeutralAttempt(neutralCallA, 'neutral-open-1', 'dial_requested')).rows[0].id;
+
+let secondSeatRefused = false;
+try {
+  await insertNeutralAttempt(neutralCallB, 'neutral-open-2', 'requested');
+} catch (error) {
+  secondSeatRefused = /duplicate key|unique/i.test(error instanceof Error ? error.message : String(error));
+}
+if (!secondSeatRefused) {
+  throw new Error("A seller held two open dial attempts at once, so the seat is a counter and not a seat.");
+}
+
+// Closing the first attempt has to free the seat, or the probe above would pass
+// for the wrong reason: a table that refuses every second insert also refuses
+// this one.
+await db.query(`update public.dial_attempts set status='completed' where id=$1`, [firstNeutralAttempt]);
+const secondNeutralAttempt = (await insertNeutralAttempt(neutralCallB, 'neutral-open-2', 'requested')).rows[0].id;
+
+// A late provider event must not take a released seat back. This is the failure
+// measured in production on 15 September, where a CDR reopened an attempt that
+// had already been released and locked the seller out for ninety minutes.
+//
+// Close the second attempt first, so the seller has no open attempt at all. That
+// matters: with one still open, the unique seat index rejects the reopening on
+// its own and the trigger is never reached, so the assertion would pass without
+// the guard it claims to measure. Removing the trigger proved exactly that.
+await db.query(`update public.dial_attempts set status='completed' where id=$1`, [secondNeutralAttempt]);
+await db.query(`update public.dial_attempts set status='matched', external_call_id='late-cdr' where id=$1`, [firstNeutralAttempt]);
+const reopened = await db.query(`select status, external_call_id from public.dial_attempts where id=$1`, [firstNeutralAttempt]);
+if (reopened.rows[0].status !== 'completed') {
+  throw new Error(`A late provider event reopened a closed dial attempt: status is ${reopened.rows[0].status}.`);
+}
+if (reopened.rows[0].external_call_id !== 'late-cdr') {
+  throw new Error("The terminal guard refused the whole write instead of only the seat, so the provider can no longer enrich the row.");
+}
+
+// Reading is scoped: a seller sees their own attempts, someone outside the tenant
+// sees none, and an admin sees both.
+//
+// This runs inside a DO block that actually switches role. Setting the JWT claim
+// alone leaves the connection as superuser, which bypasses RLS entirely -- and
+// then every read returns every row, so the seller and admin assertions pass
+// while measuring nothing. The first draft of this probe did exactly that, and
+// only the stranger assertion noticed.
+await db.exec(`update public.profiles set active_tenant_id='00000000-0000-0000-0000-000000000001' where id in ('00000000-0000-0000-0000-000000000020','00000000-0000-0000-0000-000000000002')`);
+await db.exec(`
+  do $dialattempts$
+  declare
+    v_own integer;
+    v_stranger integer;
+    v_admin integer;
+  begin
+    perform set_config('request.jwt.claim.role','authenticated',true);
+    set local role authenticated;
+
+    perform set_config('request.jwt.claim.sub','${neutralSeller}',true);
+    select count(*) into v_own from public.dial_attempts;
+    if v_own <> 2 then
+      raise exception 'A seller saw % of their own dial attempts instead of 2', v_own;
+    end if;
+
+    perform set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000050',true);
+    select count(*) into v_stranger from public.dial_attempts;
+    if v_stranger <> 0 then
+      raise exception 'Someone outside the tenant read % dial attempts', v_stranger;
+    end if;
+
+    perform set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',true);
+    select count(*) into v_admin from public.dial_attempts;
+    if v_admin <> 2 then
+      raise exception 'A tenant admin saw % dial attempts instead of 2', v_admin;
+    end if;
+  end $dialattempts$;
+`);
+
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+console.log("Verified the neutral dial attempt: one open seat per seller, the seat frees on close, a late provider event cannot take it back, and reads are scoped to the seller and their admin.");
+
 // The seller's whole journey, executed against the migrated schema: register the call that
 // grounds a contract, draft it, send it, let the customer accept on the public page, and
 // activate it once the evidence package exists. These are the exact RPCs the application
