@@ -203,7 +203,7 @@ export function useSinchWebphone() {
     return { providerCallId: call.id };
   }, [reportLeg]);
 
-  /** Lägger på. Det här är det Rinkel inte kunde och som dialern ljög om. */
+  /** Lägger på. Samtalet ligger i webbläsaren, så knappen avslutar det på riktigt. */
   const hangup = useCallback(() => {
     callRef.current?.hangup();
   }, []);

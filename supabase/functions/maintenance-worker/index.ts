@@ -3,7 +3,6 @@ import { createClient } from "npm:@supabase/supabase-js@2.110.7";
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const cronSecret = Deno.env.get("CRON_SECRET")!;
-const rinkelReconciliationEnabled = Deno.env.get("RINKEL_RECONCILIATION_ENABLED") !== "false";
 const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
 type SegmentJob = { id: string; tenant_id: string; segment_id: string };
@@ -44,38 +43,15 @@ Deno.serve(async (request) => {
   const { data: tenants, error: tenantError } = await supabase.from("tenants").select("id").eq("status", "active").limit(500);
   if (tenantError) return Response.json({ error: tenantError.message }, { status: 500 });
   const retentionResults: unknown[] = [];
-  const maintenanceBucket = new Date().toISOString().slice(0, 13);
   const retentionBucket = new Date().toISOString().slice(0, 10);
-  if (rinkelReconciliationEnabled) {
-    const { data: platformRinkel } = await supabase.from("platform_integrations").select("id")
-      .eq("provider", "rinkel").is("disabled_at", null).in("status", ["connected", "degraded"]).limit(1).maybeSingle();
-    if (platformRinkel) {
-      const { error: reconciliationQueueError } = await supabase.from("platform_rinkel_jobs").upsert({
-        job_type: "rinkel.reconcile_platform",
-        aggregate_id: platformRinkel.id,
-        idempotency_key: `rinkel.reconcile_platform:${maintenanceBucket}`,
-        payload: { platform_integration_id: platformRinkel.id },
-      }, { onConflict: "idempotency_key", ignoreDuplicates: true });
-      if (reconciliationQueueError) return Response.json({ error: reconciliationQueueError.message }, { status: 500 });
-
-      const { error: platformRetentionQueueError } = await supabase.from("platform_rinkel_jobs").upsert({
-        job_type: "rinkel.retention_platform",
-        aggregate_id: platformRinkel.id,
-        idempotency_key: `rinkel.retention_platform:${retentionBucket}`,
-        payload: { platform_integration_id: platformRinkel.id },
-        available_at: new Date().toISOString(),
-      }, { onConflict: "idempotency_key", ignoreDuplicates: true });
-      if (platformRetentionQueueError) return Response.json({ error: platformRetentionQueueError.message }, { status: 500 });
-    }
-  }
   for (const tenant of tenants ?? []) {
     await supabase.from("outbox_jobs").upsert({
       tenant_id: tenant.id,
-      job_type: "rinkel.retention",
+      job_type: "telephony.retention",
       aggregate_type: "tenant",
       aggregate_id: tenant.id,
       payload: {},
-      idempotency_key: `rinkel.retention:${tenant.id}:${retentionBucket}`,
+      idempotency_key: `telephony.retention:${tenant.id}:${retentionBucket}`,
       priority: 90,
     }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true });
     const { data, error } = await supabase.rpc("run_retention_maintenance", { p_tenant_id: tenant.id, p_limit: Math.max(1, Math.min(Number(body.retentionLimit ?? 1000), 10000)) });

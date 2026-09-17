@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { redactProviderNames } from "@/lib/telephony/webphone";
 import { z } from "zod";
 import { getAppContext } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -41,10 +42,9 @@ type Reservation = {
 };
 
 function publicTelephonyMessage(message: string) {
-  return message
-    .replace(/sinch/gi, "telefonitjänsten")
-    .replace(/provider/gi, "telefonitjänsten")
-    .replace(/leverantör/gi, "telefonitjänst");
+  // Namnen hämtas ur registret. En hårdkodad lista slutar täcka i samma stund
+  // som vi byter, och då står leverantörens namn i säljarens felmeddelande.
+  return redactProviderNames(message);
 }
 
 // Dialling the tenant's own caller-ID number loops the call back to the same

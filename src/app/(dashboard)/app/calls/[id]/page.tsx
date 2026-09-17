@@ -60,7 +60,7 @@ export default async function CallDetailPage({ params }: { params: Promise<{ id:
       </CardContent></Card>
 
       <Card><CardHeader><h2>AI Insights</h2><Badge>{insights?.[0]?.status ?? call.insights_status}</Badge></CardHeader><CardContent>
-        {insights?.length ? insights.map((item) => <div key={item.source} className="activity-line"><div><strong>{item.source === "sinch" ? "Telefoni" : item.source} · {item.sentiment ?? "utan sentiment"}</strong><p>{item.summary ?? "Ingen sammanfattning"}</p><p className="muted">{item.topics?.join(", ")}</p></div></div>) : <p>Inga insights tillgängliga ännu.</p>}
+        {insights?.length ? insights.map((item) => <div key={item.source} className="activity-line"><div><strong>{item.source === "manual" ? "Manuell" : "Telefoni"} · {item.sentiment ?? "utan sentiment"}</strong><p>{item.summary ?? "Ingen sammanfattning"}</p><p className="muted">{item.topics?.join(", ")}</p></div></div>) : <p>Inga insights tillgängliga ännu.</p>}
       </CardContent></Card>
     </div>
     <Card style={{ marginTop: 16 }}><CardHeader><h2>Telefonihändelser</h2><Badge>{events?.length ?? 0}</Badge></CardHeader><CardContent>

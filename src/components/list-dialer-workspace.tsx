@@ -41,7 +41,7 @@ type Claim = {
 };
 type Phase = "idle" | "loading" | "ready" | "dialing" | "calling" | "after_call" | "paused" | "ended" | "empty" | "error";
 
-// Rinkel maps both a human answer and an answering service to `completed`, so every status
+// The provider maps both a human answer and an answering service to `completed`, so every status
 // below means the prospect never came on the line. In automatic mode those are the calls the
 // dialer is supposed to work through on its own: it records the matching outcome and moves to
 // the next prospect. Anything else — an answered call above all — stops for after-work.
@@ -206,7 +206,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
     return disposition;
   }
 
-  // Rinkel has no hangup endpoint, so this never claims to drop the provider's
+  // The server cannot drop the provider's leg, so this never claims to drop the provider's
   // call. It releases the dial attempt — which is what blocks the seat and the
   // rest of the list — and closes an unanswered call. `cancelled` is in neither
   // the unattended-outcome map nor the session-stopping map, so the seller lands
@@ -309,7 +309,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
           {callId && callState.connectionState === "degraded" ? <div className="notice">Realtime är frånkopplat. Kundexa använder statuspolling tills anslutningen är återställd.</div> : null}
           {callId && (phase === "calling" || phase === "dialing" || callState.recovering) ? <div className="dialer-end">
             {/* The label carries the truth, not the footnote under it — see the
-                same change in rinkel-dialer.tsx. */}
+                same change in dialer-panel.tsx. */}
             <button className="button button-danger" type="button" onClick={endCurrentCall} disabled={voice.ending}>
               <PhoneOff size={15} /> {voice.ending
                 ? "Släpper…"

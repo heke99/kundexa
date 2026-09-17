@@ -23,26 +23,42 @@ function withEnv(values: Record<string, string | undefined>, run: () => void) {
 }
 
 async function main() {
-// The webhook target inherits the app host when it is not set explicitly. Deriving
-// the two independently is what let production serve links for www.kundexa.se while
-// all five Rinkel subscriptions pointed at the redirecting apex.
-withEnv({ RINKEL_WEBHOOK_PUBLIC_BASE_URL: undefined, NEXT_PUBLIC_APP_URL: "https://kundexa.se" }, () => {
+// Callback-URL:en härleds ur app-URL:en och ingenting annat. Att räkna fram de
+// två oberoende av varandra var det som lät produktionen servera länkar för
+// www.kundexa.se medan varje webhook-prenumeration pekade på den omdirigerande
+// apexdomänen -- och händelserna föll bort utan att någon sa till.
+withEnv({ NEXT_PUBLIC_APP_URL: "https://kundexa.se" }, () => {
+  assert.equal(expectedWebhookUrl(), "https://kundexa.se/api/webhooks/sinch");
 });
 
-// A trailing slash on the app URL must not produce a double slash in webhook paths.
-withEnv({ RINKEL_WEBHOOK_PUBLIC_BASE_URL: undefined, NEXT_PUBLIC_APP_URL: "https://kundexa.se/" }, () => {
+// Ett avslutande snedstreck i app-URL:en får inte bli ett dubbelt i sökvägen.
+withEnv({ NEXT_PUBLIC_APP_URL: "https://kundexa.se/" }, () => {
+  assert.equal(expectedWebhookUrl(), "https://kundexa.se/api/webhooks/sinch");
 });
 
-// An explicit override still wins, because the webhook host may legitimately differ.
-withEnv({ RINKEL_WEBHOOK_PUBLIC_BASE_URL: "https://hooks.kundexa.se", NEXT_PUBLIC_APP_URL: "https://kundexa.se" }, () => {
+// Värdnamnet bärs med. En prenumeration mot fel värd tas emot av ingen.
+withEnv({ NEXT_PUBLIC_APP_URL: "https://www.kundexa.se" }, () => {
+  assert.equal(expectedWebhookUrl(), "https://www.kundexa.se/api/webhooks/sinch");
 });
 
-// The live production mismatch is reported rather than silently accepted.
-withEnv({ RINKEL_WEBHOOK_PUBLIC_BASE_URL: "https://kundexa.se", NEXT_PUBLIC_APP_URL: "https://www.kundexa.se" }, () => {
+// I produktion får en app-URL som inte går att nå utifrån inte tyst bli
+// webhookmål. Att registrera localhost hos leverantören ger en prenumeration som
+// aldrig levererar -- och inget samtal får någonsin sitt utfall.
+for (const unusable of ["http://localhost:3000", "http://127.0.0.1:3000", "https://kundexa.local"]) {
+  withEnv({ NEXT_PUBLIC_APP_URL: unusable, VERCEL_ENV: "production" }, () => {
+    assert.equal(expectedWebhookUrl(), "https://kundexa.se/api/webhooks/sinch");
+  });
+}
+
+// En trasig URL faller tillbaka oavsett körmiljö: den går inte att tolka alls.
+withEnv({ NEXT_PUBLIC_APP_URL: "inte-en-url" }, () => {
+  assert.equal(expectedWebhookUrl(), "https://kundexa.se/api/webhooks/sinch");
 });
 
-// An unusable app URL must not silently become the webhook target.
-withEnv({ RINKEL_WEBHOOK_PUBLIC_BASE_URL: undefined, NEXT_PUBLIC_APP_URL: "http://localhost:3000", VERCEL_ENV: "production" }, () => {
+// Lokalt är localhost rätt svar. En utvecklingsmiljö som pekar på produktionen
+// hade skickat testsamtalens händelser till riktiga kunder.
+withEnv({ NEXT_PUBLIC_APP_URL: "http://localhost:3000", VERCEL_ENV: undefined }, () => {
+  assert.equal(expectedWebhookUrl(), "http://localhost:3000/api/webhooks/sinch");
 });
 
 // Reserved PostgREST grammar characters must never survive into an `or=(...)` value.

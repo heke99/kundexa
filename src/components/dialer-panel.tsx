@@ -231,33 +231,7 @@ export function DialerPanel({
         Telefonitjänsten ringer alltid upp säljarens egen enhet först och kopplar
         därefter kunden, så "numret kunden ser" säger ingenting om vilken telefon
         som faktiskt ringer. Står fel telefon här går samtalet via fel person. */}
-    {dialer.dialPath?.mapped ? <dl className="key-value dialer-path">
-      <dt>Kunden ser</dt>
-      <dd>{dialer.dialPath.callerIdNumber ?? "—"}</dd>
-      <dt>Ringer upp dig</dt>
-      {/* Never name a webphone here. Kundexa has none — no SIP, no WebRTC — and
-          the provider's `muteOtherDevicesOnWebphone` only silences the other
-          devices while one is online. A correct dial policy therefore does not
-          mean the call rings in the browser; it rings the phone on the seat, and
-          saying otherwise is the same false claim this change removed from the
-          warning one line below. */}
-      <dd>
-        {dialer.dialPath.deviceRingsPhone ?? "Telefonienheten på din plats"}
-        {dialer.dialPath.providerUserName ? ` · ${dialer.dialPath.providerUserName}` : ""}
-      </dd>
-    </dl> : null}
-    {dialer.dialPath?.issue ? <div className="notice warning">
-      {dialer.dialPath.issue}
-      {mayManageIntegrations
-        ? <div style={{ marginTop: 10 }}>
-            <a className="button button-secondary button-sm" href="/app/integrations">Öppna Integrationer</a>
-          </div>
-        : null}
-    </div> : null}
-    {dialer.dialPath?.mapped && !dialer.dialPath.issue && dialer.dialPath.seatNameMatchesProfile === false ? <p className="notice warning">
-      Telefoniplatsen som ringer upp dig står på {dialer.dialPath.providerUserName}. Samtalet går då via
-      den personens telefon i stället för din egen. Be administratören lägga upp en egen telefoniplats för dig.
-    </p> : null}
+
     {dialer.calling ? <p className="notice">Samtalet hanteras på din telefonienhet. Kundexa uppdaterar status automatiskt.</p> : null}
     {callId && (dialer.calling || callState.recovering) ? <div className="dialer-end">
       {/* The label carries the truth, not the footnote under it. The provider has

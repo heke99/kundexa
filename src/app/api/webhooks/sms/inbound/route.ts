@@ -1,32 +1,35 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { authenticate46ElksNumber, formToObject, verify46ElksNetwork } from "@/lib/webhooks/46elks";
+import { authenticateSmsNumber, smsWebhookAdapter, verifySmsCallbackNetwork } from "@/lib/messaging/provider";
 import { decideAcceptance, normalizeAcceptanceText } from "@/lib/domain/acceptance";
 
 export async function POST(request: Request) {
-  if (!await verify46ElksNetwork(request)) return new NextResponse(null, { status: 403 });
+  const adapter = smsWebhookAdapter();
+  if (!await verifySmsCallbackNetwork(request, adapter.id)) return new NextResponse(null, { status: 403 });
   // Held outside the try so a failure can be correlated with the provider's retry.
   let providerEventId: string | null = null;
   try {
     const token = new URL(request.url).searchParams.get("token") ?? "";
-    const payload = formToObject(await request.formData());
-    const to = payload.to;
-    const from = payload.from;
-    const message = payload.message ?? "";
-    const number = to ? await authenticate46ElksNumber(to, token) : null;
-    if (!number || !from) return new NextResponse(null, { status: 403 });
+    const inbound = await adapter.parseInbound(request);
+    // The provider posts several callback kinds to one URL. Acknowledge what is
+    // not an inbound text instead of interpreting it as one -- a delivery report
+    // read as a reply would be recorded as the customer's answer to a contract.
+    if (!inbound) return new NextResponse(null, { status: 204 });
+    const { from, to, body: message, payload } = inbound;
+    const number = await authenticateSmsNumber(to, token);
+    if (!number) return new NextResponse(null, { status: 403 });
 
     const admin = createAdminClient();
-    const providerId = payload.id ?? null;
+    const providerId = inbound.providerMessageId;
     providerEventId = providerId;
     // `ignoreDuplicates` returns no row for a redelivery — and also no row when
     // the write fails. Conflating the two answered 204 to a database error, and
-    // 46elks does not redeliver a 2xx: an inbound SMS, contract acceptance
+    // no SMS provider redelivers after a 2xx: an inbound SMS, contract acceptance
     // included, was lost for good. The Resend webhook already separates the two;
     // this one did not.
     const { data: event, error: eventError } = await admin.from("provider_webhook_events").upsert({
       tenant_id: number.tenant_id,
-      provider: "46elks",
+      provider: adapter.id,
       event_type: "sms.inbound",
       provider_event_id: providerId,
       route_key: to,
@@ -66,14 +69,15 @@ export async function POST(request: Request) {
       to_number: to,
       body: message,
       status: "delivered",
-      delivered_at: payload.created ?? new Date().toISOString(),
+      delivered_at: inbound.receivedAt,
     }, { onConflict: "tenant_id,provider_message_id" }).select("id").single();
     if (smsError) throw smsError;
 
     // PostgREST returns an error rather than throwing, so an unchecked read looks
     // exactly like "no recipients": the customer's "JA" would be stored as an
-    // ordinary inbound SMS, the acceptance would never be recorded, and 46elks
-    // would get a 204 and never retry. Throwing gives a 500 and a redelivery.
+    // ordinary inbound SMS, the acceptance would never be recorded, and the
+    // provider would get a 204 and never retry. Throwing gives a 500 and a
+    // redelivery.
     const { data: recipients, error: recipientsError } = await admin.from("contract_recipients")
       .select("id")
       .eq("tenant_id", number.tenant_id)
@@ -163,7 +167,7 @@ export async function POST(request: Request) {
     // The provider needs a non-2xx so it redelivers; it does not need our internal
     // error text. Keep the detail on our side, where it can be acted on.
     console.error("inbound_sms_webhook_failed", {
-      provider: "46elks",
+      provider: adapter.id,
       providerEventId,
       message: error instanceof Error ? error.message : String(error),
     });

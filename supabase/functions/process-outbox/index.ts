@@ -1,7 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2.110.7";
 import { decryptJson } from "../_shared/crypto.ts";
 import { inQuietHours } from "../_shared/reminder-time.ts";
-import { RinkelClient } from "../_shared/rinkel.ts";
+import { DEFAULT_SMS_PROVIDER, smsProviderFor, type SmsProviderCredentials } from "../_shared/sms-provider.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -9,9 +9,19 @@ const encryptionKey = Deno.env.get("KUNDEXA_ENCRYPTION_KEY")!;
 const appUrl = Deno.env.get("APP_URL")!;
 const cronSecret = Deno.env.get("CRON_SECRET")!;
 const globalResendKey = Deno.env.get("RESEND_API_KEY") ?? "";
+// Plattformens eget SMS-konto. En tenant som kör i Kundexas konto använder
+// det här; en tenant med eget konto har sina egna nycklar krypterade i
+// tenant_integrations. Samma uppdelning som e-posten redan har.
+const globalSmsProvider = Deno.env.get("SMS_PROVIDER") ?? DEFAULT_SMS_PROVIDER;
+const globalSmsServicePlanId = Deno.env.get("SMS_SERVICE_PLAN_ID") ?? "";
+const globalSmsApiToken = Deno.env.get("SMS_API_TOKEN") ?? "";
+const globalSmsRegion = Deno.env.get("SMS_REGION") ?? "eu";
 const globalEmailFromAddress = Deno.env.get("DEFAULT_EMAIL_FROM_ADDRESS") ?? "";
 const globalEmailFromName = Deno.env.get("DEFAULT_EMAIL_FROM_NAME") ?? "Kundexa";
 const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+
+/** Jobbtyper från tidigare telefonileverantörer som aldrig ska köras igen. */
+const LEGACY_TELEPHONY_JOB_TYPES = ["rinkel.process_event", "rinkel.enrich_call", "rinkel.reconcile_calls"];
 
 type Job = {
   id: string;
@@ -21,7 +31,7 @@ type Job = {
   payload: Record<string, unknown>;
   attempts: number;
 };
-type ElksCredentials = { username: string; password: string };
+type SmsCredentials = Partial<SmsProviderCredentials>;
 type EmailCredentials = { apiKey?: string; from?: string; webhookSigningSecret?: string; webhookPathToken?: string };
 type EmailAttachmentRef = { document_id: string; filename?: string; mime_type?: string };
 
@@ -60,16 +70,42 @@ async function contractIssuerName(tenantId: string, contractId: string | null, f
   return legalName || fallback;
 }
 
-async function get46ElksCredentials(tenantId: string): Promise<ElksCredentials> {
+/**
+ * Vilken SMS-leverantör tenanten skickar genom, och med vilka nycklar.
+ *
+ * Returnerar porten, aldrig en namngiven klient: resten av jobbet ska inte
+ * behöva veta vem som bär meddelandet. Saknas en aktiv integration faller vi
+ * tillbaka på plattformens konto -- men bara om det faktiskt är konfigurerat.
+ * En tyst fallback till tomma nycklar hade dödbrevat avtalet med ett fel som
+ * pekar på leverantören i stället för på inställningen som saknas.
+ */
+async function getSmsProvider(tenantId: string) {
   const { data, error } = await supabase.from("tenant_integrations")
-    .select("credentials_ciphertext")
+    .select("provider,configuration,credentials_ciphertext")
     .eq("tenant_id", tenantId)
-    .eq("provider", "46elks")
+    .eq("provider_type", "sms")
     .eq("status", "active")
     .limit(1)
-    .single();
-  if (error || !data?.credentials_ciphertext) throw new Error("46elks_integration_missing");
-  return decryptJson<ElksCredentials>(data.credentials_ciphertext, encryptionKey);
+    .maybeSingle();
+  // Ett läsfel är inte samma sak som "ingen integration". Att slå ihop dem
+  // hade skickat kundens SMS via fel konto vid en tillfällig databasstörning.
+  if (error) throw new Error(`sms_integration_read_failed:${error.code ?? "unknown"}`);
+
+  const configuration = (data?.configuration ?? {}) as Record<string, unknown>;
+  const accountMode = String(configuration.account_mode ?? "platform_managed");
+  const credentials: SmsCredentials = data?.credentials_ciphertext
+    ? await decryptJson<SmsCredentials>(data.credentials_ciphertext, encryptionKey)
+    : {};
+
+  const providerId = data?.provider ?? globalSmsProvider;
+  const resolved: SmsProviderCredentials = accountMode === "tenant_owned"
+    ? {
+      servicePlanId: String(credentials.servicePlanId ?? ""),
+      apiToken: String(credentials.apiToken ?? ""),
+      region: String(credentials.region ?? configuration.region ?? globalSmsRegion),
+    }
+    : { servicePlanId: globalSmsServicePlanId, apiToken: globalSmsApiToken, region: globalSmsRegion };
+  return smsProviderFor(providerId, resolved);
 }
 
 async function getEmailConfig(tenantId: string) {
@@ -100,46 +136,6 @@ async function getEmailConfig(tenantId: string) {
   return { apiKey, address, replyTo, fromName, formattedFrom: `${fromName} <${address}>`, tenant, integrationId: data.id };
 }
 
-async function post46Elks(path: string, credentials: ElksCredentials, values: Record<string, string>) {
-  const response = await fetch(`https://api.46elks.com/a1/${path}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${btoa(`${credentials.username}:${credentials.password}`)}`,
-      "content-type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams(values),
-  });
-  const text = await response.text();
-  if (!response.ok) throw new Error(`46elks_${response.status}:${text.slice(0, 500)}`);
-  return JSON.parse(text) as Record<string, unknown>;
-}
-
-
-async function reconcileSubmitted46ElksSms(sms: Record<string, unknown>, credentials: ElksCredentials) {
-  const url = new URL("https://api.46elks.com/a1/sms");
-  url.searchParams.set("to", String(sms.to_number ?? ""));
-  url.searchParams.set("limit", "100");
-  const response = await fetch(url, {
-    headers: { Authorization: `Basic ${btoa(`${credentials.username}:${credentials.password}`)}` },
-  });
-  if (!response.ok) throw new Error(`sms_reconciliation_${response.status}`);
-  const payload = await response.json() as { data?: Array<Record<string, unknown>> };
-  const localCreated = new Date(String(sms.created_at ?? 0)).getTime();
-  const candidates = (payload.data ?? []).filter((candidate) => {
-    if (String(candidate.direction ?? "") !== "outgoing") return false;
-    if (String(candidate.to ?? "") !== String(sms.to_number ?? "")) return false;
-    if (String(candidate.from ?? "") !== String(sms.from_number ?? "")) return false;
-    if (String(candidate.message ?? "") !== String(sms.body ?? "")) return false;
-    const providerCreated = new Date(String(candidate.created ?? 0)).getTime();
-    return Number.isFinite(providerCreated) && Number.isFinite(localCreated) && Math.abs(providerCreated - localCreated) <= 30 * 60 * 1000;
-  }).sort((left, right) => {
-    const leftDelta = Math.abs(new Date(String(left.created ?? 0)).getTime() - localCreated);
-    const rightDelta = Math.abs(new Date(String(right.created ?? 0)).getTime() - localCreated);
-    return leftDelta - rightDelta;
-  });
-  return candidates[0] ?? null;
-}
-
 async function processSms(job: Job) {
   const { data: sms, error } = await supabase.from("sms_messages").select("*")
     .eq("tenant_id", job.tenant_id).eq("id", job.aggregate_id).single();
@@ -154,23 +150,33 @@ async function processSms(job: Job) {
   if (!outboundSms?.enabled) throw new Error("permanent_sms_outbound_feature_disabled");
   if (sms.contract_id && !contractSms?.enabled) throw new Error("permanent_sms_contract_delivery_feature_disabled");
 
-  const credentials = await get46ElksCredentials(job.tenant_id);
+  const provider = await getSmsProvider(job.tenant_id);
+
+  // Ett meddelande som står kvar i "submitting" kan ha nått leverantören innan
+  // vi tappade svaret. Vi frågar på vår egen referens -- inte på ungefärlig tid
+  // och innehåll, som den gamla avstämningen gjorde. En felmatchning där
+  // markerade ett osänt avtal som skickat; en missad matchning skickade det två
+  // gånger. Referensen gör frågan exakt.
   if (sms.status === "submitting") {
-    const reconciled = await reconcileSubmitted46ElksSms(sms as Record<string, unknown>, credentials);
-    if (reconciled?.id) {
-      const reconciledStatus = String(reconciled.status ?? "created");
-      const sentAt = String(reconciled.created ?? sms.sent_at ?? new Date().toISOString());
+    const reconciled = await provider.findSubmitted(String(sms.id));
+    if (reconciled) {
+      const sentAt = reconciled.sentAt ?? sms.sent_at ?? new Date().toISOString();
       const { error: reconcileError } = await supabase.from("sms_messages").update({
-        provider_message_id: String(reconciled.id),
-        status: ["created", "sent", "delivered", "failed"].includes(reconciledStatus) ? reconciledStatus : "created",
+        provider_message_id: reconciled.providerMessageId,
+        status: reconciled.status,
         sent_at: sentAt,
-        delivered_at: reconciledStatus === "delivered" ? String(reconciled.delivered ?? new Date().toISOString()) : sms.delivered_at,
-        parts: reconciled.parts == null ? sms.parts : Number(reconciled.parts),
-        cost: reconciled.cost == null ? sms.cost : Number(reconciled.cost),
+        delivered_at: reconciled.deliveredAt ?? sms.delivered_at,
+        parts: reconciled.parts,
+        cost: reconciled.cost ?? sms.cost,
       }).eq("tenant_id", job.tenant_id).eq("id", sms.id);
       if (reconcileError) throw reconcileError;
-      await supabase.from("contract_deliveries").update({ status: reconciledStatus === "delivered" ? "delivered" : "sent", provider_status: `reconciled_${reconciledStatus}`, sent_at: sentAt }).eq("tenant_id", job.tenant_id).eq("sms_message_id", sms.id);
-      await supabase.from("contract_reminders").update({ status: "sent", sent_at: sentAt }).eq("tenant_id", job.tenant_id).eq("sms_message_id", sms.id).in("status", ["queued", "scheduled"]);
+      await supabase.from("contract_deliveries").update({
+        status: reconciled.status === "delivered" ? "delivered" : "sent",
+        provider_status: `reconciled_${reconciled.status}`,
+        sent_at: sentAt,
+      }).eq("tenant_id", job.tenant_id).eq("sms_message_id", sms.id);
+      await supabase.from("contract_reminders").update({ status: "sent", sent_at: sentAt })
+        .eq("tenant_id", job.tenant_id).eq("sms_message_id", sms.id).in("status", ["queued", "scheduled"]);
       return;
     }
     const submittingAgeMs = Date.now() - new Date(sms.updated_at).getTime();
@@ -178,25 +184,27 @@ async function processSms(job: Job) {
     const { error: resetError } = await supabase.from("sms_messages").update({ status: "queued", error_message: "No provider submission found during reconciliation; retrying safely." }).eq("tenant_id", job.tenant_id).eq("id", sms.id).eq("status", "submitting");
     if (resetError) throw resetError;
   }
+
   const { data: number } = await supabase.from("phone_numbers").select("webhook_token_ciphertext")
     .eq("tenant_id", job.tenant_id).eq("number_e164", sms.from_number).single();
   if (!number?.webhook_token_ciphertext) throw new Error("sms_number_token_missing");
   const token = await decryptJson<{ token: string }>(number.webhook_token_ciphertext, encryptionKey);
 
   await supabase.from("sms_messages").update({ status: "submitting" }).eq("id", sms.id);
-  const result = await post46Elks("sms", credentials, {
+  const submission = await provider.send({
     from: sms.from_number,
     to: sms.to_number,
-    message: sms.body,
-    whendelivered: `${appUrl}/api/webhooks/46elks/sms/delivery?token=${encodeURIComponent(token.token)}&message_id=${encodeURIComponent(sms.id)}&from_number=${encodeURIComponent(sms.from_number)}`,
+    body: sms.body,
+    clientReference: String(sms.id),
+    deliveryCallbackUrl: `${appUrl}/api/webhooks/sms/delivery?token=${encodeURIComponent(token.token)}&message_id=${encodeURIComponent(sms.id)}&from_number=${encodeURIComponent(sms.from_number)}`,
   });
-  const sentAt = new Date().toISOString();
+  const sentAt = submission.sentAt;
   await supabase.from("sms_messages").update({
-    provider_message_id: String(result.id ?? ""),
-    status: "created",
+    provider_message_id: submission.providerMessageId,
+    status: submission.status,
     sent_at: sentAt,
-    parts: Number(result.parts ?? 1),
-    cost: result.cost ? Number(result.cost) : null,
+    parts: submission.parts,
+    cost: submission.cost,
   }).eq("id", sms.id);
   await supabase.from("contract_deliveries").update({ status: "sent", provider_status: "submitted", sent_at: sentAt }).eq("sms_message_id", sms.id);
   await supabase.from("contract_reminders").update({ status: "sent", sent_at: sentAt }).eq("tenant_id", job.tenant_id).eq("sms_message_id", sms.id).in("status", ["queued", "scheduled"]);
@@ -787,15 +795,21 @@ async function sha256Text(value: string) {
   return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function getPlatformRinkelClient() {
-  const apiKey = Deno.env.get("RINKEL_API_KEY") ?? "";
-  if (!apiKey) throw new Error("permanent_rinkel_platform_not_configured");
-  return new RinkelClient({
-    apiKey,
-    baseUrl: Deno.env.get("RINKEL_API_BASE_URL") ?? "https://api.rinkel.com/v1",
-    timeoutMs: Number(Deno.env.get("RINKEL_REQUEST_TIMEOUT_MS") ?? 15000),
-    requestId: crypto.randomUUID(),
-  });
+/**
+ * Radera leverantörens egen kopia av en inspelning.
+ *
+ * Porten finns för att gallringen har två halvor: vår kopia och leverantörens.
+ * Ingen leverantör vi kör i dag lagrar inspelningar åt oss, så registret är
+ * tomt -- och då måste anropet säga det rakt ut. Att tyst hoppa över halvan
+ * hade märkt inspelningen som gallrad medan kundens samtal låg kvar hos
+ * leverantören, vilket är precis det gallringspolicyn lovar att den inte gör.
+ */
+const PROVIDER_RECORDING_DELETERS: Record<string, (providerRecordingId: string) => Promise<void>> = {};
+
+async function deleteProviderRecording(provider: string, providerRecordingId: string) {
+  const deleter = PROVIDER_RECORDING_DELETERS[provider];
+  if (!deleter) throw new Error(`permanent_provider_recording_delete_unsupported:${provider}`);
+  await deleter(providerRecordingId);
 }
 
 function chunkValues<T>(values: T[], size = 100) {
@@ -817,7 +831,7 @@ function findExternalCallId(payload: unknown): string | null {
   return null;
 }
 
-async function processRinkelRetention(job: Job) {
+async function processTelephonyRetention(job: Job) {
   const now = new Date().toISOString();
   const { data: policy, error: policyError } = await supabase.from("telephony_policies").select("*")
     .eq("tenant_id", job.tenant_id).maybeSingle();
@@ -849,8 +863,11 @@ async function processRinkelRetention(job: Job) {
     ))
     .map((call) => call.external_call_id as string))];
 
+  // Ingen filtrering på leverantör. Gallringsfristen gäller inspelningen, inte
+  // vem som spelade in den -- och ett leverantörsbyte får inte lämna den gamla
+  // leverantörens inspelningar ogallrade för evigt.
   const { data: recordings, error: recordingError } = await supabase.from("call_recordings").select("*")
-    .eq("tenant_id", job.tenant_id).eq("provider", "rinkel")
+    .eq("tenant_id", job.tenant_id)
     .lte("retention_delete_at", now).is("deleted_at", null).limit(250);
   if (recordingError) throw recordingError;
   let recordingsPurged = 0;
@@ -861,8 +878,7 @@ async function processRinkelRetention(job: Job) {
       if (storageError) throw storageError;
     }
     if (policy.delete_provider_recording_on_retention && recording.provider_recording_id) {
-      const client = getPlatformRinkelClient();
-      await client.deleteCallRecording(recording.provider_recording_id);
+      await deleteProviderRecording(String(recording.provider ?? ""), String(recording.provider_recording_id));
     }
     const { error: recordingUpdateError } = await supabase.from("call_recordings").update({
       status: "purged",
@@ -899,10 +915,14 @@ async function processRinkelRetention(job: Job) {
     if (error) throw error;
   }
 
+  // Gallringen av råa nyttolaster gäller alla leverantörer, inte en namngiven.
+  // Fristen är tenantens, inte telefonins, och en händelse som passerat den ska
+  // skrubbas vem den än kom ifrån -- annars överlever den gamla leverantörens
+  // rådata bytet som gjordes för att bli av med den.
   const rawCutoff = new Date(Date.now() - Number(policy.raw_event_retention_days ?? 30) * 86400000).toISOString();
   const heldExternalIdSet = new Set(rawHeldExternalIds);
   const { data: legacyEvents, error: legacyEventReadError } = await supabase.from("provider_webhook_events")
-    .select("id,payload").eq("tenant_id", job.tenant_id).eq("provider", "rinkel").lt("received_at", rawCutoff)
+    .select("id,payload").eq("tenant_id", job.tenant_id).lt("received_at", rawCutoff)
     .in("status", ["processed", "dead_letter", "conflict"]).limit(500);
   if (legacyEventReadError) throw legacyEventReadError;
   const legacyEventIds = (legacyEvents ?? [])
@@ -917,40 +937,10 @@ async function processRinkelRetention(job: Job) {
     if (error) throw error;
   }
 
-  const { data: platformEvents, error: platformEventReadError } = await supabase.from("platform_rinkel_webhook_events")
-    .select("id,external_call_id").eq("tenant_id", job.tenant_id).lt("received_at", rawCutoff)
-    .in("status", ["processed", "dead_letter", "conflict"]).limit(500);
-  if (platformEventReadError) throw platformEventReadError;
-  const platformEventIds = (platformEvents ?? [])
-    .filter((event) => !event.external_call_id || !heldExternalIdSet.has(event.external_call_id))
-    .map((event) => event.id);
-  for (const ids of chunkValues(platformEventIds)) {
-    const { error } = await supabase.from("platform_rinkel_webhook_events").update({ payload: {} })
-      .eq("tenant_id", job.tenant_id).in("id", ids);
-    if (error) throw error;
-  }
-
-  const { data: oldJobs, error: oldJobsError } = await supabase.from("platform_rinkel_jobs")
-    .select("id,payload").contains("payload", { tenant_id: job.tenant_id })
-    .in("status", ["completed", "dead_letter"]).lt("created_at", rawCutoff).limit(500);
-  if (oldJobsError) throw oldJobsError;
-  const scrubJobIds = (oldJobs ?? []).filter((candidate) => {
-    const payload = candidate.payload && typeof candidate.payload === "object" && !Array.isArray(candidate.payload)
-      ? candidate.payload as Record<string, unknown> : {};
-    const callId = typeof payload.call_id === "string" ? payload.call_id : null;
-    return !callId || (!recordingHeld.has(callId) && !transcriptHeld.has(callId) && !insightsHeld.has(callId));
-  }).map((candidate) => candidate.id);
-  if (scrubJobIds.length) {
-    const { error: scrubError } = await supabase.from("platform_rinkel_jobs").update({
-      payload: {}, last_error: null, last_error_code: null, last_error_message: null,
-    }).in("id", scrubJobIds);
-    if (scrubError) throw scrubError;
-  }
-
   await supabase.from("audit_logs").insert({
     tenant_id: job.tenant_id,
     actor_user_id: null,
-    action: "rinkel.retention_executed",
+    action: "telephony.retention_executed",
     entity_type: "telephony_retention",
     entity_id: job.tenant_id,
     after_data: {
@@ -958,9 +948,7 @@ async function processRinkelRetention(job: Job) {
       legal_hold_calls: new Set([...recordingHeld, ...transcriptHeld, ...insightsHeld]).size,
       transcripts_purged: transcriptIds.length,
       insights_purged: insightIds.length,
-      legacy_events_scrubbed: legacyEventIds.length,
-      platform_events_scrubbed: platformEventIds.length,
-      platform_jobs_scrubbed: scrubJobIds.length,
+      raw_events_scrubbed: legacyEventIds.length,
       raw_cutoff: rawCutoff,
     },
   });
@@ -968,18 +956,23 @@ async function processRinkelRetention(job: Job) {
 
 async function processJob(job: Job) {
   if (job.job_type === "sms.send") return processSms(job);
-  if (job.job_type === "call.start") throw new Error("permanent_legacy_46elks_voice_job_disabled_use_rinkel");
+  // Samtal startas i webbläsaren mot leverantörens webbtelefon, aldrig ur kön.
+  if (job.job_type === "call.start") throw new Error("permanent_legacy_queued_voice_job_disabled_use_webphone");
   if (job.job_type === "email.send") return processEmail(job);
   if (job.job_type === "contract.reminder.dispatch") return processContractReminder(job);
-  if (job.job_type === "recording.download") throw new Error("permanent_legacy_46elks_recording_job_disabled_use_rinkel");
+  if (job.job_type === "recording.download") throw new Error("permanent_legacy_queued_recording_job_disabled");
   if (job.job_type === "evidence.generate") return processEvidence(job);
   if (job.job_type === "contract.confirmation") return processContractConfirmation(job);
   if (job.job_type === "contract.signed.confirmation") return processSignedContractConfirmation(job);
   if (job.job_type === "webhook.deliver") return processWebhook(job);
-  if (["rinkel.process_event", "rinkel.enrich_call", "rinkel.reconcile_calls"].includes(job.job_type)) {
-    throw new Error("permanent_legacy_tenant_rinkel_job_disabled_use_platform_worker");
+  // De gamla leverantörsjobben finns kvar i kön hos tenants som körde dem. De
+  // ska dö en gång, inte köra om i evighet.
+  if (LEGACY_TELEPHONY_JOB_TYPES.includes(job.job_type)) {
+    throw new Error(`permanent_legacy_telephony_job_disabled:${job.job_type}`);
   }
-  if (job.job_type === "rinkel.retention") return processRinkelRetention(job);
+  // Det gamla namnet accepteras fortfarande: jobb som redan låg i kön när
+  // namnet byttes ska gallra, inte dödbrevas.
+  if (job.job_type === "telephony.retention" || job.job_type === "rinkel.retention") return processTelephonyRetention(job);
   throw new Error(`unsupported_job_type:${job.job_type}`);
 }
 

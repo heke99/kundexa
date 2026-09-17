@@ -1,29 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { useSinchWebphone } from "./use-sinch-webphone";
-
-export type DialPath = {
-  mapped?: boolean;
-  deviceReady?: boolean;
-  /** The phone Rinkel rings first: the seller's own seat at the provider. */
-  deviceRingsPhone?: string | null;
-  providerUserName?: string | null;
-  /** What the customer sees. A different number from the one above. */
-  callerIdNumber?: string | null;
-  callerIdSource?: string | null;
-  seatNameMatchesProfile?: boolean | null;
-  /** Rinkel's "call only Webphone when available". False means a mobile rings too. */
-  webphoneOnly?: boolean | null;
-  ringDevices?: string | null;
-  outboundNumberMatches?: boolean | null;
-  dialPathCorrect?: boolean | null;
-  dialPolicyAppliedAt?: string | null;
-  dialPolicyError?: string | null;
-  seatSharedWithOtherUser?: boolean | null;
-  /** One actionable sentence, or null when the dial path is correct. */
-  issue?: string | null;
-};
+import { useWebphone } from "./use-webphone";
 
 export type EndCallResult = {
   callId: string;
@@ -35,95 +13,70 @@ export type EndCallResult = {
   message: string;
 };
 
+/**
+ * Vad telefonistatusen faktiskt svarar.
+ *
+ * Den gamla typen beskrev en uppringningsväg: vilken telefon leverantören
+ * ringde först, vilken plats säljaren satt på, om namnet stämde. Ingen av de
+ * frågorna finns kvar när webbläsaren är telefonen -- och fält som aldrig fylls
+ * i är värre än inga fält, för de får gränssnittet att visa "okänt" om något
+ * som inte existerar.
+ */
 type StatusResponse = {
-  dialPath?: DialPath | null;
   manualReady?: boolean;
   automaticReady?: boolean;
-  platformConfigured?: boolean | null;
-  platformReady?: boolean;
-  runtimeConfigured?: boolean;
   tenantEnabled?: boolean;
-  tenantHasNumber?: boolean;
-  userMapped?: boolean;
-  userHasDevice?: boolean;
-  userHasNumberAccess?: boolean;
-  callerIdResolvable?: boolean;
-  apiVerified?: boolean;
-  coreWebhooksVerified?: boolean;
-  workerHealthy?: boolean;
-  userHasActiveDevice?: boolean;
-  blockers?: Array<{ code: string; message: string }>;
-  webhookReady?: boolean;
+  outboundCallsEnabled?: boolean;
+  withinCallingHours?: boolean;
+  callerIdConfigured?: boolean;
+  callerIdNumber?: string | null;
+  callerIdSource?: string | null;
+  hasOpenAttempt?: boolean;
+  webphoneConfigured?: boolean;
+  blockers?: Array<{ code?: string; message?: string }>;
   status?: string;
   errorCode?: string | null;
   errorMessage?: string | null;
 };
 
 function publicTelephonyMessage(message: string) {
+  // Skyddsnät. Meddelandena kommer från våra egna hinder i databasen och namnger
+  // ingen leverantör, men ett felmeddelande som slinker igenom från ett
+  // bibliotek ska inte lära säljaren vem vi köper telefoni av.
   return message
-    .replace(/rinkel/gi, "telefonitjänsten")
     .replace(/provider/gi, "telefonitjänsten")
     .replace(/leverantör/gi, "telefonitjänst");
 }
 
+/**
+ * En mening som säger vad säljaren ska göra.
+ *
+ * Hindren kommer numera färdigformulerade från databasen, ett per villkor som
+ * brister. Koderna nedan är bara till för de två hinder som inte kan formuleras
+ * där: serverns egen konfiguration och ett misslyckat anrop.
+ */
 function telephonyStatusMessage(data: StatusResponse) {
   if (data.manualReady) return "Telefoni redo";
-  if (data.blockers?.[0]?.message) return publicTelephonyMessage(data.blockers[0].message);
+  const firstBlocker = data.blockers?.find((blocker) => blocker.message)?.message;
+  if (firstBlocker) return publicTelephonyMessage(firstBlocker);
   if (data.errorMessage) return publicTelephonyMessage(data.errorMessage);
-  switch (data.errorCode) {
-    case "RINKEL_RUNTIME_API_KEY_MISSING":
-      return "Telefonitjänstens serverkonfiguration saknas. Kontakta plattformsadministratören";
-    case "RINKEL_PLATFORM_NOT_CONFIGURED":
-      return "Telefoni är inte konfigurerad eller verifierad av plattformsadministratören";
-    case "RINKEL_PLATFORM_TESTING":
-      return "Telefonianslutningen testas just nu";
-    case "RINKEL_AUTHENTICATION_ERROR":
-      return "Telefonitjänstens anslutning nekades";
-    case "RINKEL_PLAN_UNSUPPORTED":
-      return "Telefonikontot saknar nödvändig integrationsåtkomst";
-    case "RINKEL_UNAVAILABLE":
-      return "Telefonitjänsten kunde inte nås vid den senaste kontrollen";
-    case "TELEPHONY_PLATFORM_DISABLED":
-      return "Central telefoni är pausad";
-    case "RINKEL_DIAL_CAPABILITY_MISSING":
-      return "Telefonianslutningen saknar verifierad uppringningsbehörighet";
-    case "TELEPHONY_DISABLED":
-      return "Telefoni är pausad för företaget";
-    case "RINKEL_TENANT_NUMBER_MISSING":
-      return "Inget telefonnummer har tilldelats företaget eller ditt team";
-    case "RINKEL_USER_MAPPING_MISSING":
-      return "Du saknar en telefonimappning";
-    case "RINKEL_DEVICE_MISSING":
-    case "DEVICE_MISSING":
-    case "PROVIDER_DEVICE_MISSING":
-      return "Logga in i telefonitjänstens webbtelefon eller app – ingen enhet är registrerad för dig";
-    case "RINKEL_NUMBER_ACCESS_DENIED":
-      return "Du saknar åtkomst till ett utgående nummer";
-    case "CALLER_ID_UNRESOLVABLE":
-      return "Ditt tilldelade utgående nummer kunde inte väljas";
-    case "MANUAL_DIALER_DISABLED":
-      return "Manuell uppringning är avstängd för företaget";
+  switch (data.blockers?.[0]?.code ?? data.errorCode) {
+    case "WEBPHONE_NOT_CONFIGURED":
+      return "Webbtelefonen är inte konfigurerad. Kontakta plattformsadministratören";
+    case "TELEPHONY_STATUS_QUERY_FAILED":
+      return "Telefonistatus kunde inte läsas";
     default:
-      break;
+      return "Telefoni är inte redo";
   }
-  if (!data.platformReady) return "Telefoni är inte redo. Kontakta administratören";
-  if (!data.tenantEnabled) return "Telefoni är pausad för företaget";
-  if (!data.tenantHasNumber) return "Inget telefonnummer har tilldelats företaget eller ditt team";
-  if (!data.userMapped) return "Du saknar en telefonimappning";
-  if (!data.userHasDevice) return "Logga in i telefonitjänstens webbtelefon eller app – ingen enhet är registrerad för dig";
-  if (!data.userHasNumberAccess) return "Du saknar åtkomst till ett utgående nummer";
-  if (data.callerIdResolvable === false) return "Ditt tilldelade utgående nummer kunde inte väljas";
-  return "Telefoni är inte redo";
 }
 
 export function useDialerPanel() {
-  const webphone = useSinchWebphone();
+  const webphone = useWebphone();
   const { start: startWebphone } = webphone;
   const [registered, setRegistered] = useState(false);
   const [automaticReady, setAutomaticReady] = useState(false);
   const [calling, setCalling] = useState(false);
   const [ending, setEnding] = useState(false);
-  const [dialPath, setDialPath] = useState<DialPath | null>(null);
   const [status, setStatus] = useState("Kontrollerar telefoni…");
 
   useEffect(() => {
@@ -134,7 +87,6 @@ export function useDialerPanel() {
         if (!active) return;
         setRegistered(Boolean(response.ok && data.manualReady));
         setAutomaticReady(Boolean(response.ok && data.automaticReady));
-        setDialPath(response.ok ? data.dialPath ?? null : null);
         setStatus(response.ok ? telephonyStatusMessage(data) : publicTelephonyMessage(data.errorMessage ?? "Telefonistatus kunde inte hämtas"));
       })
       .catch(() => {
@@ -262,10 +214,10 @@ export function useDialerPanel() {
     setStatus("Telefoni redo");
   }, []);
 
-  // Rinkel exposes no hangup endpoint — its whole call-control surface is
-  // `POST /dial` — so this never claims to drop the provider's call. What it
-  // does is release the dial attempt, which is what actually blocks the seller
-  // from calling the next number, and close an unanswered call.
+  // Serversidan lägger inte på: samtalet ligger i webbläsarens webbtelefon och
+  // avslutas där. Det här anropet släpper uppringningsförsöket, som är det som
+  // faktiskt hindrar säljaren från att ringa nästa nummer, och stänger ett
+  // obesvarat samtal.
   const endCall = useCallback(async (callId: string, reason?: string) => {
     setEnding(true);
     try {
@@ -288,7 +240,7 @@ export function useDialerPanel() {
   }, []);
 
   return {
-    registered, automaticReady, calling, ending, dialPath, status,
+    registered, automaticReady, calling, ending, status,
     startCall, markEnded, endCall,
     webphone: webphone.state, startWebphone: webphone.start, hangupWebphone: webphone.hangup,
   };

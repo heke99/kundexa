@@ -52,11 +52,11 @@ for (const [pattern, message] of [
   [/enqueue_outgoing_webhook_event/i, "outgoing webhook routing is required"],
   [/process_import_run/i, "transactional import execution is required"],
   [/prevent_truncated_import_execution/i, "truncated imports must be blocked in the database"],
-  [/apply_rinkel_call_event/i, "Rinkel events require a canonical database reducer"],
-  [/correlate_rinkel_incoming_event/i, "incoming Rinkel correlation must be transactional"],
-  [/correlate_rinkel_outgoing_event/i, "outgoing Rinkel correlation must be transactional"],
-  [/protect_rinkel_call_projection/i, "Rinkel call state must be monotonic"],
-  [/reconcile_rinkel_call_from_cdr/i, "Rinkel CDR reconciliation must repair canonical calls"],
+  [/ingest_sinch_voice_event/i, "provider voice events require a canonical database reducer"],
+  [/protect_call_projection/i, "call state must be monotonic whoever reports it"],
+  [/reserve_outbound_call/i, "a seat and a call row must exist before anything is dialled"],
+  [/finalize_dial/i, "the provider dial outcome must be written atomically"],
+  [/release_stale_dial_attempts/i, "an attempt that never got a provider answer must be releasable"],
   [/apply_resend_delivery_event/i, "Resend events require an immutable monotonic reducer"],
   [/finalize_signing_envelope/i, "multi-recipient signing requires atomic finalization"],
   [/sync_contract_recipient_from_acceptance/i, "legacy acceptance must update the canonical recipient state"],
@@ -158,11 +158,10 @@ const edgeFiles = [
   "supabase/functions/data-worker/index.ts",
   "supabase/functions/ingestion-worker/index.ts",
   "supabase/functions/maintenance-worker/index.ts",
-  "supabase/functions/rinkel-platform-worker/index.ts",
   "supabase/functions/compliance-worker/index.ts",
   "supabase/functions/_shared/crypto.ts",
   "supabase/functions/_shared/reminder-time.ts",
-  "supabase/functions/_shared/rinkel.ts",
+  "supabase/functions/_shared/sms-provider.ts",
 ];
 for (const relative of edgeFiles) {
   const file = join(root, relative);
@@ -181,9 +180,13 @@ const outboxWorker = await readFile(join(root, "supabase/functions/process-outbo
 for (const job of ["sms.send", "call.start", "email.send", "recording.download", "evidence.generate", "contract.confirmation", "contract.signed.confirmation", "contract.reminder.dispatch", "webhook.deliver"]) {
   assert.match(outboxWorker, new RegExp(job.replace(".", "\\.")), `Outbox worker does not support ${job}`);
 }
-assert.match(outboxWorker, /permanent_legacy_46elks_voice_job_disabled_use_rinkel/, "Legacy voice jobs must be dead-lettered without provider execution");
-assert.doesNotMatch(outboxWorker, /post46Elks\("calls"/, "46elks must not remain an executable voice provider");
-assert.doesNotMatch(outboxWorker, /voice_start/, "The outbox worker must not retain the legacy 46elks voice bridge");
+assert.match(outboxWorker, /permanent_legacy_queued_voice_job_disabled_use_webphone/, "Legacy voice jobs must be dead-lettered without provider execution");
+assert.doesNotMatch(outboxWorker, /46elks|api\.46elks\.com/i, "The outbox worker must not name a removed provider, let alone call it");
+assert.doesNotMatch(outboxWorker, /voice_start/, "The outbox worker must not retain a queued voice bridge");
+// Utskicket får inte känna leverantören. Den dagen porten kringgås är bytet dyrt igen.
+assert.doesNotMatch(outboxWorker, /sms\.api\.sinch\.com|xms\/v1/, "SMS delivery must go through the provider port, not a hard-coded endpoint");
+assert.match(outboxWorker, /smsProviderFor|getSmsProvider/, "SMS delivery must resolve its provider through the neutral port");
+assert.match(outboxWorker, /provider\.findSubmitted\(String\(sms\.id\)\)/, "A retry must look the message up by our own reference, never by approximate time and content");
 assert.doesNotMatch(outboxWorker, /increment_usage/, "Worker must not double-count usage after database reservation");
 assert.match(outboxWorker, /contract-confirmation\//, "Contract acceptance confirmations require stable business idempotency keys");
 assert.match(outboxWorker, /contract-signed\//, "Final signed-document confirmations require stable business idempotency keys");
@@ -195,8 +198,7 @@ assert.match(outboxWorker, /Idempotency-Key/, "Resend requests require stable pr
 assert.match(outboxWorker, /https:\/\/api\.resend\.com\/emails/, "Worker must use the Resend email endpoint");
 assert.match(outboxWorker, /enqueue_due_contract_reminders/, "Worker must atomically enqueue due reminders");
 assert.match(outboxWorker, /inQuietHours/, "Reminder delivery must respect tenant quiet hours");
-assert.doesNotMatch(outboxWorker, /async function processRinkelEvent/, "Legacy tenant Rinkel event processing must be removed from the general outbox worker");
-assert.doesNotMatch(outboxWorker, /async function processRinkelEnrichment/, "Legacy tenant Rinkel enrichment must be removed from the general outbox worker");
+assert.doesNotMatch(outboxWorker, /async function processRinkel/, "Legacy tenant provider processing must be removed from the general outbox worker");
 
 const resendWebhook = await readFile(join(root, "src/app/api/webhooks/resend/[token]/route.ts"), "utf8");
 for (const pattern of [/request\.text\(\)/, /svix-id/, /svix-timestamp/, /svix-signature/, /timingSafeEqual/, /provider_webhook_events/, /provider_message_id/, /resendStatusForEvent/, /apply_resend_delivery_event/, /webhook_event_replay_lookup_failed/, /\["processed", "ignored"\]\.includes\(existingEvent\.status\)/]) {
@@ -240,93 +242,40 @@ assert.match(maintenanceWorker, /refresh_due_dynamic_customer_lists/, "Maintenan
 assert.match(maintenanceWorker, /run_retention_maintenance/, "Maintenance worker must execute retention");
 assert.match(maintenanceWorker, /normalize_due_geographies/, "Maintenance worker must normalize geographic reference data");
 assert.match(maintenanceWorker, /release_expired_platform_allocations/, "Maintenance worker must release expired platform list allocations");
-assert.match(maintenanceWorker, /rinkel\.reconcile_platform/, "Maintenance worker must schedule central Rinkel reconciliation");
-assert.match(maintenanceWorker, /rinkel\.retention/, "Maintenance worker must schedule Rinkel retention");
+assert.match(maintenanceWorker, /telephony\.retention/, "Maintenance worker must schedule telephony retention");
+assert.doesNotMatch(maintenanceWorker, /rinkel/i, "The maintenance worker must not name a removed provider");
 const complianceWorker = await readFile(join(root, "supabase/functions/compliance-worker/index.ts"), "utf8");
 for (const pattern of [/queue_due_nix_checks/, /claim_nix_check_jobs/, /complete_nix_check_job/, /fail_nix_check_job/, /redirect: "manual"/, /nix_private_network_forbidden/, /decryptJson/]) assert.match(complianceWorker, pattern, `Compliance worker invariant missing: ${pattern}`);
 
 const apiAuth = await readFile(join(root, "src/lib/api-auth.ts"), "utf8");
 assert.match(apiAuth, /identity\.source === "api_key" \? createAdminClient\(\) : createClient\(\)/, "Session API calls must retain RLS");
 
-const rinkelClient = await readFile(join(root, "supabase/functions/_shared/rinkel.ts"), "utf8");
-assert.match(rinkelClient, /"x-rinkel-api-key"/, "Rinkel client must use the documented authentication header");
-assert.match(rinkelClient, /retrySafe && method === "GET" \? 3 : 1/, "Only safe Rinkel GET calls may retry");
-assert.match(rinkelClient, /\/call-recordings\/.*\/stream/, "Rinkel recordings need fresh temporary stream URLs");
-assert.match(rinkelClient, /\(\?:v1\\\/\)\?call-recordings/, "Rinkel recording references must accept webhook URLs with and without /v1");
-const rinkelWebhook = await readFile(join(root, "src/app/api/webhooks/rinkel/[secret]/[event]/route.ts"), "utf8");
-const rinkelWebhookSecurity = await readFile(join(root, "src/lib/webhooks/rinkel.ts"), "utf8");
-assert.match(rinkelWebhookSecurity, /process\.env\.VERCEL === "1"/, "Rinkel IP extraction must trust Vercel's controlled forwarding header only on Vercel");
-assert.match(rinkelWebhookSecurity, /RINKEL_TRUST_X_REAL_IP/, "Non-Vercel x-real-ip trust must be explicit and disabled by default");
-assert.match(rinkelWebhookSecurity, /RINKEL_WEBHOOK_ALLOWED_IPS/, "Documented Rinkel source IPs must be configurable server-side");
-for (const pattern of [/verifyRinkelNetwork/, /authenticatePlatformRinkelWebhook/, /parseRinkelWebhookRequest/, /admin\.rpc\("ingest_platform_rinkel_webhook_event"/, /status:\s*503/, /status:\s*200/]) {
-  assert.match(rinkelWebhook, pattern, `Rinkel webhook route invariant missing: ${pattern}`);
-}
-assert.doesNotMatch(rinkelWebhook, /\.from\("platform_rinkel_webhook_events"\)/, "Rinkel webhook route must keep durable ingest behind the atomic RPC");
-const rinkelWebhookRepairMigration = await readFile(join(root, "supabase/migrations/202608100003_rinkel_webhook_live_verification_repair.sql"), "utf8");
-for (const pattern of [
-  /create or replace function public\.ingest_platform_rinkel_webhook_event/,
-  /insert into public\.platform_rinkel_webhook_events/,
-  /on conflict\(provider_event_id\) do nothing/,
-  /insert into public\.platform_rinkel_jobs/,
-  /'rinkel\.process_event'/,
-  /on conflict\(idempotency_key\) do nothing/,
-  /record_platform_rinkel_webhook_receipt/,
-  /'ingest_mode','atomic_rpc'/,
-  /grant execute on function public\.ingest_platform_rinkel_webhook_event/,
-]) {
-  assert.match(rinkelWebhookRepairMigration, pattern, `Rinkel webhook ingest invariant missing: ${pattern}`);
-}
 const dialRoute = await readFile(join(root, "src/app/api/v1/calls/route.ts"), "utf8");
 // The seat and the call row must exist before anything can be dialled. That has
 // not changed with the provider; what changed is who dials. The browser places
 // the call now, so the route reserves and stops -- and must not grow a dial of
 // its own, which would put a call outside the seat that guards it.
 assert.match(dialRoute, /reserve_outbound_call/, "The dial route requires an atomic local reservation before the call can be placed");
-assert.doesNotMatch(dialRoute, /fetch\([^)]*sinch/i, "The dial route must not call the provider directly; the browser places the call");
+assert.doesNotMatch(dialRoute, /fetch\(/, "The dial route must not call a provider directly; the browser places the call");
 assert.doesNotMatch(dialRoute, /callPhoneNumber|callouts\./, "The dial route must not place calls; that is the webphone's job");
 assert.match(dialRoute, /provider_status,provider_outcome,provider_cause/, "Call APIs must expose technical provider state separately from CRM disposition");
-const rinkelMigration = await readFile(join(root, "supabase/migrations/202607300002_central_rinkel_platform.sql"), "utf8");
-assert.match(rinkelMigration, /RINKEL_WEBHOOKS_NOT_READY/, "Automatic Rinkel calls need a database-enforced webhook health gate");
-assert.match(rinkelMigration, /revoke all on public\.platform_integrations,public\.platform_rinkel_users,public\.platform_rinkel_numbers/, "Raw central Rinkel provider data must not be table-readable by authenticated clients");
-assert.match(rinkelMigration, /get_tenant_rinkel_resources/, "Tenants require an explicitly filtered Rinkel resource projection");
-assert.doesNotMatch(rinkelMigration, /call_attempts_operator_write/, "Authenticated clients must not mutate provider call attempts directly");
-assert.doesNotMatch(rinkelMigration, /call_transcripts_tenant_select/, "Transcript access must follow canonical call access, not tenant-wide visibility");
-assert.match(rinkelMigration, /public\.can_access_call\(call_id\)/, "Call artifacts must inherit canonical call access");
-const rinkelCronRoute = await readFile(join(root, "src/app/api/cron/rinkel-platform-worker/route.ts"), "utf8");
-assert.match(rinkelCronRoute, /RINKEL_WORKER_NOT_DEPLOYED/, "The Vercel cron bridge must distinguish a missing Supabase Edge Function from a missing Next route");
-assert.match(rinkelCronRoute, /status:\s*502/, "Upstream worker failures must be exposed as gateway failures instead of misleading route 404s");
-const rinkelWorkerInvoker = await readFile(join(root, "src/lib/workers/rinkel-platform-worker.ts"), "utf8");
-assert.match(rinkelWorkerInvoker, /\/functions\/v1\/rinkel-platform-worker/, "All server-side worker invocations must use the deployed Supabase Edge Function");
-assert.match(rinkelWorkerInvoker, /RINKEL_WORKER_NOT_DEPLOYED/, "A missing worker deployment needs a stable diagnostic code");
-const rinkelPlatformWorker = await readFile(join(root, "supabase/functions/rinkel-platform-worker/index.ts"), "utf8");
-assert.match(rinkelPlatformWorker, /RINKEL_INCOMING_ALLOCATION_CONFLICT/, "Ambiguous incoming calls must be quarantined");
-assert.match(rinkelPlatformWorker, /RINKEL_OUTGOING_CORRELATION_CONFLICT/, "Ambiguous outgoing calls must be quarantined");
-assert.match(rinkelPlatformWorker, /RINKEL_CDR_CORRELATION_CONFLICT/, "Ambiguous CDR repair candidates must be quarantined");
-assert.match(rinkelPlatformWorker, /getCallByCallId/, "Known Rinkel call IDs must be reconciled from CDR");
-assert.match(rinkelPlatformWorker, /listCallDetailRecords/, "Unknown dial outcomes require bounded CDR discovery");
-assert.match(rinkelPlatformWorker, /reconcile_rinkel_call_from_cdr/, "CDR repair must use the atomic database reducer");
-const rinkelHardeningMigration = await readFile(join(root, "supabase/migrations/202608020001_rinkel_lifecycle_reconciliation_hardening.sql"), "utf8");
-assert.match(rinkelHardeningMigration, /provider_outcome/, "Provider outcome must be separate from CRM disposition");
-assert.match(rinkelHardeningMigration, /call_recordings_one_active_provider_call_uidx/, "One active recording projection per provider call is required");
-assert.match(rinkelHardeningMigration, /inbound_match/, "Incoming calls need tenant-safe unique customer correlation");
-assert.match(rinkelHardeningMigration, /rinkel\.reconcile_call/, "callEnd and uncertain dials must enqueue CDR reconciliation");
-assert.match(rinkelHardeningMigration, /rinkel_incoming_event_payload_mismatch/, "Incoming webhook payload must be revalidated inside the transaction");
-assert.match(rinkelHardeningMigration, /rinkel_outgoing_event_payload_mismatch/, "Outgoing webhook payload must be revalidated inside the transaction");
-assert.match(rinkelHardeningMigration, /rinkel_external_call_id_conflict/, "Lifecycle reducers must reject duplicate provider call IDs");
-assert.match(rinkelHardeningMigration, /old\.recording_status in \('available_at_provider','copy_pending','stored_privately'\)/, "Late events must not regress an available recording");
-const rinkelAccessMigration = await readFile(join(root, "supabase/migrations/202608020002_rinkel_access_and_readiness_diagnostics.sql"), "utf8");
-assert.match(rinkelAccessMigration, /resolved_platform/, "Telephony readiness must return a deterministic object even when the platform row is absent");
-assert.match(rinkelAccessMigration, /RINKEL_AUTHENTICATION_ERROR/, "Telephony readiness must expose a stable authentication diagnostic");
-assert.match(rinkelAccessMigration, /RINKEL_TENANT_NUMBER_MISSING/, "Telephony readiness must distinguish missing tenant number allocation");
-assert.match(rinkelAccessMigration, /errorMessage/, "Telephony readiness must return an actionable safe message");
-const rinkelPlatformPage = await readFile(join(root, "src/app/(dashboard)/app/platform/telephony/page.tsx"), "utf8");
-assert.match(rinkelPlatformPage, /Plattformsbehörighet krävs/, "The Rinkel platform route must show an explicit access diagnostic instead of silently redirecting");
-assert.match(rinkelPlatformPage, /Databassynk krävs/, "The Rinkel platform route must surface missing database migrations");
-const sidebar = await readFile(join(root, "src/components/app-shell/sidebar.tsx"), "utf8");
-assert.match(sidebar, /Rinkeltelefoni/, "Platform owners and admins need a direct Rinkel navigation entry");
-const rinkelDialerHook = await readFile(join(root, "src/hooks/use-rinkel-dialer.ts"), "utf8");
-assert.match(rinkelDialerHook, /RINKEL_PLATFORM_NOT_CONFIGURED/, "Seller dialer status must distinguish an unconfigured Rinkel platform");
-assert.doesNotMatch(rinkelDialerHook, /Telefonileverantören är tillfälligt otillgänglig/, "Seller dialer status must not collapse every Rinkel failure into one generic message");
+const smsPort = await readFile(join(root, "supabase/functions/_shared/sms-provider.ts"), "utf8");
+assert.match(smsPort, /client_reference: request\.clientReference/, "Our own reference must reach the provider, or a retry cannot find the message it already sent");
+assert.match(smsPort, /delivery_report: "per_recipient"/, "Delivery reports must be requested, since a contract SMS without one is unverifiable");
+assert.match(smsPort, /permanent_sms_provider_not_configured/, "Missing credentials must be a permanent, named failure rather than a retry loop");
+assert.match(smsPort, /permanent_sms_provider_unknown/, "An unknown provider name must refuse rather than silently fall back to another account");
+assert.match(smsPort, /cost: null/, "Cost must be null when the provider does not report it, never invented");
+const smsWebhookPort = await readFile(join(root, "src/lib/messaging/provider.ts"), "utf8");
+assert.match(smsWebhookPort, /webhook_token_hash !== sha256\(token \+ env\.KUNDEXA_WEBHOOK_PEPPER\)/, "Inbound SMS must be authenticated per number, not per account");
+assert.match(smsWebhookPort, /type !== "mo_text"/, "A delivery report must not be parsed as an inbound reply to a contract");
+const smsInboundRoute = await readFile(join(root, "src/app/api/webhooks/sms/inbound/route.ts"), "utf8");
+for (const pattern of [/adapter\.parseInbound\(request\)/, /record_contract_acceptance_v3/, /if \(eventError\) throw eventError/, /if \(recipientsError\) throw recipientsError/, /if \(acceptanceRequestsError\) throw acceptanceRequestsError/, /status: 403/, /status: 500/]) {
+  assert.match(smsInboundRoute, pattern, `Inbound SMS invariant missing: ${pattern}`);
+}
+assert.doesNotMatch(smsInboundRoute, /sinch|46elks/i, "The inbound SMS route must not name a provider; that belongs in the adapter");
+const smsDeliveryRoute = await readFile(join(root, "src/app/api/webhooks/sms/delivery/route.ts"), "utf8");
+assert.match(smsDeliveryRoute, /fromNumber \? await authenticateSmsNumber\(fromNumber, token\) : null/, "A leaked delivery URL must not be usable for another number");
+assert.doesNotMatch(smsDeliveryRoute, /sinch|46elks/i, "The delivery route must not name a provider; that belongs in the adapter");
 const bootstrapPlatformOwner = await readFile(join(root, "scripts/bootstrap-platform-owner.mjs"), "utf8");
 assert.match(bootstrapPlatformOwner, /platform_owner\.bootstrapped/, "Initial platform owner bootstrap must be audited");
 assert.match(bootstrapPlatformOwner, /SUPABASE_SERVICE_ROLE_KEY/, "Platform owner bootstrap must run server-side with the service role");
@@ -341,44 +290,22 @@ assert.match(appLayout, /const platform = await getPlatformContext\(\)/, "Platfo
 const supabaseProxy = await readFile(join(root, "src/lib/supabase/proxy.ts"), "utf8");
 assert.match(supabaseProxy, /requestHeaders\.set\("x-kundexa-path", request\.nextUrl\.pathname\)/, "Proxy must overwrite the internal path hint used by the shared layout");
 assert.doesNotMatch(bootstrapPlatformOwner, /Slutför tenant-onboarding innan \/app\/platform\/telephony/, "Platform owner bootstrap must not require tenant onboarding");
-const rinkelActions = await readFile(join(root, "src/app/actions/rinkel.ts"), "utf8");
-assert.match(rinkelActions, /transcription:\s*false/, "Connection tests must not infer transcription from webhook access");
-assert.match(rinkelActions, /ai_insights:\s*false/, "Connection tests must not infer AI Insights from webhook access");
-assert.doesNotMatch(rinkelActions, /credentials_ciphertext|decryptJson|encryptJson/, "Rinkel actions must never use tenant credentials");
-assert.match(rinkelActions, /replace_rinkel_user_mapping_v2/, "Rinkel seller mapping replacement must be transactional");
-assert.match(rinkelActions, /platform_rinkel_capabilities/, "A successful Rinkel directory sync must refresh canonical readiness capabilities");
-assert.match(rinkelActions, /dial_configured:\s*dialConfigured/, "Directory sync must derive dial readiness from active users, devices and numbers");
-assert.match(rinkelActions, /dial_ready_seller_count/, "Number assignment must report how many sellers are actually ring-ready");
-assert.match(rinkelActions, /assign_platform_rinkel_number/, "Assigning a number to an organisation, team or seller must go through one RPC");
-assert.match(rinkelActions, /provider_device_missing_count/, "Assignment feedback must separate a missing provider device from an unresolved seller");
-assert.match(rinkelActions, /invokeRinkelPlatformWorker/, "Admin and cron worker runs must share one canonical invocation helper");
-const rinkelDialSelectionMigration = await readFile(join(root, "supabase/migrations/202608040001_rinkel_dial_selection_consistency.sql"), "utf8");
-assert.match(rinkelDialSelectionMigration, /seller_team_grant/, "Shared team numbers must be resolvable for the seller's own team memberships");
-assert.match(rinkelDialSelectionMigration, /access_level in \('dial','manage'\)/, "Inbound-only number grants must never authorize outbound calls");
-assert.match(rinkelDialSelectionMigration, /callerIdResolvable/, "Telephony readiness must prove that an accessible number is actually selectable");
-assert.match(rinkelDialSelectionMigration, /accessible_fallback/, "The dial resolver needs a deterministic fallback to any number the seller can dial with");
-assert.match(rinkelDialSelectionMigration, /rinkel_number_grants_active_user_access_uidx/, "Direct seller number access must be idempotent");
-assert.match(rinkelDialSelectionMigration, /direct_number_grant_id/, "Saving a seller mapping must atomically grant access to its default number");
-assert.match(rinkelDialSelectionMigration, /The selected active user\/device plus the caller-ID resolver are the runtime/, "Manual dial reservation must use the same runtime contract as readiness");
-assert.match(rinkelDialSelectionMigration, /if v_mapping\.external_device_id is null or v_caller\.provider_number_id is null/, "Dial reservation must validate the concrete provider device and number before creating a call");
-const rinkelTeamActivationMigration = await readFile(join(root, "supabase/migrations/202608040002_rinkel_worker_and_team_activation_consistency.sql"), "utf8");
-assert.match(rinkelTeamActivationMigration, /rinkel_user_allocations_one_active_tenant_uidx/, "A provider user must be reusable in separate tenant contexts without being moved away from another company");
-assert.match(rinkelTeamActivationMigration, /left join auth\.users/, "Team assignment must use an exact authenticated email match for deterministic seller activation");
-assert.match(rinkelTeamActivationMigration, /v_auto_mapped_count/, "Team assignment must report sellers mapped automatically");
-assert.match(rinkelTeamActivationMigration, /v_ambiguous_member_count/, "Ambiguous users or devices must be reported instead of guessed");
-const rinkelMappingForm = await readFile(join(root, "src/components/rinkel-user-mapping-form.tsx"), "utf8");
-assert.match(rinkelMappingForm, /activeDevices/, "The mapping UI must only show devices belonging to the selected telephony user");
-assert.match(rinkelMappingForm, /setSelectedDeviceId\(""\)/, "Changing the telephony user must clear any stale device selection");
-assert.match(rinkelMappingForm, /disabled=\{!selectedUserAllocationId\}/, "A seller must be mappable before the provider has registered a device");
-const rinkelOneClickMigration = await readFile(join(root, "supabase/migrations/202609070001_rinkel_one_click_number_assignment.sql"), "utf8");
-assert.match(rinkelOneClickMigration, /rinkel_effective_provider_device/, "The dial device must be resolved from the live provider record");
-assert.match(rinkelOneClickMigration, /provider_user\.external_device_id/, "Rinkel exposes the device as a nullable scalar and that scalar must be dialable");
-assert.match(rinkelOneClickMigration, /PROVIDER_DEVICE_MISSING/, "A missing provider device must be an actionable readiness blocker");
-assert.match(rinkelOneClickMigration, /p_scope not in \('tenant','team','user'\)/, "One assignment RPC must cover organisation, team and seller scope");
-assert.doesNotMatch(rinkelOneClickMigration, /raise exception 'RINKEL_USER_DEVICE_MISSING'/, "Allocation must not be blocked by a device the provider has not registered yet");
-const platformAssignmentForm = await readFile(join(root, "src/components/platform-number-assignment-form.tsx"), "utf8");
-assert.match(platformAssignmentForm, /assignPlatformPhoneNumber/, "The platform assignment form must submit the single assignment action");
-assert.match(platformAssignmentForm, /rinkel_user_id/, "A superadmin must be able to pick the provider user when addresses differ");
+// Nummertilldelning. Den ersatte leverantörens allokeringsmodell och är nu en
+// rad i `phone_numbers` plus ett val per företag, team, lista eller kampanj.
+const callerIdMigration = await readFile(join(root, "supabase/migrations/202609170001_neutral_caller_id_selection.sql"), "utf8");
+for (const pattern of [/teams/, /campaigns/, /customer_lists/, /telephony_policies/, /caller_id_phone_number_id/, /default_caller_id_phone_number_id/]) {
+  assert.match(callerIdMigration, pattern, `Caller-ID assignment invariant missing: ${pattern}`);
+}
+const callerIdOptionsMigration = await readFile(join(root, "supabase/migrations/202609170008_caller_id_options.sql"), "utf8");
+assert.match(callerIdOptionsMigration, /n\.supports_voice/, "A number without voice support must never be offered as a caller ID");
+assert.match(callerIdOptionsMigration, /order by \(n\.id = v_default\) desc/, "The resolved default must be first, or the dialer preselects a different number than the call would use");
+const telephonyActions = await readFile(join(root, "src/app/actions/telephony.ts"), "utf8");
+assert.match(telephonyActions, /export async function saveCallerIdDefault/, "An administrator must be able to change the outgoing number without a deploy");
+assert.match(telephonyActions, /supports_voice/, "Assigning a caller ID must verify the number can actually carry a call");
+const dropMigration = await readFile(join(root, "supabase/migrations/202609170009_drop_rinkel_schema.sql"), "utf8");
+assert.match(dropMigration, /rinkel_schema_removal_incomplete/, "The removal must fail loudly rather than leave half a provider behind");
+assert.match(dropMigration, /create trigger calls_projection_monotonic/, "Call-state monotonicity must survive the removal, and apply to every provider");
+assert.doesNotMatch(dropMigration, /^\s*if old\.provider<>/m, "The monotonicity guard must not be gated on a provider name again");
 const nixMigration = await readFile(join(root, "supabase/migrations/202609070004_seller_reported_nix_and_screening_mode.sql"), "utf8");
 assert.match(nixMigration, /nix_screening_mode/, "NIX screening must be a tenant policy, not a hard-coded gate");
 assert.match(nixMigration, /if v_nix_result is not null and v_nix_result<>'not_listed' then/, "A known listing must refuse the call before the mode is consulted");
@@ -387,7 +314,7 @@ assert.match(nixMigration, /apply_call_block_disposition/, "The manual and list 
 assert.match(nixMigration, /'listed',now\(\),now\(\)\+interval '1 year'/, "A seller report must record a durable NIX result for the number");
 const completeRoute = await readFile(join(root, "src/app/api/v1/calls/complete/route.ts"), "utf8");
 assert.match(completeRoute, /"nix_listed"/, "The after-call API must accept the seller NIX report");
-const dialerNix = await readFile(join(root, "src/components/rinkel-dialer.tsx"), "utf8");
+const dialerNix = await readFile(join(root, "src/components/dialer-panel.tsx"), "utf8");
 assert.match(dialerNix, /Nixat nummer/, "The seller must be able to report a NIX listing from the dialer");
 const complianceAdminActions = await readFile(join(root, "src/app/actions/admin.ts"), "utf8");
 assert.match(complianceAdminActions, /saveComplianceScreeningPolicy/, "The screening mode must be settable by a tenant administrator");
@@ -405,20 +332,23 @@ assert.match(rlsMigration, /can_access_customer_row/, "The customers select poli
 assert.doesNotMatch(rlsMigration, /create policy customers_scoped_select[\s\S]{0,200}can_access_customer\(id\)/, "The select policy must evaluate the candidate row's own columns");
 const globalCss = await readFile(join(root, "src/app/globals.css"), "utf8");
 assert.match(globalCss, /\.span-2/, "Multi-column form spans must be defined, not assumed");
-const rinkelDialerComponent = await readFile(join(root, "src/components/rinkel-dialer.tsx"), "utf8");
-assert.match(rinkelDialerComponent, /initialCallerId/, "The manual dialer must select the only accessible caller ID automatically");
-assert.match(rinkelDialerComponent, /numberAllocationId,/, "The manual dialer must always send the selected number allocation explicitly");
-assert.match(rinkelDialerComponent, /!numberAllocationId/, "The dial button must not submit without a caller-ID allocation");
-assert.match(rinkelClient, /return "data" in root \? root\.data : root/, "Rinkel directory parsing must accept direct and data-wrapped API payloads");
+const dialerComponent = await readFile(join(root, "src/components/dialer-panel.tsx"), "utf8");
+assert.match(dialerComponent, /initialCallerId/, "The manual dialer must select the only accessible caller ID automatically");
+assert.match(dialerComponent, /callerIdPhoneNumberId,/, "The manual dialer must always send the selected number explicitly");
+assert.match(dialerComponent, /!callerIdPhoneNumberId/, "The dial button must not submit without a caller ID");
+assert.doesNotMatch(dialerComponent, /dialPath/, "The dial path belonged to a provider that rang a desk phone first; the browser is the phone now");
 assert.match(dialRoute, /internalDialFailure/, "Local database and finalization errors must not be mislabeled as provider failures");
 assert.match(dialRoute, /getCorrelationId\(request\)/, "Dial failures must use a stable correlation id for support tracing");
 assert.match(dialRoute, /apiJson\(correlationId/, "Dial responses must expose the correlation id as a response header");
-assert.match(rinkelDialerHook, /Referens:/, "Seller-visible dial errors must include a neutral support reference");
+const dialerHook = await readFile(join(root, "src/hooks/use-dialer.ts"), "utf8");
+assert.match(dialerHook, /Referens:/, "Seller-visible dial errors must include a neutral support reference");
+// Hindren formuleras i databasen. En hårdkodad kodlista i klienten driver isär
+// från SQL:en och lämnar säljaren med "telefoni ej redo" utan orsak.
+assert.match(dialerHook, /data\.blockers\?\.find\(\(blocker\) => blocker\.message\)/, "The dialer must show the database's own reason, not re-derive one");
+assert.doesNotMatch(dialerHook, /RINKEL_/, "The dialer must not branch on a removed provider's diagnostic codes");
 const exampleEnv = await readFile(join(root, ".env.example"), "utf8");
 assert.doesNotMatch(exampleEnv, /SUPABASE_SERVICE_ROLE_KEY=eyJ/, "Tracked environment examples must not contain a live service-role JWT");
-assert.match(rinkelMigration, /create or replace function public\.replace_rinkel_user_mapping_v2/, "Central Rinkel mapping replacement RPC is missing");
-assert.match(rinkelMigration, /credentials_ciphertext=null/, "Legacy tenant Rinkel credentials must be cleared during cutover");
-assert.match(rinkelPlatformWorker, /transcription_status:\s*"available"/, "Observed transcriptions must update canonical call capability state");
+
 assert.match(apiAuth, /api_key_actor_insufficient_permission/, "API keys must retain the creating actor role permission boundary");
 const contractApi = await readFile(join(root, "src/app/api/v1/contracts/route.ts"), "utf8");
 assert.match(contractApi, /getCorrelationId/, "Contract API responses require a correlation identifier");
@@ -516,13 +446,12 @@ const callRealtime = await readFile(join(root, "src/hooks/use-call-realtime.ts")
 for (const pattern of [/fetchCurrentStatus/, /schedulePoll/, /scheduleReconnect/, /visibilitychange/, /SUBSCRIBED/, /reconciliation_required/]) {
   assert.match(callRealtime, pattern, `Dialer recovery invariant missing: ${pattern}`);
 }
-const productionRinkelWorker = await readFile(join(root, "supabase/functions/rinkel-platform-worker/index.ts"), "utf8");
-assert.match(productionRinkelWorker, /pending_correlation/, "Uncorrelated Rinkel lifecycle events must remain retryable");
-assert.match(productionRinkelWorker, /correlate_rinkel_incoming_event/, "Incoming Rinkel correlation must use the atomic database RPC");
-assert.match(productionRinkelWorker, /correlate_rinkel_outgoing_event/, "Outgoing Rinkel correlation must use the atomic database RPC");
-assert.match(productionRinkelWorker, /apply_rinkel_call_event/, "Rinkel lifecycle projection must use the canonical reducer");
-assert.match(productionRinkelWorker, /processCallReconciliation/, "Rinkel reconciliation must perform provider repair instead of only flagging stale calls");
-assert.match(productionRinkelWorker, /select\("id"\)\.maybeSingle\(\)/, "Rinkel event processing must claim an event atomically");
+const voiceWebhook = await readFile(join(root, "src/app/api/webhooks/sinch/route.ts"), "utf8");
+assert.match(voiceWebhook, /verifySinchCallback/, "Voice events must be signature-verified before they are believed");
+assert.match(voiceWebhook, /status: 503/, "An unconfigured webhook must ask for redelivery, not swallow the event with a 200");
+assert.match(voiceWebhook, /status: 403/, "An unverifiable event must be refused");
+assert.doesNotMatch(voiceWebhook, /reason: verification\.reason \}\)[\s\S]{0,120}NextResponse\.json/, "The rejection reason must be logged, not handed to the sender");
+assert.match(voiceWebhook, /ingest_sinch_voice_event/, "Voice lifecycle projection must use the atomic database reducer");
 const resendWebhookProjection = await readFile(join(root, "src/app/api/webhooks/resend/[token]/route.ts"), "utf8");
 assert.match(resendWebhookProjection, /apply_resend_delivery_event/, "Resend webhook delivery state must use the monotonic reducer");
 const signingProvider = await readFile(join(root, "src/lib/signing/provider.ts"), "utf8");
@@ -696,7 +625,98 @@ assert.equal(packageJson.overrides.postcss, "8.5.19");
 assert.equal(packageJson.scripts["functions:deploy"], "node scripts/deploy-functions.mjs");
 assert.equal(packageJson.scripts["geography:import"], "node scripts/import-geography.mjs");
 const deployFunctions = await readFile(join(root, "scripts/deploy-functions.mjs"), "utf8");
-for (const worker of ["process-outbox", "rinkel-platform-worker", "automation-runner", "data-worker", "ingestion-worker", "maintenance-worker", "compliance-worker", "parsehub-worker"]) assert.match(deployFunctions, new RegExp(worker), `Deployment must include ${worker}`);
+for (const worker of ["process-outbox", "automation-runner", "data-worker", "ingestion-worker", "maintenance-worker", "compliance-worker", "parsehub-worker"]) assert.match(deployFunctions, new RegExp(worker), `Deployment must include ${worker}`);
 assert.match(packageJson.scripts.verify, /typecheck:edge/, "Full verification must type-check Edge Functions");
 
-console.log(`Verified ${migrations.length} migrations, monotonic Rinkel/Resend projections, non-truncating imports, multi-recipient signing, dialer recovery, canonical contracts, tenant isolation and worker deployment.`);
+// Leverantörsnamn får bara finnas där de hör hemma.
+//
+// Det här är hela poängen med omskrivningen. Så länge ett leverantörsnamn får
+// stå var som helst i koden växer bindningen tillbaka, och nästa byte blir lika
+// dyrt som det här. Kontrollen är därför inte kosmetisk: den är kontraktet.
+//
+// Undantagen är uppräknade, inte mönstermatchade. Ett mönster hade tyst börjat
+// undanta nya filer när någon döpte om en katalog.
+const PROVIDER_NAME_EXEMPT = new Set([
+  // Adaptrarna. Här är namnet själva innehållet.
+  "src/lib/telephony/sinch/registration-token.ts",
+  "src/lib/telephony/sinch/callback-signature.ts",
+  "src/lib/telephony/webphone/sinch.ts",
+  "src/hooks/use-sinch-webphone.ts",
+  "src/hooks/use-webphone.ts",
+  "src/lib/telephony/webphone/index.ts",
+  "src/lib/telephony/webphone/provider.ts",
+  "src/lib/messaging/provider.ts",
+  "supabase/functions/_shared/sms-provider.ts",
+  // Rutten är namngiven efter leverantören därför att det är leverantören som
+  // bestämmer nyttolastens form och därmed callback-URL:en.
+  "src/app/api/webhooks/sinch/route.ts",
+  "src/app/api/v1/telephony/webphone/route.ts",
+  "src/lib/env.ts",
+  // Migrationen som tar bort leverantören måste få nämna den.
+  "supabase/migrations/202609170009_drop_rinkel_schema.sql",
+  // Tester och genererade filer.
+  "scripts/api-core-tests.ts",
+  "scripts/verify.mjs",
+  "scripts/verify-sql.mjs",
+  "scripts/sinch-unit-tests.mts",
+  "scripts/remediation-regression-tests.mjs",
+  "scripts/verify-generated-schema.mjs",
+  "src/lib/supabase/database.types.ts",
+  "src/lib/supabase/runtime-database.types.ts",
+]);
+const SCANNED_ROOTS = ["src", "scripts", "supabase/functions"];
+const SCANNED_EXTENSIONS = [".ts", ".tsx", ".mjs", ".mts", ".sql"];
+
+async function sourceFiles(relative) {
+  const absolute = join(root, relative);
+  const entries = await readdir(absolute, { withFileTypes: true });
+  const found = [];
+  for (const entry of entries) {
+    const child = `${relative}/${entry.name}`;
+    if (entry.isDirectory()) found.push(...await sourceFiles(child));
+    else if (SCANNED_EXTENSIONS.some((extension) => entry.name.endsWith(extension))) found.push(child);
+  }
+  return found;
+}
+
+const scanned = (await Promise.all(SCANNED_ROOTS.map(sourceFiles))).flat();
+assert.ok(scanned.length > 200, "The provider-name scan must actually reach the source tree");
+const removedProviderMentions = [];
+const providerLeaks = [];
+for (const relative of scanned) {
+  if (PROVIDER_NAME_EXEMPT.has(relative)) continue;
+  const source = await readFile(join(root, relative), "utf8");
+  // De borttagna leverantörerna får inte nämnas alls. Ett namn som står kvar
+  // betyder antingen kod som inte längre kan köra, eller ett fält som ingen
+  // fyller i.
+  // Ett namn får stå kvar på exakt ett ställe: i listan över jobbtyper som ska
+  // dödbrevas när de dyker upp ur kön. Den listan är själva avvecklingen.
+  const withoutQueueDrain = source
+    .replace(/const LEGACY_TELEPHONY_JOB_TYPES = \[[^\]]*\];/, "")
+    .replace(/job\.job_type === "rinkel\.retention"/, "");
+  if (/rinkel|46\s?elks/i.test(withoutQueueDrain)) removedProviderMentions.push(relative);
+  if (/\bsinch\b/i.test(source)) providerLeaks.push(relative);
+}
+assert.deepEqual(removedProviderMentions, [], `Removed providers are still named in: ${removedProviderMentions.join(", ")}`);
+assert.deepEqual(providerLeaks, [], `The provider is named outside its adapters in: ${providerLeaks.join(", ")}`);
+
+// Migrationer skrivs aldrig om -- de är protokollet över vad som byggts, och
+// borttagningen fungerar just genom att spelas upp efter dem. Regeln gäller
+// därför framåt: ingen migration efter borttagningen får återinföra namnet.
+const REMOVAL_MIGRATION = "202609170009";
+for (const name of migrations) {
+  const version = name.match(/^(\d+)_/)?.[1] ?? "";
+  if (version <= REMOVAL_MIGRATION) continue;
+  const source = await readFile(join(migrationDir, name), "utf8");
+  assert.doesNotMatch(source, /rinkel|46\s?elks/i, `${name} reintroduces a removed provider`);
+}
+
+// Det slutgiltiga beviset: schemat självt. Genererade typer läses ur det levande
+// projektet, så ett namn här betyder att något faktiskt finns kvar i databasen --
+// oavsett vad källkoden säger.
+const generatedTypes = await readFile(join(root, "src/lib/supabase/database.types.ts"), "utf8");
+assert.doesNotMatch(generatedTypes, /rinkel/i, "The live schema still carries provider tables, columns or functions");
+const runtimeTypeOverlay = await readFile(join(root, "src/lib/supabase/runtime-database.types.ts"), "utf8");
+assert.doesNotMatch(runtimeTypeOverlay, /rinkel/i, "The runtime type overlay still declares removed provider objects");
+
+console.log(`Verified ${migrations.length} migrations, monotonic call/Resend projections, non-truncating imports, multi-recipient signing, dialer recovery, canonical contracts, tenant isolation and worker deployment.`);

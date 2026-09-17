@@ -88,5 +88,13 @@ export type WebphoneProvisionInput = {
 
 export type WebphoneProvider = {
   key: string;
+  /**
+   * Har adaptern det den behöver för att kunna registrera en webbtelefon?
+   *
+   * Frågan hör hemma hos adaptern och ingen annanstans. Beredskapskontrollen
+   * läste tidigare leverantörens miljövariabler direkt, vilket betydde att ett
+   * leverantörsbyte tystade kontrollen i stället för att flytta den.
+   */
+  isConfigured(): boolean;
   provision(input: WebphoneProvisionInput): Promise<WebphoneProvisionResult>;
 };

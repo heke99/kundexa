@@ -20,6 +20,10 @@ import type { WebphoneProvider, WebphoneProvisionResult } from "./provider";
  */
 export const sinchWebphoneProvider: WebphoneProvider = {
   key: "sinch",
+  isConfigured() {
+    const env = serverEnv();
+    return Boolean(env.SINCH_APPLICATION_KEY?.trim() && env.SINCH_APPLICATION_SECRET?.trim());
+  },
   async provision(input): Promise<WebphoneProvisionResult> {
     const env = serverEnv();
     const applicationKey = env.SINCH_APPLICATION_KEY?.trim();

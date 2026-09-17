@@ -35,7 +35,7 @@ export default async function CustomerDetail({ params, searchParams }: { params:
     ok(supabase.from("deals").select("id,name,status,probability,value,currency").eq("customer_id", id).order("created_at", { ascending: false })),
     ok(supabase.from("sales_orders").select("id,order_number,status,total,currency,created_at").eq("customer_id", id).order("created_at", { ascending: false })),
     ok(supabase.from("customer_lists").select("id,name,callback_policy,status").eq("status", "active").order("name")),
-    ok(supabase.rpc("get_current_user_rinkel_numbers")),
+    ok(supabase.rpc("caller_id_options_for_current_user")),
   ]);
   if (!customer) notFound();
   // The card is the canonical CRM record, so the person actually responsible has to be
