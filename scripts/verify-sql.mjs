@@ -2720,6 +2720,64 @@ if (ownCallerId.rows[0].caller_id_phone_number_id !== '00000000-0000-0000-0000-0
 await db.exec(`update public.teams set caller_id_phone_number_id=null where id='00000000-0000-0000-0000-000000000026'`);
 console.log("Verified caller-ID selection: a team takes its own tenant's number and is refused another tenant's.");
 
+// Calling hours are a system default, not something set per tenant by hand. A new
+// tenant must inherit the window the owner decided on, or the first seller in
+// every new company hits a refusal nobody configured.
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+const probeTenant = (await db.query(`
+  insert into public.tenants(slug,name,legal_name,status)
+  values('calling-hours-probe','Calling Hours Probe','Calling Hours Probe AB','active')
+  returning id
+`)).rows[0].id;
+// The policy row is created for the tenant automatically, so read what the system
+// actually gave it rather than inserting one here and testing my own row.
+const inherited = await db.query(`
+  select allowed_days, allowed_start_time::text as starts, allowed_end_time::text as ends
+  from public.telephony_policies where tenant_id=$1
+`, [probeTenant]);
+if (inherited.rows.length !== 1) {
+  throw new Error("A new tenant did not get a telephony policy at all.");
+}
+if (inherited.rows[0].starts !== '08:00:00' || inherited.rows[0].ends !== '21:00:00') {
+  throw new Error(`A new tenant inherited calling hours ${inherited.rows[0].starts}-${inherited.rows[0].ends} instead of 08:00-21:00.`);
+}
+if ([...inherited.rows[0].allowed_days].sort().join(",") !== "1,2,3,4,5,6,7") {
+  throw new Error(`A new tenant inherited calling days ${inherited.rows[0].allowed_days} instead of every day.`);
+}
+
+// Widening the default must not overwrite a tenant that deliberately chose its own
+// hours. Moving a default and overruling a decision are different things.
+//
+// The migration's backfill is replayed here on purpose. Asserting after the
+// migration has already run would measure nothing: the backfill executed before
+// this probe's tenant existed, so any shape of WHERE clause would have left it
+// alone. Replaying the statement is what puts the clause itself under test, and
+// replacing the clause with `where true` does make this fail.
+await db.query(`
+  update public.telephony_policies
+  set allowed_days='{1,2,3}'::integer[], allowed_start_time='10:00', allowed_end_time='15:00'
+  where tenant_id=$1
+`, [probeTenant]);
+await db.exec(`
+  update public.telephony_policies
+  set allowed_days = '{1,2,3,4,5,6,7}'::integer[],
+      allowed_start_time = '08:00'::time,
+      allowed_end_time = '21:00'::time,
+      updated_at = now()
+  where allowed_days = '{1,2,3,4,5}'::integer[]
+    and allowed_start_time = '09:00'::time
+    and allowed_end_time = '18:00'::time
+`);
+const deliberate = await db.query(`
+  select allowed_start_time::text as starts, allowed_end_time::text as ends
+  from public.telephony_policies where tenant_id=$1
+`, [probeTenant]);
+if (deliberate.rows[0].starts !== '10:00:00' || deliberate.rows[0].ends !== '15:00:00') {
+  throw new Error(`Widening the default overwrote a tenant's own calling hours: ${deliberate.rows[0].starts}-${deliberate.rows[0].ends}`);
+}
+await db.query(`delete from public.tenants where id=$1`, [probeTenant]);
+console.log("Verified calling hours: a new tenant inherits the system default of every day 08:00-21:00, and widening that default leaves a tenant's own choice alone.");
+
 // The neutral dial attempt is the seat model without the provider baked in, and a
 // seat that can be held twice is not a seat. Exercise it directly rather than
 // through the reservation RPC, so the table's own guarantees are what is measured.
