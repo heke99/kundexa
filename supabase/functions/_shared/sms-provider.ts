@@ -3,7 +3,7 @@
 // Allt utanför den här filen och dess adaptrar talar om "ett SMS", aldrig om en
 // namngiven leverantör. Byter vi leverantör skrivs en ny adapter och registreras
 // i `smsProviderFor`; utskickskoden i process-outbox rörs inte. Det var precis
-// den kopplingen som gjorde 46elks dyr att lämna: leverantörens HTTP-anrop,
+// den kopplingen som gjorde den förra leverantören dyr att lämna: dess HTTP-anrop,
 // dess statussträngar och dess avstämningsheuristik låg mitt i jobblogiken.
 //
 // Porten är medvetet smal. Den kan bara två saker, och båda är sådant som en

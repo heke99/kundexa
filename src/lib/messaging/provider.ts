@@ -11,7 +11,7 @@ import { sha256 } from "@/lib/crypto";
  * `InboundSms` eller en `SmsDeliveryReport`, och det bor i adaptern nedan.
  *
  * Konsekvensen är att ett leverantörsbyte är en ny adapter plus en rad i
- * registret. Med 46elks låg formatparsningen, autentiseringen och
+ * registret. Hos den förra leverantören låg formatparsningen, autentiseringen och
  * avtalslogiken i samma fil, och det var därför bytet kostade så mycket.
  */
 

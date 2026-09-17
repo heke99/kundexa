@@ -200,7 +200,7 @@ Deno.test("a forged or replayed callback is refused", () => {
   assert.equal(wrongKey.valid, false);
 
   // Posted to a different path with a signature made for ours.
-  const wrongPath = verify({ path: "/api/webhooks/rinkel" });
+  const wrongPath = verify({ path: "/api/webhooks/annan-leverantor" });
   assert.equal(wrongPath.valid, false);
 
   // Captured and replayed tomorrow. The signature is still valid; the age is not.
