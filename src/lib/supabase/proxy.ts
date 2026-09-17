@@ -55,16 +55,32 @@ export async function updateSession(request: NextRequest) {
   let response = securityHeaders(NextResponse.next({ request: { headers: requestHeaders } }), contentSecurityPolicy, tenantScoped);
   if (!url || !key) return response;
 
+  // `getUser()` may rotate the refresh token, and the rotation is spent the moment
+  // GoTrue answers: the old token stops working whether or not the new one reaches
+  // the browser. Both redirects below build a fresh response, so the cookies written
+  // here have to be remembered and replayed onto whatever response is finally
+  // returned — otherwise the user is left holding a token the server has already
+  // retired, and the next request signs them out for no reason.
+  const refreshedCookies: { name: string; value: string; options?: Parameters<NextResponse["cookies"]["set"]>[2] }[] = [];
+
   const supabase = createServerClient<RuntimeDatabase>(url, key, {
     cookies: {
       getAll: () => request.cookies.getAll(),
       setAll(cookiesToSet) {
         cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
+        refreshedCookies.length = 0;
+        refreshedCookies.push(...cookiesToSet);
         response = securityHeaders(NextResponse.next({ request: { headers: requestHeaders } }), contentSecurityPolicy, tenantScoped);
         cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
       },
     },
   });
+
+  // Every exit from here carries the refreshed session, redirects included.
+  const withRefreshedSession = (target: NextResponse) => {
+    for (const { name, value, options } of refreshedCookies) target.cookies.set(name, value, options);
+    return securityHeaders(target, contentSecurityPolicy, tenantScoped);
+  };
 
   const { data } = await supabase.auth.getUser();
   const isApp = request.nextUrl.pathname.startsWith("/app");
@@ -74,12 +90,14 @@ export async function updateSession(request: NextRequest) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/login";
     redirectUrl.searchParams.set("next", request.nextUrl.pathname);
-    return securityHeaders(NextResponse.redirect(redirectUrl), contentSecurityPolicy, tenantScoped);
+    return withRefreshedSession(NextResponse.redirect(redirectUrl));
   }
   if (data.user && isAuth) {
+    // The one that bit: a signed-in user landing on /login is exactly when a stale
+    // tab refreshes its token, and this redirect used to throw the new cookies away.
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/app";
-    return securityHeaders(NextResponse.redirect(redirectUrl), contentSecurityPolicy, tenantScoped);
+    return withRefreshedSession(NextResponse.redirect(redirectUrl));
   }
   return response;
 }

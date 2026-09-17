@@ -32,8 +32,17 @@ function oneTenant(value: TenantRecord | TenantRecord[] | null | undefined) {
 async function enforceFirstLoginGate(supabase: Awaited<ReturnType<typeof createClient>>) {
   const { data: rows, error } = await supabase.rpc("current_user_security_state");
   if (error) {
+    // A failed read is not a failed login. This gate runs on every page load, in
+    // both the tenant and the platform context, so sending the user to /login on
+    // any database blip turns one slow query into "you are signed out" — and the
+    // session was never invalid.
+    //
+    // It is also no safer. The gate exists to force a password change, and a user
+    // bounced to /login simply signs back in and meets the same gate. Logging them
+    // out buys nothing and costs the session, so this throws instead: nothing is
+    // rendered, the boundary shows a real error, and they stay signed in.
     console.error("user_security_state_lookup_failed", { code: error.code ?? null });
-    redirect("/login?error=Säkerhetsstatus kunde inte verifieras");
+    throw new Error("security_state_unavailable");
   }
   const state = Array.isArray(rows) ? rows[0] : rows;
   if (state?.must_change_password) redirect("/change-password");

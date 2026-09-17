@@ -814,3 +814,39 @@ console.log("Contract e-mail is sent in the name of the legal entity that issued
   }
 }
 console.log("No dialer claims the call rings a webphone Kundexa does not have.");
+
+// Being signed out is a claim about authentication, and neither of these is one.
+//
+// enforceFirstLoginGate runs on every page load, in both the tenant and the platform
+// context. Redirecting to /login on any RPC error turned one slow query into "you are
+// signed out" — and bought nothing, because the gate exists to force a password change
+// and a bounced user simply signs back in and meets it again.
+//
+// The proxy's redirects then made that permanent: getUser() can rotate the refresh
+// token, and the rotation is spent the moment GoTrue answers. A redirect built without
+// those cookies leaves the browser holding a token the server has already retired.
+{
+  const { readFileSync } = await import("node:fs");
+  const base = new URL("..", import.meta.url).pathname;
+
+  const auth = readFileSync(base + "src/lib/auth.ts", "utf8");
+  const gate = auth.slice(auth.indexOf("async function enforceFirstLoginGate"));
+  const gateBody = gate.slice(0, gate.indexOf("\n}"));
+  assert.ok(!/redirect\("\/login/.test(gateBody),
+    "a failed security-state read must not sign the user out");
+  assert.ok(/throw new Error\("security_state_unavailable"\)/.test(gateBody),
+    "a failed security-state read must surface as an error, not as a silent pass");
+  // The gate must still do the one thing it is for.
+  assert.ok(/must_change_password.*redirect\("\/change-password"\)/s.test(gateBody),
+    "the first-login gate must still force a password change");
+
+  const proxy = readFileSync(base + "src/lib/supabase/proxy.ts", "utf8");
+  assert.ok(proxy.includes("const withRefreshedSession ="),
+    "the proxy must have one exit that carries refreshed auth cookies");
+  const redirects = proxy.match(/return\s+\S+\(NextResponse\.redirect\(/g) ?? [];
+  assert.ok(redirects.length >= 2, `expected the proxy's two redirects, found ${redirects.length}`);
+  assert.deepEqual(
+    redirects.filter((line) => !line.includes("withRefreshedSession")), [],
+    "every proxy redirect must carry the refreshed session, or it retires a token the browser still holds");
+}
+console.log("A database blip cannot sign a user out, and no redirect drops a refreshed session.");
