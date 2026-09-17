@@ -3152,6 +3152,124 @@ if (afterWork.rows[0].result.completed !== true || dialledState.disposition !== 
 }
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
 console.log("Executed the seller dial: reservation with caller ID and device, provider acceptance, and after-work closing the call with its disposition and note.");
+
+// The same journey on the provider-neutral path. This is the reservation the
+// dialler will actually use, so it is exercised end to end rather than trusted
+// because the old one works: the business rules were carried over by hand and a
+// rule that was dropped in the copying would be invisible otherwise.
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.exec(`
+  update public.telephony_policies
+  set default_caller_id_phone_number_id='00000000-0000-0000-0000-000000000022'
+  where tenant_id='00000000-0000-0000-0000-000000000001';
+  update public.customers set alternate_phone_e164='+46702222231'
+  where id='00000000-0000-0000-0000-000000000025';
+`);
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${JOWNER}',false);`);
+
+const neutralReserved = (await db.query(`
+  select public.reserve_outbound_call(
+    '00000000-0000-0000-0000-000000000025',null,'+46702222231',null,null,null,
+    gen_random_uuid(),'neutral-dial-1','customer_service'
+  ) as result
+`)).rows[0].result;
+if (neutralReserved.idempotentReplay !== false || neutralReserved.status !== 'requested') {
+  throw new Error(`The neutral reservation did not open a call: ${JSON.stringify(neutralReserved)}`);
+}
+if (neutralReserved.callerId !== '+46401234567' || neutralReserved.callerIdSource !== 'tenant_default') {
+  throw new Error(`The neutral reservation resolved the wrong caller ID: ${JSON.stringify(neutralReserved)}`);
+}
+
+const neutralRow = await db.query(`
+  select c.provider, c.from_number, c.status as call_status,
+         a.provider as attempt_provider, a.status as attempt_status, a.caller_id_source
+  from public.calls c join public.dial_attempts a on a.call_id=c.id
+  where c.id=$1
+`, [neutralReserved.callId]);
+if (neutralRow.rows.length !== 1) throw new Error("The neutral reservation did not write a dial attempt.");
+if (neutralRow.rows[0].provider !== 'sinch' || neutralRow.rows[0].attempt_provider !== 'sinch') {
+  throw new Error(`The neutral reservation did not record the provider: ${JSON.stringify(neutralRow.rows[0])}`);
+}
+if (neutralRow.rows[0].from_number !== '+46401234567') {
+  throw new Error("The call was not stamped with the resolved caller ID.");
+}
+
+// Replaying the same idempotency key returns the same call rather than opening a
+// second one, and the seat refuses a genuinely new call while one is open.
+const replayed = (await db.query(`
+  select public.reserve_outbound_call(
+    '00000000-0000-0000-0000-000000000025',null,'+46702222231',null,null,null,
+    $1,'neutral-dial-1','customer_service'
+  ) as result
+`, [neutralReserved.clientRequestId ?? '00000000-0000-0000-0000-0000000000aa'])).rows[0].result;
+if (replayed.idempotentReplay !== true || replayed.callId !== neutralReserved.callId) {
+  throw new Error(`Replaying the idempotency key opened a second call: ${JSON.stringify(replayed)}`);
+}
+
+let seatRefused = false;
+try {
+  await db.query(`
+    select public.reserve_outbound_call(
+      '00000000-0000-0000-0000-000000000025',null,'+46702222231',null,null,null,
+      gen_random_uuid(),'neutral-dial-2','customer_service'
+    )
+  `);
+} catch (error) {
+  seatRefused = String(error).includes("active_call_already_exists");
+}
+if (!seatRefused) throw new Error("A second call was reserved while the seller already held the seat.");
+
+// Finalising an unknown provider outcome must not close the attempt as failed:
+// the call may well be ringing, and releasing the seat would let the seller dial
+// over a live call.
+const unknownFinalised = (await db.query(
+  `select public.finalize_dial($1,$2,'unknown',null,null,null) as result`,
+  [neutralReserved.callId, neutralReserved.attemptId],
+)).rows[0].result;
+if (unknownFinalised.attemptStatus !== 'provider_outcome_unknown') {
+  throw new Error(`An unknown provider outcome was not kept open: ${JSON.stringify(unknownFinalised)}`);
+}
+const stillHeld = await db.query(
+  `select public.dial_attempt_holds_seat(status) as held from public.dial_attempts where id=$1`,
+  [neutralReserved.attemptId]);
+if (stillHeld.rows[0].held !== true) {
+  throw new Error("An unknown provider outcome released the seat while the call may still be live.");
+}
+
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.query(`update public.dial_attempts set status='completed' where id=$1`, [neutralReserved.attemptId]);
+
+// Without a caller ID there is no call at all. Sinch answers a callout with no
+// CLI with a call id and never reaches the destination, so a missing number has
+// to stop the reservation rather than surface later as a call nobody answered.
+await db.exec(`
+  update public.telephony_policies set default_caller_id_phone_number_id=null
+  where tenant_id='00000000-0000-0000-0000-000000000001'`);
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${JOWNER}',false);`);
+const callsBeforeNoCallerId = await db.query(`select count(*)::int as n from public.calls`);
+let callerIdRefused = false;
+try {
+  await db.query(`
+    select public.reserve_outbound_call(
+      '00000000-0000-0000-0000-000000000025',null,'+46702222231',null,null,null,
+      gen_random_uuid(),'neutral-dial-no-cli','customer_service'
+    )
+  `);
+} catch (error) {
+  callerIdRefused = String(error).includes("CALLER_ID_MISSING");
+}
+if (!callerIdRefused) throw new Error("A call was reserved with no caller ID to present.");
+const callsAfterNoCallerId = await db.query(`select count(*)::int as n from public.calls`);
+if (callsAfterNoCallerId.rows[0].n !== callsBeforeNoCallerId.rows[0].n) {
+  throw new Error("A reservation refused for a missing caller ID still created a call row.");
+}
+
+await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+await db.exec(`
+  update public.telephony_policies
+  set default_caller_id_phone_number_id='00000000-0000-0000-0000-000000000022'
+  where tenant_id='00000000-0000-0000-0000-000000000001'`);
+console.log("Executed the provider-neutral dial: caller ID resolved from the tenant default, the call and attempt stamped with the provider, the idempotency key replayed instead of doubled, the seat held against a second call, an unknown provider outcome kept open, and a missing caller ID refused before any row was written.");
 // "Ring inte igen" must actually block the customer.
 //
 // The /app/calls after-call form used to write the disposition straight onto the
