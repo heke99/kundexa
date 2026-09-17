@@ -14514,6 +14514,17 @@ export type Database = {
         Args: { p_invitation_id: string; p_reason: string }
         Returns: undefined
       }
+      finalize_dial: {
+        Args: {
+          p_attempt_id: string
+          p_call_id: string
+          p_error_code?: string
+          p_error_message?: string
+          p_external_call_id?: string
+          p_outcome: string
+        }
+        Returns: Json
+      }
       finalize_signing_envelope: {
         Args: {
           p_envelope_id: string
@@ -14692,6 +14703,16 @@ export type Database = {
           p_source_ip: string
           p_target_url_hash: string
           p_target_url_redacted: string
+        }
+        Returns: Json
+      }
+      ingest_sinch_voice_event: {
+        Args: {
+          p_event: string
+          p_external_call_id: string
+          p_payload: Json
+          p_provider_event_id: string
+          p_received_at?: string
         }
         Returns: Json
       }
@@ -15304,6 +15325,22 @@ export type Database = {
         Args: { p_job_id: string; p_reason: string }
         Returns: undefined
       }
+      reserve_outbound_call: {
+        Args: {
+          p_callback_activity_id: string
+          p_caller_id_phone_number_id?: string
+          p_client_request_id: string
+          p_contact_person_id: string
+          p_customer_id: string
+          p_idempotency_key: string
+          p_list_member_id: string
+          p_purpose?: string
+          p_session_id: string
+          p_target_phone: string
+          p_webphone_session_id?: string
+        }
+        Returns: Json
+      }
       reserve_provider_ingestion_usage: {
         Args: { p_run_id: string; p_units?: number }
         Returns: Json
@@ -15336,6 +15373,20 @@ export type Database = {
       reserve_usage_for_tenant: {
         Args: { p_amount?: number; p_metric: string; p_tenant_id: string }
         Returns: undefined
+      }
+      resolve_caller_id_phone_number: {
+        Args: {
+          p_campaign_id: string
+          p_explicit_phone_number_id: string
+          p_list_id: string
+          p_team_id: string
+          p_tenant_id: string
+        }
+        Returns: {
+          caller_id_source: string
+          number_e164: string
+          phone_number_id: string
+        }[]
       }
       resolve_contract_eligible_calls: {
         Args: { p_customer_id: string }
