@@ -57,10 +57,25 @@ export async function POST(request: Request) {
     }
 
     const sessionId = String((session as { sessionId: unknown }).sessionId);
+
+    // A-numret måste med redan här. Sinch binder det till klienten när den
+    // byggs, inte till det enskilda samtalet, så det går inte att skjuta upp
+    // till uppringningen. Saknas det svarar adaptern med ett nej som går att
+    // läsa, i stället för att dela ut uppgifter för samtal som aldrig kopplas.
+    const { data: callerId } = await supabase
+      .from("telephony_policies")
+      .select("phone_numbers!telephony_policies_default_caller_id_phone_number_tenant_fk(number_e164)")
+      .eq("tenant_id", context.tenantId)
+      .maybeSingle();
+    const callerIdentifier =
+      (callerId as { phone_numbers?: { number_e164?: string | null } | null } | null)
+        ?.phone_numbers?.number_e164?.trim() || null;
+
     const provisioned = await provisionWebphone(TELEPHONY_PROVIDER, {
       tenantId: context.tenantId,
       sellerUserId: context.userId,
       sessionId,
+      callerIdentifier,
     });
 
     // Uppgifterna kunde inte skapas. Sessionen stängs direkt i stället för att
@@ -82,8 +97,12 @@ export async function POST(request: Request) {
       available: true,
       credentials: provisioned.credentials,
       // Ett samtal utan TURN kopplas upp och blir sedan tyst bakom en
-      // företagsbrandvägg. Säg det före samtalet i stället för under det.
-      relayConfigured: turnConfigured(),
+      // företagsbrandvägg, så det ska sägas före samtalet och inte under det.
+      // Men TURN gäller bara SIP-vägen. Sinchs SDK sköter ICE själv, och att
+      // rapportera vår TURN-status för ett samtal som inte använder den hade
+      // varit en uppgift utan täckning.
+      relayConfigured:
+        provisioned.credentials.kind === "sip" ? turnConfigured() : null,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
