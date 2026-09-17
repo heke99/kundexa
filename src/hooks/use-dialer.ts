@@ -116,7 +116,7 @@ function telephonyStatusMessage(data: StatusResponse) {
   return "Telefoni är inte redo";
 }
 
-export function useRinkelDialer() {
+export function useDialerPanel() {
   const webphone = useSinchWebphone();
   const { start: startWebphone } = webphone;
   const [registered, setRegistered] = useState(false);

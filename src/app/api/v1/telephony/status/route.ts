@@ -1,90 +1,73 @@
 import { NextResponse } from "next/server";
 import { getAppContext } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { isPlatformRinkelRuntimeConfigured } from "@/lib/integrations/rinkel/client";
+import { serverEnv } from "@/lib/env";
 
 type TelephonyStatusPayload = Record<string, unknown> & {
-  errorMessage?: string | null;
-  blockers?: Array<Record<string, unknown> & { message?: string | null }>;
+  blockers?: Array<{ code?: string; message?: string }>;
 };
 
-function publicTelephonyMessage(message: string) {
-  return message
-    .replace(/rinkel/gi, "telefonitjänsten")
-    .replace(/provider/gi, "telefonitjänsten")
-    .replace(/leverantör/gi, "telefonitjänst");
-}
-
+/**
+ * Kan säljaren ringa just nu, och om inte -- varför?
+ *
+ * Den gamla versionen svarade också på om säljaren fanns provisionerad hos
+ * leverantören, hade en registrerad enhet, och vilken telefon som skulle ringa
+ * först. Ingen av de frågorna finns kvar: webbläsaren ringer, och det finns
+ * ingenting att provisionera.
+ */
 export async function GET() {
   try {
     await getAppContext();
     const supabase = await createClient();
-    // Two independent reads: readiness, and which phone actually rings. The
-    // dial path is diagnostic, so a failure to read it must not take the
-    // readiness answer down with it — but it must not be silently reported as
-    // "no dial path" either, which is why the error is kept and surfaced.
-    const [{ data, error }, { data: dialPath, error: dialPathError }] = await Promise.all([
-      supabase.rpc("telephony_status_for_current_user"),
-      supabase.rpc("current_user_dial_path"),
-    ]);
+    const { data, error } = await supabase.rpc("telephony_status_for_current_user");
     if (error || !data) {
+      console.error("telephony_status_failed", { code: error?.code ?? "NO_RESULT" });
       return NextResponse.json({
-        platformConfigured: null,
-        runtimeConfigured: isPlatformRinkelRuntimeConfigured(),
-        platformReady: false,
         tenantEnabled: false,
-        tenantHasNumber: false,
-        userMapped: false,
-        userHasDevice: false,
-        userHasNumberAccess: false,
         manualReady: false,
         automaticReady: false,
-        webhookReady: false,
         status: "error",
-        errorCode: "RINKEL_STATUS_QUERY_FAILED",
+        errorCode: "TELEPHONY_STATUS_QUERY_FAILED",
         errorMessage: "Telefonistatus kunde inte läsas.",
+        blockers: [],
       }, { status: 500 });
     }
-    const payload = data as TelephonyStatusPayload;
-    const runtimeConfigured = isPlatformRinkelRuntimeConfigured();
-    const runtimeBlocker = runtimeConfigured ? [] : [{
-      code: "RINKEL_RUNTIME_API_KEY_MISSING",
-      message: "Telefonitjänstens serverkonfiguration saknas. Kontakta plattformsadministratören.",
-    }];
-    const blockers = [...runtimeBlocker, ...(payload.blockers ?? [])];
+
+    const payload = data as unknown as TelephonyStatusPayload;
+    const env = serverEnv();
+    const webphoneConfigured = Boolean(
+      env.SINCH_APPLICATION_KEY?.trim() && env.SINCH_APPLICATION_SECRET?.trim(),
+    );
+
+    // Nycklarna är en serverinställning och syns inte i databasen, så det
+    // hindret läggs till här. Utan det skulle statusen säga "redo" om en
+    // webbtelefon som inte kan registrera sig.
+    const blockers = [
+      ...(webphoneConfigured ? [] : [{
+        code: "WEBPHONE_NOT_CONFIGURED",
+        message: "Webbtelefonen är inte konfigurerad. Kontakta plattformsadministratören.",
+      }]),
+      ...(payload.blockers ?? []),
+    ];
+
     return NextResponse.json({
       ...payload,
-      dialPath: dialPathError ? null : dialPath ?? null,
-      dialPathError: dialPathError ? "DIAL_PATH_UNAVAILABLE" : null,
-      runtimeConfigured,
-      platformReady: runtimeConfigured && payload.platformReady === true,
-      manualReady: runtimeConfigured && payload.manualReady === true,
-      automaticReady: runtimeConfigured && payload.automaticReady === true,
-      errorCode: blockers[0]?.code ?? payload.errorCode ?? null,
-      errorMessage: blockers[0]?.message
-        ? publicTelephonyMessage(String(blockers[0].message))
-        : payload.errorMessage ? publicTelephonyMessage(payload.errorMessage) : payload.errorMessage,
-      blockers: blockers.map((blocker) => ({
-        ...blocker,
-        message: blocker.message ? publicTelephonyMessage(String(blocker.message)) : blocker.message,
-      })),
+      webphoneConfigured,
+      manualReady: webphoneConfigured && payload.manualReady === true,
+      automaticReady: webphoneConfigured && payload.automaticReady === true,
+      status: blockers.length === 0 ? "ready" : "blocked",
+      blockers,
     });
-  } catch {
+  } catch (error) {
+    console.error("telephony_status_failed", { error: error instanceof Error ? error.name : "unknown" });
     return NextResponse.json({
-      platformConfigured: null,
-      runtimeConfigured: isPlatformRinkelRuntimeConfigured(),
-      platformReady: false,
       tenantEnabled: false,
-      tenantHasNumber: false,
-      userMapped: false,
-      userHasDevice: false,
-      userHasNumberAccess: false,
       manualReady: false,
       automaticReady: false,
-      webhookReady: false,
       status: "error",
-      errorCode: "RINKEL_STATUS_FAILED",
-      errorMessage: "Telefonistatus kunde inte hämtas.",
+      errorCode: "TELEPHONY_STATUS_QUERY_FAILED",
+      errorMessage: "Telefonistatus kunde inte läsas.",
+      blockers: [],
     }, { status: 500 });
   }
 }

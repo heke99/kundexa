@@ -677,7 +677,10 @@ await db.exec(`
     core_webhooks_verified=true,webhooks=true;
   update public.telephony_policies set telephony_enabled=true,manual_dialer_enabled=true,
     automatic_dialer_enabled=true,allowed_days='{1,2,3,4,5,6,7}',
-    allowed_start_time='00:00',allowed_end_time='23:59:59'
+    allowed_start_time='00:00',allowed_end_time='23:59:59',
+    -- A tenant with no number to present cannot call at all, so the fixture has
+    -- to give it one before telephony can be reported ready.
+    default_caller_id_phone_number_id='00000000-0000-0000-0000-000000000022'
     where tenant_id='00000000-0000-0000-0000-000000000001';
   insert into auth.users(id,email) values
     ('00000000-0000-0000-0000-000000000050','seller-b@example.test'),

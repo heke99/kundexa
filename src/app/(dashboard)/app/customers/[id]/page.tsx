@@ -9,7 +9,7 @@ import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { RinkelDialer } from "@/components/rinkel-dialer";
+import { DialerPanel } from "@/components/dialer-panel";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
 import { formatCurrency, formatDate, initials } from "@/lib/utils";
 
@@ -136,7 +136,7 @@ export default async function CustomerDetail({ params, searchParams }: { params:
           <CardHeader><h3><Phone size={16} /> Ring kunden</h3></CardHeader>
           <CardContent>
             <div className="phone-panel">
-              <RinkelDialer
+              <DialerPanel
                 customers={[{
                   id: customer.id,
                   display_name: customer.display_name,
@@ -147,7 +147,7 @@ export default async function CustomerDetail({ params, searchParams }: { params:
                 initialCustomer={customer.id}
                 callbackActivityId={query.callback}
                 lockedToCustomer
-                callerIdOptions={(callerIdData ?? []) as Array<{ allocationId: string; number: string; displayName: string | null; isDefault?: boolean; accessSource?: "user" | "team" | "tenant" }>}
+                callerIdOptions={(callerIdData ?? []) as Array<{ id: string; number_e164: string }>}
               />
             </div>
           </CardContent>

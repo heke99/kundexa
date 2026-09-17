@@ -9,7 +9,7 @@ import type { WebphoneProvider, WebphoneProvisionResult } from "./provider";
 /**
  * Sinch In-App Calling som webbtelefon.
  *
- * Till skillnad från Rinkel behöver säljaren inget konto hos leverantören och
+ * Säljaren behöver inget konto hos leverantören och
  * ingen registrerad enhet. Klienten identifierar sig med Kundexas eget
  * användar-ID, och servern intygar det med en kortlivad JWT. Ingen
  * provisionering, ingen enhetsmappning, ingen seat-policy.

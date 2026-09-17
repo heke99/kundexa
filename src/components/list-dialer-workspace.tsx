@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Phone, PhoneOff, Pause, Play, StickyNote } from "@/components/icons";
-import { useRinkelDialer } from "@/hooks/use-rinkel-dialer";
+import { useDialerPanel } from "@/hooks/use-dialer";
 import { useCallRealtime } from "@/hooks/use-call-realtime";
 
 type Disposition = { key: string; label: string; outcome_group: string; terminal: boolean; retry_after_minutes: number | null; requires_note: boolean; requires_callback: boolean; requires_order: boolean; contract_eligible?: boolean };
@@ -79,7 +79,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
   const [unitPrice, setUnitPrice] = useState("");
   const [selectedTargetKey, setSelectedTargetKey] = useState("");
   const selectedDisposition = useMemo(() => dispositions.find((item) => item.key === dispositionKey), [dispositionKey, dispositions]);
-  const voice = useRinkelDialer();
+  const voice = useDialerPanel();
   const [autoOutcome, setAutoOutcome] = useState<string | null>(null);
   const callState = useCallRealtime(callId, (status) => {
     voice.markEnded();

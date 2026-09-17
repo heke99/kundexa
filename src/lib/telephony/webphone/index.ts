@@ -1,12 +1,10 @@
 import "server-only";
-import { rinkelWebphoneProvider } from "./rinkel";
 import { sinchWebphoneProvider } from "./sinch";
 import type { WebphoneProvider, WebphoneProvisionInput, WebphoneProvisionResult } from "./provider";
 
 export type { WebphoneCredentials, WebphoneProvisionResult } from "./provider";
 
 const providers = new Map<string, WebphoneProvider>([
-  [rinkelWebphoneProvider.key, rinkelWebphoneProvider],
   [sinchWebphoneProvider.key, sinchWebphoneProvider],
 ]);
 

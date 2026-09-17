@@ -2,19 +2,18 @@
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Phone, PhoneOff, Radio } from "@/components/icons";
-import { useRinkelDialer } from "@/hooks/use-rinkel-dialer";
+import { useDialerPanel } from "@/hooks/use-dialer";
 import { useCallRealtime } from "@/hooks/use-call-realtime";
 
 type Customer = { id: string; display_name: string; phone_e164: string | null; do_not_call: boolean };
+// Numret som visas för mottagaren, ur företagets egna nummer. Tidigare kom det
+// från leverantörens allokeringsmodell; nu är det bara ett nummer.
 type CallerIdOption = {
-  allocationId: string;
-  number: string;
-  displayName: string | null;
-  isDefault?: boolean;
-  accessSource?: "user" | "team" | "tenant";
+  id: string;
+  number_e164: string;
 };
 
-export function RinkelDialer({
+export function DialerPanel({
   customers,
   initialCustomer,
   callbackActivityId,
@@ -46,8 +45,8 @@ export function RinkelDialer({
   const [customerOptions, setCustomerOptions] = useState<Customer[]>(customers);
   const [customerSearchLoading, setCustomerSearchLoading] = useState(false);
   const [callId, setCallId] = useState<string | null>(null);
-  const initialCallerId = callerIdOptions.find((option) => option.isDefault) ?? callerIdOptions[0];
-  const [numberAllocationId, setNumberAllocationId] = useState(initialCallerId?.allocationId ?? "");
+  const initialCallerId = callerIdOptions[0];
+  const [callerIdPhoneNumberId, setCallerIdPhoneNumberId] = useState(initialCallerId?.id ?? "");
   const [afterCall, setAfterCall] = useState(false);
   const [disposition, setDisposition] = useState("");
   const [notes, setNotes] = useState("");
@@ -56,9 +55,9 @@ export function RinkelDialer({
   const [error, setError] = useState<string | null>(null);
   const [endMessage, setEndMessage] = useState<string | null>(null);
   const requestKeyRef = useRef<string | null>(null);
-  const rinkel = useRinkelDialer();
+  const dialer = useDialerPanel();
   const callState = useCallRealtime(callId, () => {
-    rinkel.markEnded();
+    dialer.markEnded();
     setAfterCall(true);
   });
   // Once the customer has picked up, Kundexa can no longer end anything: the
@@ -102,21 +101,21 @@ export function RinkelDialer({
   }, [customerOptions, customers]);
 
   async function call() {
-    if (!selected || rinkel.calling) return;
-    if (!numberAllocationId) {
+    if (!selected || dialer.calling) return;
+    if (!callerIdPhoneNumberId) {
       setError("Du saknar ett tilldelat utgående telefonnummer.");
       return;
     }
     const customer = visibleCustomers.find((item) => item.id === selected);
     if (!customer?.phone_e164) return;
-    requestKeyRef.current ??= `rinkel.call:${crypto.randomUUID()}`;
+    requestKeyRef.current ??= `dialer.call:${crypto.randomUUID()}`;
     setError(null);
     try {
-      const id = await rinkel.startCall({
+      const id = await dialer.startCall({
         customerId: selected,
         targetPhone: customer.phone_e164,
         callbackActivityId: callbackActivityId ?? null,
-        numberAllocationId,
+        callerIdPhoneNumberId,
         clientRequestId: crypto.randomUUID(),
         idempotencyKey: requestKeyRef.current,
       });
@@ -133,10 +132,10 @@ export function RinkelDialer({
   }
 
   async function endCurrentCall() {
-    if (!callId || rinkel.ending) return;
+    if (!callId || dialer.ending) return;
     setError(null);
     try {
-      const result = await rinkel.endCall(callId);
+      const result = await dialer.endCall(callId);
       setEndMessage(result.message);
       // An unanswered call is closed here and now, so the after-call form must
       // open immediately rather than waiting for a realtime update that will
@@ -185,8 +184,8 @@ export function RinkelDialer({
   return <div>
     <div className="dialer-status">
       <strong>Click-to-call</strong>
-      <span className={`badge ${rinkel.registered ? "badge-success" : "badge-warning"}`}>
-        <Radio size={12} /> {rinkel.status}
+      <span className={`badge ${dialer.registered ? "badge-success" : "badge-warning"}`}>
+        <Radio size={12} /> {dialer.status}
       </span>
     </div>
     <div className="phone-display">{visibleCustomers.find((customer) => customer.id === selected)?.phone_e164 ?? (lockedToCustomer ? "Telefonnummer saknas" : "Välj kund")}</div>
@@ -213,18 +212,18 @@ export function RinkelDialer({
     {callerIdOptions.length > 0 ? <label className="field dialer-customer-select">
       <span>Utgående nummer</span>
       <select
-        value={numberAllocationId}
-        onChange={(event) => setNumberAllocationId(event.target.value)}
+        value={callerIdPhoneNumberId}
+        onChange={(event) => setCallerIdPhoneNumberId(event.target.value)}
         disabled={callerIdOptions.length === 1}
       >
-        {callerIdOptions.map((number) => <option key={number.allocationId} value={number.allocationId}>
-          {number.displayName ? `${number.displayName} · ` : ""}{number.number}
-          {number.isDefault ? " · Standard" : ""}
+        {callerIdOptions.map((number) => <option key={number.id} value={number.id}>
+          {number.number_e164}
+          
         </option>)}
       </select>
     </label> : <p className="form-error">Du saknar ett tilldelat utgående telefonnummer.</p>}
     <button type="button" className="call-button" onClick={call}
-      disabled={!rinkel.registered || !selected || !numberAllocationId || afterCall || rinkel.calling}
+      disabled={!dialer.registered || !selected || !callerIdPhoneNumberId || afterCall || dialer.calling}
       aria-label="Ring via telefoni">
       <Phone size={25} />
     </button>
@@ -232,9 +231,9 @@ export function RinkelDialer({
         Telefonitjänsten ringer alltid upp säljarens egen enhet först och kopplar
         därefter kunden, så "numret kunden ser" säger ingenting om vilken telefon
         som faktiskt ringer. Står fel telefon här går samtalet via fel person. */}
-    {rinkel.dialPath?.mapped ? <dl className="key-value dialer-path">
+    {dialer.dialPath?.mapped ? <dl className="key-value dialer-path">
       <dt>Kunden ser</dt>
-      <dd>{rinkel.dialPath.callerIdNumber ?? "—"}</dd>
+      <dd>{dialer.dialPath.callerIdNumber ?? "—"}</dd>
       <dt>Ringer upp dig</dt>
       {/* Never name a webphone here. Kundexa has none — no SIP, no WebRTC — and
           the provider's `muteOtherDevicesOnWebphone` only silences the other
@@ -243,31 +242,31 @@ export function RinkelDialer({
           saying otherwise is the same false claim this change removed from the
           warning one line below. */}
       <dd>
-        {rinkel.dialPath.deviceRingsPhone ?? "Telefonienheten på din plats"}
-        {rinkel.dialPath.providerUserName ? ` · ${rinkel.dialPath.providerUserName}` : ""}
+        {dialer.dialPath.deviceRingsPhone ?? "Telefonienheten på din plats"}
+        {dialer.dialPath.providerUserName ? ` · ${dialer.dialPath.providerUserName}` : ""}
       </dd>
     </dl> : null}
-    {rinkel.dialPath?.issue ? <div className="notice warning">
-      {rinkel.dialPath.issue}
+    {dialer.dialPath?.issue ? <div className="notice warning">
+      {dialer.dialPath.issue}
       {mayManageIntegrations
         ? <div style={{ marginTop: 10 }}>
             <a className="button button-secondary button-sm" href="/app/integrations">Öppna Integrationer</a>
           </div>
         : null}
     </div> : null}
-    {rinkel.dialPath?.mapped && !rinkel.dialPath.issue && rinkel.dialPath.seatNameMatchesProfile === false ? <p className="notice warning">
-      Telefoniplatsen som ringer upp dig står på {rinkel.dialPath.providerUserName}. Samtalet går då via
+    {dialer.dialPath?.mapped && !dialer.dialPath.issue && dialer.dialPath.seatNameMatchesProfile === false ? <p className="notice warning">
+      Telefoniplatsen som ringer upp dig står på {dialer.dialPath.providerUserName}. Samtalet går då via
       den personens telefon i stället för din egen. Be administratören lägga upp en egen telefoniplats för dig.
     </p> : null}
-    {rinkel.calling ? <p className="notice">Samtalet hanteras på din telefonienhet. Kundexa uppdaterar status automatiskt.</p> : null}
-    {callId && (rinkel.calling || callState.recovering) ? <div className="dialer-end">
+    {dialer.calling ? <p className="notice">Samtalet hanteras på din telefonienhet. Kundexa uppdaterar status automatiskt.</p> : null}
+    {callId && (dialer.calling || callState.recovering) ? <div className="dialer-end">
       {/* The label carries the truth, not the footnote under it. The provider has
           no hangup endpoint at all, so a button offering to end the call is a
           promise the system cannot keep — the owner pressed the old one on
           2026-09-15 and the phone went on ringing. Answered and unanswered are
           different claims, so they get different words. */}
-      <button type="button" className="button button-danger" onClick={endCurrentCall} disabled={rinkel.ending}>
-        <PhoneOff size={15} /> {rinkel.ending
+      <button type="button" className="button button-danger" onClick={endCurrentCall} disabled={dialer.ending}>
+        <PhoneOff size={15} /> {dialer.ending
           ? "Släpper…"
           : callAnswered ? "Frigör för nästa samtal" : "Avbryt uppringningen"}
       </button>

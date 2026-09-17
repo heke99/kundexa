@@ -20,16 +20,6 @@ function isUnsafePublicHostname(hostname: string) {
   return false;
 }
 
-const ipAllowlistSchema = z.string().default("82.199.77.220,188.122.73.177").transform((value, context) => {
-  const addresses = [...new Set(value.split(",").map((entry) => entry.trim()).filter(Boolean))];
-  const invalid = addresses.find((entry) => !isValidIpAddress(entry));
-  if (invalid) {
-    context.addIssue({ code: "custom", message: `Ogiltig IP-adress i RINKEL_WEBHOOK_ALLOWED_IPS: ${invalid}` });
-    return z.NEVER;
-  }
-  return addresses;
-});
-
 // stun:/turns:-adresser, kommaseparerade. Tom lista är giltigt: den betyder att
 // webbtelefonen inte är uppsatt än, och det ska sägas som ett nej i gränssnittet
 // och inte som ett startfel i hela appen.
@@ -96,40 +86,21 @@ export function canonicalAppBaseUrl() {
 }
 
 /**
- * The public base Rinkel is told to deliver webhooks to. An explicit
- * RINKEL_WEBHOOK_PUBLIC_BASE_URL still wins, because the webhook host may
- * legitimately differ from the app host, but when it is unset the value is
- * inherited from NEXT_PUBLIC_APP_URL rather than from a hardcoded literal.
+ * The URL the telephony provider is expected to POST call events to.
  *
- * Deriving the two independently is what let production drift apart: the app
- * served links for one host while the five Rinkel subscriptions pointed at
- * another, and nothing in the system noticed.
+ * It is not derived from anything the provider tells us -- the callback address
+ * is typed into the Sinch dashboard by a human, and nothing here can read it
+ * back. What this gives is the address it ought to be, so the two can be
+ * compared by someone looking at both.
+ *
+ * That comparison is the whole point. The previous provider had five
+ * subscriptions pointing at a host the application did not serve, and nothing in
+ * the system noticed until the events had been missing for weeks.
  */
-export function resolveRinkelWebhookBaseUrl() {
-  const explicit = process.env.RINKEL_WEBHOOK_PUBLIC_BASE_URL;
-  if (explicit) return explicit;
+export function expectedWebhookUrl() {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL;
-  if (appUrl && isUsablePublicAppUrl(appUrl)) return appUrl.replace(/\/$/, "");
-  return "https://kundexa.se";
-}
-
-/**
- * Whether outbound links and the registered webhook target share a host. A
- * mismatch is not fatal on its own -- a redirecting apex still resolves in a
- * browser -- but provider webhook POSTs are not guaranteed to follow redirects,
- * so it must be observable from outside instead of silently degrading.
- */
-export function publicHostAlignment() {
-  try {
-    // Read the single variable this needs rather than parsing the whole public
-    // schema: an unrelated missing Supabase variable must not make two hosts that
-    // do agree report as diverged.
-    const appHost = new URL(process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000").host;
-    const webhookHost = new URL(resolveRinkelWebhookBaseUrl()).host;
-    return { appHost, webhookHost, aligned: appHost === webhookHost };
-  } catch {
-    return { appHost: null, webhookHost: null, aligned: false };
-  }
+  const base = appUrl && isUsablePublicAppUrl(appUrl) ? appUrl.replace(/\/$/, "") : "https://kundexa.se";
+  return `${base}/api/webhooks/sinch`;
 }
 
 export function publicEnv() {
@@ -153,15 +124,6 @@ const serverSchema = publicObject.extend({
   SINCH_APPLICATION_KEY: z.string().min(1).optional(),
   SINCH_APPLICATION_SECRET: z.string().min(1).optional(),
   SINCH_RTC_ENVIRONMENT_HOST: z.string().min(1).default("ocra.api.sinch.com"),
-  RINKEL_API_KEY: z.string().min(1).optional(),
-  RINKEL_API_BASE_URL: z.string().url().default("https://api.rinkel.com/v1"),
-  RINKEL_WEBHOOK_PUBLIC_BASE_URL: z.string().url().default("https://kundexa.se"),
-  RINKEL_WEBHOOK_SECRET: z.string().min(40).max(128).optional(),
-  RINKEL_WEBHOOK_ALLOWED_IPS: ipAllowlistSchema,
-  RINKEL_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(15000),
-  RINKEL_ENFORCE_WEBHOOK_IP_ALLOWLIST: z.enum(["true", "false"]).default("true").transform((value) => value === "true"),
-  RINKEL_TRUST_X_REAL_IP: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
-  RINKEL_RECONCILIATION_ENABLED: z.enum(["true", "false"]).default("true").transform((value) => value === "true"),
   // Webbtelefonen. STUN räcker för att hitta sin egen adress; TURN är det som
   // faktiskt bär ljudet igenom en företagsbrandvägg, och utan relä blir felet
   // "kunden hör mig inte" i stället för ett ärligt fel vid uppkoppling.
@@ -177,24 +139,6 @@ const serverSchema = publicObject.extend({
   }
   if (env.RESEND_API_KEY && !env.DEFAULT_EMAIL_FROM_NAME) {
     context.addIssue({ code: "custom", path: ["DEFAULT_EMAIL_FROM_NAME"], message: "Plattformshanterad Resend kräver ett avsändarnamn." });
-  }
-  if (isDeployedRuntime()) {
-    const webhookUrl = new URL(env.RINKEL_WEBHOOK_PUBLIC_BASE_URL);
-    if (webhookUrl.protocol !== "https:" || isUnsafePublicHostname(webhookUrl.hostname)) {
-      context.addIssue({
-        code: "custom",
-        path: ["RINKEL_WEBHOOK_PUBLIC_BASE_URL"],
-        message: "RINKEL_WEBHOOK_PUBLIC_BASE_URL måste vara en publik HTTPS-adress i staging/production.",
-      });
-    }
-    const apiUrl = new URL(env.RINKEL_API_BASE_URL);
-    if (apiUrl.protocol !== "https:" || isUnsafePublicHostname(apiUrl.hostname)) {
-      context.addIssue({
-        code: "custom",
-        path: ["RINKEL_API_BASE_URL"],
-        message: "RINKEL_API_BASE_URL måste vara en publik HTTPS-adress i staging/production.",
-      });
-    }
   }
 });
 
@@ -215,15 +159,6 @@ export function serverEnv() {
     SINCH_APPLICATION_KEY: process.env.SINCH_APPLICATION_KEY,
     SINCH_APPLICATION_SECRET: process.env.SINCH_APPLICATION_SECRET,
     SINCH_RTC_ENVIRONMENT_HOST: process.env.SINCH_RTC_ENVIRONMENT_HOST ?? "ocra.api.sinch.com",
-    RINKEL_API_KEY: process.env.RINKEL_API_KEY,
-    RINKEL_API_BASE_URL: process.env.RINKEL_API_BASE_URL ?? "https://api.rinkel.com/v1",
-    RINKEL_WEBHOOK_PUBLIC_BASE_URL: resolveRinkelWebhookBaseUrl(),
-    RINKEL_WEBHOOK_SECRET: process.env.RINKEL_WEBHOOK_SECRET,
-    RINKEL_WEBHOOK_ALLOWED_IPS: process.env.RINKEL_WEBHOOK_ALLOWED_IPS ?? "82.199.77.220,188.122.73.177",
-    RINKEL_REQUEST_TIMEOUT_MS: process.env.RINKEL_REQUEST_TIMEOUT_MS ?? "15000",
-    RINKEL_ENFORCE_WEBHOOK_IP_ALLOWLIST: process.env.RINKEL_ENFORCE_WEBHOOK_IP_ALLOWLIST ?? "true",
-    RINKEL_TRUST_X_REAL_IP: process.env.RINKEL_TRUST_X_REAL_IP ?? "false",
-    RINKEL_RECONCILIATION_ENABLED: process.env.RINKEL_RECONCILIATION_ENABLED ?? "true",
     WEBPHONE_STUN_URLS: process.env.WEBPHONE_STUN_URLS ?? "",
     WEBPHONE_TURN_URLS: process.env.WEBPHONE_TURN_URLS ?? "",
     WEBPHONE_TURN_SECRET: process.env.WEBPHONE_TURN_SECRET,
