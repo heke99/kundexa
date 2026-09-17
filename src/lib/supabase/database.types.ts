@@ -4424,6 +4424,117 @@ export type Database = {
           },
         ]
       }
+      dial_attempts: {
+        Row: {
+          call_id: string
+          caller_id_phone_number_id: string | null
+          caller_id_source: string | null
+          client_request_id: string
+          created_at: string
+          destination_number_e164: string
+          error_code: string | null
+          error_message: string | null
+          expires_at: string
+          external_call_id: string | null
+          id: string
+          idempotency_key: string
+          provider: string
+          provider_request_finished_at: string | null
+          provider_request_started_at: string | null
+          requested_at: string
+          seller_user_id: string
+          source_number_e164: string
+          status: string
+          tenant_id: string
+          updated_at: string
+          webphone_session_id: string | null
+        }
+        Insert: {
+          call_id: string
+          caller_id_phone_number_id?: string | null
+          caller_id_source?: string | null
+          client_request_id: string
+          created_at?: string
+          destination_number_e164: string
+          error_code?: string | null
+          error_message?: string | null
+          expires_at: string
+          external_call_id?: string | null
+          id?: string
+          idempotency_key: string
+          provider: string
+          provider_request_finished_at?: string | null
+          provider_request_started_at?: string | null
+          requested_at?: string
+          seller_user_id: string
+          source_number_e164: string
+          status: string
+          tenant_id: string
+          updated_at?: string
+          webphone_session_id?: string | null
+        }
+        Update: {
+          call_id?: string
+          caller_id_phone_number_id?: string | null
+          caller_id_source?: string | null
+          client_request_id?: string
+          created_at?: string
+          destination_number_e164?: string
+          error_code?: string | null
+          error_message?: string | null
+          expires_at?: string
+          external_call_id?: string | null
+          id?: string
+          idempotency_key?: string
+          provider?: string
+          provider_request_finished_at?: string | null
+          provider_request_started_at?: string | null
+          requested_at?: string
+          seller_user_id?: string
+          source_number_e164?: string
+          status?: string
+          tenant_id?: string
+          updated_at?: string
+          webphone_session_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dial_attempts_call_tenant_fk"
+            columns: ["tenant_id", "call_id"]
+            isOneToOne: false
+            referencedRelation: "calls"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "dial_attempts_caller_id_phone_number_tenant_fk"
+            columns: ["tenant_id", "caller_id_phone_number_id"]
+            isOneToOne: false
+            referencedRelation: "phone_numbers"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "dial_attempts_seller_tenant_fk"
+            columns: ["tenant_id", "seller_user_id"]
+            isOneToOne: false
+            referencedRelation: "tenant_memberships"
+            referencedColumns: ["tenant_id", "user_id"]
+          },
+          {
+            foreignKeyName: "dial_attempts_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "dial_attempts_webphone_session_tenant_fk"
+            columns: ["tenant_id", "webphone_session_id"]
+            isOneToOne: false
+            referencedRelation: "webphone_sessions"
+            referencedColumns: ["tenant_id", "id"]
+          },
+        ]
+      }
       dialer_sessions: {
         Row: {
           created_at: string
@@ -14111,6 +14222,7 @@ export type Database = {
         Returns: undefined
       }
       delivery_status_rank: { Args: { p_status: string }; Returns: number }
+      dial_attempt_holds_seat: { Args: { p_status: string }; Returns: boolean }
       directory_entity_for_tenant: {
         Args: { p_entity_id: string; p_tenant_id: string }
         Returns: {
