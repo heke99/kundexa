@@ -274,7 +274,17 @@ assert.match(listDistributionMigration, /can_operate_in_team/);
 
 // Reservationen bär hela behörighets- och efterlevnadskedjan. Den överlevde
 // leverantörsbytet ordagrant, eftersom ingenting i den handlar om vem som kopplar.
-for (const pattern of [/can_access_customer\(p_customer_id\)/, /evaluate_exact_call_policy/, /exact_call_policy_denied/, /evaluate_contact_policy_for_tenant/, /v_purpose *:?= *'direct_marketing'/, /assignment_paused/]) {
+for (const pattern of [
+  /tenant_not_active/,
+  /outbound_calls_feature_disabled/,
+  /TELEPHONY_DISABLED/,
+  /TELEPHONY_OUTSIDE_ALLOWED_TIME/,
+  /evaluate_exact_call_policy/,
+  /exact_call_policy_denied/,
+  /SELF_DIAL_NOT_ALLOWED/,
+  /active_call_already_exists/,
+  /idempotentReplay/,
+]) {
   assert.match(callsMigration, pattern, `Dial reservation invariant missing: ${pattern}`);
 }
 assert.match(sqlVerifier, /00000000-0000-0000-0000-000000000025','\+46702222225','runtime','1','not_listed'/);
@@ -755,24 +765,25 @@ console.log("A skipped Edge Function deploy fails the run instead of passing as 
 }
 console.log("Contract e-mail is sent in the name of the legal entity that issued the contract.");
 
-// Kundexa contains no webphone — no SIP, no WebRTC, no audio — and the provider's
-// muteOtherDevicesOnWebphone only silences other devices while one is online. So a
-// correct dial policy does not mean the call rings in the browser: it rings the
-// phone on the seat. Telling the seller "Webbtelefonen" is the same false claim
-// that was just removed from the warning beneath it, and with the warning gone
-// there would be nothing left to contradict it.
+// Kundexa har numera en webbtelefon: leverantörens In-App Calling-SDK bär ljudet
+// i webbläsaren. Den gamla regeln här förbjöd dialern att säga "Webbtelefonen",
+// därför att det då var en osanning -- samtalet ringde en bordstelefon på
+// leverantörens plats. Den regeln förbjuder nu sanningen och är därför ersatt.
+//
+// Det som fortfarande måste hålla är att knappen inte lovar mer än
+// registreringen bär. En dialer som låter säljaren ringa innan webbtelefonen är
+// registrerad ger ett samtal som aldrig lämnar fliken, och en säljare som sitter
+// och väntar på ett svar som inte kan komma.
 {
   const { readFileSync } = await import("node:fs");
   const base = new URL("..", import.meta.url).pathname;
-  for (const file of ["src/components/dialer-panel.tsx", "src/components/list-dialer-workspace.tsx"]) {
+  for (const [file, flag] of [["src/components/dialer-panel.tsx", "dialer.registered"], ["src/components/list-dialer-workspace.tsx", "voice.registered"]]) {
     const source = readFileSync(base + file, "utf8");
-    const claims = source.split("\n").filter((line) =>
-      /["'`]Webbtelefonen/.test(line) && !line.trimStart().startsWith("//") && !line.trimStart().startsWith("*"));
-    assert.deepEqual(claims, [],
-      `${file} tells the seller the call rings a webphone that does not exist:\n${claims.join("\n")}`);
+    assert.ok(source.includes(`disabled={!${flag}`) || source.includes(`!${flag} ||`),
+      `${file} lets the seller dial before the webphone has registered.`);
   }
 }
-console.log("No dialer claims the call rings a webphone Kundexa does not have.");
+console.log("No dialer lets the seller call before the webphone has registered.");
 
 // Being signed out is a claim about authentication, and neither of these is one.
 //

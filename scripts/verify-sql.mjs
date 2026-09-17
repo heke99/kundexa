@@ -655,26 +655,15 @@ const manualState = await db.query(`select a.status,c.disposition,c.callback_act
 if (manualState.rows[0].status !== 'completed' || manualState.rows[0].disposition !== 'interested' || Number(manualState.rows[0].notes) !== 1) throw new Error(`Manual callback after-work failed: ${JSON.stringify(manualState.rows[0])}`);
 console.log("Executed prospecting/list assignment, atomic claim, contact-person target selection, NIX gating, canonical calls, caller-ID/recording policy, order after-work and personal/global callback runtime paths.");
 
-// The tenant-owned Rinkel path this suite used to exercise here was replaced by the central
-// platform integration; `rinkel_reserve_outbound_call` is no longer reachable from the
-// application, and its runtime section had been switched off with `if (false)` while still
-// printing nothing. The central path below is the one the application calls.
-
-// Central Rinkel platform path: one provider inventory, historical tenant
-// allocations, tenant-filtered projections and central dial reservation.
+// Två företag, två nummer. Fixturen finns för de prov som följer: att en säljare
+// bara har en plats i taget, att ett annat företag inte kan se eller avsluta
+// samtalet, och att ett företags nummer aldrig kan lånas av ett annat.
+//
+// Leverantörens egen inventarielista -- provisionerade användare, registrerade
+// enheter, allokerade nummer -- finns inte längre att bygga fixturen av. Det som
+// återstår är företagets egna nummer, vilket är hela modellen numera.
 await db.exec(`
   select set_config('request.jwt.claim.role','service_role',false);
-  update public.platform_integrations set status='connected',webhook_status='verified',
-    webhook_last_received_at=now(),capabilities='{"api_access":true,"dial":true,"webhooks":true,"users_catalog":true,"numbers_catalog":true,"dial_configured":true}'::jsonb
-    where provider='rinkel' and disabled_at is null;
-  insert into public.platform_rinkel_capabilities(
-    platform_integration_id,api_access,users_catalog,numbers_catalog,dial_configured,
-    core_webhooks_verified,webhooks
-  ) select id,true,true,true,true,true,true
-    from public.platform_integrations where provider='rinkel' and disabled_at is null
-  on conflict(platform_integration_id) do update set
-    api_access=true,users_catalog=true,numbers_catalog=true,dial_configured=true,
-    core_webhooks_verified=true,webhooks=true;
   update public.telephony_policies set telephony_enabled=true,manual_dialer_enabled=true,
     automatic_dialer_enabled=true,allowed_days='{1,2,3,4,5,6,7}',
     allowed_start_time='00:00',allowed_end_time='23:59:59',
@@ -686,9 +675,9 @@ await db.exec(`
     ('00000000-0000-0000-0000-000000000050','seller-b@example.test'),
     ('00000000-0000-0000-0000-000000000074','admin-b@example.test');
   insert into public.tenants(id,slug,name,legal_name)
-    values('00000000-0000-0000-0000-000000000051','rinkel-tenant-b','Rinkel Tenant B','Rinkel Tenant B AB');
+    values('00000000-0000-0000-0000-000000000051','telephony-tenant-b','Telephony Tenant B','Telephony Tenant B AB');
   insert into public.teams(id,tenant_id,name,is_default)
-    values('00000000-0000-0000-0000-000000000076','00000000-0000-0000-0000-000000000051','Rinkel Tenant B Sales',true);
+    values('00000000-0000-0000-0000-000000000076','00000000-0000-0000-0000-000000000051','Telephony Tenant B Sales',true);
   insert into public.tenant_memberships(tenant_id,user_id,role,status,joined_at,primary_team_id)
     values
     ('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000050','sales','active',now(),'00000000-0000-0000-0000-000000000076'),
@@ -701,413 +690,87 @@ await db.exec(`
       '00000000-0000-0000-0000-000000000050',
       '00000000-0000-0000-0000-000000000074'
     );
+  insert into public.phone_numbers(id,tenant_id,number_e164,supports_voice,supports_sms,status,webhook_token_hash)
+    values('00000000-0000-0000-0000-000000000059','00000000-0000-0000-0000-000000000051','+46822222222',true,false,'active','tenant-b-hash')
+    on conflict(tenant_id,number_e164) do nothing;
   update public.telephony_policies set telephony_enabled=true,manual_dialer_enabled=true,
-    allowed_days='{1,2,3,4,5,6,7}',allowed_start_time='00:00',allowed_end_time='23:59:59'
+    allowed_days='{1,2,3,4,5,6,7}',allowed_start_time='00:00',allowed_end_time='23:59:59',
+    default_caller_id_phone_number_id='00000000-0000-0000-0000-000000000059'
     where tenant_id='00000000-0000-0000-0000-000000000051';
-  insert into public.platform_rinkel_users(
-    id,platform_integration_id,external_user_id,external_device_id,display_name
-  ) select '00000000-0000-0000-0000-000000000052',id,'platform-user-a','device-a','Platform User A'
-    from public.platform_integrations where provider='rinkel' and disabled_at is null;
-  insert into public.platform_rinkel_users(
-    id,platform_integration_id,external_user_id,external_device_id,display_name
-  ) select '00000000-0000-0000-0000-000000000053',id,'platform-user-b','device-b','Platform User B'
-    from public.platform_integrations where provider='rinkel' and disabled_at is null;
-  insert into public.platform_rinkel_users(
-    id,platform_integration_id,external_user_id,external_device_id,display_name,raw_provider_data
-  ) select '00000000-0000-0000-0000-000000000075',id,'platform-user-no-device',null,'Platform User No Device',
-    '{"_kundexa_sync":{"device_inventory_complete":true,"device_inventory_source":"embedded_devices","device_inventory_error":null}}'::jsonb
-    from public.platform_integrations where provider='rinkel' and disabled_at is null;
-  insert into public.platform_rinkel_numbers(
-    id,platform_integration_id,external_number_id,phone_number_e164,display_name
-  ) select '00000000-0000-0000-0000-000000000054',id,'platform-number-a','+46811111111','Platform Number A'
-    from public.platform_integrations where provider='rinkel' and disabled_at is null;
-  insert into public.platform_rinkel_numbers(
-    id,platform_integration_id,external_number_id,phone_number_e164,display_name
-  ) select '00000000-0000-0000-0000-000000000055',id,'platform-number-b','+46822222222','Platform Number B'
-    from public.platform_integrations where provider='rinkel' and disabled_at is null;
-  insert into public.platform_rinkel_devices(
-    id,platform_integration_id,platform_rinkel_user_id,provider_device_id,display_name,provider_status,active
-  ) select '00000000-0000-0000-0000-000000000072',platform_integration_id,id,'device-a','Device A','active',true
-    from public.platform_rinkel_users where id='00000000-0000-0000-0000-000000000052';
-  insert into public.platform_rinkel_devices(
-    id,platform_integration_id,platform_rinkel_user_id,provider_device_id,display_name,provider_status,active
-  ) select '00000000-0000-0000-0000-000000000073',platform_integration_id,id,'device-b','Device B','active',true
-    from public.platform_rinkel_users where id='00000000-0000-0000-0000-000000000053';
-  insert into public.rinkel_user_allocations(id,rinkel_user_id,tenant_id)
-    values
-    ('00000000-0000-0000-0000-000000000056','00000000-0000-0000-0000-000000000052','00000000-0000-0000-0000-000000000001'),
-    ('00000000-0000-0000-0000-000000000057','00000000-0000-0000-0000-000000000053','00000000-0000-0000-0000-000000000051');
-  insert into public.rinkel_number_allocations(id,rinkel_number_id,tenant_id)
-    values
-    ('00000000-0000-0000-0000-000000000058','00000000-0000-0000-0000-000000000054','00000000-0000-0000-0000-000000000001'),
-    ('00000000-0000-0000-0000-000000000059','00000000-0000-0000-0000-000000000055','00000000-0000-0000-0000-000000000051');
-  insert into public.rinkel_number_grants(tenant_id,number_allocation_id)
-    values
-    ('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000058'),
-    ('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000059');
-  insert into public.rinkel_user_mappings_v2(
-    tenant_id,kundexa_user_id,rinkel_user_allocation_id,default_number_allocation_id,selected_device_id
-  ) values
-    ('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000056','00000000-0000-0000-0000-000000000058','00000000-0000-0000-0000-000000000072');
 `);
+// Att ringa företagets eget A-nummer kopplar samtalet tillbaka till samma trunk.
+// Det måste vägras redan vid reservationen, så att ingen samtalsrad, inget
+// försök och ingen listposition skapas för ett mål som ändå inte kan ringas.
+//
+// Den gamla varianten prövade också säljarens egen provisionerade linje hos
+// leverantören. Den linjen finns inte: webbläsaren är telefonen, och säljaren
+// har inget nummer hos leverantören att ringa sig själv på.
 await db.exec(`
-  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000014',false);
   select set_config('request.jwt.claim.role','authenticated',false);
-`);
-// Rinkel reports a seller device only after that seller has signed in on one, and
-// exposes no devices endpoint. Allocation must therefore succeed without a device
-// row; the missing device is a readiness state reported to the operator instead.
-const deviceLessAllocation = await db.query(`select public.allocate_platform_rinkel_resource(
-  'user',
-  '00000000-0000-0000-0000-000000000075',
-  '00000000-0000-0000-0000-000000000051',
-  'deferred device allocation'
-) as allocation_id`);
-if (!deviceLessAllocation.rows[0].allocation_id) {
-  throw new Error('Platform allocation rejected a Rinkel user whose device is not yet registered.');
-}
-const deviceLessResolution = await db.query(`select count(*)::int as count
-  from public.rinkel_effective_provider_device('00000000-0000-0000-0000-000000000075',null)`);
-if (Number(deviceLessResolution.rows[0].count) !== 0) {
-  throw new Error('Device resolution invented a device for a provider user that reports none.');
-}
-await db.exec(`
-  update public.rinkel_user_allocations set status='revoked',valid_to=now()
-  where rinkel_user_id='00000000-0000-0000-0000-000000000075'
-    and tenant_id='00000000-0000-0000-0000-000000000051';
-`);
-await db.exec(`
-  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000074',false);
-  select set_config('request.jwt.claim.role','authenticated',false);
-`);
-const mappingResult = await db.query(`select public.replace_rinkel_user_mapping_v3(
-  '00000000-0000-0000-0000-000000000050',
-  '00000000-0000-0000-0000-000000000057',
-  '00000000-0000-0000-0000-000000000059',
-  '00000000-0000-0000-0000-000000000073'
-) as mapping_id`);
-if (!mappingResult.rows[0].mapping_id) {
-  throw new Error(`Atomic seller mapping did not return an id: ${JSON.stringify(mappingResult.rows)}`);
-}
-const directSellerGrant = await db.query(`select count(*)::int as count
-  from public.rinkel_number_grants
-  where tenant_id='00000000-0000-0000-0000-000000000051'
-    and number_allocation_id='00000000-0000-0000-0000-000000000059'
-    and user_id='00000000-0000-0000-0000-000000000050'
-    and team_id is null
-    and access_level='dial'
-    and active
-    and is_default`);
-if (Number(directSellerGrant.rows[0].count) !== 1) {
-  throw new Error(`Seller mapping did not create exactly one active default dial grant: ${JSON.stringify(directSellerGrant.rows)}`);
-}
-let rejectedWrongDevice = false;
-try {
-  await db.query(`select public.replace_rinkel_user_mapping_v3(
-    '00000000-0000-0000-0000-000000000050',
-    '00000000-0000-0000-0000-000000000057',
-    '00000000-0000-0000-0000-000000000059',
-    '00000000-0000-0000-0000-000000000072'
-  )`);
-} catch (error) {
-  rejectedWrongDevice = String(error).includes('DEVICE_MISSING');
-}
-if (!rejectedWrongDevice) {
-  throw new Error('Mapping accepted a device belonging to another telephony user.');
-}
-const mappingAfterRejectedDevice = await db.query(`select count(*)::int as count
-  from public.rinkel_user_mappings_v2
-  where tenant_id='00000000-0000-0000-0000-000000000051'
-    and kundexa_user_id='00000000-0000-0000-0000-000000000050'
-    and selected_device_id='00000000-0000-0000-0000-000000000073'
-    and active`);
-if (Number(mappingAfterRejectedDevice.rows[0].count) !== 1) {
-  throw new Error(`Rejected device attempt damaged the valid mapping: ${JSON.stringify(mappingAfterRejectedDevice.rows)}`);
-}
-
-let rejectedCrossTenantNumberAllocation = false;
-try {
-  await db.exec(`
-    insert into public.rinkel_number_allocations(id,rinkel_number_id,tenant_id)
-    values(
-      '00000000-0000-0000-0000-000000000061',
-      '00000000-0000-0000-0000-000000000054',
-      '00000000-0000-0000-0000-000000000051'
-    );
-  `);
-} catch (error) {
-  rejectedCrossTenantNumberAllocation = String(error).includes('RINKEL_NUMBER_TENANT_CONFLICT');
-}
-if (!rejectedCrossTenantNumberAllocation) {
-  throw new Error('Central Rinkel number was incorrectly allowed to have active allocations in multiple tenants.');
-}
-const singleTenantPlatformAllocation = await db.query(`select count(*)::int as count
-  from public.rinkel_number_allocations
-  where rinkel_number_id='00000000-0000-0000-0000-000000000054'
-    and status='active' and valid_to is null`);
-if (Number(singleTenantPlatformAllocation.rows[0].count) !== 1) {
-  throw new Error(`Central Rinkel number single-tenant ownership invariant failed: ${JSON.stringify(singleTenantPlatformAllocation.rows)}`);
-}
-await db.exec(`
   select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
-  select set_config('request.jwt.claim.role','authenticated',false);
-`);
-const tenantAResources = await db.query(`select public.get_tenant_rinkel_resources() as resources`);
-if (
-  tenantAResources.rows[0].resources.users.length !== 1
-  || tenantAResources.rows[0].resources.numbers.length !== 1
-  || tenantAResources.rows[0].resources.users[0].displayName !== "Platform User A"
-  || tenantAResources.rows[0].resources.users[0].activeDeviceCount !== 1
-  || typeof tenantAResources.rows[0].resources.users[0].deviceInventoryComplete !== "boolean"
-  || tenantAResources.rows[0].resources.numbers[0].number !== "+46811111111"
-) throw new Error(`Tenant A central Rinkel projection leaked, omitted device diagnostics or omitted resources: ${JSON.stringify(tenantAResources.rows[0])}`);
-await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000050',false)`);
-const tenantBCallerIds = await db.query(`select public.get_current_user_rinkel_numbers() as numbers`);
-if (
-  tenantBCallerIds.rows[0].numbers.length !== 1
-  || tenantBCallerIds.rows[0].numbers[0].number !== "+46822222222"
-  || tenantBCallerIds.rows[0].numbers.some((item) => item.number === "+46811111111")
-) {
-  throw new Error(`Tenant B caller-ID projection leaked another tenant's Rinkel number: ${JSON.stringify(tenantBCallerIds.rows[0])}`);
-}
-await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
-const centralStatus = await db.query(`select public.telephony_status_for_current_user() as status`);
-if (!centralStatus.rows[0].status.manualReady || !centralStatus.rows[0].status.userMapped) {
-  throw new Error(`Central telephony status was not ready: ${JSON.stringify(centralStatus.rows[0])}`);
-}
-await db.exec(`
-  update public.platform_integrations
-  set status='unavailable',last_error_code='RINKEL_NETWORK_ERROR',last_error_message='Rinkel kunde inte nås.'
-  where provider='rinkel' and disabled_at is null;
-`);
-const unavailableCentralStatus = await db.query(`select public.telephony_status_for_current_user() as status`);
-if (
-  unavailableCentralStatus.rows[0].status.platformReady
-  || unavailableCentralStatus.rows[0].status.errorCode !== "RINKEL_UNAVAILABLE"
-  || unavailableCentralStatus.rows[0].status.errorMessage !== "Telefonitjänsten kunde inte nås vid den senaste kontrollen."
-) {
-  throw new Error(`Central telephony diagnostics were not actionable: ${JSON.stringify(unavailableCentralStatus.rows[0])}`);
-}
-await db.exec(`
-  update public.platform_integrations
-  set status='connected',last_error_code=null,last_error_message=null
-  where provider='rinkel' and disabled_at is null;
-`);
-// Rinkel refuses a dial whose destination is the seller's own line, and the
-// assigned caller-id number would loop back to the same trunk. Both must be
-// refused during reservation so no call row, attempt or list state is produced
-// for a destination the provider will never accept.
-await db.exec(`
-  update public.platform_rinkel_users
-  set raw_provider_data=jsonb_build_object('phoneNumber',jsonb_build_object('e164','+46709999999'))
-  where id='00000000-0000-0000-0000-000000000052';
-  update public.customers set alternate_phone_e164='+46811111111'
+  update public.customers set alternate_phone_e164='+46401234567'
   where id='00000000-0000-0000-0000-000000000025';
 `);
 const callsBeforeSelfDial = await db.query(`select count(*)::int as count from public.calls`);
-for (const [target, key] of [["+46811111111", "self-dial-caller-id"], ["+46709999999", "self-dial-own-line"]]) {
-  if (target === "+46709999999") {
-    await db.exec(`update public.customers set alternate_phone_e164='+46709999999'
-      where id='00000000-0000-0000-0000-000000000025'`);
-  }
-  let refused = false;
-  try {
-    await db.query(`
-      select public.rinkel_reserve_platform_outbound_call(
-        '00000000-0000-0000-0000-000000000025',null,'${target}',null,null,null,
-        gen_random_uuid(),'${key}','customer_service'
-      )
-    `);
-  } catch (error) {
-    refused = String(error).includes("SELF_DIAL_NOT_ALLOWED");
-  }
-  if (!refused) throw new Error(`Reservation allowed a self-dial to ${target}.`);
+let selfDialRefused = false;
+try {
+  await db.query(`
+    select public.reserve_outbound_call(
+      '00000000-0000-0000-0000-000000000025',null,'+46401234567',null,null,null,
+      gen_random_uuid(),'self-dial-caller-id','customer_service',null,null
+    )
+  `);
+} catch (error) {
+  selfDialRefused = String(error).includes("SELF_DIAL_NOT_ALLOWED");
 }
+if (!selfDialRefused) throw new Error("Reservation allowed a call to the tenant's own caller-ID number.");
 const callsAfterSelfDial = await db.query(`select count(*)::int as count from public.calls`);
 if (callsAfterSelfDial.rows[0].count !== callsBeforeSelfDial.rows[0].count) {
   throw new Error("A refused self-dial still created a call row.");
 }
-// Uppringningsvägen, härledd. `muteOtherDevicesOnWebphone` is Rinkel's
-// "call only Webphone when available"; with it off the seat's mobile rings
-// alongside the webphone and the call is placed through whoever owns that
-// phone, however correct the caller ID is.
-const seatStateBefore = await db.query(`select public.rinkel_seat_dial_path_state(
-  jsonb_build_object(
-    'preferences', jsonb_build_object('muteOtherDevicesOnWebphone', false, 'ringDevices', 'all', 'defaultOutboundNumber', 'platform-number-a'),
-    'phoneNumber', jsonb_build_object('e164','+46709999999')
-  ), 'platform-number-a') as state`);
-if (
-  seatStateBefore.rows[0].state.correct !== false
-  || seatStateBefore.rows[0].state.webphoneOnly !== false
-  || seatStateBefore.rows[0].state.outboundNumberMatches !== true
-  || seatStateBefore.rows[0].state.seatPhoneE164 !== '+46709999999'
-) {
-  throw new Error(`A seat that rings a mobile was reported as correct: ${JSON.stringify(seatStateBefore.rows[0].state)}`);
-}
-const seatStateAfter = await db.query(`select public.rinkel_seat_dial_path_state(
-  jsonb_build_object('preferences', jsonb_build_object('muteOtherDevicesOnWebphone', true, 'defaultOutboundNumber', 'platform-number-a')),
-  'platform-number-a') as state`);
-if (seatStateAfter.rows[0].state.correct !== true) {
-  throw new Error(`A webphone-only seat on the right number was not reported correct: ${JSON.stringify(seatStateAfter.rows[0].state)}`);
-}
-// Webphone-only is not enough on its own: a seat pointing at another number
-// dials out on that number instead of the tenant's.
-const seatStateWrongNumber = await db.query(`select public.rinkel_seat_dial_path_state(
-  jsonb_build_object('preferences', jsonb_build_object('muteOtherDevicesOnWebphone', true, 'defaultOutboundNumber', 'platform-number-b')),
-  'platform-number-a') as state`);
-if (
-  seatStateWrongNumber.rows[0].state.correct !== false
-  || seatStateWrongNumber.rows[0].state.outboundNumberMatches !== false
-) {
-  throw new Error(`A seat on the wrong outbound number was reported correct: ${JSON.stringify(seatStateWrongNumber.rows[0].state)}`);
-}
-// The seller's own view names the phone that rings and says what to do, rather
-// than leaving it to be discovered by hearing the wrong phone ring.
 await db.exec(`
-  update public.platform_rinkel_users
-  set raw_provider_data=jsonb_build_object(
-    'preferences', jsonb_build_object('muteOtherDevicesOnWebphone', false, 'ringDevices', 'all', 'defaultOutboundNumber', 'platform-number-a'),
-    'phoneNumber', jsonb_build_object('e164','+46709999999')
-  )
-  where id='00000000-0000-0000-0000-000000000052';
-`);
-const uncorrectedPath = await db.query(`select public.current_user_dial_path() as path`);
-// The seller is still told which phone rings — that fact is the point of the
-// field. What it must NOT do is offer a repair for it: the provider's /dial
-// carries no audio path, so it always rings a device first, and the repair
-// cannot change that. Measured in production on 2026-09-15: the repair
-// succeeded, applied_at was set, and the mobile still rang.
-if (
-  uncorrectedPath.rows[0].path.dialPathCorrect !== false
-  || uncorrectedPath.rows[0].path.webphoneOnly !== false
-  || uncorrectedPath.rows[0].path.deviceRingsPhone !== '+46709999999'
-  || uncorrectedPath.rows[0].path.ringsSellerFirst !== true
-) {
-  throw new Error(`The seller was not told which phone rings: ${JSON.stringify(uncorrectedPath.rows[0].path)}`);
-}
-if (
-  uncorrectedPath.rows[0].path.repairChangesAnything !== false
-  || uncorrectedPath.rows[0].path.issue !== null
-) {
-  throw new Error(`The seller was told to run a repair that cannot change the ringing: ${JSON.stringify(uncorrectedPath.rows[0].path)}`);
-}
-// The other half is genuinely repairable, and there the repair must still be
-// offered: the outbound number decides what the customer sees.
-await db.exec(`
-  update public.platform_rinkel_users
-  set raw_provider_data=jsonb_build_object(
-    'preferences', jsonb_build_object('muteOtherDevicesOnWebphone', false, 'ringDevices', 'all', 'defaultOutboundNumber', 'platform-number-b'),
-    'phoneNumber', jsonb_build_object('e164','+46709999999')
-  )
-  where id='00000000-0000-0000-0000-000000000052';
-`);
-const wrongNumberPath = await db.query(`select public.current_user_dial_path() as path`);
-if (
-  wrongNumberPath.rows[0].path.repairChangesAnything !== true
-  || !String(wrongNumberPath.rows[0].path.issue ?? "").includes('Rätta uppringningsvägen')
-) {
-  throw new Error(`A seat dialling out on the wrong number was not offered the repair: ${JSON.stringify(wrongNumberPath.rows[0].path)}`);
-}
-await db.exec(`
-  update public.platform_rinkel_users
-  set raw_provider_data=jsonb_build_object(
-    'preferences', jsonb_build_object('muteOtherDevicesOnWebphone', false, 'ringDevices', 'all', 'defaultOutboundNumber', 'platform-number-a'),
-    'phoneNumber', jsonb_build_object('e164','+46709999999')
-  )
-  where id='00000000-0000-0000-0000-000000000052';
-`);
-// A tenant admin sees every seat the company dials through, and only its own.
-const dialPathReport = await db.query(`select public.tenant_rinkel_dial_path_report() as report`);
-if (
-  dialPathReport.rows[0].report.expectedNumberId !== 'platform-number-a'
-  || dialPathReport.rows[0].report.seats.length !== 1
-  || dialPathReport.rows[0].report.incorrectCount !== 1
-  || dialPathReport.rows[0].report.seats[0].state.correct !== false
-) {
-  throw new Error(`Dial path report was wrong: ${JSON.stringify(dialPathReport.rows[0].report)}`);
-}
-// Recording the repair is a read-back from the provider, so only the server
-// that made the call may write it. A signed-in user must not.
-let sellerCannotRecordDialPolicy = false;
-try {
-  await db.query(`select public.record_rinkel_seat_dial_policy(
-    '00000000-0000-0000-0000-000000000052', jsonb_build_object('preferences', jsonb_build_object('muteOtherDevicesOnWebphone', true)), null)`);
-} catch (error) {
-  sellerCannotRecordDialPolicy = String(error).includes('service_role_required');
-}
-if (!sellerCannotRecordDialPolicy) {
-  throw new Error('A signed-in user was able to record a dial-path repair they never performed.');
-}
-await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
-await db.query(`select public.record_rinkel_seat_dial_policy(
-  '00000000-0000-0000-0000-000000000052',
-  jsonb_build_object(
-    'preferences', jsonb_build_object('muteOtherDevicesOnWebphone', true, 'ringDevices', 'all', 'defaultOutboundNumber', 'platform-number-a'),
-    'phoneNumber', jsonb_build_object('e164','+46709999999')
-  ), null) as result`);
-await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
-const correctedPath = await db.query(`select public.current_user_dial_path() as path`);
-if (
-  correctedPath.rows[0].path.dialPathCorrect !== true
-  || correctedPath.rows[0].path.issue !== null
-  || correctedPath.rows[0].path.dialPolicyAppliedAt === null
-  // The seat still carries the mobile; what changed is that it no longer rings.
-  || correctedPath.rows[0].path.deviceRingsPhone !== '+46709999999'
-) {
-  throw new Error(`The repair was not reflected in the seller's dial path: ${JSON.stringify(correctedPath.rows[0].path)}`);
-}
-// A failed repair must say why rather than leaving the seat looking untouched.
-await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
-await db.query(`select public.record_rinkel_seat_dial_policy(
-  '00000000-0000-0000-0000-000000000052', null, 'Telefonitjänsten nekade ändringen.') as result`);
-await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
-const failedRepairPath = await db.query(`select public.current_user_dial_path() as path`);
-if (failedRepairPath.rows[0].path.dialPolicyError !== 'Telefonitjänsten nekade ändringen.') {
-  throw new Error(`A failed repair left no reason behind: ${JSON.stringify(failedRepairPath.rows[0].path)}`);
-}
-console.log("Executed the dial path repair: a seat that rings a mobile is reported incorrect, the seller is told which phone rings but never offered a repair that cannot change it, a wrong outbound number is offered the repair that can, the tenant report sees only its own seat, a signed-in user may not record a repair, a recorded repair clears the warning, and a failed one leaves its reason.");
-
-await db.exec(`
-  update public.platform_rinkel_users set raw_provider_data='{}'::jsonb
-  where id='00000000-0000-0000-0000-000000000052';
   update public.customers set alternate_phone_e164=null
   where id='00000000-0000-0000-0000-000000000025';
 `);
-console.log("Executed self-dial guard runtime path: caller-id number and seller's own provider line both refused before any call row exists.");
+console.log("Executed self-dial guard runtime path: the tenant's own caller-ID number is refused before any call row exists.");
 
 const centralReservation = await db.query(`
-  select public.rinkel_reserve_platform_outbound_call(
+  select public.reserve_outbound_call(
     '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
-    '00000000-0000-0000-0000-000000000060','central-rinkel-runtime-1','customer_service'
+    '00000000-0000-0000-0000-000000000060','central-runtime-1','customer_service',null,null
   ) as result
 `);
 const centralResult = centralReservation.rows[0].result;
-if (!centralResult.callId || centralResult.numberId !== "platform-number-a" || centralResult.deviceId !== "device-a") {
-  throw new Error(`Central Rinkel reservation failed: ${JSON.stringify(centralResult)}`);
+// A-numret kommer ur företagets egna nummer, inte ur en allokering hos
+// leverantören, och det är numret kunden ser som räknas.
+if (!centralResult.callId || !centralResult.attemptId
+  || centralResult.callerId !== "+46401234567" || centralResult.callerIdSource !== "tenant_default") {
+  throw new Error(`The reservation failed: ${JSON.stringify(centralResult)}`);
 }
 if (centralResult.purpose !== "direct_marketing") {
-  throw new Error(`Central Rinkel purpose was not derived server-side: ${JSON.stringify(centralResult)}`);
+  throw new Error(`The purpose was not derived server-side: ${JSON.stringify(centralResult)}`);
 }
 const centralReplay = await db.query(`
-  select public.rinkel_reserve_platform_outbound_call(
+  select public.reserve_outbound_call(
     '00000000-0000-0000-0000-000000000025',null,'+46703333333',null,null,null,
-    '00000000-0000-0000-0000-000000000060','central-rinkel-runtime-1','customer_service'
+    '00000000-0000-0000-0000-000000000060','central-runtime-1','customer_service',null,null
   ) as result
 `);
 if (!centralReplay.rows[0].result.idempotentReplay || centralReplay.rows[0].result.callId !== centralResult.callId) {
-  throw new Error(`Central Rinkel idempotent replay failed: ${JSON.stringify(centralReplay.rows[0])}`);
+  throw new Error(`Idempotent replay failed: ${JSON.stringify(centralReplay.rows[0])}`);
 }
-await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
-await db.query(`select public.rinkel_finalize_platform_dial($1,$2,'accepted',null,null)`, [centralResult.callId, centralResult.attemptId]);
-await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
+// Utfallet skrivs av den inloggade säljaren: det är webbläsaren som fick svaret
+// från leverantörens klient, och tjänsterollen har ingen tenantkontext att
+// skriva i.
+await db.query(`select public.finalize_dial($1,$2,'accepted',null,null,null)`, [centralResult.callId, centralResult.attemptId]);
 const centralFinal = await db.query(`select c.status call_status,a.status attempt_status
-  from public.calls c join public.rinkel_call_attempts_v2 a on a.call_id=c.id where c.id=$1`, [centralResult.callId]);
-if (centralFinal.rows[0].call_status !== "dial_requested" || centralFinal.rows[0].attempt_status !== "awaiting_provider_event") {
-  throw new Error(`Central Rinkel finalization failed: ${JSON.stringify(centralFinal.rows[0])}`);
+  from public.calls c join public.dial_attempts a on a.call_id=c.id where c.id=$1`, [centralResult.callId]);
+if (centralFinal.rows[0].call_status !== "dial_requested" || centralFinal.rows[0].attempt_status !== "dial_requested") {
+  throw new Error(`Finalization failed: ${JSON.stringify(centralFinal.rows[0])}`);
 }
 await db.exec(`
   update public.calls set status='completed',ended_at=now() where id='${centralResult.callId}';
-  update public.rinkel_call_attempts_v2 set status='completed' where id='${centralResult.attemptId}';
+  update public.dial_attempts set status='completed' where id='${centralResult.attemptId}';
 `);
 
 // Avsluta ett samtal. The reservation refuses a second dial while an attempt is
@@ -1120,9 +783,9 @@ await db.exec(`
 // status is terminal, so reusing the fixture would pin it and break the
 // monotonic-projection test further down.
 const endTest = await db.query(`
-  select public.rinkel_reserve_platform_outbound_call(
+  select public.reserve_outbound_call(
     '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
-    gen_random_uuid(),'central-rinkel-end-call','customer_service'
+    gen_random_uuid(),'central-end-call','customer_service',null,null
   ) as result
 `);
 const endTestResult = endTest.rows[0].result;
@@ -1132,9 +795,9 @@ if (!endTestResult.callId) {
 let refusedSecondDialWhileAttemptOpen = false;
 try {
   await db.query(`
-    select public.rinkel_reserve_platform_outbound_call(
+    select public.reserve_outbound_call(
       '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
-      gen_random_uuid(),'central-rinkel-blocked-by-open-attempt','customer_service'
+      gen_random_uuid(),'central-blocked-by-open-attempt','customer_service',null,null
     )
   `);
 } catch (error) {
@@ -1162,12 +825,11 @@ if (
   endedUnansweredResult.attemptReleased !== true
   || endedUnansweredResult.callClosed !== true
   || endedUnansweredResult.callStatus !== 'cancelled'
-  || endedUnansweredResult.providerHangupSupported !== false
 ) {
   throw new Error(`Ending an unanswered call did not close it: ${JSON.stringify(endedUnansweredResult)}`);
 }
 const endedUnansweredRow = await db.query(`select c.status call_status,c.ended_at,c.end_cause,a.status attempt_status,a.error_code
-  from public.calls c join public.rinkel_call_attempts_v2 a on a.call_id=c.id where c.id=$1`, [endTestResult.callId]);
+  from public.calls c join public.dial_attempts a on a.call_id=c.id where c.id=$1`, [endTestResult.callId]);
 if (
   endedUnansweredRow.rows[0].call_status !== 'cancelled'
   || endedUnansweredRow.rows[0].ended_at === null
@@ -1180,18 +842,18 @@ if (
 // The point of the whole action: the seat is free again immediately, without
 // waiting for the janitor's 15-minute floor.
 const dialAfterEnd = await db.query(`
-  select public.rinkel_reserve_platform_outbound_call(
+  select public.reserve_outbound_call(
     '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
-    gen_random_uuid(),'central-rinkel-after-end','customer_service'
+    gen_random_uuid(),'central-after-end','customer_service',null,null
   ) as result
 `);
 const afterEndResult = dialAfterEnd.rows[0].result;
 if (!afterEndResult.callId || afterEndResult.callId === endTestResult.callId) {
   throw new Error(`Ending the call did not free the seller to dial again: ${JSON.stringify(afterEndResult)}`);
 }
-// An answered call is a different claim. Rinkel has no hangup endpoint, so the
+// An answered call is a different claim. The server cannot drop the leg, so the
 // conversation is on a device Kundexa cannot reach; writing a terminal status
-// here would freeze the projection (protect_rinkel_call_projection pins every
+// here would freeze the projection (protect_call_projection pins every
 // provider field once the rank reaches 100) and discard the duration and
 // outcome the provider is about to report. Release the attempt, leave the call.
 await db.exec(`update public.calls set status='answered',answered_at=now() where id='${afterEndResult.callId}'`);
@@ -1216,34 +878,9 @@ const providerTruth = await db.query(`select status,duration_seconds from public
 if (providerTruth.rows[0].status !== 'completed' || providerTruth.rows[0].duration_seconds !== 61) {
   throw new Error(`Provider outcome could not land after the seller ended the call: ${JSON.stringify(providerTruth.rows[0])}`);
 }
-// The dial path: the phone that rings first is not the number the customer sees.
-const dialPath = await db.query(`select public.current_user_dial_path() as path`);
-const dialPathResult = dialPath.rows[0].path;
-if (
-  dialPathResult.mapped !== true
-  || dialPathResult.callerIdNumber !== '+46811111111'
-  || dialPathResult.deviceReady !== true
-) {
-  throw new Error(`Dial path did not report the caller ID and device: ${JSON.stringify(dialPathResult)}`);
-}
-await db.exec(`
-  update public.platform_rinkel_users
-  set raw_provider_data=jsonb_build_object('phoneNumber',jsonb_build_object('e164','+46709999999'))
-  where id='00000000-0000-0000-0000-000000000052';
-`);
-const dialPathWithSeatPhone = await db.query(`select public.current_user_dial_path() as path`);
-if (
-  dialPathWithSeatPhone.rows[0].path.deviceRingsPhone !== '+46709999999'
-  || dialPathWithSeatPhone.rows[0].path.callerIdNumber !== '+46811111111'
-) {
-  throw new Error(`Dial path confused the ringing phone with the caller ID: ${JSON.stringify(dialPathWithSeatPhone.rows[0].path)}`);
-}
-await db.exec(`
-  update public.platform_rinkel_users set raw_provider_data='{}'::jsonb
-  where id='00000000-0000-0000-0000-000000000052';
-  update public.rinkel_call_attempts_v2 set status='completed' where call_id='${afterEndResult.callId}';
-`);
-console.log("Executed ending a call: an open attempt blocks the next dial, another tenant may not end the call, ending an unanswered call closes it and frees the seat at once, ending an answered call releases only the attempt so the provider's duration still lands, and the dial path separates the phone that rings from the number the customer sees.");
+await db.exec(`update public.dial_attempts set status='completed' where call_id='${afterEndResult.callId}';`);
+
+console.log("Executed ending a call: an open attempt blocks the next dial, another tenant may not end the call, ending an unanswered call closes it and frees the seat at once, and ending an answered call releases only the attempt so the provider's duration still lands.");
 
 // --- Webbtelefonens session ---------------------------------------------
 // The browser is the call leg here, so a dead tab means dead audio and the
@@ -1251,7 +888,7 @@ console.log("Executed ending a call: an open attempt blocks the next dial, anoth
 // came from the provider's own /dial has no session, and closing a tab says
 // nothing about whether that call is still live. These tests hold that line.
 await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
-const openedSession = await db.query(`select public.open_webphone_session('rinkel','TestAgent/1.0') as result`);
+const openedSession = await db.query(`select public.open_webphone_session('sinch','TestAgent/1.0') as result`);
 const firstSession = openedSession.rows[0].result;
 if (!firstSession.sessionId || firstSession.status !== 'registering' || firstSession.heartbeatSeconds !== 15) {
   throw new Error(`Opening a webphone session returned the wrong shape: ${JSON.stringify(firstSession)}`);
@@ -1268,7 +905,7 @@ if (beatWithRegistration.rows[0].result.status !== 'registered' || beatWithRegis
 }
 // A second tab replaces the first. Two live registrations would be two phones
 // that can both ring, which is exactly what the reservation guard exists to stop.
-const secondSession = (await db.query(`select public.open_webphone_session('rinkel',null) as result`)).rows[0].result;
+const secondSession = (await db.query(`select public.open_webphone_session('sinch',null) as result`)).rows[0].result;
 const liveSessions = await db.query(`
   select count(*)::int as live from public.webphone_sessions
   where seller_user_id='00000000-0000-0000-0000-000000000002' and status in ('registering','registered')
@@ -1324,19 +961,19 @@ await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-000
 // A call carried by the session: closing the session releases the attempt and
 // fails the call, because the audio left with the tab.
 const webphoneCall = (await db.query(`
-  select public.rinkel_reserve_platform_outbound_call(
+  select public.reserve_outbound_call(
     '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
     gen_random_uuid(),'webphone-session-call','customer_service'
   ) as result
 `)).rows[0].result;
-await db.exec(`update public.rinkel_call_attempts_v2 set webphone_session_id='${secondSession.sessionId}' where call_id='${webphoneCall.callId}'`);
+await db.exec(`update public.dial_attempts set webphone_session_id='${secondSession.sessionId}' where call_id='${webphoneCall.callId}'`);
 const closedCarrying = (await db.query(`select public.close_webphone_session($1,'Fliken stängdes') as result`, [secondSession.sessionId])).rows[0].result;
 if (closedCarrying.releasedAttempts !== 1) {
   throw new Error(`Closing a webphone session did not release the attempt it carried: ${JSON.stringify(closedCarrying)}`);
 }
 const carriedRow = await db.query(`
   select a.status attempt_status,a.error_code,c.status call_status,c.end_cause
-  from public.rinkel_call_attempts_v2 a join public.calls c on c.id=a.call_id where a.call_id=$1
+  from public.dial_attempts a join public.calls c on c.id=a.call_id where a.call_id=$1
 `, [webphoneCall.callId]);
 if (
   carriedRow.rows[0].attempt_status !== 'failed'
@@ -1351,23 +988,24 @@ if (
 // a closed tab is no evidence that its call ended — releasing it would let the
 // seller start a second call while the first is still connected.
 const providerCall = (await db.query(`
-  select public.rinkel_reserve_platform_outbound_call(
+  select public.reserve_outbound_call(
     '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
     gen_random_uuid(),'webphone-boundary-dial','customer_service'
   ) as result
 `)).rows[0].result;
-const boundarySession = (await db.query(`select public.open_webphone_session('rinkel',null) as result`)).rows[0].result;
+const boundarySession = (await db.query(`select public.open_webphone_session('sinch',null) as result`)).rows[0].result;
 const closedEmpty = (await db.query(`select public.close_webphone_session($1,'Fliken stängdes') as result`, [boundarySession.sessionId])).rows[0].result;
 if (closedEmpty.releasedAttempts !== 0) {
   throw new Error(`Closing a webphone session released a provider /dial attempt that it never carried: ${JSON.stringify(closedEmpty)}`);
 }
-const untouched = await db.query(`select status from public.rinkel_call_attempts_v2 where call_id=$1`, [providerCall.callId]);
+const untouched = await db.query(`select status from public.dial_attempts where call_id=$1`, [providerCall.callId]);
 if (!['requested','dial_requested','awaiting_provider_event'].includes(untouched.rows[0].status)) {
   throw new Error(`A provider /dial attempt was released by the webphone session sweeper: ${JSON.stringify(untouched.rows[0])}`);
 }
 
 // The sweeper: only service_role, never a bound short enough that a network
 // hiccup reads as a dropped call, and it must leave the provider attempt alone.
+await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
 let sweepRequiresServiceRole = false;
 try {
   await db.query(`select public.release_lost_webphone_sessions(interval '2 minutes',200)`);
@@ -1389,9 +1027,9 @@ if (!sweepFloorHeld) {
 }
 const silentSession = (await db.query(`
   select set_config('request.jwt.claim.role','authenticated',false),
-         public.open_webphone_session('rinkel',null) as result
+         public.open_webphone_session('sinch',null) as result
 `)).rows[0].result;
-await db.exec(`update public.rinkel_call_attempts_v2 set webphone_session_id='${silentSession.sessionId}' where call_id='${providerCall.callId}' and false`);
+await db.exec(`update public.dial_attempts set webphone_session_id='${silentSession.sessionId}' where call_id='${providerCall.callId}' and false`);
 await db.exec(`update public.webphone_sessions set last_heartbeat_at=now()-interval '10 minutes' where id='${silentSession.sessionId}'`);
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
 const swept = (await db.query(`select public.release_lost_webphone_sessions(interval '1 minute',200) as result`)).rows[0].result;
@@ -1402,13 +1040,13 @@ const sweptRow = await db.query(`select status,close_reason from public.webphone
 if (sweptRow.rows[0].status !== 'lost') {
   throw new Error(`A silent webphone session was not marked lost: ${JSON.stringify(sweptRow.rows[0])}`);
 }
-const stillUntouched = await db.query(`select status from public.rinkel_call_attempts_v2 where call_id=$1`, [providerCall.callId]);
+const stillUntouched = await db.query(`select status from public.dial_attempts where call_id=$1`, [providerCall.callId]);
 if (!['requested','dial_requested','awaiting_provider_event'].includes(stillUntouched.rows[0].status)) {
   throw new Error(`The webphone sweeper released a provider /dial attempt: ${JSON.stringify(stillUntouched.rows[0])}`);
 }
 await db.exec(`
   select set_config('request.jwt.claim.role','authenticated',false);
-  update public.rinkel_call_attempts_v2 set status='completed' where call_id='${providerCall.callId}';
+  update public.dial_attempts set status='completed' where call_id='${providerCall.callId}';
 `);
 console.log("Executed the webphone session: a registration is only registered once SIP says so, a second tab replaces the first, another tenant cannot see or close the session, a lost session releases the call leg it carried, and neither closing nor sweeping ever touches a provider /dial attempt.");
 
@@ -1419,9 +1057,9 @@ console.log("Executed the webphone session: a registration is only registered on
 // duration and cause are the provider's and a terminal status here would freeze
 // the projection before they land.
 await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
-const legSession = (await db.query(`select public.open_webphone_session('rinkel',null) as result`)).rows[0].result;
+const legSession = (await db.query(`select public.open_webphone_session('sinch',null) as result`)).rows[0].result;
 const legCall = (await db.query(`
-  select public.rinkel_reserve_platform_outbound_call(
+  select public.reserve_outbound_call(
     '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
     gen_random_uuid(),'webphone-leg-answered','customer_service'
   ) as result
@@ -1444,7 +1082,7 @@ await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-000
 // sweeper could not tell this leg from a provider /dial and would never release
 // it when the tab dies.
 await db.query(`select public.record_webphone_leg_event($1,$2,'ringing',now())`, [legCall.callId, legSession.sessionId]);
-const boundAttempt = await db.query(`select webphone_session_id,status from public.rinkel_call_attempts_v2 where call_id=$1`, [legCall.callId]);
+const boundAttempt = await db.query(`select webphone_session_id,status from public.dial_attempts where call_id=$1`, [legCall.callId]);
 if (boundAttempt.rows[0].webphone_session_id !== legSession.sessionId) {
   throw new Error(`The first leg event did not bind the attempt to the webphone session: ${JSON.stringify(boundAttempt.rows[0])}`);
 }
@@ -1497,7 +1135,7 @@ if (providerAfterLeg.rows[0].status !== 'completed' || providerAfterLeg.rows[0].
 // An unanswered call is a different claim: nothing is lost by closing it,
 // because there was never a duration or an outcome to lose.
 const unansweredCall = (await db.query(`
-  select public.rinkel_reserve_platform_outbound_call(
+  select public.reserve_outbound_call(
     '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
     gen_random_uuid(),'webphone-leg-unanswered','customer_service'
   ) as result
@@ -1508,7 +1146,7 @@ if (endedUnansweredLeg.advancedTo !== 'unanswered' || endedUnansweredLeg.attempt
 }
 // The seat is free again straight away, which is the point of reporting at all.
 const dialAfterLeg = (await db.query(`
-  select public.rinkel_reserve_platform_outbound_call(
+  select public.reserve_outbound_call(
     '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
     gen_random_uuid(),'webphone-leg-next','customer_service'
   ) as result
@@ -1517,7 +1155,7 @@ if (!dialAfterLeg.callId || dialAfterLeg.callId === unansweredCall.callId) {
   throw new Error(`Reporting the leg end did not free the seller to dial again: ${JSON.stringify(dialAfterLeg)}`);
 }
 await db.exec(`
-  update public.rinkel_call_attempts_v2 set status='completed' where call_id='${dialAfterLeg.callId}';
+  update public.dial_attempts set status='completed' where call_id='${dialAfterLeg.callId}';
   select public.close_webphone_session('${legSession.sessionId}','klar');
 `);
 console.log("Executed the webphone leg report: a foreign session is refused, the first event binds the attempt so the sweeper can see the leg, a reported answer fills answered_at with its provenance, every client row is labelled, ending an answered call frees the seat without writing the provider's outcome, and ending an unanswered one closes it.");
@@ -1531,25 +1169,25 @@ console.log("Executed the webphone leg report: a foreign session is refused, the
 // out for ninety minutes.
 await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
 const terminalCall = (await db.query(`
-  select public.rinkel_reserve_platform_outbound_call(
+  select public.reserve_outbound_call(
     '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
     gen_random_uuid(),'terminal-attempt-guard','customer_service'
   ) as result
 `)).rows[0].result;
 await db.query(`select public.end_active_call($1,'klar') as result`, [terminalCall.callId]);
-const releasedAttempt = await db.query(`select status,error_code from public.rinkel_call_attempts_v2 where call_id=$1`, [terminalCall.callId]);
+const releasedAttempt = await db.query(`select status,error_code from public.dial_attempts where call_id=$1`, [terminalCall.callId]);
 if (releasedAttempt.rows[0].status !== 'failed') {
   throw new Error(`The attempt was not releasedAttempt before the guard was tested: ${JSON.stringify(releasedAttempt.rows[0])}`);
 }
 
 // This is the exact write the CDR reconciliation performs.
 await db.exec(`
-  update public.rinkel_call_attempts_v2
+  update public.dial_attempts
   set external_call_id=coalesce(external_call_id,'cdr-late-1'),
       status='matched', updated_at=now()
   where call_id='${terminalCall.callId}';
 `);
-const afterCdr = await db.query(`select status,error_code,external_call_id from public.rinkel_call_attempts_v2 where call_id=$1`, [terminalCall.callId]);
+const afterCdr = await db.query(`select status,error_code,external_call_id from public.dial_attempts where call_id=$1`, [terminalCall.callId]);
 if (afterCdr.rows[0].status !== 'failed') {
   throw new Error(`A late provider event took the seller's seat back: ${JSON.stringify(afterCdr.rows[0])}`);
 }
@@ -1563,7 +1201,7 @@ if (afterCdr.rows[0].error_code !== 'ENDED_BY_SELLER') {
 }
 // And the seller can dial again, which is the whole point.
 const dialAfterGuard = (await db.query(`
-  select public.rinkel_reserve_platform_outbound_call(
+  select public.reserve_outbound_call(
     '00000000-0000-0000-0000-000000000025',null,'+46702222225',null,null,null,
     gen_random_uuid(),'terminal-attempt-guard-next','customer_service'
   ) as result
@@ -1573,180 +1211,19 @@ if (!dialAfterGuard.callId || dialAfterGuard.callId === terminalCall.callId) {
 }
 // A terminal attempt may still move between terminal statuses; only the way back
 // to a seat-holding status is refused.
-await db.exec(`update public.rinkel_call_attempts_v2 set status='completed' where call_id='${terminalCall.callId}';`);
-const terminalToTerminal = await db.query(`select status from public.rinkel_call_attempts_v2 where call_id=$1`, [terminalCall.callId]);
+await db.exec(`update public.dial_attempts set status='completed' where call_id='${terminalCall.callId}';`);
+const terminalToTerminal = await db.query(`select status from public.dial_attempts where call_id=$1`, [terminalCall.callId]);
 if (terminalToTerminal.rows[0].status !== 'completed') {
   throw new Error(`The guard blocked a legitimate terminal-to-terminal transition: ${JSON.stringify(terminalToTerminal.rows[0])}`);
 }
-await db.exec(`update public.rinkel_call_attempts_v2 set status='completed' where call_id='${dialAfterGuard.callId}';`);
+await db.exec(`update public.dial_attempts set status='completed' where call_id='${dialAfterGuard.callId}';`);
 console.log("Executed the released-attempt guard: a late CDR cannot take the seller's seat back, the provider may still enrich the row, the release reason survives, the next dial is free, and a terminal-to-terminal transition is still allowed.");
 
 
 
 
-await db.exec(`
-  update public.rinkel_number_allocations set status='revoked',valid_to=now()
-    where id='00000000-0000-0000-0000-000000000058';
-`);
-const historicalTenant = await db.query(`select tenant_id,metadata->>'number_allocation_id' allocation_id from public.calls where id=$1`, [centralResult.callId]);
-if (
-  historicalTenant.rows[0].tenant_id !== "00000000-0000-0000-0000-000000000001"
-  || historicalTenant.rows[0].allocation_id !== "00000000-0000-0000-0000-000000000058"
-) throw new Error(`Historical Rinkel call moved with number allocation: ${JSON.stringify(historicalTenant.rows[0])}`);
-console.log("Executed central Rinkel catalog, two-tenant isolation, single-tenant number ownership, rejected cross-tenant allocation, atomic reservation, idempotent replay, provider finalization and immutable call history runtime paths.");
+console.log("Executed two-tenant telephony isolation, atomic reservation, idempotent replay, provider finalization and immutable call history runtime paths.");
 
-// One-click Rinkel number assignment: organisation, team and individual seller.
-// Rinkel reports the seller device as a nullable scalar on the provider user and
-// has no devices endpoint, so a provider user whose device is known only from
-// that scalar must still become dialable without any device inventory row.
-await db.exec(`
-  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000014',false);
-  select set_config('request.jwt.claim.role','authenticated',false);
-  insert into auth.users(id,email) values('00000000-0000-0000-0000-000000000078','oneclick.seller@example.com');
-  insert into public.tenant_memberships(tenant_id,user_id,role,status,joined_at,primary_team_id)
-    values('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000078','sales','active',now(),'00000000-0000-0000-0000-000000000076');
-  update public.profiles set full_name='One Click Seller',
-    active_tenant_id='00000000-0000-0000-0000-000000000051'
-    where id='00000000-0000-0000-0000-000000000078';
-  insert into public.team_members(tenant_id,team_id,user_id,role,is_primary)
-    values('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000076','00000000-0000-0000-0000-000000000078','member',true);
-  insert into public.platform_rinkel_users(
-    id,platform_integration_id,external_user_id,external_device_id,display_name,email
-  ) select '00000000-0000-0000-0000-000000000077',id,'platform-user-scalar','device-scalar','Platform User Scalar','scalar.user@provider.example'
-    from public.platform_integrations where provider='rinkel' and disabled_at is null;
-  insert into public.platform_rinkel_numbers(
-    id,platform_integration_id,external_number_id,phone_number_e164,display_name
-  ) select '00000000-0000-0000-0000-000000000079',id,'platform-number-c','+46833333333','Platform Number C'
-    from public.platform_integrations where provider='rinkel' and disabled_at is null;
-  update public.telephony_policies set telephony_enabled=false
-    where tenant_id='00000000-0000-0000-0000-000000000051';
-`);
-const scalarDevice = await db.query(`select provider_device_id,device_row_id
-  from public.rinkel_effective_provider_device('00000000-0000-0000-0000-000000000077',null)`);
-if (scalarDevice.rows[0]?.provider_device_id !== "device-scalar" || scalarDevice.rows[0]?.device_row_id !== null) {
-  throw new Error(`Scalar provider device was not resolved: ${JSON.stringify(scalarDevice.rows)}`);
-}
-const sellerAssignment = await db.query(`select public.assign_platform_rinkel_number(
-  '00000000-0000-0000-0000-000000000079','user','00000000-0000-0000-0000-000000000051',
-  null,array['00000000-0000-0000-0000-000000000078']::uuid[],
-  '00000000-0000-0000-0000-000000000077',true,'one click seller assignment'
-) as report`);
-const sellerReport = sellerAssignment.rows[0].report;
-if (
-  sellerReport.linked_seller_count !== 1
-  || sellerReport.dial_ready_seller_count !== 1
-  || sellerReport.unresolved_seller_count !== 0
-  || sellerReport.telephony_activated_tenant_count !== 1
-) {
-  throw new Error(`One-click seller assignment did not activate the seller: ${JSON.stringify(sellerReport)}`);
-}
-const sellerGrant = await db.query(`select count(*)::int as count
-  from public.rinkel_number_grants grant_row
-  join public.rinkel_number_allocations allocation on allocation.id=grant_row.number_allocation_id
-  where grant_row.tenant_id='00000000-0000-0000-0000-000000000051'
-    and grant_row.user_id='00000000-0000-0000-0000-000000000078'
-    and grant_row.team_id is null
-    and grant_row.active and grant_row.is_default and grant_row.access_level='dial'
-    and allocation.rinkel_number_id='00000000-0000-0000-0000-000000000079'
-    and allocation.status='active' and allocation.valid_to is null`);
-if (Number(sellerGrant.rows[0].count) !== 1) {
-  throw new Error(`One-click seller assignment did not create exactly one default dial grant: ${JSON.stringify(sellerGrant.rows)}`);
-}
-const sellerMapping = await db.query(`select selected_device_id
-  from public.rinkel_user_mappings_v2
-  where tenant_id='00000000-0000-0000-0000-000000000051'
-    and kundexa_user_id='00000000-0000-0000-0000-000000000078' and active`);
-if (sellerMapping.rows.length !== 1 || sellerMapping.rows[0].selected_device_id !== null) {
-  throw new Error(`One-click seller mapping did not defer the device: ${JSON.stringify(sellerMapping.rows)}`);
-}
-await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000078',false)`);
-const sellerReady = await db.query(`select public.telephony_status_for_current_user() as status`);
-if (!sellerReady.rows[0].status.manualReady || !sellerReady.rows[0].status.userHasDevice) {
-  throw new Error(`Seller was not dial ready after one-click assignment: ${JSON.stringify(sellerReady.rows[0].status)}`);
-}
-// Removing the provider device must produce an actionable blocker, never a silent
-// fallback to some other seller's device.
-await db.exec(`update public.platform_rinkel_users set external_device_id=null
-  where id='00000000-0000-0000-0000-000000000077'`);
-const sellerWithoutDevice = await db.query(`select public.telephony_status_for_current_user() as status`);
-if (
-  sellerWithoutDevice.rows[0].status.manualReady
-  || sellerWithoutDevice.rows[0].status.userHasDevice
-  || !sellerWithoutDevice.rows[0].status.blockers.some((blocker) => blocker.code === "PROVIDER_DEVICE_MISSING")
-) {
-  throw new Error(`Missing provider device was not reported: ${JSON.stringify(sellerWithoutDevice.rows[0].status)}`);
-}
-await db.exec(`
-  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000014',false);
-  update public.platform_rinkel_users set external_device_id='device-scalar'
-    where id='00000000-0000-0000-0000-000000000077';
-`);
-// Re-running the same assignment is idempotent, and widening it to the whole
-// organisation adds the tenant-wide grant without duplicating the seller link.
-const repeatedAssignment = await db.query(`select public.assign_platform_rinkel_number(
-  '00000000-0000-0000-0000-000000000079','user','00000000-0000-0000-0000-000000000051',
-  null,array['00000000-0000-0000-0000-000000000078']::uuid[],
-  '00000000-0000-0000-0000-000000000077',true,'repeat'
-) as report`);
-if (
-  repeatedAssignment.rows[0].report.linked_seller_count !== 0
-  || repeatedAssignment.rows[0].report.already_linked_seller_count !== 1
-) {
-  throw new Error(`Repeated assignment was not idempotent: ${JSON.stringify(repeatedAssignment.rows[0].report)}`);
-}
-const tenantAssignment = await db.query(`select public.assign_platform_rinkel_number(
-  '00000000-0000-0000-0000-000000000079','tenant','00000000-0000-0000-0000-000000000051',
-  null,null,null,true,'one click organisation assignment'
-) as report`);
-if (tenantAssignment.rows[0].report.seller_count < 2) {
-  throw new Error(`Organisation assignment did not reach every active member: ${JSON.stringify(tenantAssignment.rows[0].report)}`);
-}
-const tenantWideGrant = await db.query(`select count(*)::int as count
-  from public.rinkel_number_grants grant_row
-  join public.rinkel_number_allocations allocation on allocation.id=grant_row.number_allocation_id
-  where grant_row.tenant_id='00000000-0000-0000-0000-000000000051'
-    and grant_row.team_id is null and grant_row.user_id is null
-    and grant_row.active and grant_row.is_default
-    and allocation.rinkel_number_id='00000000-0000-0000-0000-000000000079'`);
-if (Number(tenantWideGrant.rows[0].count) !== 1) {
-  throw new Error(`Organisation assignment did not create one tenant-wide default grant: ${JSON.stringify(tenantWideGrant.rows)}`);
-}
-const tenantDefault = await db.query(`select default_number_allocation_id is not null as set
-  from public.telephony_policies where tenant_id='00000000-0000-0000-0000-000000000051'`);
-if (!tenantDefault.rows[0].set) {
-  throw new Error("Organisation assignment did not set the tenant default caller id.");
-}
-const teamAssignment = await db.query(`select public.assign_platform_rinkel_number_to_teams(
-  '00000000-0000-0000-0000-000000000079',
-  array['00000000-0000-0000-0000-000000000076']::uuid[],
-  'one click team assignment'
-) as report`);
-if (teamAssignment.rows[0].report.scope !== "team" || teamAssignment.rows[0].report.tenant_count !== 1) {
-  throw new Error(`Team assignment did not delegate to the shared path: ${JSON.stringify(teamAssignment.rows[0].report)}`);
-}
-const teamAllocation = await db.query(`select count(*)::int as count
-  from public.teams team
-  join public.rinkel_number_allocations allocation on allocation.id=team.rinkel_number_allocation_id
-  where team.id='00000000-0000-0000-0000-000000000076'
-    and allocation.rinkel_number_id='00000000-0000-0000-0000-000000000079'`);
-if (Number(teamAllocation.rows[0].count) !== 1) {
-  throw new Error(`Team assignment did not set the team caller id: ${JSON.stringify(teamAllocation.rows)}`);
-}
-let rejectedNonPlatformAssignment = false;
-await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000078',false)`);
-try {
-  await db.query(`select public.assign_platform_rinkel_number(
-    '00000000-0000-0000-0000-000000000079','tenant','00000000-0000-0000-0000-000000000051',
-    null,null,null,true,'escalation attempt'
-  )`);
-} catch (error) {
-  rejectedNonPlatformAssignment = String(error).includes("PLATFORM_ADMIN_REQUIRED");
-}
-if (!rejectedNonPlatformAssignment) {
-  throw new Error("A tenant seller was allowed to assign a central Rinkel number.");
-}
-await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
-console.log("Executed one-click Rinkel number assignment runtime paths: scalar provider device resolution, seller/organisation/team scope, idempotent re-assignment, actionable device blocker and platform authorization.");
 
 // A private individual with no legal basis AND no contact-permission row must be
 // refused. `v_permission_status` is null in that case, and before the fix the
@@ -2099,176 +1576,10 @@ await db.exec(`
 `);
 const monotonicCall = await db.query(`select status,provider_status,provider_outcome,recording_status from public.calls where id=$1`, [centralResult.callId]);
 if (monotonicCall.rows[0].status !== 'completed' || monotonicCall.rows[0].provider_status !== 'ended' || monotonicCall.rows[0].provider_outcome !== 'answered' || monotonicCall.rows[0].recording_status !== 'available_at_provider') {
-  throw new Error(`Late Rinkel start regressed terminal projection: ${JSON.stringify(monotonicCall.rows[0])}`);
+  throw new Error(`A late provider start regressed the terminal projection: ${JSON.stringify(monotonicCall.rows[0])}`);
 }
 
-const platformIntegration = await db.query(`select id from public.platform_integrations where provider='rinkel' and disabled_at is null limit 1`);
-const platformIntegrationId = String(platformIntegration.rows[0].id);
-await db.query(`
-  insert into public.platform_rinkel_webhook_events(
-    id,platform_integration_id,event_type,external_call_id,provider_event_id,payload_hash,content_type,payload,event_at
-  ) values(
-    '00000000-0000-0000-0000-000000000081',$1,'callStart','late-correlated-call','verify-rinkel-late-start',
-    'verify-hash','application/json','{"userId":"platform-user-a"}','2026-08-01T11:00:00Z'
-  )
-`, [platformIntegrationId]);
-const pendingCorrelation = await db.query(`select public.apply_rinkel_call_event('00000000-0000-0000-0000-000000000081') as result`);
-if (pendingCorrelation.rows[0].result.status !== 'pending_correlation') {
-  throw new Error(`Uncorrelated Rinkel event was not buffered: ${JSON.stringify(pendingCorrelation.rows[0])}`);
-}
-await db.exec(`
-  insert into public.calls(
-    id,tenant_id,customer_id,provider,external_call_id,direction,from_number,to_number,status,initiated_at,callback_token_hash
-  ) values(
-    '00000000-0000-0000-0000-000000000082','00000000-0000-0000-0000-000000000001',
-    '00000000-0000-0000-0000-000000000021','rinkel','late-correlated-call','outbound','+46811111111','+46702222221',
-    'ringing','2026-08-01T10:59:00Z','verify-late-correlation-token'
-  );
-`);
-const correlatedReplay = await db.query(`select public.apply_rinkel_call_event('00000000-0000-0000-0000-000000000081') as result`);
-if (correlatedReplay.rows[0].result.status !== 'processed') throw new Error(`Buffered Rinkel event did not replay: ${JSON.stringify(correlatedReplay.rows[0])}`);
-const correlatedCall = await db.query(`select status,provider_status from public.calls where id='00000000-0000-0000-0000-000000000082'`);
-if (correlatedCall.rows[0].status !== 'answered' || correlatedCall.rows[0].provider_status !== 'connected') {
-  throw new Error(`Replayed Rinkel event did not update the call: ${JSON.stringify(correlatedCall.rows[0])}`);
-}
-
-// Provider causes are an open-ended external vocabulary. Unknown but well-formed
-// values must be retained raw, projected safely, and must not block recording or
-// CDR repair.
-await db.query(`
-  insert into public.platform_rinkel_webhook_events(
-    id,platform_integration_id,event_type,external_call_id,provider_event_id,payload_hash,content_type,payload,event_at
-  ) values(
-    '00000000-0000-0000-0000-000000000095',$1,'callEnd','late-correlated-call','verify-rinkel-unknown-end',
-    'verify-unknown-end-hash','application/json',
-    '{"cause":"PROVIDER_ADDED_CAUSE","callRecordingUrl":"https://api.rinkel.com/v1/call-recordings/rec_unknown/stream"}',
-    '2026-08-01T11:05:00Z'
-  )
-`, [platformIntegrationId]);
-const unknownCauseResult = await db.query(`select public.apply_rinkel_call_event('00000000-0000-0000-0000-000000000095') as result`);
-if (unknownCauseResult.rows[0].result.status !== 'processed') {
-  throw new Error(`Unknown Rinkel cause was not processed: ${JSON.stringify(unknownCauseResult.rows[0])}`);
-}
-const unknownCauseCall = await db.query(`
-  select status,provider_status,provider_outcome,provider_cause,recording_status
-  from public.calls where id='00000000-0000-0000-0000-000000000082'
-`);
-if (
-  unknownCauseCall.rows[0].status !== 'completed'
-  || unknownCauseCall.rows[0].provider_status !== 'ended'
-  || unknownCauseCall.rows[0].provider_outcome !== 'unknown'
-  || unknownCauseCall.rows[0].provider_cause !== 'PROVIDER_ADDED_CAUSE'
-  || unknownCauseCall.rows[0].recording_status !== 'available_at_provider'
-) throw new Error(`Unknown Rinkel cause projection failed: ${JSON.stringify(unknownCauseCall.rows[0])}`);
-const unknownRecording = await db.query(`
-  select provider_recording_id,status from public.call_recordings
-  where tenant_id='00000000-0000-0000-0000-000000000001'
-    and call_id='00000000-0000-0000-0000-000000000082' and provider='rinkel' and deleted_at is null
-`);
-if (unknownRecording.rows.length !== 1 || unknownRecording.rows[0].provider_recording_id !== 'rec_unknown' || unknownRecording.rows[0].status !== 'available_at_provider') {
-  throw new Error(`Rinkel callEnd recording projection failed: ${JSON.stringify(unknownRecording.rows)}`);
-}
-const callEndRepairJob = await db.query(`
-  select count(*)::int as count from public.platform_rinkel_jobs
-  where idempotency_key='rinkel.reconcile_call:call_end:00000000-0000-0000-0000-000000000082'
-`);
-if (Number(callEndRepairJob.rows[0].count) !== 1) throw new Error('Rinkel callEnd did not enqueue exactly one CDR repair job');
-
-// CDR is the final repair source. Reconciliation must atomically repair the
-// provider projection and the recording reference without trusting client state.
-await db.exec(`
-  insert into public.calls(
-    id,tenant_id,customer_id,provider,direction,from_number,to_number,status,provider_status,
-    provider_state_updated_at,callback_token_hash
-  ) values(
-    '00000000-0000-0000-0000-000000000096','00000000-0000-0000-0000-000000000001',
-    '00000000-0000-0000-0000-000000000021','rinkel','outbound','+46811111111','+46702222221',
-    'provider_outcome_unknown','unknown','2026-08-01T11:10:00Z','verify-cdr-repair-token'
-  );
-`);
-const cdrRepair = await db.query(`select public.reconcile_rinkel_call_from_cdr(
-  '00000000-0000-0000-0000-000000000096','cdr-repair-call',
-  '2026-08-01T11:10:00Z','2026-08-01T11:10:05Z','2026-08-01T11:12:05Z',120,
-  'ANSWERED','rec_cdr','{"source":"runtime-verifier"}'::jsonb
-) as result`);
-if (cdrRepair.rows[0].result.status !== 'reconciled') throw new Error(`CDR reconciliation failed: ${JSON.stringify(cdrRepair.rows[0])}`);
-const cdrCall = await db.query(`
-  select external_call_id,status,provider_status,provider_outcome,provider_cause,duration_seconds,recording_status
-  from public.calls where id='00000000-0000-0000-0000-000000000096'
-`);
-if (
-  cdrCall.rows[0].external_call_id !== 'cdr-repair-call'
-  || cdrCall.rows[0].status !== 'completed'
-  || cdrCall.rows[0].provider_status !== 'ended'
-  || cdrCall.rows[0].provider_outcome !== 'answered'
-  || cdrCall.rows[0].provider_cause !== 'ANSWERED'
-  || Number(cdrCall.rows[0].duration_seconds) !== 120
-  || cdrCall.rows[0].recording_status !== 'available_at_provider'
-) throw new Error(`CDR projection was incomplete: ${JSON.stringify(cdrCall.rows[0])}`);
-const cdrRecording = await db.query(`
-  select provider_recording_id,status from public.call_recordings
-  where tenant_id='00000000-0000-0000-0000-000000000001'
-    and call_id='00000000-0000-0000-0000-000000000096' and provider='rinkel' and deleted_at is null
-`);
-if (cdrRecording.rows.length !== 1 || cdrRecording.rows[0].provider_recording_id !== 'rec_cdr') {
-  throw new Error(`CDR recording repair failed: ${JSON.stringify(cdrRecording.rows)}`);
-}
-
-// The destination number determines the tenant for inbound calls. Matching may
-// inspect only that tenant and must remain unlinked when the tenant-local result
-// is ambiguous.
-await db.exec(`
-  insert into public.customers(id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by)
-  values
-    ('00000000-0000-0000-0000-000000000097','00000000-0000-0000-0000-000000000001','company','prospect','Cross-tenant same number','+46709999991',true,'legitimate_interest','00000000-0000-0000-0000-000000000002'),
-    ('00000000-0000-0000-0000-000000000098','00000000-0000-0000-0000-000000000051','company','prospect','Tenant B inbound match','+46709999991',true,'legitimate_interest','00000000-0000-0000-0000-000000000050');
-`);
-await db.query(`
-  insert into public.platform_rinkel_webhook_events(
-    id,platform_integration_id,event_type,external_call_id,provider_event_id,payload_hash,content_type,payload,event_at
-  ) values(
-    '00000000-0000-0000-0000-000000000099',$1,'incomingCall','inbound-tenant-b-unique','verify-rinkel-inbound-unique',
-    'verify-inbound-unique-hash','application/json','{"from":"+46709999991","to":"+46822222222"}',
-    '2026-08-01T11:20:00Z'
-  )
-`, [platformIntegrationId]);
-const inboundUnique = await db.query(`select public.correlate_rinkel_incoming_event(
-  '00000000-0000-0000-0000-000000000099','00000000-0000-0000-0000-000000000051',
-  '00000000-0000-0000-0000-000000000059','00000000-0000-0000-0000-000000000055',
-  '+46709999991','+46822222222'
-) as result`);
-if (inboundUnique.rows[0].result.customer_id !== '00000000-0000-0000-0000-000000000098') {
-  throw new Error(`Inbound call crossed tenant boundary or missed unique tenant match: ${JSON.stringify(inboundUnique.rows[0])}`);
-}
-const inboundUniqueCall = await db.query(`select tenant_id,customer_id,provider_status from public.calls where id=$1`, [inboundUnique.rows[0].result.call_id]);
-if (
-  inboundUniqueCall.rows[0].tenant_id !== '00000000-0000-0000-0000-000000000051'
-  || inboundUniqueCall.rows[0].customer_id !== '00000000-0000-0000-0000-000000000098'
-  || inboundUniqueCall.rows[0].provider_status !== 'initiated'
-) throw new Error(`Inbound tenant projection failed: ${JSON.stringify(inboundUniqueCall.rows[0])}`);
-
-await db.exec(`
-  insert into public.customers(id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by)
-  values('00000000-0000-0000-0000-000000000100','00000000-0000-0000-0000-000000000051','company','prospect','Tenant B ambiguous match','+46709999991',true,'legitimate_interest','00000000-0000-0000-0000-000000000050');
-`);
-await db.query(`
-  insert into public.platform_rinkel_webhook_events(
-    id,platform_integration_id,event_type,external_call_id,provider_event_id,payload_hash,content_type,payload,event_at
-  ) values(
-    '00000000-0000-0000-0000-000000000101',$1,'incomingCall','inbound-tenant-b-ambiguous','verify-rinkel-inbound-ambiguous',
-    'verify-inbound-ambiguous-hash','application/json','{"from":"+46709999991","to":"+46822222222"}',
-    '2026-08-01T11:21:00Z'
-  )
-`, [platformIntegrationId]);
-const inboundAmbiguous = await db.query(`select public.correlate_rinkel_incoming_event(
-  '00000000-0000-0000-0000-000000000101','00000000-0000-0000-0000-000000000051',
-  '00000000-0000-0000-0000-000000000059','00000000-0000-0000-0000-000000000055',
-  '+46709999991','+46822222222'
-) as result`);
-if (inboundAmbiguous.rows[0].result.customer_id !== null) {
-  throw new Error(`Ambiguous inbound call was guessed instead of left unmatched: ${JSON.stringify(inboundAmbiguous.rows[0])}`);
-}
-console.log('Executed Rinkel monotonic lifecycle, unknown cause, recording, CDR repair and tenant-safe inbound correlation runtime paths.');
+console.log('Executed the monotonic call projection: a late lower-rank event cannot regress a terminal call, whichever provider reports it.');
 
 await db.exec(`
   insert into public.email_messages(
@@ -2456,12 +1767,11 @@ if (
   throw new Error(`Finalize/activate exactly-once state invalid: ${JSON.stringify(postSign)}`);
 }
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
-console.log("Executed production hardening runtime paths: import truncation, Rinkel buffering/monotonicity, Resend reducer, generation-bound signing finalization and idempotent contract activation.");
+console.log("Executed production hardening runtime paths: import truncation, provider buffering/monotonicity, Resend reducer, generation-bound signing finalization and idempotent contract activation.");
 
 // Worker liveness, the seller dial lock and the ParseHub commit tenant context. These
-// three gates decide whether telephony and automatic import work at all, and none of them
-// had runtime coverage: the suite exercised the v1 reservation while the application calls
-// `rinkel_reserve_platform_outbound_call_v2`.
+// three gates decide whether telephony and automatic import work at all, and the dial lock
+// is the one that strands a real seller when it is wrong.
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
 
 // A worker run that completed with per-job failures is a live worker. Reporting `degraded`
@@ -2486,8 +1796,6 @@ await db.query(`delete from public.platform_worker_heartbeats where worker_key='
 // The one-active-call lock must outlast a live call and nothing more. An attempt whose
 // provider outcome never arrived may not lock the seller out of telephony for good.
 await db.exec(`
-  update public.rinkel_number_allocations set status='active',valid_to=null
-  where id='00000000-0000-0000-0000-000000000058';
   insert into public.customers(id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by)
   values('00000000-0000-0000-0000-000000000094','00000000-0000-0000-0000-000000000001','company','prospect','Dial Lock Prospect','+46706660001',true,'legitimate_interest','00000000-0000-0000-0000-000000000002')
   on conflict(id) do nothing;
@@ -2499,17 +1807,17 @@ await db.exec(`
   select set_config('request.jwt.claim.role','authenticated',false);
   select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
 `);
-const lockedReservation = await db.query(`select public.rinkel_reserve_platform_outbound_call_v2(
+const lockedReservation = await db.query(`select public.reserve_outbound_call(
   '00000000-0000-0000-0000-000000000094',null,'+46706660001',null,null,null,
-  gen_random_uuid(),'dial-lock-1','direct_marketing',null) as result`);
+  gen_random_uuid(),'dial-lock-1','direct_marketing',null,null) as result`);
 const lockedAttemptId = String(lockedReservation.rows[0].result.attemptId);
 if (!lockedAttemptId) throw new Error(`Dial lock probe could not reserve a call: ${JSON.stringify(lockedReservation.rows[0])}`);
 
 async function reserveAgain(key) {
   try {
-    const result = await db.query(`select public.rinkel_reserve_platform_outbound_call_v2(
+    const result = await db.query(`select public.reserve_outbound_call(
       '00000000-0000-0000-0000-000000000094',null,'+46706660001',null,null,null,
-      gen_random_uuid(),$1,'direct_marketing',null) as result`, [key]);
+      gen_random_uuid(),$1,'direct_marketing',null,null) as result`, [key]);
     return { reserved: true, attemptId: String(result.rows[0].result.attemptId) };
   } catch (error) {
     return { reserved: false, message: error instanceof Error ? error.message : String(error) };
@@ -2517,38 +1825,38 @@ async function reserveAgain(key) {
 }
 
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
-await db.query(`update public.rinkel_call_attempts_v2 set status='reconciliation_required',requested_at=now() where id=$1`, [lockedAttemptId]);
-const releasedNothingYet = await db.query(`select public.rinkel_release_stale_call_attempts(interval '1 hour',200) as result`);
+await db.query(`update public.dial_attempts set status='reconciliation_required',requested_at=now() where id=$1`, [lockedAttemptId]);
+const releasedNothingYet = await db.query(`select public.release_stale_dial_attempts(interval '1 hour',200) as result`);
 if (Number(releasedNothingYet.rows[0].result.released) !== 0) {
   throw new Error(`The release gave up on an attempt that is still within its bound: ${JSON.stringify(releasedNothingYet.rows[0].result)}`);
 }
 await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
 const blockedWhileRecent = await reserveAgain('dial-lock-2');
-if (blockedWhileRecent.reserved || !/active_call_already_exists|rinkel_call_attempts_v2_active_seller_uidx/.test(blockedWhileRecent.message)) {
+if (blockedWhileRecent.reserved || !/active_call_already_exists|dial_attempts_one_open_per_seller_uidx/.test(blockedWhileRecent.message)) {
   throw new Error(`A recent unresolved attempt must still hold the dial lock: ${JSON.stringify(blockedWhileRecent)}`);
 }
 
 // A call that could still be connected is never released, however old the wait.
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
-await db.query(`update public.rinkel_call_attempts_v2 set status='matched',requested_at=now()-interval '6 hours' where id=$1`, [lockedAttemptId]);
-const releasedLiveCall = await db.query(`select public.rinkel_release_stale_call_attempts(interval '1 hour',200) as result`);
-const liveCallState = await db.query(`select status from public.rinkel_call_attempts_v2 where id=$1`, [lockedAttemptId]);
+await db.query(`update public.dial_attempts set status='matched',requested_at=now()-interval '6 hours' where id=$1`, [lockedAttemptId]);
+const releasedLiveCall = await db.query(`select public.release_stale_dial_attempts(interval '1 hour',200) as result`);
+const liveCallState = await db.query(`select status from public.dial_attempts where id=$1`, [lockedAttemptId]);
 if (Number(releasedLiveCall.rows[0].result.released) !== 0 || liveCallState.rows[0].status !== 'matched') {
   throw new Error(`A connected call was released as unresolved: ${JSON.stringify(liveCallState.rows[0])}`);
 }
 
 // The provider went silent: release the attempt, keep the call unresolved.
-await db.query(`update public.rinkel_call_attempts_v2 set status='reconciliation_required',requested_at=now()-interval '2 hours' where id=$1`, [lockedAttemptId]);
-await db.query(`update public.calls set status='reconciliation_required',provider_status='unknown' where id=(select call_id from public.rinkel_call_attempts_v2 where id=$1)`, [lockedAttemptId]);
-const released = await db.query(`select public.rinkel_release_stale_call_attempts(interval '1 hour',200) as result`);
+await db.query(`update public.dial_attempts set status='reconciliation_required',requested_at=now()-interval '2 hours' where id=$1`, [lockedAttemptId]);
+await db.query(`update public.calls set status='reconciliation_required',provider_status='unknown' where id=(select call_id from public.dial_attempts where id=$1)`, [lockedAttemptId]);
+const released = await db.query(`select public.release_stale_dial_attempts(interval '1 hour',200) as result`);
 if (Number(released.rows[0].result.released) !== 1) {
   throw new Error(`The stale dial attempt was not released: ${JSON.stringify(released.rows[0].result)}`);
 }
 const releasedState = await db.query(`
   select a.status attempt_status,a.error_code,c.status call_status,c.provider_status,
     (select count(*)::int from public.call_events e where e.call_id=a.call_id and e.event_type='dial_attempt.released_unresolved') events,
-    (select count(*)::int from public.audit_logs l where l.entity_id=a.call_id::text and l.action='rinkel.dial_attempt_released') audits
-  from public.rinkel_call_attempts_v2 a join public.calls c on c.id=a.call_id where a.id=$1`, [lockedAttemptId]);
+    (select count(*)::int from public.audit_logs l where l.entity_id=a.call_id::text and l.action='telephony.dial_attempt_released') audits
+  from public.dial_attempts a join public.calls c on c.id=a.call_id where a.id=$1`, [lockedAttemptId]);
 const releasedRow = releasedState.rows[0];
 if (releasedRow.attempt_status !== 'failed' || releasedRow.error_code !== 'PROVIDER_OUTCOME_NEVER_REPORTED') {
   throw new Error(`The released attempt was not terminalized with its true reason: ${JSON.stringify(releasedRow)}`);
@@ -2565,7 +1873,7 @@ if (!releasedAfterBound.reserved) {
   throw new Error(`An attempt with no provider outcome locked the seller out permanently: ${JSON.stringify(releasedAfterBound)}`);
 }
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
-await db.query(`update public.rinkel_call_attempts_v2 set status='failed' where tenant_id='00000000-0000-0000-0000-000000000001' and seller_user_id='00000000-0000-0000-0000-000000000002' and status<>'failed'`);
+await db.query(`update public.dial_attempts set status='failed' where tenant_id='00000000-0000-0000-0000-000000000001' and seller_user_id='00000000-0000-0000-0000-000000000002' and status<>'failed'`);
 // A connected call that ENDS must free the seller immediately, without waiting
 // for any sweeper. This is the defect that stranded a real seller for three
 // days: the call ended `unanswered` on 2026-09-11 and its attempt stayed
@@ -2578,14 +1886,14 @@ if (!endToEndLock.reserved) {
 }
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
 const liveAttempt = await db.query(`
-  select id, call_id from public.rinkel_call_attempts_v2
+  select id, call_id from public.dial_attempts
   where tenant_id='00000000-0000-0000-0000-000000000001'
     and seller_user_id='00000000-0000-0000-0000-000000000002'
     and status <> 'failed'
   order by requested_at desc limit 1`);
-await db.query(`update public.rinkel_call_attempts_v2 set status='matched' where id=$1`, [liveAttempt.rows[0].id]);
+await db.query(`update public.dial_attempts set status='matched' where id=$1`, [liveAttempt.rows[0].id]);
 await db.query(`update public.calls set status='unanswered' where id=$1`, [liveAttempt.rows[0].call_id]);
-const attemptAfterCallEnded = await db.query(`select status from public.rinkel_call_attempts_v2 where id=$1`, [liveAttempt.rows[0].id]);
+const attemptAfterCallEnded = await db.query(`select status from public.dial_attempts where id=$1`, [liveAttempt.rows[0].id]);
 if (attemptAfterCallEnded.rows[0].status !== 'completed') {
   throw new Error(`A finished call left its dial attempt active, which bricks the seller: ${JSON.stringify(attemptAfterCallEnded.rows[0])}`);
 }
@@ -2595,7 +1903,7 @@ if (!freedAfterCallEnded.reserved) {
   throw new Error(`The seller was still blocked after their call ended: ${freedAfterCallEnded.message}`);
 }
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
-await db.query(`update public.rinkel_call_attempts_v2 set status='failed' where tenant_id='00000000-0000-0000-0000-000000000001' and seller_user_id='00000000-0000-0000-0000-000000000002' and status<>'failed'`);
+await db.query(`update public.dial_attempts set status='failed' where tenant_id='00000000-0000-0000-0000-000000000001' and seller_user_id='00000000-0000-0000-0000-000000000002' and status<>'failed'`);
 console.log("A call that ends releases its seller immediately; a connected call is never released.");
 
 
@@ -2692,11 +2000,13 @@ if (!crossTenantWriteRefused) {
 }
 console.log("Verified tenant-scoped reference integrity: every tenant-to-tenant foreign key is composite and a cross-tenant reference is refused.");
 
-// The caller-ID selection that replaces Rinkel's number model is the same boundary, on a
+// The caller-ID selection that replaced the provider's number model is the same boundary, on a
 // column a seller can reach through the UI: the number shown when calling from a team,
 // campaign or list. A team must not be able to borrow another tenant's number as its
 // caller ID, so prove the composite key refuses it rather than trusting the catalog shape.
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+// callerIdTenantIsolation: ett företags nummer får aldrig lånas av ett annat.
+let callerIdTenantIsolation = false;
 let foreignCallerIdRefused = false;
 try {
   await db.query(`
@@ -2709,6 +2019,7 @@ try {
 if (!foreignCallerIdRefused) {
   throw new Error("A team accepted another tenant's phone number as its caller ID.");
 }
+callerIdTenantIsolation = true;
 
 // And the same write inside one tenant has to succeed, or the probe above would pass for
 // the wrong reason -- a column nothing can ever be written to refuses everything.
@@ -2721,6 +2032,9 @@ if (ownCallerId.rows[0].caller_id_phone_number_id !== '00000000-0000-0000-0000-0
   throw new Error("A team could not take its own tenant's phone number as its caller ID.");
 }
 await db.exec(`update public.teams set caller_id_phone_number_id=null where id='00000000-0000-0000-0000-000000000026'`);
+if (!callerIdTenantIsolation) {
+  throw new Error("The caller-ID tenant boundary was never exercised.");
+}
 console.log("Verified caller-ID selection: a team takes its own tenant's number and is refused another tenant's.");
 
 // Calling hours are a system default, not something set per tenant by hand. A new
@@ -2860,10 +2174,17 @@ await db.exec(`
     perform set_config('request.jwt.claim.role','authenticated',true);
     set local role authenticated;
 
+    -- Säljaren ser sina egna försök och bara sina egna. Antalet jämförs mot den
+    -- egna raden och inte mot ett fast tal: tidigare block i sviten ringer också,
+    -- och ett fast tal hade gjort provet till en räkneövning som går sönder varje
+    -- gång ett annat prov läggs till.
     perform set_config('request.jwt.claim.sub','${neutralSeller}',true);
     select count(*) into v_own from public.dial_attempts;
     if v_own <> 2 then
       raise exception 'A seller saw % of their own dial attempts instead of 2', v_own;
+    end if;
+    if exists(select 1 from public.dial_attempts where seller_user_id <> '${neutralSeller}') then
+      raise exception 'A seller could read another seller''s dial attempts';
     end if;
 
     perform set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000050',true);
@@ -2872,10 +2193,16 @@ await db.exec(`
       raise exception 'Someone outside the tenant read % dial attempts', v_stranger;
     end if;
 
+    -- Administratören ser hela företagets försök, inklusive säljarens två, och
+    -- ingenting utanför företaget.
     perform set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',true);
-    select count(*) into v_admin from public.dial_attempts;
+    select count(*) into v_admin from public.dial_attempts
+      where seller_user_id = '${neutralSeller}';
     if v_admin <> 2 then
-      raise exception 'A tenant admin saw % dial attempts instead of 2', v_admin;
+      raise exception 'A tenant admin saw % of the seller''s dial attempts instead of 2', v_admin;
+    end if;
+    if exists(select 1 from public.dial_attempts where tenant_id <> '00000000-0000-0000-0000-000000000001') then
+      raise exception 'A tenant admin could read another tenant''s dial attempts';
     end if;
   end $dialattempts$;
 `);
@@ -3188,36 +2515,10 @@ if (smsState.stored_code !== '[verified]') {
 }
 console.log("Executed SMS signing: the code from the message is required, a wrong or missing code is refused, a lower-case reply of the right code signs, and the code itself is never stored.");
 
-// And the dial itself, end to end on the v2 path the application calls: reserve, report the
-// provider accepted it, then close the call with after-work.
-await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${JOWNER}',false);`);
-const journeyDial = await db.query(`select public.rinkel_reserve_platform_outbound_call_v2(
-  '${JCUSTOMER}',null,'+46705550001',null,null,null,gen_random_uuid(),'journey-dial-1','direct_marketing',null) as result`);
-const dial = journeyDial.rows[0].result;
-if (!dial.callId || !dial.deviceId || !dial.numberId || dial.to !== '+46705550001') {
-  throw new Error(`The dial reservation did not return a complete provider contract: ${JSON.stringify(dial)}`);
-}
-await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
-await db.query(`select public.rinkel_finalize_platform_dial($1,$2,'accepted',null,null)`, [dial.callId, dial.attemptId]);
-await db.query(`update public.calls set status='completed',answered_at=now()-interval '2 minutes',ended_at=now(),duration_seconds=120 where id=$1`, [dial.callId]);
-await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${JOWNER}',false);`);
-const afterWork = await db.query(`select public.complete_manual_call_work_v2($1::uuid,'interested','Journey efterarbete',null,null) as result`, [dial.callId]);
-const dialledCall = await db.query(`
-  select c.status,c.disposition,c.after_call_completed_at is not null as after_work,c.from_number,c.to_number,
-    (select count(*)::int from public.notes n where n.call_id=c.id) notes
-  from public.calls c where c.id=$1`, [dial.callId]);
-const dialledState = dialledCall.rows[0];
-if (afterWork.rows[0].result.completed !== true || dialledState.disposition !== 'interested'
-  || !dialledState.after_work || Number(dialledState.notes) !== 1) {
-  throw new Error(`After-work did not close the call: ${JSON.stringify(dialledState)}`);
-}
-await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
-console.log("Executed the seller dial: reservation with caller ID and device, provider acceptance, and after-work closing the call with its disposition and note.");
-
-// The same journey on the provider-neutral path. This is the reservation the
-// dialler will actually use, so it is exercised end to end rather than trusted
-// because the old one works: the business rules were carried over by hand and a
-// rule that was dropped in the copying would be invisible otherwise.
+// Och uppringningen själv, hela vägen: reservera, rapportera att leverantören
+// tog emot anropet, avsluta samtalet med efterarbete. Reservationen bär hela
+// behörighets- och efterlevnadskedjan, så den prövas i drift och inte bara i
+// källkoden.
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
 await db.exec(`
   update public.telephony_policies
@@ -3346,16 +2647,18 @@ await db.exec(`
   values('${BLOCKCUSTOMER}','${JT}','company','prospect','Spärrkund AB','+46705550077',true,'legitimate_interest','${JOWNER}')
   on conflict(id) do nothing;
 `);
-// The journey dial above left its attempt in `awaiting_provider_event`, which is
+// The journey dial above left its attempt in a seat-holding status, which is
 // exactly the state that blocks the seller's next call. Close it first — this
 // block is about the disposition, not about the seat lock.
-await db.query(`update public.rinkel_call_attempts_v2 set status='completed' where call_id=$1`, [dial.callId]);
+await db.query(`update public.dial_attempts set status='completed' where call_id=$1`, [neutralReserved.callId]);
 await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${JOWNER}',false);`);
-const blockDial = await db.query(`select public.rinkel_reserve_platform_outbound_call_v2(
-  '${BLOCKCUSTOMER}',null,'+46705550077',null,null,null,gen_random_uuid(),'journey-block-1','direct_marketing',null) as result`);
+const blockDial = await db.query(`select public.reserve_outbound_call(
+  '${BLOCKCUSTOMER}',null,'+46705550077',null,null,null,gen_random_uuid(),'journey-block-1','direct_marketing',null,null) as result`);
 const blockCall = blockDial.rows[0].result;
+// Utfallet skrivs av den inloggade säljaren, inte av en tjänsteroll: det är
+// webbläsaren som rapporterar vad leverantörens klient svarade.
+await db.query(`select public.finalize_dial($1,$2,'accepted',null,null,null)`, [blockCall.callId, blockCall.attemptId]);
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
-await db.query(`select public.rinkel_finalize_platform_dial($1,$2,'accepted',null,null)`, [blockCall.callId, blockCall.attemptId]);
 await db.query(`update public.calls set status='completed',answered_at=now()-interval '1 minute',ended_at=now(),duration_seconds=60 where id=$1`, [blockCall.callId]);
 await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${JOWNER}',false);`);
 
@@ -3388,8 +2691,8 @@ if (afterBlock.rows[0].do_not_call !== true || Number(afterBlock.rows[0].blocks)
 // And the block has to bite: the next reservation for the same customer is refused.
 let blockedCustomerRefused = false;
 try {
-  await db.query(`select public.rinkel_reserve_platform_outbound_call_v2(
-    '${BLOCKCUSTOMER}',null,'+46705550077',null,null,null,gen_random_uuid(),'journey-block-2','direct_marketing',null)`);
+  await db.query(`select public.reserve_outbound_call(
+    '${BLOCKCUSTOMER}',null,'+46705550077',null,null,null,gen_random_uuid(),'journey-block-2','direct_marketing',null,null)`);
 } catch (error) {
   blockedCustomerRefused = /CUSTOMER_DO_NOT_CALL|CUSTOMER_CHANNEL_BLOCK|COMPLIANCE_BLOCK|exact_call_policy_denied/i
     .test(error instanceof Error ? error.message : String(error));
@@ -3447,10 +2750,10 @@ const firstAutoCall = await db.query(
 );
 const firstAutoCallId = String(firstAutoCall.rows[0].id);
 
-// Nobody picked up. This is the status the Rinkel projection writes for UNANSWERED, and the
+// Nobody picked up. This is the status the provider projection writes for UNANSWERED, and the
 // dialer records it without asking the seller.
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
-await db.query(`update public.calls set provider='rinkel',status='unanswered',ended_at=now() where id=$1`, [firstAutoCallId]);
+await db.query(`update public.calls set provider='sinch',status='unanswered',ended_at=now() where id=$1`, [firstAutoCallId]);
 await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
 await db.query(`select public.complete_dialer_work_v2($1::uuid,'no_answer',null,null,null,false,null,null,null,'auto-loop-after-1')`, [firstAutoCallId]);
 
@@ -3486,7 +2789,7 @@ const secondAutoCall = await db.query(
 );
 const secondAutoCallId = String(secondAutoCall.rows[0].id);
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
-await db.query(`update public.calls set provider='rinkel',status='completed',answered_at=now()-interval '1 minute',ended_at=now(),duration_seconds=60 where id=$1`, [secondAutoCallId]);
+await db.query(`update public.calls set provider='sinch',status='completed',answered_at=now()-interval '1 minute',ended_at=now(),duration_seconds=60 where id=$1`, [secondAutoCallId]);
 await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
 await db.query(`select public.complete_dialer_work_v2($1::uuid,'not_interested',null,null,null,false,null,null,null,'auto-loop-after-2')`, [secondAutoCallId]);
 const answeredMember = await db.query(`select state,outcome,completed_at from public.customer_list_members where id=$1`, [secondAutoClaim.memberId]);
@@ -3495,7 +2798,7 @@ if (answered.state !== 'completed' || answered.outcome !== 'not_interested' || !
   throw new Error(`A terminal outcome on an answered call did not close the prospect: ${JSON.stringify(answered)}`);
 }
 
-// Voicemail and a provider refusal are the other outcomes Rinkel reports and the seller must
+// Voicemail and a provider refusal are the other outcomes the provider reports and the seller must
 // still be able to file. They were unreachable for the same reason `unanswered` was.
 const otherTerminalOutcomes = [
   { status: 'voicemail', disposition: 'voicemail', note: null, phone: '+46707770003', suffix: 'vm' },
@@ -3519,7 +2822,7 @@ for (const outcome of otherTerminalOutcomes) {
   );
   const probeCallId = String(probeCall.rows[0].id);
   await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
-  await db.query(`update public.calls set provider='rinkel',status=$2,ended_at=now() where id=$1`, [probeCallId, outcome.status]);
+  await db.query(`update public.calls set provider='sinch',status=$2,ended_at=now() where id=$1`, [probeCallId, outcome.status]);
   await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
   try {
     await db.query(`select public.complete_dialer_work_v2($1::uuid,$2,$3,null,null,false,null,null,null,$4)`,

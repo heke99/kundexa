@@ -8,7 +8,6 @@ export type EndCallResult = {
   attemptReleased: boolean;
   callClosed: boolean;
   answeredWhenEnded: boolean;
-  providerHangupSupported: boolean;
   callStatus: string;
   message: string;
 };
