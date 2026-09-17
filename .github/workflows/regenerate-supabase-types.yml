@@ -1,0 +1,99 @@
+# Regenerate the Supabase types from the linked project, on a branch, on demand.
+#
+# The type file is generated from the live schema and must never be hand-edited,
+# so every migration leaves the branch red until it is regenerated. That needs a
+# Supabase access token, which is a repository secret and deliberately not
+# available to a development environment. This workflow closes that gap: it runs
+# where the secret already lives.
+#
+# It verifies after committing rather than leaving it to the pull request check.
+# A push made with GITHUB_TOKEN does not trigger workflows, so the pull request's
+# own verify run would not fire for this commit and the branch would look
+# unverified when it is not.
+
+name: regenerate-supabase-types
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: The branch to regenerate types on (never main)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: regenerate-types-${{ inputs.branch }}
+  cancel-in-progress: false
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Refuse main
+        if: inputs.branch == 'main'
+        run: |
+          echo "::error title=Refusing to regenerate on main::Generated types must land on a branch and go through review, not straight onto main."
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Fail loudly rather than regenerating nothing and reporting success. A
+      # silently skipped regeneration would leave the branch red with no reason
+      # given, which is the failure this workflow exists to prevent.
+      - name: Require Supabase credentials
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ] || [ -z "$SUPABASE_PROJECT_REF" ]; then
+            echo "::error title=Types were not regenerated::SUPABASE_ACCESS_TOKEN and SUPABASE_PROJECT_REF are not set, so the schema could not be read."
+            exit 1
+          fi
+
+      - name: Regenerate types
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: npm run types:generate
+
+      - name: Commit if the schema moved
+        id: commit
+        run: |
+          if git diff --quiet -- src/lib/supabase/database.types.ts; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "The generated types already matched the project schema."
+            exit 0
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/supabase/database.types.ts
+          git commit -m "Regenerate Supabase types from the project schema"
+          git push origin "HEAD:${{ inputs.branch }}"
+
+      # The push above cannot trigger the pull request's verify run, so prove the
+      # branch is green here instead of implying it.
+      - name: Verify the branch
+        run: npm run verify
