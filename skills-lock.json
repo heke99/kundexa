@@ -163,6 +163,168 @@
       "skillPath": "skills/.curated/security-threat-model/SKILL.md",
       "computedHash": "b3ad2dc0b2eee1f189680fdb8cf3b17853f12ab3403d389393f4237ebc6f9821"
     },
+    "sinch-10dlc": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-10dlc/SKILL.md",
+      "computedHash": "d6c4c55178ed57f98da02545ca2f8ddd18ff663aa9e8e23c5c2c5c03d6b56f2b"
+    },
+    "sinch-authentication": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-authentication/SKILL.md",
+      "computedHash": "eacd0e11d9f64336f86811eb2933d4f11e41db9ba958a63d4e2f457b19f59f00"
+    },
+    "sinch-cli": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-cli/SKILL.md",
+      "computedHash": "68f2421be9aff90599b0f78e03d1262e5b9540f640663e6afa6acab722849630"
+    },
+    "sinch-conversation-api": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-conversation-api/SKILL.md",
+      "computedHash": "e17b3b83f5783895c0bca7cf0031c9eceef4fd19c12aa2d4967f5055a018d646"
+    },
+    "sinch-elastic-sip-trunking": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-elastic-sip-trunking/SKILL.md",
+      "computedHash": "850aef5145ee00ac4580ff1bad79afb2dac00f62e3c33da05f56acb5fdecdbe8"
+    },
+    "sinch-fax-api": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-fax-api/SKILL.md",
+      "computedHash": "d58d38ebb8fab659f8dd8b1ca9d1ec1015f24286bec9784f2ec3e3d0204077c6"
+    },
+    "sinch-functions": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-functions/SKILL.md",
+      "computedHash": "9351a3f5aa8b97bd3f5fa89fb9fceb601f2a54dd2ed34f8f0f57aaf32e23296a"
+    },
+    "sinch-functions-dotnet": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-functions-dotnet/SKILL.md",
+      "computedHash": "7a906a846243d3458a1aec36a5504cd64cf2d4353f44ee932528c5e98f4d64a0"
+    },
+    "sinch-functions-node": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-functions-node/SKILL.md",
+      "computedHash": "48e31daef935aa85979dfe4a2851afa0a43b4ba05f95d0142cc9907fc7fab840"
+    },
+    "sinch-imported-numbers-hosting-orders": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-imported-numbers-hosting-orders/SKILL.md",
+      "computedHash": "af3652791bceaf7e91efd9c10c92e55c610244d164c6fe1bf4279eef51f82e29"
+    },
+    "sinch-in-app-calling": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-in-app-calling/SKILL.md",
+      "computedHash": "6ca3b3f03050eea86b61322a883b1d25649383939b94109a4f9e33bb68255cf4"
+    },
+    "sinch-mailgun": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-mailgun/SKILL.md",
+      "computedHash": "495369eea0f0fa99f532b9b53f2ff0c560de3782e54e5cf59a510a72f4df7093"
+    },
+    "sinch-mailgun-inspect": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-mailgun-inspect/SKILL.md",
+      "computedHash": "66e9d670ca5c12f410eb5644c933675389fdaef7375c7d8ebe6c81f3c642dfbb"
+    },
+    "sinch-mailgun-optimize": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-mailgun-optimize/SKILL.md",
+      "computedHash": "729cfbabf44753e6da00c622562dd0c4830b7ac6a2378f7f5b231849fd91aa41"
+    },
+    "sinch-mailgun-validate": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-mailgun-validate/SKILL.md",
+      "computedHash": "69dfe42ce1bbb5d21ae99f0b00d2b50a7455b3fdc77ccc9cfd0bdc83613825a7"
+    },
+    "sinch-mms": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-mms/SKILL.md",
+      "computedHash": "c27a91c2395aef61f542a7f84a1f3923cbb833e7578c2f210234e2c92bd4258a"
+    },
+    "sinch-number-lookup-api": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-number-lookup-api/SKILL.md",
+      "computedHash": "3a0c67e3702bb194c3333ab142bce7a5dfa1de402ba68cb28b6c5b7be53b9096"
+    },
+    "sinch-number-order-api": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-number-order-api/SKILL.md",
+      "computedHash": "888d47b4d5cb1ee73cae6a581aad10b0afb2d32aab6811e62ec6079df6568d8f"
+    },
+    "sinch-numbers-api": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-numbers-api/SKILL.md",
+      "computedHash": "7296012a2fcfd6b1dcce7091867725f0e1179ac2b7d10db774d26d9f6d3351a7"
+    },
+    "sinch-porting-api": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-porting-api/SKILL.md",
+      "computedHash": "20b67e46c62d4614bea7771386f3686c26a06f8a4bde1fbc34c63460a02c275a"
+    },
+    "sinch-provisioning-api": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-provisioning-api/SKILL.md",
+      "computedHash": "fd0d32e6f1ba634038d49f2eb83b4fbdcc08cfafba4c7829e0f5ee9a51ab635f"
+    },
+    "sinch-rcs": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-rcs/SKILL.md",
+      "computedHash": "1a6c405f5020adeac2ff404d72eae88ee17811ca492d885dc3e9b187cb05ed2c"
+    },
+    "sinch-sdks": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-sdks/SKILL.md",
+      "computedHash": "43e8254f4107dc27b07be3448ee6972f6ea1f4a20a4fa35033a6737faffd96eb"
+    },
+    "sinch-sms": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-sms/SKILL.md",
+      "computedHash": "05cf89a3d3de366c57b994bc334c09cf2d51e16904c204a33ad2deb579f56dfa"
+    },
+    "sinch-verification-api": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-verification-api/SKILL.md",
+      "computedHash": "73b34931a435409f90f38cac2bc8a5983a4978ba0057f03a957da20583b9f83a"
+    },
+    "sinch-voice-api": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-voice-api/SKILL.md",
+      "computedHash": "1e733a686229a118512b215b8e7e64deb0a6f7afe20bf6ec9f41fbd0897e37aa"
+    },
+    "sinch-whatsapp": {
+      "source": "sinch/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sinch-whatsapp/SKILL.md",
+      "computedHash": "f318658803bf515422df43d990af14b7b05eb9095865782148deec2ee2db30de"
+    },
     "skill-scanner": {
       "source": "getsentry/skills",
       "sourceType": "github",
