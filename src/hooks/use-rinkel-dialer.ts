@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useSinchWebphone } from "./use-sinch-webphone";
 
 export type DialPath = {
   mapped?: boolean;
@@ -116,6 +117,8 @@ function telephonyStatusMessage(data: StatusResponse) {
 }
 
 export function useRinkelDialer() {
+  const webphone = useSinchWebphone();
+  const { start: startWebphone } = webphone;
   const [registered, setRegistered] = useState(false);
   const [automaticReady, setAutomaticReady] = useState(false);
   const [calling, setCalling] = useState(false);
@@ -146,13 +149,22 @@ export function useRinkelDialer() {
     };
   }, []);
 
+  // Webbtelefonen registrerar sig när dialern öppnas, inte vid första trycket
+  // på ringknappen. Registreringen tar ett par sekunder, och att göra den när
+  // säljaren redan har ett nummer framför sig hade lagt den väntan mitt i
+  // arbetet -- och gett ett "webbtelefonen är inte klar" på det första samtalet
+  // varje gång sidan laddats om.
+  useEffect(() => {
+    void startWebphone();
+  }, [startWebphone]);
+
   const startCall = useCallback(async (payload: Record<string, unknown>) => {
     setCalling(true);
-    setStatus("Initierar samtalet på din telefonienhet…");
+    setStatus("Kopplar upp samtalet i webbtelefonen…");
     const body = {
       ...payload,
       clientRequestId: payload.clientRequestId ?? crypto.randomUUID(),
-      idempotencyKey: payload.idempotencyKey ?? `rinkel.call:${crypto.randomUUID()}`,
+      idempotencyKey: payload.idempotencyKey ?? `call:${crypto.randomUUID()}`,
     };
     let response: Response;
     try {
@@ -177,6 +189,8 @@ export function useRinkelDialer() {
       providerStatus?: string;
       callActive?: boolean;
       idempotentReplay?: boolean;
+      attemptId?: string;
+      to?: string;
       correlationId?: string;
     };
     try {
@@ -207,12 +221,41 @@ export function useRinkelDialer() {
       setStatus(data.message ?? "Det tidigare samtalsförsöket är avslutat");
       throw new Error(data.message ?? "call_attempt_not_active");
     }
+    if (uncertain) {
+      setCalling(true);
+      setStatus("Samtalsresultatet är oklart – inväntar säker avstämning");
+      return data.callId;
+    }
+    if (data.idempotentReplay) {
+      // Reservationen återanvändes, så samtalet är redan uppkopplat. Att ringa
+      // en gång till hade gett mottagaren två samtal för ett tryck.
+      setCalling(true);
+      setStatus(publicTelephonyMessage(data.message ?? "Det befintliga samtalet fortsätter"));
+      return data.callId;
+    }
+
+    // Servern har reserverat platsen och samtalsraden. Uppkopplingen sker här,
+    // i webbläsaren. Misslyckas den är raden redan skriven, så felet går att
+    // följa -- till skillnad från förr, när ett samtal kunde försvinna mellan
+    // leverantören och oss.
+    if (!data.attemptId || !data.to) {
+      setCalling(false);
+      throw new Error("reservation_contract_invalid");
+    }
+    try {
+      await webphone.placeCall({ callId: data.callId, attemptId: data.attemptId, to: data.to });
+    } catch (error) {
+      setCalling(false);
+      const message = error instanceof Error && error.message === "webphone_not_ready"
+        ? "Webbtelefonen är inte klar ännu. Vänta någon sekund och försök igen."
+        : "Samtalet kunde inte kopplas upp i webbtelefonen.";
+      setStatus(message);
+      throw new Error(message);
+    }
     setCalling(true);
-    setStatus(uncertain
-      ? "Samtalsresultatet är oklart – inväntar säker avstämning"
-      : publicTelephonyMessage(data.message ?? "Telefonitjänsten ringer din valda enhet"));
+    setStatus("Webbtelefonen ringer upp");
     return data.callId;
-  }, []);
+  }, [webphone]);
 
   const markEnded = useCallback(() => {
     setCalling(false);
@@ -244,5 +287,9 @@ export function useRinkelDialer() {
     }
   }, []);
 
-  return { registered, automaticReady, calling, ending, dialPath, status, startCall, markEnded, endCall };
+  return {
+    registered, automaticReady, calling, ending, dialPath, status,
+    startCall, markEnded, endCall,
+    webphone: webphone.state, startWebphone: webphone.start, hangupWebphone: webphone.hangup,
+  };
 }
