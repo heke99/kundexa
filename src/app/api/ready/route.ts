@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { expectedWebhookUrl, isUsablePublicAppUrl, publicEnv } from "@/lib/env";
+import { expectedWebhookUrl, isUsablePublicAppUrl, publicEnv, serverEnv } from "@/lib/env";
 import { telephonyConfigured } from "@/lib/telephony/webphone";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +21,18 @@ type DeliveryChecks = {
    * ingenting jämförde dem.
    */
   linkHostAligned: boolean | null;
+  /**
+   * IP-spärren framför SMS-webhookarna, och om den nuvarande leverantören alls
+   * har några nät registrerade.
+   *
+   * `is_provider_ip_allowed` frågar per leverantör och nekar när inget nät
+   * matchar. En spärr som slås på innan leverantörens nät är inlagda avvisar
+   * därför varje leveransrapport och varje inkommande SMS med 403 -- inklusive
+   * kundens "JA" på ett avtal. Det syns inte någonstans förrän någon läser en
+   * loggrad, så det står här i stället.
+   */
+  smsIpAllowlistEnforced: boolean;
+  smsIpAllowlistNetworks: number | null;
   reportedAt: string | null;
 };
 
@@ -30,6 +42,8 @@ const UNREPORTED: DeliveryChecks = {
   platformSmsConfigured: null,
   platformEmailConfigured: null,
   linkHostAligned: null,
+  smsIpAllowlistEnforced: false,
+  smsIpAllowlistNetworks: null,
   reportedAt: null,
 };
 
@@ -47,6 +61,8 @@ function readDelivery(metadata: unknown, appBaseUrl: string | null): DeliveryChe
     // Utan en av de två adresserna finns inget att jämföra, och `false` vore ett
     // påstående om olikhet som ingen mätning stöder.
     linkHostAligned: workerAppUrl && appBaseUrl ? workerAppUrl === appBaseUrl.replace(/\/$/, "") : null,
+    smsIpAllowlistEnforced: false,
+    smsIpAllowlistNetworks: null,
     reportedAt: null,
   };
 }
@@ -94,6 +110,19 @@ export async function GET() {
     if (heartbeat) {
       const read = readDelivery(heartbeat.metadata, appBaseUrl);
       if (read) delivery = { ...read, reportedAt: heartbeat.updated_at ?? null };
+    }
+
+    let allowlistEnforced = false;
+    try { allowlistEnforced = serverEnv().ENFORCE_SMS_IP_ALLOWLIST; } catch { allowlistEnforced = false; }
+    delivery = { ...delivery, smsIpAllowlistEnforced: allowlistEnforced };
+    if (delivery.smsProvider) {
+      const { count, error: allowlistError } = await admin.from("provider_network_allowlists")
+        .select("id", { head: true, count: "exact" })
+        .eq("provider", delivery.smsProvider)
+        .eq("active", true);
+      // Ett läsfel är inte noll nät. Noll betyder "spärren stänger ute allt",
+      // och det påståendet ska bara göras när det är mätt.
+      delivery = { ...delivery, smsIpAllowlistNetworks: allowlistError ? null : count ?? 0 };
     }
 
     return NextResponse.json({

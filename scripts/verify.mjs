@@ -755,10 +755,24 @@ assert.deepEqual(providerLeaks, [], `The provider is named outside its adapters 
 // borttagningen fungerar just genom att spelas upp efter dem. Regeln gäller
 // därför framåt: ingen migration efter borttagningen får återinföra namnet.
 const REMOVAL_MIGRATION = "202609170009";
+// En migration som *tar bort* leverantörens rader måste nämna namnet för att
+// kunna peka ut dem. Undantaget är därför en uppräkning, inte ett mönster: ett
+// mönster som "migrationer med `delete` får nämna namnet" hade börjat ursäkta
+// varje framtida migration som råkar innehålla en delete.
+const REMOVAL_MIGRATIONS_MAY_NAME = new Set([
+  "202609180001_remove_provider_configuration_leftovers.sql",
+]);
 for (const name of migrations) {
   const version = name.match(/^(\d+)_/)?.[1] ?? "";
   if (version <= REMOVAL_MIGRATION) continue;
   const source = await readFile(join(migrationDir, name), "utf8");
+  if (REMOVAL_MIGRATIONS_MAY_NAME.has(name)) {
+    // Den får nämna namnet, men bara för att ta bort. Ett `insert` eller en ny
+    // tabell med namnet är ett återinförande oavsett vad filen heter.
+    assert.doesNotMatch(source, /^\s*(insert|create)\b[\s\S]*rinkel/im,
+      `${name} may name the removed provider only to delete it`);
+    continue;
+  }
   assert.doesNotMatch(source, /rinkel|46\s?elks/i, `${name} reintroduces a removed provider`);
 }
 
