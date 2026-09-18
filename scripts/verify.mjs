@@ -320,11 +320,12 @@ assert.match(numberAdapterCode, /readMoney\(number\.monthlyPrice\)/, "The monthl
 assert.doesNotMatch(numberAdapterCode, /monthlyCost/, "The provider reports `monthlyPrice`; reading the other name shows every number as priceless");
 assert.match(numberAdapter, /supportingDocumentationRequired/, "A number needing identity documents cannot be rented in one call and must not be offered as if it could");
 assert.match(numberAdapter, /async findActive\(/, "Renting is billable, so owning the number must be checkable before a retry");
-const numberSearchRoute = await readFile(join(root, "src/app/api/v1/telephony/numbers/available/route.ts"), "utf8");
-assert.match(numberSearchRoute, /isAdmin\(context\.role\)/, "Number search must be admin-only; the next button after it sends an invoice");
-assert.match(numberSearchRoute, /number_provider_not_configured/, "Missing provider credentials must be a named refusal, not an empty result list");
-const telephonyActionsSource = await readFile(join(root, "src/app/actions/telephony.ts"), "utf8");
-const rentBody = telephonyActionsSource.slice(telephonyActionsSource.indexOf("export async function rentPhoneNumber"));
+const numberSearchRouteSource = await readFile(join(root, "src/app/api/v1/telephony/numbers/available/route.ts"), "utf8");
+assert.match(numberSearchRouteSource, /number_provider_not_configured/, "Missing provider credentials must be a named refusal, not an empty result list");
+// Hyrningen flyttade till plattformen när kostnaden visade sig ligga där.
+// Regeln om ordningen följde med -- den handlar om pengar, inte om filplacering.
+const platformActionsSource = await readFile(join(root, "src/app/actions/platform.ts"), "utf8");
+const rentBody = platformActionsSource.slice(platformActionsSource.indexOf("export async function rentPhoneNumberForTenant"));
 // Hyr först, spara sedan. Omvänd ordning lämnar ett nummer i databasen som
 // ingen äger när leverantören säger nej.
 assert.ok(rentBody.indexOf("provider.rent(") < rentBody.indexOf('from("phone_numbers").insert'),
@@ -887,5 +888,55 @@ assert.ok(readinessIndex < reserveIndex,
 const sinchWebhookRoute = await readFile(join(root, "src/app/api/webhooks/sinch/route.ts"), "utf8");
 assert.match(sinchWebhookRoute, /payload\.callid/,
   "The provider sends `callid` in lower case; reading `callId` finds nothing and rejects every real event");
+
+// ---------------------------------------------------------------------------
+// Två kostnadsbärande beslut ligger där den som betalar sitter
+// ---------------------------------------------------------------------------
+// Numren hyrs i Kundexas leverantörskonto och faktureras Kundexa. En knapp hos
+// företaget hade alltså skickat en räkning till någon annan, varje månad tills
+// någon säger upp numret. Och all avtalspost går via Kundexas e-postkonto,
+// eftersom det är Kundexa som äger domänverifieringen hos leverantören.
+const numberSearchRoute = await readFile(join(root, "src/app/api/v1/telephony/numbers/available/route.ts"), "utf8");
+assert.match(numberSearchRoute, /getPlatformContext|isPlatformAdmin/,
+  "Searching rentable numbers is a platform action: the rental is billed to the platform, not the tenant");
+assert.doesNotMatch(numberSearchRoute, /getAppContext/,
+  "A tenant context here would let a company spend the platform's money");
+const platformActions = await readFile(join(root, "src/app/actions/platform.ts"), "utf8");
+assert.match(platformActions, /export async function rentPhoneNumberForTenant/,
+  "Renting a number must live on the platform surface");
+assert.match(platformActions, /tenantId: z\.uuid\(\)/,
+  "The receiving tenant must be explicit: a guessed one puts a monthly cost on the wrong company");
+const tenantTelephonyActions = await readFile(join(root, "src/app/actions/telephony.ts"), "utf8");
+assert.doesNotMatch(tenantTelephonyActions, /provider\.rent\(/,
+  "A tenant-scoped action must not be able to rent a number");
+
+// Kontomodellen för e-post prövades på fem ställen med två olika defaultvärden,
+// så ett företag utan uttrycklig inställning fick olika svar beroende på vem som
+// frågade -- utskicket kunde prövas mot en nyckel och skickas med en annan. Det
+// finns nu bara en modell för avtalspost, och därför inget att läsa.
+//
+// Regeln gäller e-posten. SMS har fortfarande ett tenantägt läge, så en bred
+// sökning efter namnet hade fällt fel filer av rätt skäl.
+for (const file of [
+  "src/app/actions/contracts.ts",
+  "src/lib/contracts/api-service.ts",
+  "src/app/actions/admin.ts",
+  "src/app/api/v1/integrations/resend/test/route.ts",
+  "supabase/functions/process-outbox/index.ts",
+]) {
+  const source = (await readFile(join(root, file), "utf8")).replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
+  // Just den här formen var defekten: en default som skilde sig mellan anropen.
+  assert.doesNotMatch(source, /account_mode \?\? "tenant_owned"/,
+    `${file} defaults the account model to tenant-owned; that default disagreed with the other call sites`);
+}
+for (const file of [
+  ["src/app/actions/contracts.ts", /emailFrom = String\(env\.DEFAULT_EMAIL_FROM_ADDRESS/],
+  ["src/lib/contracts/api-service.ts", /emailFrom = String\(env\.DEFAULT_EMAIL_FROM_ADDRESS/],
+  ["supabase/functions/process-outbox/index.ts", /const apiKey = globalResendKey;/],
+]) {
+  const [name, pattern] = file;
+  assert.match(await readFile(join(root, name), "utf8"), pattern,
+    `${name} must take the e-mail account from the platform, unconditionally: the verified sending domain is the platform's`);
+}
 
 console.log(`Verified ${migrations.length} migrations, monotonic call/Resend projections, non-truncating imports, multi-recipient signing, dialer recovery, canonical contracts, tenant isolation and worker deployment.`);

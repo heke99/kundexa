@@ -162,9 +162,13 @@ async function getEmailConfig(tenantId: string) {
   const credentials = data.credentials_ciphertext
     ? await decryptJson<EmailCredentials>(data.credentials_ciphertext, encryptionKey)
     : {};
-  const accountMode = String(configuration.account_mode ?? "tenant_owned");
-  const apiKey = accountMode === "platform_managed" ? globalResendKey : credentials.apiKey;
-  const address = String(configuration.from_address ?? configuration.from ?? credentials.from ?? globalEmailFromAddress);
+  // All avtalspost går via Kundexas e-postkonto. Ett företag har ingen egen
+  // nyckel och ingen egen avsändardomän -- det enda som skiljer utskicken åt är
+  // vilket bolag som står som avsändare, och det är ett namn, inte ett konto.
+  // Tidigare kunde `account_mode` peka på en tenantnyckel, och defaulten skilde
+  // sig mellan de fem ställen som läste den.
+  const apiKey = globalResendKey;
+  const address = globalEmailFromAddress;
   const fromName = cleanHeaderName(String(configuration.from_name ?? tenant.legal_name ?? globalEmailFromName));
   const replyTo = configuration.reply_to ? String(configuration.reply_to) : null;
   if (!apiKey) throw new Error("permanent_email_provider_not_configured");

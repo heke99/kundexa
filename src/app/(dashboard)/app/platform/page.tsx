@@ -10,13 +10,14 @@ import { canReadPlatformAdministration, getPlatformContext, isPlatformAdmin, isP
 import { updatePlatformMembership, updateTenantPlatformStatus } from "@/app/actions/platform";
 import { createPlatformTenantAndInviteOwner } from "@/app/actions/platform-lists";
 import { authUserEmailsById } from "@/lib/supabase/auth-admin-users";
+import { NumberRental } from "@/components/number-rental";
 
 const roleLabels: Record<string, string> = {
   platform_owner: "Plattformsägare", platform_admin: "Plattformsadmin",
   platform_support: "Support", platform_auditor: "Revisor",
 };
 
-export default async function PlatformPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string }> }) {
+export default async function PlatformPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string; webhookToken?: string }> }) {
   const params = await searchParams;
   const context = await getPlatformContext();
   if (!canReadPlatformAdministration(context.platformRole)) {
@@ -64,6 +65,18 @@ export default async function PlatformPage({ searchParams }: { searchParams: Pro
       <Card><CardContent><strong>{listEntries}</strong><p className="muted">centrala listposter</p></CardContent></Card>
       <Card><CardContent><strong>{availableEntries}</strong><p className="muted">tillgängliga för tilldelning</p></CardContent></Card>
     </div>
+
+    {params.webhookToken ? <div className="notice warning"><strong>Spara numrets callback-token nu:</strong> <code>{params.webhookToken}</code><br />Den visas bara en gång.</div> : null}
+
+    {isPlatformAdmin(context.platformRole) ? <Card style={{ marginTop: 16 }}>
+      <CardHeader><h2>Hyr nummer åt ett företag</h2></CardHeader>
+      <CardContent>
+        <p className="muted">Numren hyrs i Kundexas leverantörskonto och faktureras Kundexa. Därför sitter knappen här och inte hos företagen.</p>
+        <div style={{ marginTop: 12 }}>
+          <NumberRental tenants={(tenants ?? []).map((tenant) => ({ id: tenant.id, name: tenant.legal_name || tenant.name }))} />
+        </div>
+      </CardContent>
+    </Card> : null}
 
     <div className="split-layout">
       <Card>

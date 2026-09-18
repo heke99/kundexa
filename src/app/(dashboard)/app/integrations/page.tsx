@@ -7,7 +7,6 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Field, SelectField } from "@/components/ui/form-field";
 import { Badge } from "@/components/ui/badge";
-import { NumberRental } from "@/components/number-rental";
 import { formatDate } from "@/lib/utils";
 import { saveCallerIdDefault, saveTelephonyPolicy } from "@/app/actions/telephony";
 
@@ -101,12 +100,9 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
       <Card><CardHeader><h2>E-post och Resend</h2><Badge className={resendActive ? "badge-success" : "badge-warning"}>{resend?.status ?? "inte ansluten"}</Badge></CardHeader><CardContent>
         <div className="notice"><strong>Feature flags</strong><br />outbound_email: {featureMap.get("outbound_email") ? "aktiv" : "avstängd"}<br />contract_delivery_email: {featureMap.get("contract_delivery_email") ? "aktiv" : "avstängd"}<br />outbound_sms: {featureMap.get("outbound_sms") ? "aktiv" : "avstängd"}<br />contract_delivery_sms: {featureMap.get("contract_delivery_sms") ? "aktiv" : "avstängd"}</div>
         <form action={saveEmailIntegration} className="form-stack" style={{ marginTop: 14 }}>
-          <SelectField label="Kontomodell" name="account_mode" defaultValue={String(resendConfig.account_mode ?? "tenant_owned")}><option value="tenant_owned">Tenantens eget Resend-konto</option><option value="platform_managed">Kundexas Resend-konto</option></SelectField>
-          <Field label="Resend API-nyckel" name="api_key" type="password" placeholder={resend?.credentials_ciphertext ? "Sparad – lämna tomt för att behålla" : "re_..."} />
-          <Field label="Avsändarnamn" name="from_name" defaultValue={String(resendConfig.from_name ?? "")} required />
-          <Field label="Verifierad från-adress" name="from_address" type="email" defaultValue={String(resendConfig.from_address ?? resendConfig.from ?? "")} placeholder="avtal@utskick.foretag.se" required />
+          <div className="notice">Avtalspost skickas från Kundexas e-postkonto och verifierade domän{resendConfig.from_address ? <> — <code>{String(resendConfig.from_address)}</code></> : null}. Det som skiljer era utskick från andras är avsändarnamnet och svarsadressen.</div>
+          <Field label="Avsändarnamn" name="from_name" defaultValue={String(resendConfig.from_name ?? "")} placeholder="Bolaget som står som avsändare" />
           <Field label="Reply-to" name="reply_to" type="email" defaultValue={String(resendConfig.reply_to ?? "")} placeholder="kundservice@foretag.se" />
-          <Field label="Sändningsdomän" name="sending_domain" defaultValue={String(resendConfig.sending_domain ?? "")} placeholder="utskick.foretag.se" />
           <Field label="Testmottagare" name="test_recipient" type="email" defaultValue={String(resendConfig.test_recipient ?? "")} required />
           <Field label="Webhook signing secret" name="webhook_signing_secret" type="password" placeholder="Sparad – lämna tomt för att behålla" />
           <button className="button button-primary">Spara krypterat som väntande</button>
@@ -120,7 +116,9 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
       <Card><CardHeader><h2><KeyRound size={17} /> SMS</h2></CardHeader><CardContent><div className="notice">SMS bär avtalsutskick och kundsvar. Kör i Kundexas konto om ni inte har ett eget avtal med leverantören.</div><form action={saveSmsIntegration} className="form-stack" style={{ marginTop: 14 }}><SelectField label="Kontomodell" name="account_mode"><option value="platform_managed">Kundexas konto</option><option value="tenant_owned">Eget konto</option></SelectField><Field label="Service plan-id (endast eget konto)" name="service_plan_id" /><Field label="API-token (endast eget konto)" name="api_token" type="password" /><SelectField label="Region" name="region"><option value="eu">EU</option><option value="us">US</option></SelectField><button className="button button-primary">Kryptera och spara</button></form></CardContent></Card>
 
       <Card><CardHeader><h2><Phone size={17} /> Telefonnummer</h2><Badge>{numbers?.length ?? 0}</Badge></CardHeader><CardContent style={{ padding: 0 }}><DataTable headers={["Nummer", "Voice", "SMS", "MMS", "Status"]}>{numbers?.map((number) => <tr key={number.id}><td><strong>{number.number_e164}</strong></td><td>{number.supports_voice ? "Ja" : "Nej"}</td><td>{number.supports_sms ? "Ja" : "Nej"}</td><td>{number.supports_mms ? "Ja" : "Nej"}</td><td><Badge className={number.status === "active" ? "badge-success" : ""}>{number.status}</Badge></td></tr>)}</DataTable></CardContent></Card>
-      <Card><CardHeader><h2><Phone size={17} /> Hyr ett nytt nummer</h2></CardHeader><CardContent><NumberRental /></CardContent></Card>
+      <Card><CardHeader><h2><Phone size={17} /> Nya nummer</h2></CardHeader><CardContent>
+        <div className="notice">Nummer beställs av Kundexa. De hyrs i Kundexas leverantörskonto och faktureras Kundexa, så de går inte att hyra härifrån — kontakta oss så läggs numret upp på företaget.</div>
+      </CardContent></Card>
 
       <Card><CardHeader><h2>Lägg till ett nummer ni redan har</h2></CardHeader><CardContent>
         <p className="muted" style={{ marginBottom: 12 }}>

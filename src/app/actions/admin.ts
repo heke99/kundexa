@@ -94,24 +94,31 @@ export async function saveSmsIntegration(form: FormData) {
   redirect("/app/integrations?message=SMS-inställningarna är sparade");
 }
 
-type ResendCredentials = { apiKey?: string; webhookSigningSecret?: string; webhookPathToken?: string; from?: string };
+type ResendCredentials = { webhookSigningSecret?: string; webhookPathToken?: string; from?: string };
 
 export async function saveEmailIntegration(form: FormData) {
   const context = await adminContext();
-  const accountMode = value(form, "account_mode") === "platform_managed" ? "platform_managed" : "tenant_owned";
-  const apiKey = value(form, "api_key");
-  const fromName = value(form, "from_name").slice(0, 100);
-  const fromAddress = value(form, "from_address").toLowerCase();
+  // Avsändaradressen är inte längre en tenantinställning. All avtalspost går via
+  // Kundexas e-postkonto, för det är den domän som är verifierad hos
+  // leverantören -- ett företag som skrev in sin egen adress fick varje utskick
+  // avvisat. Det som skiljer företagen åt är avsändarnamnet, som tas ur avtalets
+  // utställande bolag, och svarsadressen.
+  const env = serverEnv();
+  const fromAddress = String(env.DEFAULT_EMAIL_FROM_ADDRESS ?? "").toLowerCase();
+  const fromName = value(form, "from_name").slice(0, 100) || context.tenantLegalName;
   const replyTo = value(form, "reply_to").toLowerCase();
-  const sendingDomain = value(form, "sending_domain").toLowerCase();
   const testRecipient = value(form, "test_recipient").toLowerCase();
   const webhookSigningSecret = value(form, "webhook_signing_secret");
   const email = /^\S+@\S+\.\S+$/;
-  if (!fromName || !email.test(fromAddress) || !email.test(testRecipient) || (replyTo && !email.test(replyTo))) {
-    redirect("/app/integrations?error=Avsändarnamn, verifierad från-adress och testmottagare krävs");
+  if (!email.test(fromAddress)) {
+    redirect("/app/integrations?error=" + encodeURIComponent(
+      "Kundexas verifierade avsändaradress är inte konfigurerad. Plattformsadministratören behöver sätta DEFAULT_EMAIL_FROM_ADDRESS.",
+    ));
   }
-  if (sendingDomain && !fromAddress.endsWith(`@${sendingDomain}`)) redirect("/app/integrations?error=Från-adressen måste använda angiven sändningsdomän");
-  const env = serverEnv();
+  if (!email.test(testRecipient) || (replyTo && !email.test(replyTo))) {
+    redirect("/app/integrations?error=En giltig testmottagare krävs, och svarsadressen måste vara en e-postadress om den anges");
+  }
+  const sendingDomain = fromAddress.split("@")[1] ?? "";
   const admin = createAdminClient();
   const { data: existing } = await admin.from("tenant_integrations").select("id,credentials_ciphertext,configuration").eq("tenant_id", context.tenantId).eq("provider_type", "email").eq("provider", "resend").eq("name", "Resend").maybeSingle();
   let oldCredentials: ResendCredentials = {};
@@ -131,10 +138,10 @@ export async function saveEmailIntegration(form: FormData) {
       ));
     }
   }
-  if (accountMode === "tenant_owned" && !apiKey && !oldCredentials.apiKey) redirect("/app/integrations?error=Resend API-nyckel krävs för tenantägt konto");
   const pathToken = oldCredentials.webhookPathToken || randomToken(32);
+  // Ingen `apiKey` längre. Den enda hemligheten som är tenantens egen är
+  // signeringshemligheten för dess webhookadress.
   const credentials: ResendCredentials = {
-    apiKey: apiKey || oldCredentials.apiKey,
     webhookSigningSecret: webhookSigningSecret || oldCredentials.webhookSigningSecret,
     webhookPathToken: pathToken,
     from: fromAddress,
@@ -142,7 +149,7 @@ export async function saveEmailIntegration(form: FormData) {
   const oldConfig = readJsonObject(existing?.configuration);
   const configuration = toJsonObject({
     ...oldConfig,
-    account_mode: accountMode,
+    account_mode: "platform_managed",
     from_name: fromName,
     from_address: fromAddress,
     reply_to: replyTo || null,
@@ -166,7 +173,7 @@ export async function saveEmailIntegration(form: FormData) {
   await admin.from("audit_logs").insert({
     tenant_id: context.tenantId, actor_user_id: context.userId,
     action: existing ? "integration.resend_updated" : "integration.resend_created", entity_type: "tenant_integration", entity_id: saved.id,
-    after_data: { account_mode: accountMode, from_address: fromAddress, reply_to: replyTo || null, sending_domain: sendingDomain || null, api_key_changed: Boolean(apiKey), webhook_secret_changed: Boolean(webhookSigningSecret), status: "pending" },
+    after_data: { account_mode: "platform_managed", from_address: fromAddress, reply_to: replyTo || null, sending_domain: sendingDomain || null, webhook_secret_changed: Boolean(webhookSigningSecret), status: "pending" },
   });
   revalidatePath("/app/integrations");
   redirect(`/app/integrations?message=${encodeURIComponent("Resend sparades som väntande. Kör Testa anslutning innan avtalsutskick.")}&resendWebhook=${encodeURIComponent(`${canonicalAppBaseUrl()}/api/webhooks/resend/${pathToken}`)}`);
@@ -180,9 +187,8 @@ export async function testResendIntegration(form: FormData) {
   if (!integration?.credentials_ciphertext) redirect("/app/integrations?error=Spara Resend-konfigurationen först");
   const credentials = decryptJson<ResendCredentials>(integration.credentials_ciphertext, env.KUNDEXA_ENCRYPTION_KEY);
   const configuration = readJsonObject(integration.configuration);
-  const accountMode = String(configuration.account_mode ?? "tenant_owned");
-  const apiKey = accountMode === "platform_managed" ? env.RESEND_API_KEY : credentials.apiKey;
-  const fromAddress = String(configuration.from_address ?? credentials.from ?? "");
+  const apiKey = env.RESEND_API_KEY;
+  const fromAddress = String(env.DEFAULT_EMAIL_FROM_ADDRESS ?? "");
   const fromName = String(configuration.from_name ?? context.tenantLegalName);
   const testRecipient = String(configuration.test_recipient ?? "");
   if (!apiKey || !/^\S+@\S+\.\S+$/.test(fromAddress) || !/^\S+@\S+\.\S+$/.test(testRecipient)) redirect("/app/integrations?error=API-nyckel, från-adress eller testmottagare saknas");

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { rentPhoneNumber } from "@/app/actions/telephony";
+import { rentPhoneNumberForTenant } from "@/app/actions/platform";
 
 type AvailableNumber = {
   phoneNumber: string;
@@ -24,7 +24,7 @@ type AvailableNumber = {
  * svenskt nummer som origineras utomlands blockeras av operatörerna enligt PTS
  * föreskrift, så landsvalet är inte en kosmetisk filtrering.
  */
-export function NumberRental() {
+export function NumberRental({ tenants }: { tenants: { id: string; name: string }[] }) {
   const [regionCode, setRegionCode] = useState("SE");
   const [numberType, setNumberType] = useState("LOCAL");
   const [pattern, setPattern] = useState("");
@@ -32,6 +32,10 @@ export function NumberRental() {
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
+  // Företaget väljs innan sökningen, inte i bekräftelsedialogen. Ett nummer och
+  // en månadskostnad som hamnar på fel företag är inte en felklickning man
+  // upptäcker -- den upptäcks på fakturan.
+  const [tenantId, setTenantId] = useState(tenants[0]?.id ?? "");
 
   async function search() {
     setSearching(true);
@@ -71,6 +75,12 @@ export function NumberRental() {
     </p>
 
     <div className="form-grid">
+      <label className="field">
+        <span>Företag som ska få numret</span>
+        <select value={tenantId} onChange={(event) => setTenantId(event.target.value)}>
+          {tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.name}</option>)}
+        </select>
+      </label>
       <label className="field">
         <span>Land</span>
         <select value={regionCode} onChange={(event) => setRegionCode(event.target.value)}>
@@ -125,12 +135,13 @@ export function NumberRental() {
           : confirming === number.phoneNumber
           // Två steg, därför att det andra kostar pengar varje månad tills
           // någon säger upp numret hos leverantören.
-          ? <form action={rentPhoneNumber} className="toolbar-left">
+          ? <form action={rentPhoneNumberForTenant} className="toolbar-left">
             <input type="hidden" name="phone_number" value={number.phoneNumber} />
+            <input type="hidden" name="tenant_id" value={tenantId} />
             <button className="button button-primary button-sm">Ja, hyr {number.phoneNumber}</button>
             <button type="button" className="button button-ghost button-sm" onClick={() => setConfirming(null)}>Avbryt</button>
           </form>
-          : <button type="button" className="button button-secondary button-sm" onClick={() => setConfirming(number.phoneNumber)}>
+          : <button type="button" className="button button-secondary button-sm" disabled={!tenantId} onClick={() => setConfirming(number.phoneNumber)}>
             Hyr
           </button>}
       </div>)}
