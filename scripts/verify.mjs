@@ -657,7 +657,25 @@ assert.equal(packageJson.overrides.postcss, "8.5.19");
 assert.equal(packageJson.scripts["functions:deploy"], "node scripts/deploy-functions.mjs");
 assert.equal(packageJson.scripts["geography:import"], "node scripts/import-geography.mjs");
 const deployFunctions = await readFile(join(root, "scripts/deploy-functions.mjs"), "utf8");
-for (const worker of ["process-outbox", "automation-runner", "data-worker", "ingestion-worker", "maintenance-worker", "compliance-worker", "parsehub-worker"]) assert.match(deployFunctions, new RegExp(worker), `Deployment must include ${worker}`);
+// Listan stod tidigare i skriptet, och prövades här mot en kopia av samma lista
+// -- två handskrivna listor som bekräftade varandra. En ny funktion kördes inte
+// förrän någon fyllde på båda, och en borttagen låg kvar i produktionen: den
+// gamla leverantörens arbetare låg ACTIVE i tre dagar efter att källkoden
+// försvann. Listan läses nu ur katalogen, och det är katalogen som prövas.
+assert.match(deployFunctions, /readdirSync\(functionsDir/,
+  "The deploy list must be read from the functions directory, not hand-maintained beside it");
+const deployedWorkers = (await readdir(join(root, "supabase/functions"), { withFileTypes: true }))
+  .filter((entry) => entry.isDirectory() && !entry.name.startsWith("_"))
+  .map((entry) => entry.name).sort();
+for (const worker of ["process-outbox", "automation-runner", "data-worker", "ingestion-worker", "maintenance-worker", "compliance-worker", "parsehub-worker"]) {
+  assert.ok(deployedWorkers.includes(worker), `Deployment must include ${worker}`);
+}
+// Deployen deployar det repot har; utan det här tas det som lämnat repot aldrig
+// bort någonstans, och ligger kvar anropbart i produktionen.
+assert.match(deployFunctions, /functions", "delete"/,
+  "The deploy must remove retired functions, or a deleted worker stays live in production forever");
+assert.match(deployFunctions, /if \(functions\.length === 0\)/,
+  "An empty directory listing must abort the deploy rather than read as `remove everything`");
 assert.match(packageJson.scripts.verify, /typecheck:edge/, "Full verification must type-check Edge Functions");
 
 // Varje npm-skript en workflow anropar måste finnas. Ett borttaget skript syns
@@ -742,9 +760,13 @@ for (const relative of scanned) {
   // fyller i.
   // Ett namn får stå kvar på exakt ett ställe: i listan över jobbtyper som ska
   // dödbrevas när de dyker upp ur kön. Den listan är själva avvecklingen.
+  // Samma undantag gäller listan över avvecklade Edge-funktioner: en deploy som
+  // ska *ta bort* en funktion måste kunna peka ut den vid namn. Bara listan
+  // strippas -- namnet någon annanstans i filen är fortfarande ett återfall.
   const withoutQueueDrain = source
     .replace(/const LEGACY_TELEPHONY_JOB_TYPES = \[[^\]]*\];/, "")
-    .replace(/job\.job_type === "rinkel\.retention"/, "");
+    .replace(/job\.job_type === "rinkel\.retention"/, "")
+    .replace(/const RETIRED = \[[^\]]*\];/, "");
   if (/rinkel|46\s?elks/i.test(withoutQueueDrain)) removedProviderMentions.push(relative);
   if (/\bsinch\b/i.test(source)) providerLeaks.push(relative);
 }
