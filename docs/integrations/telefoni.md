@@ -151,8 +151,22 @@ WEBPHONE_TURN_URLS
 WEBPHONE_TURN_SECRET
 ```
 
-Ett företag som har eget avtal med leverantören lägger in sina SMS-nycklar under
-Integrationer; de krypteras innan de lämnar servern.
+### Ett konto, inte ett val
+
+All utgående post -- SMS och e-post -- går genom Kundexas konton hos
+leverantörerna. Det är inte en förenkling utan vad leverantörerna kräver:
+avsändardomänen måste vara verifierad hos e-postleverantören, och avsändarnumret
+måste höra till det SMS-konto som skickar. Båda ägs av Kundexa.
+
+Det som skiljer företagens utskick åt är avsändarnamnet -- avtalets utställande
+bolag -- svarsadressen, och avsändarnumret. Inget av det är ett konto.
+
+Kontomodellen lästes tidigare på fem ställen med två olika defaultvärden, så ett
+företag utan uttrycklig inställning fick olika svar beroende på vilken kodväg som
+frågade: utskicket kunde prövas mot en nyckel och skickas med en annan.
+
+Numren hyrs av samma skäl från plattformssidan och inte av företagen: de hyrs i
+Kundexas leverantörskonto och faktureras Kundexa.
 
 ## Att byta leverantör
 

@@ -65,28 +65,21 @@ export async function inviteUser(form: FormData) {
  */
 export async function saveSmsIntegration(form: FormData) {
   const context = await adminContext();
-  const accountMode = value(form, "account_mode") || "platform_managed";
-  const servicePlanId = value(form, "service_plan_id");
-  const apiToken = value(form, "api_token");
+  // Kundexas konto, alltid. Nycklarna är inte längre en tenantinställning, av
+  // samma skäl som för e-posten: avsändarnumret måste höra till det konto som
+  // skickar, och numren är hyrda i Kundexas konto hos leverantören. Ett eget
+  // service-plan hade alltså inte kunnat skicka från företagets eget nummer.
   const region = value(form, "region") || "eu";
-  // Ett eget konto utan nycklar är inte ett eget konto. Att spara det ändå hade
-  // gjort integrationen "aktiv" och dödbrevat varje avtals-SMS därefter.
-  if (accountMode === "tenant_owned" && (!servicePlanId || !apiToken)) {
-    redirect("/app/integrations?error=Ett eget SMS-konto kräver service plan-id och API-token");
-  }
-  const env = serverEnv();
+  if (!["eu", "us"].includes(region)) redirect("/app/integrations?error=Regionen ska vara eu eller us");
   const admin = createAdminClient();
-  const cipher = accountMode === "tenant_owned"
-    ? encryptJson({ servicePlanId, apiToken, region }, env.KUNDEXA_ENCRYPTION_KEY)
-    : null;
   const { error } = await admin.from("tenant_integrations").upsert({
     tenant_id: context.tenantId,
     provider_type: "sms",
     provider: process.env.SMS_PROVIDER ?? DEFAULT_SMS_PROVIDER,
     name: "sms",
-    credentials_ciphertext: cipher,
+    credentials_ciphertext: null,
     status: "active",
-    configuration: { account_mode: accountMode, region },
+    configuration: { account_mode: "platform_managed", region },
     created_by: context.userId,
   }, { onConflict: "tenant_id,provider_type,provider,name" });
   if (error) throw error;

@@ -67,7 +67,6 @@ type Job = {
   payload: Record<string, unknown>;
   attempts: number;
 };
-type SmsCredentials = Partial<SmsProviderCredentials>;
 type EmailCredentials = { apiKey?: string; from?: string; webhookSigningSecret?: string; webhookPathToken?: string };
 type EmailAttachmentRef = { document_id: string; filename?: string; mime_type?: string };
 
@@ -127,21 +126,16 @@ async function getSmsProvider(tenantId: string) {
   // hade skickat kundens SMS via fel konto vid en tillfällig databasstörning.
   if (error) throw new Error(`sms_integration_read_failed:${error.code ?? "unknown"}`);
 
-  const configuration = (data?.configuration ?? {}) as Record<string, unknown>;
-  const accountMode = String(configuration.account_mode ?? "platform_managed");
-  const credentials: SmsCredentials = data?.credentials_ciphertext
-    ? await decryptJson<SmsCredentials>(data.credentials_ciphertext, encryptionKey)
-    : {};
-
+  // Kundexas SMS-konto, alltid -- samma regel som för avtalsposten. Numren är
+  // hyrda i Kundexas konto hos leverantören, så ett tenantägt service-plan hade
+  // inte kunnat skicka från dem ändå: avsändarnumret måste höra till kontot som
+  // skickar. Det som skiljer företagens SMS åt är avsändarnumret, inte kontot.
   const providerId = data?.provider ?? globalSmsProvider;
-  const resolved: SmsProviderCredentials = accountMode === "tenant_owned"
-    ? {
-      servicePlanId: String(credentials.servicePlanId ?? ""),
-      apiToken: String(credentials.apiToken ?? ""),
-      region: String(credentials.region ?? configuration.region ?? globalSmsRegion),
-    }
-    : { servicePlanId: globalSmsServicePlanId, apiToken: globalSmsApiToken, region: globalSmsRegion };
-  return smsProviderFor(providerId, resolved);
+  return smsProviderFor(providerId, {
+    servicePlanId: globalSmsServicePlanId,
+    apiToken: globalSmsApiToken,
+    region: globalSmsRegion,
+  });
 }
 
 async function getEmailConfig(tenantId: string) {

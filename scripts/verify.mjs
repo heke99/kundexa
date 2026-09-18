@@ -915,8 +915,9 @@ assert.doesNotMatch(tenantTelephonyActions, /provider\.rent\(/,
 // frågade -- utskicket kunde prövas mot en nyckel och skickas med en annan. Det
 // finns nu bara en modell för avtalspost, och därför inget att läsa.
 //
-// Regeln gäller e-posten. SMS har fortfarande ett tenantägt läge, så en bred
-// sökning efter namnet hade fällt fel filer av rätt skäl.
+// Samma regel gäller SMS. Avsändarnumret måste höra till det konto som skickar,
+// och numren är hyrda i Kundexas konto -- ett tenantägt service-plan hade inte
+// kunnat skicka från företagets eget nummer ändå.
 for (const file of [
   "src/app/actions/contracts.ts",
   "src/lib/contracts/api-service.ts",
@@ -929,14 +930,21 @@ for (const file of [
   assert.doesNotMatch(source, /account_mode \?\? "tenant_owned"/,
     `${file} defaults the account model to tenant-owned; that default disagreed with the other call sites`);
 }
-for (const file of [
-  ["src/app/actions/contracts.ts", /emailFrom = String\(env\.DEFAULT_EMAIL_FROM_ADDRESS/],
-  ["src/lib/contracts/api-service.ts", /emailFrom = String\(env\.DEFAULT_EMAIL_FROM_ADDRESS/],
-  ["supabase/functions/process-outbox/index.ts", /const apiKey = globalResendKey;/],
+for (const [name, pattern, what] of [
+  ["src/app/actions/contracts.ts", /emailFrom = String\(env\.DEFAULT_EMAIL_FROM_ADDRESS/, "the verified sending domain"],
+  ["src/lib/contracts/api-service.ts", /emailFrom = String\(env\.DEFAULT_EMAIL_FROM_ADDRESS/, "the verified sending domain"],
+  ["supabase/functions/process-outbox/index.ts", /const apiKey = globalResendKey;/, "the verified sending domain"],
+  ["supabase/functions/process-outbox/index.ts", /servicePlanId: globalSmsServicePlanId,\s*\n\s*apiToken: globalSmsApiToken,/, "the account the sending numbers are rented in"],
 ]) {
-  const [name, pattern] = file;
   assert.match(await readFile(join(root, name), "utf8"), pattern,
-    `${name} must take the e-mail account from the platform, unconditionally: the verified sending domain is the platform's`);
+    `${name} must take the account from the platform, unconditionally: ${what} belongs to the platform`);
 }
+
+// Ett tenantägt SMS-konto går inte att skicka från: numret hör till kontot.
+const smsIntegrationAction = (await readFile(join(root, "src/app/actions/admin.ts"), "utf8"))
+  .replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
+const smsSaveBody = smsIntegrationAction.slice(smsIntegrationAction.indexOf("export async function saveSmsIntegration"));
+assert.doesNotMatch(smsSaveBody.slice(0, smsSaveBody.indexOf("\n}")), /api_token|service_plan_id/,
+  "Saving SMS settings must not take tenant provider credentials: the sending number belongs to the platform's account");
 
 console.log(`Verified ${migrations.length} migrations, monotonic call/Resend projections, non-truncating imports, multi-recipient signing, dialer recovery, canonical contracts, tenant isolation and worker deployment.`);
