@@ -940,6 +940,27 @@ for (const [name, pattern, what] of [
     `${name} must take the account from the platform, unconditionally: ${what} belongs to the platform`);
 }
 
+// Beredskapssvaret måste rapportera webbappens egen e-postkonfiguration.
+//
+// Arbetarens rapport läser Edge-funktionens miljö. Anslutningstestet, som är
+// det som gör integrationen aktiv, körs i webbappen och läser Vercels. De två
+// var omöjliga att skilja utifrån: allt såg grönt ut medan testknappen svarade
+// att kontot inte är konfigurerat.
+{
+  const readyRoute = await readFile(join(root, "src/app/api/ready/route.ts"), "utf8");
+  assert.match(readyRoute, /webEmailConfigured: boolean;/,
+    "The readiness answer must carry the web app's own email configuration, not only the worker's");
+  assert.match(readyRoute, /env\.RESEND_API_KEY && env\.DEFAULT_EMAIL_FROM_ADDRESS/,
+    "The web app's email configuration must be read from the web app's own environment");
+  // Varje rad som alls nämner nyckeln måste reducera den till ett ja eller nej
+  // på samma rad. Svaret är publikt.
+  for (const line of readyRoute.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "").split("\n")) {
+    if (!line.includes("RESEND_API_KEY")) continue;
+    assert.match(line, /Boolean\(/,
+      "The readiness answer must report whether the key is set, never the key");
+  }
+}
+
 // Anslutningstestet får inte kräva en krypterad tenantpost.
 //
 // Testet skickar med Kundexas nyckel och behöver bara avsändarnamn och

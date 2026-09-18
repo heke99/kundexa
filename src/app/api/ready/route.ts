@@ -12,6 +12,19 @@ type DeliveryChecks = {
   platformSmsConfigured: boolean | null;
   platformEmailConfigured: boolean | null;
   /**
+   * Har webbappen själv Kundexas e-postnycklar?
+   *
+   * `platformEmailConfigured` ovan är utskicksarbetarens rapport, och den läser
+   * Edge-funktionens miljö. Anslutningstestet på Integrationer körs i webbappen
+   * och läser Vercels. Det är två uppsättningar variabler som måste vara satta
+   * var för sig, och den ena sa ingenting om den andra: arbetaren kunde vara
+   * grön medan testknappen svarade att kontot inte är konfigurerat. Utan ett
+   * godkänt test blir integrationen aldrig aktiv, och då skickas inget avtal.
+   *
+   * Värdet är ett ja eller nej om att variablerna finns, aldrig deras innehåll.
+   */
+  webEmailConfigured: boolean;
+  /**
    * Bygger arbetaren sina avtalslänkar mot samma adress som webbappen?
    *
    * Första utskicket bygger länken i webbappen (`NEXT_PUBLIC_APP_URL`),
@@ -41,6 +54,7 @@ const UNREPORTED: DeliveryChecks = {
   smsProvider: null,
   platformSmsConfigured: null,
   platformEmailConfigured: null,
+  webEmailConfigured: false,
   linkHostAligned: null,
   smsIpAllowlistEnforced: false,
   smsIpAllowlistNetworks: null,
@@ -58,6 +72,9 @@ function readDelivery(metadata: unknown, appBaseUrl: string | null): DeliveryChe
     smsProvider: typeof record.smsProvider === "string" && record.smsProvider ? record.smsProvider : null,
     platformSmsConfigured: record.platformSmsConfigured === true,
     platformEmailConfigured: record.platformEmailConfigured === true,
+    // Sätts av anroparen: det här är arbetarens rapport, och den vet ingenting
+    // om webbappens egen miljö.
+    webEmailConfigured: false,
     // Utan en av de två adresserna finns inget att jämföra, och `false` vore ett
     // påstående om olikhet som ingen mätning stöder.
     linkHostAligned: workerAppUrl && appBaseUrl ? workerAppUrl === appBaseUrl.replace(/\/$/, "") : null,
@@ -111,6 +128,14 @@ export async function GET() {
       const read = readDelivery(heartbeat.metadata, appBaseUrl);
       if (read) delivery = { ...read, reportedAt: heartbeat.updated_at ?? null };
     }
+
+    // Webbappens egen miljö, läst här och ingen annanstans.
+    let webEmailConfigured = false;
+    try {
+      const env = serverEnv();
+      webEmailConfigured = Boolean(env.RESEND_API_KEY && env.DEFAULT_EMAIL_FROM_ADDRESS);
+    } catch { webEmailConfigured = false; }
+    delivery = { ...delivery, webEmailConfigured };
 
     let allowlistEnforced = false;
     try { allowlistEnforced = serverEnv().ENFORCE_SMS_IP_ALLOWLIST; } catch { allowlistEnforced = false; }
