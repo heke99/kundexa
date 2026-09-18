@@ -660,6 +660,17 @@ const deployFunctions = await readFile(join(root, "scripts/deploy-functions.mjs"
 for (const worker of ["process-outbox", "automation-runner", "data-worker", "ingestion-worker", "maintenance-worker", "compliance-worker", "parsehub-worker"]) assert.match(deployFunctions, new RegExp(worker), `Deployment must include ${worker}`);
 assert.match(packageJson.scripts.verify, /typecheck:edge/, "Full verification must type-check Edge Functions");
 
+// Varje npm-skript en workflow anropar måste finnas. Ett borttaget skript syns
+// annars inte förrän CI säger "Missing script", vilket den gjorde en minut efter
+// att den här grenens PR öppnades.
+const workflowDir = join(root, ".github/workflows");
+for (const name of (await readdir(workflowDir)).filter((file) => file.endsWith(".yml") || file.endsWith(".yaml"))) {
+  const workflow = await readFile(join(workflowDir, name), "utf8");
+  for (const [, script] of workflow.matchAll(/npm run ([a-z0-9:_-]+)/g)) {
+    assert.ok(script in packageJson.scripts, `${name} runs \`npm run ${script}\`, which package.json does not define`);
+  }
+}
+
 // Leverantörsnamn får bara finnas där de hör hemma.
 //
 // Det här är hela poängen med omskrivningen. Så länge ett leverantörsnamn får
@@ -698,10 +709,14 @@ const PROVIDER_NAME_EXEMPT = new Set([
   "src/lib/supabase/database.types.ts",
   "src/lib/supabase/runtime-database.types.ts",
 ]);
-const SCANNED_ROOTS = ["src", "scripts", "supabase/functions"];
+// `.github` ingår. Den saknades, och kostade en röd CI direkt efter att PR:en
+// öppnades: verify-workflowen anropade `npm run test:rinkel` som ett eget steg
+// långt efter att skriptet tagits bort ur package.json. En skanning som inte
+// läser det som faktiskt kör bygget mäter inte bygget.
+const SCANNED_ROOTS = ["src", "scripts", "supabase/functions", ".github"];
 // .json ingår: ruttklassificeringen är en JSON-fil, och där stod en borttagen
 // leverantörs namn kvar i både en rutt och tre motiveringar.
-const SCANNED_EXTENSIONS = [".ts", ".tsx", ".mjs", ".mts", ".sql", ".json"];
+const SCANNED_EXTENSIONS = [".ts", ".tsx", ".mjs", ".mts", ".sql", ".json", ".yml", ".yaml"];
 
 async function sourceFiles(relative) {
   const absolute = join(root, relative);
