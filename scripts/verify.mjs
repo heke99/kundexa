@@ -755,10 +755,24 @@ assert.deepEqual(providerLeaks, [], `The provider is named outside its adapters 
 // borttagningen fungerar just genom att spelas upp efter dem. Regeln gäller
 // därför framåt: ingen migration efter borttagningen får återinföra namnet.
 const REMOVAL_MIGRATION = "202609170009";
+// En migration som *tar bort* leverantörens rader måste nämna namnet för att
+// kunna peka ut dem. Undantaget är därför en uppräkning, inte ett mönster: ett
+// mönster som "migrationer med `delete` får nämna namnet" hade börjat ursäkta
+// varje framtida migration som råkar innehålla en delete.
+const REMOVAL_MIGRATIONS_MAY_NAME = new Set([
+  "202609180001_remove_provider_configuration_leftovers.sql",
+]);
 for (const name of migrations) {
   const version = name.match(/^(\d+)_/)?.[1] ?? "";
   if (version <= REMOVAL_MIGRATION) continue;
   const source = await readFile(join(migrationDir, name), "utf8");
+  if (REMOVAL_MIGRATIONS_MAY_NAME.has(name)) {
+    // Den får nämna namnet, men bara för att ta bort. Ett `insert` eller en ny
+    // tabell med namnet är ett återinförande oavsett vad filen heter.
+    assert.doesNotMatch(source, /^\s*(insert|create)\b[\s\S]*rinkel/im,
+      `${name} may name the removed provider only to delete it`);
+    continue;
+  }
   assert.doesNotMatch(source, /rinkel|46\s?elks/i, `${name} reintroduces a removed provider`);
 }
 
@@ -769,5 +783,51 @@ const generatedTypes = await readFile(join(root, "src/lib/supabase/database.type
 assert.doesNotMatch(generatedTypes, /rinkel/i, "The live schema still carries provider tables, columns or functions");
 const runtimeTypeOverlay = await readFile(join(root, "src/lib/supabase/runtime-database.types.ts"), "utf8");
 assert.doesNotMatch(runtimeTypeOverlay, /rinkel/i, "The runtime type overlay still declares removed provider objects");
+
+// ---------------------------------------------------------------------------
+// Avtalslänken ska nå kunden, eller stoppas där någon kan göra något åt det
+// ---------------------------------------------------------------------------
+// Funktionsflaggorna för SMS och e-post prövades bara i utskicksarbetaren, som
+// dödbrevar jobbet. Säljaren såg "utskicket har köats" och kunden fick aldrig
+// någon länk. Varje väg som köar en leverans måste därför först fråga om
+// kanalen är öppen -- och en ny väg som glömmer det ska fälla bygget, inte
+// upptäckas av en kund som väntar.
+for (const [file, source] of [
+  ["src/app/actions/contracts.ts", await readFile(join(root, "src/app/actions/contracts.ts"), "utf8")],
+  ["src/lib/contracts/api-service.ts", await readFile(join(root, "src/lib/contracts/api-service.ts"), "utf8")],
+]) {
+  const queueIndex = source.indexOf("prepare_contract_delivery");
+  assert.ok(queueIndex > 0, `${file} must still queue the delivery through prepare_contract_delivery`);
+  const gateIndex = source.indexOf("contractDeliveryBlocker(");
+  assert.ok(gateIndex > 0, `${file} queues a contract delivery without checking whether the channel is enabled`);
+  assert.ok(gateIndex < queueIndex, `${file} must check the delivery channel before queueing, not after`);
+}
+
+// Länken kunden klickar på byggs på två ställen: webbappen vid första utskicket
+// och arbetaren vid påminnelsen. Arbetarens adress kom från `Deno.env.get(...)!`,
+// som bara tystar typkontrollen -- en osatt variabel gav `undefined/accept/...`
+// i ett SMS som rapporterades som skickat.
+// Samma regel som för nummeradaptern: kommentarerna får nämna det gamla
+// uttrycket -- de är protokollet över vad som var fel. Koden får inte.
+const outboxWorkerCode = outboxWorker.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
+assert.doesNotMatch(outboxWorkerCode, /Deno\.env\.get\("APP_URL"\)!/,
+  "APP_URL must be validated, not asserted non-null: an unset value ships `undefined/accept/<token>` to a customer");
+assert.doesNotMatch(outboxWorkerCode, /\$\{appUrl\}\//,
+  "Customer-facing URLs must be built through requireAppUrl(), which refuses an unset APP_URL");
+assert.match(outboxWorker, /function requireAppUrl\(\)/, "The worker must validate APP_URL before building a customer link");
+// Arbetarens konfiguration är det enda stället SMS-nycklarnas närvaro går att
+// se utifrån; webbappen har dem inte. Rapporten får bära närvaro, aldrig värden.
+assert.match(outboxWorker, /platformSmsConfigured: Boolean\(/, "The worker must report whether platform SMS credentials are present");
+const deliveryReport = outboxWorkerCode.match(/function deliveryConfiguration\(\)[\s\S]*?\n\}/);
+assert.ok(deliveryReport, "The worker must report its delivery configuration");
+for (const secret of ["globalSmsApiToken", "globalSmsServicePlanId", "globalResendKey", "cronSecret", "encryptionKey", "serviceKey"]) {
+  assert.ok(!new RegExp(`:\\s*${secret}\\b`).test(deliveryReport[0]),
+    `The delivery report must carry presence, never the value of ${secret}`);
+}
+const readyRoute = await readFile(join(root, "src/app/api/ready/route.ts"), "utf8");
+assert.match(readyRoute, /platform_worker_heartbeats/,
+  "Readiness must read the worker's own report: the web app cannot see the Edge Function's SMS credentials");
+assert.match(readyRoute, /linkHostAligned/,
+  "Readiness must compare the worker's link host with the app's, so a reminder cannot point at another host");
 
 console.log(`Verified ${migrations.length} migrations, monotonic call/Resend projections, non-truncating imports, multi-recipient signing, dialer recovery, canonical contracts, tenant isolation and worker deployment.`);

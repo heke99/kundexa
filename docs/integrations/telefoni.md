@@ -170,3 +170,37 @@ Databasen behöver inte röras. `calls.provider` och `dial_attempts.provider` ä
 textkolumner som bär vem som kopplade samtalet, och inget villkor i systemet
 läser ett leverantörsnamn för att avgöra vad som ska hända — det var precis den
 sortens villkor som tystade två skydd vid förra bytet.
+
+## Avtalslänken
+
+Länken kunden klickar på byggs på två ställen, och de måste peka på samma värd.
+
+| Vad | Var | Variabel |
+| --- | --- | --- |
+| Första utskicket (SMS och e-post) | webbappen | `NEXT_PUBLIC_APP_URL` |
+| Påminnelsen, och SMS-leveransens callback | utskicksarbetaren | `APP_URL` |
+
+Glider de isär pekar påminnelsen på en annan värd än avtalet, och en POST som
+möter en omdirigering kan tappas tyst. `/api/ready` jämför dem:
+`checks.delivery.linkHostAligned`.
+
+Arbetaren vägrar bygga en länk alls när `APP_URL` saknas. Tidigare gav en osatt
+variabel strängen `undefined/accept/<token>` i ett SMS som rapporterades som
+skickat. Felet saknar prefixet `permanent_`, så jobbet kommer tillbaka när
+adressen är satt i stället för att dödbrevas med avtalet osänt.
+
+### Vad som krävs för att ett avtal ska nå kunden
+
+Fyra saker, och alla fyra prövas **innan** utskicket köas -- ett nej ska nå
+säljaren som kan göra något åt det, inte dödbrevas i en jobbtabell:
+
+- företagets funktionsflaggor för kanalen (`outbound_sms` och
+  `contract_delivery_sms`, respektive motsvarigheterna för e-post),
+- ett aktivt nummer som bär SMS, respektive en aktiv och testad Resend-integration
+  med verifierad avsändaradress,
+- kundens mobilnummer i E.164 respektive en giltig e-postadress,
+- den kanoniska PDF:en, som binds till acceptansen med sin SHA-256.
+
+SMS-nycklarna bor i Edge-funktionen, som webbappen inte kan läsa. Därför
+rapporterar arbetaren själv om de finns -- närvaro, aldrig värden -- i sin
+heartbeat, och `/api/ready` läser tillbaka det under `checks.delivery`.

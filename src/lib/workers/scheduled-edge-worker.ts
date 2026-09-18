@@ -36,6 +36,27 @@ export function isScheduledEdgeWorker(value: string): value is ScheduledEdgeWork
   return (scheduledEdgeWorkers as readonly string[]).includes(value);
 }
 
+/**
+ * Leveranskonfigurationen som arbetaren rapporterar om sig själv.
+ *
+ * Edge-funktionens hemligheter går inte att läsa från webbappen. Utan den här
+ * vägen finns det ingen plats där någon kan se att SMS-nycklarna saknas -- det
+ * upptäcks först av kunden som aldrig fick sin avtalslänk. Arbetaren svarar med
+ * enbart närvaro och den publika adressen, aldrig med nycklarnas värden.
+ */
+function readDeliveryConfiguration(value: unknown) {
+  if (!value || typeof value !== "object") return null;
+  const delivery = (value as Record<string, unknown>).delivery;
+  if (!delivery || typeof delivery !== "object") return null;
+  const record = delivery as Record<string, unknown>;
+  return {
+    appUrl: typeof record.appUrl === "string" ? record.appUrl : "",
+    smsProvider: typeof record.smsProvider === "string" ? record.smsProvider : "",
+    platformSmsConfigured: record.platformSmsConfigured === true,
+    platformEmailConfigured: record.platformEmailConfigured === true,
+  };
+}
+
 function summarizeWorkerResult(value: unknown) {
   if (!value || typeof value !== "object") return { fetched: 0, processed: 0, failed: 0, requeued: 0 };
   const record = value as Record<string, unknown>;
@@ -132,6 +153,7 @@ export async function invokeScheduledEdgeWorker(worker: ScheduledEdgeWorker) {
     throw new Error(`edge_worker_http_${response.status}`);
   }
 
+  const delivery = readDeliveryConfiguration(parsed);
   await heartbeat({
     worker,
     workerId,
@@ -141,7 +163,7 @@ export async function invokeScheduledEdgeWorker(worker: ScheduledEdgeWorker) {
     counts,
     errorCode: counts.failed > 0 ? "EDGE_WORKER_REPORTED_FAILURES" : null,
     errorMessage: counts.failed > 0 ? `${counts.failed} worker jobs reported failure.` : null,
-    metadata: { scheduler: "vercel", upstreamStatus: response.status },
+    metadata: { scheduler: "vercel", upstreamStatus: response.status, ...(delivery ? { delivery } : {}) },
   });
   return { worker, status: counts.failed > 0 ? "degraded" : "healthy", ...counts };
 }

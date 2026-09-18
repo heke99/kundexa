@@ -83,3 +83,68 @@ assert.match(rendered.html, /Granska och acceptera avtalet/);
 assert.match(rendered.text, /https:\/\/example\.test\/accept\/token/);
 
 console.log("Contract delivery unit tests passed: stable snapshot/PDF hashes, reminder quiet hours, Resend mapping and escaped email templates.");
+
+// --- Leveranskanalens funktionsflaggor -------------------------------------
+// Flaggorna kontrollerades tidigare bara i utskicksarbetaren, som dödbrevar
+// jobbet. Säljaren fick "utskicket har köats", kunden fick aldrig någon länk.
+// Kontrollen ligger nu före köandet, och de här fallen är vad den måste svara.
+const readinessSource = (await readFile(new URL("../src/lib/contracts/delivery-readiness.ts", import.meta.url), "utf8"))
+  .replace('import type { SupabaseClient } from "@supabase/supabase-js";', "");
+const readiness = await importSource(readinessSource, "delivery-readiness.ts");
+
+function featureClient(rows, error = null) {
+  const calls = [];
+  return {
+    calls,
+    from() {
+      const builder = {
+        select() { return builder; },
+        eq() { return builder; },
+        in(_column, keys) {
+          calls.push(keys);
+          return Promise.resolve({ data: error ? null : rows.filter((row) => keys.includes(row.feature_key)), error });
+        },
+      };
+      return builder;
+    },
+  };
+}
+
+const allOn = [
+  { feature_key: "outbound_sms", enabled: true },
+  { feature_key: "contract_delivery_sms", enabled: true },
+  { feature_key: "outbound_email", enabled: true },
+  { feature_key: "contract_delivery_email", enabled: true },
+];
+
+assert.deepEqual(readiness.contractDeliveryFeatureKeys("sms"), ["outbound_sms", "contract_delivery_sms"]);
+assert.deepEqual(readiness.contractDeliveryFeatureKeys("both"),
+  ["outbound_sms", "contract_delivery_sms", "outbound_email", "contract_delivery_email"]);
+
+assert.equal(await readiness.contractDeliveryBlocker(featureClient(allOn), "t1", "sms"), null);
+assert.equal(await readiness.contractDeliveryBlocker(featureClient(allOn), "t1", "both"), null);
+
+// Precis Gridex läge i produktion: kanalen av, avtalsleveransen på.
+const channelOff = allOn.map((row) => row.feature_key === "outbound_sms" ? { ...row, enabled: false } : row);
+const smsBlocked = await readiness.contractDeliveryBlocker(featureClient(channelOff), "t1", "sms");
+assert.equal(smsBlocked?.featureKey, "outbound_sms");
+assert.match(smsBlocked.message, /Utgående SMS är avstängt/);
+// "both" får inte slinka igenom på att e-posten råkar vara påslagen.
+assert.equal((await readiness.contractDeliveryBlocker(featureClient(channelOff), "t1", "both"))?.featureKey, "outbound_sms");
+// ... men e-post ensamt är fortfarande öppet, så säljaren kan skicka den vägen.
+assert.equal(await readiness.contractDeliveryBlocker(featureClient(channelOff), "t1", "email"), null);
+
+const deliveryOff = allOn.map((row) => row.feature_key === "contract_delivery_email" ? { ...row, enabled: false } : row);
+assert.equal((await readiness.contractDeliveryBlocker(featureClient(deliveryOff), "t1", "email"))?.featureKey, "contract_delivery_email");
+
+// En flagga vars rad aldrig skapades är inte ett ja.
+assert.equal((await readiness.contractDeliveryBlocker(featureClient([]), "t1", "sms"))?.featureKey, "outbound_sms");
+
+// Ett läsfel är inte "avstängt". Annars skickas säljaren till en administratör
+// för att slå på något som redan är påslaget, medan databasen är nere.
+await assert.rejects(
+  () => readiness.contractDeliveryBlocker(featureClient([], { code: "57014" }), "t1", "sms"),
+  /contract_delivery_feature_read_failed:57014/,
+);
+
+console.log("Contract delivery channel gate passed: disabled channels are refused before queueing, and a read failure is not a refusal.");
