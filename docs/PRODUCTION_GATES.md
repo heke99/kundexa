@@ -4,11 +4,11 @@ Följande måste godkännas före försäljning eller skarp kundtrafik.
 
 ## Leverantörer och data
 
-- Signerat upplägg och en enda central livecredential för Rinkel-telefoni samt separata credentials för 46elks SMS, e-postleverantör, dataleverantör och NIX-källa.
+- Signerat upplägg och livecredentials för telefonileverantören samt separata credentials för SMS, e-postleverantör, dataleverantör och NIX-källa.
 - Exakta providerfält, kvoter, cacheomfattning, lagring, filtrering, visning, export och retention registrerade från avtalet.
 - Officiellt och aktuellt geografiskt referensregister importerat och verifierat.
-- Verifierade Rinkel-webhookpayloads, eventordning, oklara `/dial`-utfall, inspelningslänkar och providerfel mot staging.
-- Samma logiska `RINKEL_API_KEY` finns server-side i Vercel och Supabase Edge Secrets; ingen Rinkel-credential finns per tenant.
+- Verifierade webhookpayloads, eventordning, oklara uppringningsutfall och providerfel mot staging.
+- Samma leverantörsnycklar finns server-side i Vercel och Supabase Edge Secrets; ingen telefonicredential finns per tenant.
 - Alla fyra kärnwebhookar (`incomingCall`, `outgoingCall`, `callStart`, `callEnd`), katalogsynk, resursallokering, nödstopp och reconciliation är liveverifierade. `callInsights` verifieras separat endast när den kapabiliteten används.
 - NIX-resultatmapping, giltighet och omkontroll testad med verklig källa.
 - SPF, DKIM och DMARC verifierade för alla avsändardomäner.
@@ -43,4 +43,4 @@ Följande måste godkännas före försäljning eller skarp kundtrafik.
 - Abonnemang, usage limits, överdebitering och avstängningsregler.
 - Support-, SLA-, status- och incidentkommunikation.
 - Onboardingmaterial och administratörsutbildning.
-- Schedulerövervakning för samtliga workers, inklusive `rinkel-platform-worker`, och larm på dead-letter/kvarstående jobb.
+- Schedulerövervakning för samtliga workers och larm på dead-letter/kvarstående jobb.

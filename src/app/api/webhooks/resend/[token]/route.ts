@@ -130,7 +130,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   // "received" and the duplicate short-circuit above — which only recognises
   // "processed" and "ignored" — could never fire. The dedupe machinery existed
   // and did nothing, and the events table read as though none had been handled.
-  // The inbound 46elks route already closes its events this way.
+  // The inbound SMS route already closes its events this way.
   //
   // A declined projection still counts as handled: the RPC looked at the event
   // and decided not to apply it, most often because a later state already

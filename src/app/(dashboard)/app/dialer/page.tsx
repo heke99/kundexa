@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getAppContext } from "@/lib/auth";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { RinkelDialer } from "@/components/rinkel-dialer";
+import { DialerPanel } from "@/components/dialer-panel";
 import { Badge } from "@/components/ui/badge";
 import { Field, SelectField } from "@/components/ui/form-field";
 import { formatDate } from "@/lib/utils";
@@ -23,7 +23,7 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
     ok(supabase.from("calls").select("id,to_number,status,disposition,created_at,customers(display_name)").order("created_at", { ascending: false }).limit(8)),
     ok(supabase.from("customer_lists").select("id,name,dialing_mode,priority,status").eq("status", "active").order("priority", { ascending: false })),
     ok(supabase.from("activities").select("id,customer_id,list_id,callback_scope,due_at,title,customers(display_name,phone_e164)").eq("type", "callback").eq("status", "open").lte("due_at", now).order("due_at").limit(20)),
-    ok(supabase.rpc("get_current_user_rinkel_numbers")),
+    ok(supabase.from("phone_numbers").select("id,number_e164").eq("status","active").eq("supports_voice",true).order("number_e164")),
   ]);
   return <>
     <PageHeader title="Dialer" description="Välj en tilldelad ringlista eller ring ett enskilt nummer från det kanoniska kundkortet." />
@@ -33,7 +33,7 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
       {!lists?.length ? <div className="notice">Du har inga aktiva och tilldelade ringlistor.</div> : null}
     </div>
     <div className="dialer-grid">
-      <div className="phone-panel"><RinkelDialer customers={selectedCustomer ? [selectedCustomer] : []} initialCustomer={selectedCustomer?.id} callbackActivityId={params.callback} callerIdOptions={(callerIdData ?? []) as Array<{ allocationId: string; number: string; displayName: string | null; isDefault?: boolean; accessSource?: "user" | "team" | "tenant" }>} mayManageIntegrations={can(context.role, "integrations.manage")} /></div>
+      <div className="phone-panel"><DialerPanel customers={selectedCustomer ? [selectedCustomer] : []} initialCustomer={selectedCustomer?.id} callbackActivityId={params.callback} callerIdOptions={(callerIdData ?? []) as Array<{ id: string; number_e164: string }>} mayManageIntegrations={can(context.role, "integrations.manage")} /></div>
       <div className="grid">
         <Card><CardHeader><h2><Plus size={17} /> Ring ett nytt nummer</h2></CardHeader><CardContent>
           <p className="muted">Numret matchas först mot befintliga kundkort. Finns en träff öppnas det kundkortet, annars skapas ett enda nytt prospekt och dess kundkort öppnas. Därifrån ringer du direkt.</p>

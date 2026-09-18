@@ -130,3 +130,37 @@ Upptäckte och backfillade en andra odokumenterad produktionsmigration, samt en 
 `is_tenant_admin`-guard i live som repot saknade.
 
 Kvar: extern åtgärd hos Rinkel (logga in på en enhet), därefter livetest av dial/CDR/recording.
+
+## 2026-09-17 — Rinkel och 46elks borta, Sinch är leverantören
+
+Bytet är genomfört hela vägen: källkod, schema, testsviter och driftdokumentation.
+`npm run verify` grön i sin helhet (exit 0).
+
+**Migrationer**: 202609170007 (telefonifunktioner utan leverantörens objektmodell),
+202609170008 (`caller_id_options_for_current_user`), 202609170009 (18 tabeller,
+44 funktioner, 17 kolumner droppade, med en självkontroll som fäller migrationen om
+något blir kvar), 202609170010 (rättar gallringen av hängande försök).
+
+**Tre defekter som borttagningen avslöjade**, alla samma form — ett skydd villkorat på
+ett leverantörsnamn, som slutade gälla i samma stund som namnet byttes:
+
+- `protect_rinkel_call_projection` inledde med `if old.provider<>'rinkel'`. Monotoniciteten
+  var alltså avstängd för varje samtal som ringts sedan bytet: en sen händelse kunde
+  backa ett avslutat samtal till "ringer".
+- `complete_manual_call_work_v2` hoppade över sin normalisering av slutstatus av samma skäl.
+- Min egen portering av gallringen använde `dial_attempt_holds_seat(status)`, som
+  inkluderar `matched` — alltså uppkopplat. Den hade släppt säljarens plats mitt i ett
+  samtal. Testsviten fångade den; den ursprungliga funktionen räknade upp statusarna en
+  och en av precis det skälet.
+
+**Kontraktet som gör bytet varaktigt**: `scripts/verify.mjs` skannar `src/`, `scripts/`
+och `supabase/functions/` och fäller bygget om ett leverantörsnamn står utanför de
+uppräknade adapterfilerna. Migrationer är undantagna eftersom de är historik, men ingen
+migration efter borttagningen får återinföra namnet. Slutbeviset är de genererade
+typerna: de läses ur det levande projektet, så ett namn där betyder att något faktiskt
+finns kvar i databasen.
+
+`.json` lades till i skanningen efter att ruttklassificeringen visat sig bära både en
+borttagen rutt och tre motiveringar med leverantörens namn.
+
+**Kvar**: allt i `next-actions.md` kräver leverantörskonto eller ett riktigt samtal.

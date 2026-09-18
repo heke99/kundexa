@@ -4,8 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Phone, PhoneOff, Pause, Play, StickyNote } from "@/components/icons";
-import { useRinkelDialer } from "@/hooks/use-rinkel-dialer";
+import { useDialerPanel } from "@/hooks/use-dialer";
 import { useCallRealtime } from "@/hooks/use-call-realtime";
+import { WebphoneAudioPanel } from "@/components/webphone-audio-panel";
 
 type Disposition = { key: string; label: string; outcome_group: string; terminal: boolean; retry_after_minutes: number | null; requires_note: boolean; requires_callback: boolean; requires_order: boolean; contract_eligible?: boolean };
 type Product = { id: string; name: string };
@@ -41,7 +42,7 @@ type Claim = {
 };
 type Phase = "idle" | "loading" | "ready" | "dialing" | "calling" | "after_call" | "paused" | "ended" | "empty" | "error";
 
-// Rinkel maps both a human answer and an answering service to `completed`, so every status
+// The provider maps both a human answer and an answering service to `completed`, so every status
 // below means the prospect never came on the line. In automatic mode those are the calls the
 // dialer is supposed to work through on its own: it records the matching outcome and moves to
 // the next prospect. Anything else — an answered call above all — stops for after-work.
@@ -79,7 +80,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
   const [unitPrice, setUnitPrice] = useState("");
   const [selectedTargetKey, setSelectedTargetKey] = useState("");
   const selectedDisposition = useMemo(() => dispositions.find((item) => item.key === dispositionKey), [dispositionKey, dispositions]);
-  const voice = useRinkelDialer();
+  const voice = useDialerPanel();
   const [autoOutcome, setAutoOutcome] = useState<string | null>(null);
   const callState = useCallRealtime(callId, (status) => {
     voice.markEnded();
@@ -206,7 +207,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
     return disposition;
   }
 
-  // Rinkel has no hangup endpoint, so this never claims to drop the provider's
+  // The server cannot drop the provider's leg, so this never claims to drop the provider's
   // call. It releases the dial attempt — which is what blocks the seat and the
   // rest of the list — and closes an unanswered call. `cancelled` is in neither
   // the unattended-outcome map nor the session-stopping map, so the seller lands
@@ -216,6 +217,8 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
     if (!callId || voice.ending) return;
     setError(null);
     try {
+      // Lägg på i webbläsaren först, släpp platsen sedan.
+      voice.hangupWebphone();
       const result = await voice.endCall(callId);
       if (result.callClosed) await handleCallEnded(result.callStatus);
     } catch (caught) {
@@ -304,21 +307,27 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
         <div className="dialer-call-controls">
           {phase === "ready" ? <button className="call-button" type="button" onClick={() => dial()} disabled={!voice.registered}><Phone size={25} /></button> : null}
           {phase === "dialing" ? <Badge className="badge-info">Kopplar samtalet…</Badge> : null}
-          {phase === "calling" ? <div className="notice">Samtalet hanteras på din telefonienhet. {mode === "automatic" ? "Svarar ingen registreras utfallet automatiskt och nästa prospekt rings upp." : "Kundexa inväntar slutstatus innan efterarbetet öppnas."}</div> : null}
+          {phase === "calling" ? <div className="notice">Samtalet är uppkopplat i webbläsaren. {mode === "automatic" ? "Svarar ingen registreras utfallet automatiskt och nästa prospekt rings upp." : "Kundexa inväntar slutstatus innan efterarbetet öppnas."}</div> : null}
+          <WebphoneAudioPanel
+            inCall={voice.calling}
+            muted={voice.muted}
+            capabilities={voice.audioCapabilities}
+            onToggleMute={voice.toggleMute}
+            onSendDtmf={voice.sendDtmf}
+          />
           {callState.recovering ? <div className="notice">Samtalets slutstatus är osäker och avstäms automatiskt. Ring inte nästa prospekt ännu.</div> : null}
           {callId && callState.connectionState === "degraded" ? <div className="notice">Realtime är frånkopplat. Kundexa använder statuspolling tills anslutningen är återställd.</div> : null}
           {callId && (phase === "calling" || phase === "dialing" || callState.recovering) ? <div className="dialer-end">
-            {/* The label carries the truth, not the footnote under it — see the
-                same change in rinkel-dialer.tsx. */}
+            {/* Knappen lägger på på riktigt — se samma ändring i dialer-panel.tsx. */}
             <button className="button button-danger" type="button" onClick={endCurrentCall} disabled={voice.ending}>
               <PhoneOff size={15} /> {voice.ending
-                ? "Släpper…"
-                : callAnswered ? "Frigör för nästa samtal" : "Avbryt uppringningen"}
+                ? "Lägger på…"
+                : callAnswered ? "Lägg på" : "Avbryt uppringningen"}
             </button>
             <small className="muted">
               {callAnswered
-                ? "Samtalet pågår på din telefon och måste läggas på där — telefonitjänsten kan inte kopplas ned härifrån. Kundexa släpper samtalsförsöket direkt så att listan kan fortsätta."
-                : "Kundexa avbryter uppringningen och släpper samtalsförsöket. Ringer telefonen fortfarande avvisar du samtalet där; telefonitjänsten kan inte kopplas ned härifrån."}
+                ? "Samtalet läggs på här och platsen släpps, så listan kan fortsätta direkt."
+                : "Uppringningen avbryts och samtalsförsöket släpps."}
             </small>
           </div> : null}
           {phase === "ready" && claim.allowSkip ? <button className="button button-ghost button-sm" type="button" onClick={() => pause("skip")}>Hoppa över</button> : null}

@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { decryptJson, encryptJson, randomToken, sha256 } from "@/lib/crypto";
 import { canonicalAppBaseUrl, serverEnv } from "@/lib/env";
+import { DEFAULT_SMS_PROVIDER } from "@/lib/messaging/provider";
 import { readJsonObject, toJson, toJsonObject } from "@/lib/supabase/json";
 import type { RuntimeDatabase } from "@/lib/supabase/runtime-database.types";
 import { getScraperAdapter, identityFieldMapping, validateScraperFilter } from "../../../supabase/functions/_shared/providers";
@@ -54,27 +55,43 @@ export async function inviteUser(form: FormData) {
   return inviteTenantUser(form);
 }
 
-export async function save46ElksIntegration(form: FormData) {
+/**
+ * Tenantens SMS-leverantör.
+ *
+ * Formuläret talar om SMS, inte om ett leverantörsnamn: kontomodellen avgör om
+ * meddelandena går genom Kundexas konto eller tenantens eget, och nycklarna
+ * krypteras innan de lämnar servern. Byter vi leverantör byts adaptern i
+ * `_shared/sms-provider.ts` -- den här raden i databasen ser likadan ut.
+ */
+export async function saveSmsIntegration(form: FormData) {
   const context = await adminContext();
-  const username = value(form, "username");
-  const password = value(form, "password");
-  if (!username || !password) redirect("/app/integrations?error=Användarnamn och lösenord krävs");
+  const accountMode = value(form, "account_mode") || "platform_managed";
+  const servicePlanId = value(form, "service_plan_id");
+  const apiToken = value(form, "api_token");
+  const region = value(form, "region") || "eu";
+  // Ett eget konto utan nycklar är inte ett eget konto. Att spara det ändå hade
+  // gjort integrationen "aktiv" och dödbrevat varje avtals-SMS därefter.
+  if (accountMode === "tenant_owned" && (!servicePlanId || !apiToken)) {
+    redirect("/app/integrations?error=Ett eget SMS-konto kräver service plan-id och API-token");
+  }
   const env = serverEnv();
   const admin = createAdminClient();
-  const cipher = encryptJson({ username, password }, env.KUNDEXA_ENCRYPTION_KEY);
+  const cipher = accountMode === "tenant_owned"
+    ? encryptJson({ servicePlanId, apiToken, region }, env.KUNDEXA_ENCRYPTION_KEY)
+    : null;
   const { error } = await admin.from("tenant_integrations").upsert({
     tenant_id: context.tenantId,
-    provider_type: "telephony",
-    provider: "46elks",
-    name: "46elks",
+    provider_type: "sms",
+    provider: process.env.SMS_PROVIDER ?? DEFAULT_SMS_PROVIDER,
+    name: "sms",
     credentials_ciphertext: cipher,
     status: "active",
-    configuration: { account_mode: value(form, "account_mode") || "tenant_owned" },
+    configuration: { account_mode: accountMode, region },
     created_by: context.userId,
   }, { onConflict: "tenant_id,provider_type,provider,name" });
   if (error) throw error;
   revalidatePath("/app/integrations");
-  redirect("/app/integrations?message=46elks är sparat krypterat");
+  redirect("/app/integrations?message=SMS-inställningarna är sparade");
 }
 
 type ResendCredentials = { apiKey?: string; webhookSigningSecret?: string; webhookPathToken?: string; from?: string };
@@ -261,7 +278,7 @@ export async function addPhoneNumber(form: FormData) {
   const token = randomToken();
   const admin = createAdminClient();
   const { data: integration } = await admin.from("tenant_integrations").select("id")
-    .eq("tenant_id", context.tenantId).eq("provider", "46elks").eq("status", "active").limit(1).maybeSingle();
+    .eq("tenant_id", context.tenantId).eq("provider_type", "sms").eq("status", "active").limit(1).maybeSingle();
   const { error } = await admin.from("phone_numbers").insert({
     tenant_id: context.tenantId,
     integration_id: integration?.id,

@@ -56,7 +56,6 @@ export function Sidebar({
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [overrides, setOverrides] = useState<SectionOverrides | null>(null);
-  const mayManagePlatformTelephony = platformRole === "platform_owner" || platformRole === "platform_admin";
 
   // Read after mount so the server and the first client render agree; until then
   // every section renders open, which is the safe direction to be wrong in.
@@ -134,9 +133,6 @@ export function Sidebar({
       <Link href="/app/platform" className={cn("nav-link", pathname === "/app/platform" && "active")}>
         <ShieldCheck size={17} /><span>Plattformsadmin</span>
       </Link>
-      {mayManagePlatformTelephony ? <Link href="/app/platform/telephony" className={cn("nav-link", pathname.startsWith("/app/platform/telephony") && "active")}>
-        <Phone size={17} /><span>Rinkeltelefoni</span>
-      </Link> : null}
       {platformMode && hasActiveTenant ? <Link href="/app" className="nav-link">
         <ShieldCheck size={17} /><span>Tenantdashboard</span>
       </Link> : null}

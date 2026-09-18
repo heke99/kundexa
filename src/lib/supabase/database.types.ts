@@ -460,127 +460,6 @@ export type Database = {
           },
         ]
       }
-      call_attempts: {
-        Row: {
-          call_id: string
-          client_request_id: string
-          connection_id: string
-          created_at: string
-          destination_number_e164: string
-          error_code: string | null
-          error_message: string | null
-          expires_at: string
-          external_call_id: string | null
-          id: string
-          idempotency_key: string
-          matched_at: string | null
-          provider_request_finished_at: string | null
-          provider_request_started_at: string | null
-          requested_at: string
-          rinkel_device_id: string
-          rinkel_number_id: string
-          rinkel_user_id: string
-          seller_user_id: string
-          source_number_e164: string
-          status: string
-          tenant_id: string
-          updated_at: string
-        }
-        Insert: {
-          call_id: string
-          client_request_id: string
-          connection_id: string
-          created_at?: string
-          destination_number_e164: string
-          error_code?: string | null
-          error_message?: string | null
-          expires_at?: string
-          external_call_id?: string | null
-          id?: string
-          idempotency_key: string
-          matched_at?: string | null
-          provider_request_finished_at?: string | null
-          provider_request_started_at?: string | null
-          requested_at?: string
-          rinkel_device_id: string
-          rinkel_number_id: string
-          rinkel_user_id: string
-          seller_user_id: string
-          source_number_e164: string
-          status?: string
-          tenant_id: string
-          updated_at?: string
-        }
-        Update: {
-          call_id?: string
-          client_request_id?: string
-          connection_id?: string
-          created_at?: string
-          destination_number_e164?: string
-          error_code?: string | null
-          error_message?: string | null
-          expires_at?: string
-          external_call_id?: string | null
-          id?: string
-          idempotency_key?: string
-          matched_at?: string | null
-          provider_request_finished_at?: string | null
-          provider_request_started_at?: string | null
-          requested_at?: string
-          rinkel_device_id?: string
-          rinkel_number_id?: string
-          rinkel_user_id?: string
-          seller_user_id?: string
-          source_number_e164?: string
-          status?: string
-          tenant_id?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "call_attempts_tenant_id_call_id_fkey"
-            columns: ["tenant_id", "call_id"]
-            isOneToOne: false
-            referencedRelation: "calls"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "call_attempts_tenant_id_connection_id_fkey"
-            columns: ["tenant_id", "connection_id"]
-            isOneToOne: false
-            referencedRelation: "tenant_integrations"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "call_attempts_tenant_id_fkey"
-            columns: ["tenant_id"]
-            isOneToOne: false
-            referencedRelation: "tenants"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "call_attempts_tenant_id_rinkel_number_id_fkey"
-            columns: ["tenant_id", "rinkel_number_id"]
-            isOneToOne: false
-            referencedRelation: "rinkel_numbers"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "call_attempts_tenant_id_rinkel_user_id_fkey"
-            columns: ["tenant_id", "rinkel_user_id"]
-            isOneToOne: false
-            referencedRelation: "rinkel_users"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "call_attempts_tenant_id_seller_user_id_fkey"
-            columns: ["tenant_id", "seller_user_id"]
-            isOneToOne: false
-            referencedRelation: "tenant_memberships"
-            referencedColumns: ["tenant_id", "user_id"]
-          },
-        ]
-      }
       call_correlation_conflicts: {
         Row: {
           candidate_attempt_ids: string[]
@@ -1399,6 +1278,7 @@ export type Database = {
           allowed_end_time: string
           allowed_start_time: string
           budget: number | null
+          caller_id_phone_number_id: string | null
           cost_limit: number | null
           created_at: string
           created_by: string | null
@@ -1410,7 +1290,6 @@ export type Database = {
           name: string
           questionnaire: Json
           retry_rules: Json
-          rinkel_number_allocation_id: string | null
           script: string | null
           starts_at: string | null
           status: string
@@ -1422,6 +1301,7 @@ export type Database = {
           allowed_end_time?: string
           allowed_start_time?: string
           budget?: number | null
+          caller_id_phone_number_id?: string | null
           cost_limit?: number | null
           created_at?: string
           created_by?: string | null
@@ -1433,7 +1313,6 @@ export type Database = {
           name: string
           questionnaire?: Json
           retry_rules?: Json
-          rinkel_number_allocation_id?: string | null
           script?: string | null
           starts_at?: string | null
           status?: string
@@ -1445,6 +1324,7 @@ export type Database = {
           allowed_end_time?: string
           allowed_start_time?: string
           budget?: number | null
+          caller_id_phone_number_id?: string | null
           cost_limit?: number | null
           created_at?: string
           created_by?: string | null
@@ -1456,7 +1336,6 @@ export type Database = {
           name?: string
           questionnaire?: Json
           retry_rules?: Json
-          rinkel_number_allocation_id?: string | null
           script?: string | null
           starts_at?: string | null
           status?: string
@@ -1465,10 +1344,10 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "campaigns_rinkel_number_allocation_fk"
-            columns: ["tenant_id", "rinkel_number_allocation_id"]
+            foreignKeyName: "campaigns_caller_id_phone_number_tenant_fk"
+            columns: ["tenant_id", "caller_id_phone_number_id"]
             isOneToOne: false
-            referencedRelation: "rinkel_number_allocations"
+            referencedRelation: "phone_numbers"
             referencedColumns: ["tenant_id", "id"]
           },
           {
@@ -3410,6 +3289,7 @@ export type Database = {
           archived_at: string | null
           auto_next_delay_seconds: number
           callback_policy: string
+          caller_id_phone_number_id: string | null
           created_at: string
           description: string | null
           dialing_mode: string
@@ -3422,14 +3302,12 @@ export type Database = {
           lock_to_seller: boolean
           max_attempts: number
           name: string
-          outbound_phone_number_id: string | null
           owner_user_id: string | null
           parent_list_id: string | null
           priority: number
           questionnaire: Json
           required_disposition: boolean
           retry_delay_minutes: number
-          rinkel_number_allocation_id: string | null
           script: string | null
           settings: Json
           source_kind: string
@@ -3452,6 +3330,7 @@ export type Database = {
           archived_at?: string | null
           auto_next_delay_seconds?: number
           callback_policy?: string
+          caller_id_phone_number_id?: string | null
           created_at?: string
           description?: string | null
           dialing_mode?: string
@@ -3464,14 +3343,12 @@ export type Database = {
           lock_to_seller?: boolean
           max_attempts?: number
           name: string
-          outbound_phone_number_id?: string | null
           owner_user_id?: string | null
           parent_list_id?: string | null
           priority?: number
           questionnaire?: Json
           required_disposition?: boolean
           retry_delay_minutes?: number
-          rinkel_number_allocation_id?: string | null
           script?: string | null
           settings?: Json
           source_kind?: string
@@ -3494,6 +3371,7 @@ export type Database = {
           archived_at?: string | null
           auto_next_delay_seconds?: number
           callback_policy?: string
+          caller_id_phone_number_id?: string | null
           created_at?: string
           description?: string | null
           dialing_mode?: string
@@ -3506,14 +3384,12 @@ export type Database = {
           lock_to_seller?: boolean
           max_attempts?: number
           name?: string
-          outbound_phone_number_id?: string | null
           owner_user_id?: string | null
           parent_list_id?: string | null
           priority?: number
           questionnaire?: Json
           required_disposition?: boolean
           retry_delay_minutes?: number
-          rinkel_number_allocation_id?: string | null
           script?: string | null
           settings?: Json
           source_kind?: string
@@ -3528,17 +3404,17 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "customer_lists_caller_id_phone_number_tenant_fk"
+            columns: ["tenant_id", "caller_id_phone_number_id"]
+            isOneToOne: false
+            referencedRelation: "phone_numbers"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
             foreignKeyName: "customer_lists_parent_tenant_fk"
             columns: ["tenant_id", "parent_list_id"]
             isOneToOne: false
             referencedRelation: "customer_lists"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "customer_lists_rinkel_number_allocation_fk"
-            columns: ["tenant_id", "rinkel_number_allocation_id"]
-            isOneToOne: false
-            referencedRelation: "rinkel_number_allocations"
             referencedColumns: ["tenant_id", "id"]
           },
           {
@@ -3567,13 +3443,6 @@ export type Database = {
             columns: ["tenant_id", "team_id"]
             isOneToOne: false
             referencedRelation: "teams"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "customer_lists_tenant_outbound_number_fk"
-            columns: ["tenant_id", "outbound_phone_number_id"]
-            isOneToOne: false
-            referencedRelation: "phone_numbers"
             referencedColumns: ["tenant_id", "id"]
           },
         ]
@@ -4400,6 +4269,117 @@ export type Database = {
             columns: ["tenant_id", "office_id"]
             isOneToOne: false
             referencedRelation: "offices"
+            referencedColumns: ["tenant_id", "id"]
+          },
+        ]
+      }
+      dial_attempts: {
+        Row: {
+          call_id: string
+          caller_id_phone_number_id: string | null
+          caller_id_source: string | null
+          client_request_id: string
+          created_at: string
+          destination_number_e164: string
+          error_code: string | null
+          error_message: string | null
+          expires_at: string
+          external_call_id: string | null
+          id: string
+          idempotency_key: string
+          provider: string
+          provider_request_finished_at: string | null
+          provider_request_started_at: string | null
+          requested_at: string
+          seller_user_id: string
+          source_number_e164: string
+          status: string
+          tenant_id: string
+          updated_at: string
+          webphone_session_id: string | null
+        }
+        Insert: {
+          call_id: string
+          caller_id_phone_number_id?: string | null
+          caller_id_source?: string | null
+          client_request_id: string
+          created_at?: string
+          destination_number_e164: string
+          error_code?: string | null
+          error_message?: string | null
+          expires_at: string
+          external_call_id?: string | null
+          id?: string
+          idempotency_key: string
+          provider: string
+          provider_request_finished_at?: string | null
+          provider_request_started_at?: string | null
+          requested_at?: string
+          seller_user_id: string
+          source_number_e164: string
+          status: string
+          tenant_id: string
+          updated_at?: string
+          webphone_session_id?: string | null
+        }
+        Update: {
+          call_id?: string
+          caller_id_phone_number_id?: string | null
+          caller_id_source?: string | null
+          client_request_id?: string
+          created_at?: string
+          destination_number_e164?: string
+          error_code?: string | null
+          error_message?: string | null
+          expires_at?: string
+          external_call_id?: string | null
+          id?: string
+          idempotency_key?: string
+          provider?: string
+          provider_request_finished_at?: string | null
+          provider_request_started_at?: string | null
+          requested_at?: string
+          seller_user_id?: string
+          source_number_e164?: string
+          status?: string
+          tenant_id?: string
+          updated_at?: string
+          webphone_session_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dial_attempts_call_tenant_fk"
+            columns: ["tenant_id", "call_id"]
+            isOneToOne: false
+            referencedRelation: "calls"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "dial_attempts_caller_id_phone_number_tenant_fk"
+            columns: ["tenant_id", "caller_id_phone_number_id"]
+            isOneToOne: false
+            referencedRelation: "phone_numbers"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "dial_attempts_seller_tenant_fk"
+            columns: ["tenant_id", "seller_user_id"]
+            isOneToOne: false
+            referencedRelation: "tenant_memberships"
+            referencedColumns: ["tenant_id", "user_id"]
+          },
+          {
+            foreignKeyName: "dial_attempts_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "dial_attempts_webphone_session_tenant_fk"
+            columns: ["tenant_id", "webphone_session_id"]
+            isOneToOne: false
+            referencedRelation: "webphone_sessions"
             referencedColumns: ["tenant_id", "id"]
           },
         ]
@@ -7149,6 +7129,13 @@ export type Database = {
             referencedColumns: ["tenant_id", "id"]
           },
           {
+            foreignKeyName: "notes_created_by_profile_fk"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "notes_list_tenant_fk"
             columns: ["tenant_id", "list_id"]
             isOneToOne: false
@@ -8265,565 +8252,6 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
-      }
-      platform_rinkel_capabilities: {
-        Row: {
-          ai_insights: boolean
-          api_access: boolean
-          core_webhooks_verified: boolean
-          details: Json
-          detected_at: string
-          dial: boolean
-          dial_configured: boolean
-          dial_endpoint_reachable: boolean
-          dial_test_succeeded: boolean
-          dial_tested_at: string | null
-          insights_supported: boolean
-          note_sync_supported: boolean
-          numbers_catalog: boolean
-          platform_integration_id: string
-          recording_detected: boolean
-          recordings: boolean
-          transcription: boolean
-          transcription_supported: boolean
-          users_catalog: boolean
-          webhooks: boolean
-          webhooks_registration: boolean
-        }
-        Insert: {
-          ai_insights?: boolean
-          api_access?: boolean
-          core_webhooks_verified?: boolean
-          details?: Json
-          detected_at?: string
-          dial?: boolean
-          dial_configured?: boolean
-          dial_endpoint_reachable?: boolean
-          dial_test_succeeded?: boolean
-          dial_tested_at?: string | null
-          insights_supported?: boolean
-          note_sync_supported?: boolean
-          numbers_catalog?: boolean
-          platform_integration_id: string
-          recording_detected?: boolean
-          recordings?: boolean
-          transcription?: boolean
-          transcription_supported?: boolean
-          users_catalog?: boolean
-          webhooks?: boolean
-          webhooks_registration?: boolean
-        }
-        Update: {
-          ai_insights?: boolean
-          api_access?: boolean
-          core_webhooks_verified?: boolean
-          details?: Json
-          detected_at?: string
-          dial?: boolean
-          dial_configured?: boolean
-          dial_endpoint_reachable?: boolean
-          dial_test_succeeded?: boolean
-          dial_tested_at?: string | null
-          insights_supported?: boolean
-          note_sync_supported?: boolean
-          numbers_catalog?: boolean
-          platform_integration_id?: string
-          recording_detected?: boolean
-          recordings?: boolean
-          transcription?: boolean
-          transcription_supported?: boolean
-          users_catalog?: boolean
-          webhooks?: boolean
-          webhooks_registration?: boolean
-        }
-        Relationships: [
-          {
-            foreignKeyName: "platform_rinkel_capabilities_platform_integration_id_fkey"
-            columns: ["platform_integration_id"]
-            isOneToOne: true
-            referencedRelation: "platform_integrations"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      platform_rinkel_conflicts: {
-        Row: {
-          claimed_tenant_ids: string[]
-          conflict_type: string
-          created_at: string
-          details: Json
-          event_id: string | null
-          id: string
-          provider_resource_key: string
-          provider_resource_type: string
-          resolved_at: string | null
-          resolved_by: string | null
-          status: string
-        }
-        Insert: {
-          claimed_tenant_ids?: string[]
-          conflict_type: string
-          created_at?: string
-          details?: Json
-          event_id?: string | null
-          id?: string
-          provider_resource_key: string
-          provider_resource_type: string
-          resolved_at?: string | null
-          resolved_by?: string | null
-          status?: string
-        }
-        Update: {
-          claimed_tenant_ids?: string[]
-          conflict_type?: string
-          created_at?: string
-          details?: Json
-          event_id?: string | null
-          id?: string
-          provider_resource_key?: string
-          provider_resource_type?: string
-          resolved_at?: string | null
-          resolved_by?: string | null
-          status?: string
-        }
-        Relationships: []
-      }
-      platform_rinkel_devices: {
-        Row: {
-          active: boolean
-          created_at: string
-          device_type: string | null
-          display_name: string | null
-          id: string
-          last_seen_at: string | null
-          last_synced_at: string
-          platform_integration_id: string
-          platform_rinkel_user_id: string
-          provider_device_id: string
-          provider_status: string
-          raw_payload: Json
-          updated_at: string
-        }
-        Insert: {
-          active?: boolean
-          created_at?: string
-          device_type?: string | null
-          display_name?: string | null
-          id?: string
-          last_seen_at?: string | null
-          last_synced_at?: string
-          platform_integration_id: string
-          platform_rinkel_user_id: string
-          provider_device_id: string
-          provider_status?: string
-          raw_payload?: Json
-          updated_at?: string
-        }
-        Update: {
-          active?: boolean
-          created_at?: string
-          device_type?: string | null
-          display_name?: string | null
-          id?: string
-          last_seen_at?: string | null
-          last_synced_at?: string
-          platform_integration_id?: string
-          platform_rinkel_user_id?: string
-          provider_device_id?: string
-          provider_status?: string
-          raw_payload?: Json
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "platform_rinkel_devices_platform_integration_id_fkey"
-            columns: ["platform_integration_id"]
-            isOneToOne: false
-            referencedRelation: "platform_integrations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "platform_rinkel_devices_platform_rinkel_user_id_fkey"
-            columns: ["platform_rinkel_user_id"]
-            isOneToOne: false
-            referencedRelation: "platform_rinkel_users"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      platform_rinkel_jobs: {
-        Row: {
-          aggregate_id: string | null
-          attempts: number
-          available_at: string
-          completed_at: string | null
-          created_at: string
-          dead_lettered_at: string | null
-          id: string
-          idempotency_key: string
-          job_type: string
-          last_error: string | null
-          last_error_code: string | null
-          last_error_message: string | null
-          locked_at: string | null
-          locked_by: string | null
-          max_attempts: number
-          payload: Json
-          status: string
-          updated_at: string
-        }
-        Insert: {
-          aggregate_id?: string | null
-          attempts?: number
-          available_at?: string
-          completed_at?: string | null
-          created_at?: string
-          dead_lettered_at?: string | null
-          id?: string
-          idempotency_key: string
-          job_type: string
-          last_error?: string | null
-          last_error_code?: string | null
-          last_error_message?: string | null
-          locked_at?: string | null
-          locked_by?: string | null
-          max_attempts?: number
-          payload?: Json
-          status?: string
-          updated_at?: string
-        }
-        Update: {
-          aggregate_id?: string | null
-          attempts?: number
-          available_at?: string
-          completed_at?: string | null
-          created_at?: string
-          dead_lettered_at?: string | null
-          id?: string
-          idempotency_key?: string
-          job_type?: string
-          last_error?: string | null
-          last_error_code?: string | null
-          last_error_message?: string | null
-          locked_at?: string | null
-          locked_by?: string | null
-          max_attempts?: number
-          payload?: Json
-          status?: string
-          updated_at?: string
-        }
-        Relationships: []
-      }
-      platform_rinkel_numbers: {
-        Row: {
-          active: boolean
-          country_code: string | null
-          created_at: string
-          display_name: string | null
-          external_number_id: string
-          id: string
-          is_platform_default: boolean
-          last_synced_at: string
-          phone_number_e164: string
-          platform_integration_id: string
-          provider_status: string
-          raw_provider_data: Json
-          recording_enabled: boolean
-          updated_at: string
-        }
-        Insert: {
-          active?: boolean
-          country_code?: string | null
-          created_at?: string
-          display_name?: string | null
-          external_number_id: string
-          id?: string
-          is_platform_default?: boolean
-          last_synced_at?: string
-          phone_number_e164: string
-          platform_integration_id: string
-          provider_status?: string
-          raw_provider_data?: Json
-          recording_enabled?: boolean
-          updated_at?: string
-        }
-        Update: {
-          active?: boolean
-          country_code?: string | null
-          created_at?: string
-          display_name?: string | null
-          external_number_id?: string
-          id?: string
-          is_platform_default?: boolean
-          last_synced_at?: string
-          phone_number_e164?: string
-          platform_integration_id?: string
-          provider_status?: string
-          raw_provider_data?: Json
-          recording_enabled?: boolean
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "platform_rinkel_numbers_platform_integration_id_fkey"
-            columns: ["platform_integration_id"]
-            isOneToOne: false
-            referencedRelation: "platform_integrations"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      platform_rinkel_users: {
-        Row: {
-          active: boolean
-          created_at: string
-          dial_policy_applied_at: string | null
-          dial_policy_error: string | null
-          display_name: string
-          email: string | null
-          external_device_id: string | null
-          external_user_id: string
-          id: string
-          last_synced_at: string
-          platform_integration_id: string
-          provider_created_at: string | null
-          raw_provider_data: Json
-          updated_at: string
-        }
-        Insert: {
-          active?: boolean
-          created_at?: string
-          dial_policy_applied_at?: string | null
-          dial_policy_error?: string | null
-          display_name: string
-          email?: string | null
-          external_device_id?: string | null
-          external_user_id: string
-          id?: string
-          last_synced_at?: string
-          platform_integration_id: string
-          provider_created_at?: string | null
-          raw_provider_data?: Json
-          updated_at?: string
-        }
-        Update: {
-          active?: boolean
-          created_at?: string
-          dial_policy_applied_at?: string | null
-          dial_policy_error?: string | null
-          display_name?: string
-          email?: string | null
-          external_device_id?: string | null
-          external_user_id?: string
-          id?: string
-          last_synced_at?: string
-          platform_integration_id?: string
-          provider_created_at?: string | null
-          raw_provider_data?: Json
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "platform_rinkel_users_platform_integration_id_fkey"
-            columns: ["platform_integration_id"]
-            isOneToOne: false
-            referencedRelation: "platform_integrations"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      platform_rinkel_webhook_events: {
-        Row: {
-          attempts: number
-          content_type: string
-          correlated_attempt_id: string | null
-          correlated_call_id: string | null
-          correlation_attempts: number
-          correlation_key: string | null
-          correlation_status: string
-          event_at: string | null
-          event_type: string
-          external_call_id: string
-          headers: Json
-          id: string
-          last_error: string | null
-          next_retry_at: string | null
-          payload: Json
-          payload_hash: string
-          platform_integration_id: string
-          processed_at: string | null
-          provider_event_id: string
-          received_at: string
-          source_ip: unknown
-          status: string
-          tenant_id: string | null
-        }
-        Insert: {
-          attempts?: number
-          content_type: string
-          correlated_attempt_id?: string | null
-          correlated_call_id?: string | null
-          correlation_attempts?: number
-          correlation_key?: string | null
-          correlation_status?: string
-          event_at?: string | null
-          event_type: string
-          external_call_id: string
-          headers?: Json
-          id?: string
-          last_error?: string | null
-          next_retry_at?: string | null
-          payload: Json
-          payload_hash: string
-          platform_integration_id: string
-          processed_at?: string | null
-          provider_event_id: string
-          received_at?: string
-          source_ip?: unknown
-          status?: string
-          tenant_id?: string | null
-        }
-        Update: {
-          attempts?: number
-          content_type?: string
-          correlated_attempt_id?: string | null
-          correlated_call_id?: string | null
-          correlation_attempts?: number
-          correlation_key?: string | null
-          correlation_status?: string
-          event_at?: string | null
-          event_type?: string
-          external_call_id?: string
-          headers?: Json
-          id?: string
-          last_error?: string | null
-          next_retry_at?: string | null
-          payload?: Json
-          payload_hash?: string
-          platform_integration_id?: string
-          processed_at?: string | null
-          provider_event_id?: string
-          received_at?: string
-          source_ip?: unknown
-          status?: string
-          tenant_id?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "platform_rinkel_webhook_events_correlated_attempt_id_fkey"
-            columns: ["correlated_attempt_id"]
-            isOneToOne: false
-            referencedRelation: "rinkel_call_attempts_v2"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "platform_rinkel_webhook_events_correlated_call_id_fkey"
-            columns: ["correlated_call_id"]
-            isOneToOne: false
-            referencedRelation: "calls"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "platform_rinkel_webhook_events_platform_integration_id_fkey"
-            columns: ["platform_integration_id"]
-            isOneToOne: false
-            referencedRelation: "platform_integrations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "platform_rinkel_webhook_events_tenant_id_fkey"
-            columns: ["tenant_id"]
-            isOneToOne: false
-            referencedRelation: "tenants"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      platform_rinkel_webhook_subscriptions: {
-        Row: {
-          created_at: string
-          event_type: string
-          failed_count: number
-          id: string
-          last_error: string | null
-          last_error_code: string | null
-          last_error_message: string | null
-          last_http_status: number | null
-          last_processed_at: string | null
-          last_received_at: string | null
-          last_verified_at: string | null
-          platform_integration_id: string
-          processed_count: number
-          provider_active: boolean | null
-          received_count: number
-          registered_at: string | null
-          required: boolean
-          status: string
-          target_url_hash: string
-          target_url_redacted: string | null
-          test_received_at: string | null
-          test_requested_at: string | null
-          updated_at: string
-        }
-        Insert: {
-          created_at?: string
-          event_type: string
-          failed_count?: number
-          id?: string
-          last_error?: string | null
-          last_error_code?: string | null
-          last_error_message?: string | null
-          last_http_status?: number | null
-          last_processed_at?: string | null
-          last_received_at?: string | null
-          last_verified_at?: string | null
-          platform_integration_id: string
-          processed_count?: number
-          provider_active?: boolean | null
-          received_count?: number
-          registered_at?: string | null
-          required?: boolean
-          status?: string
-          target_url_hash: string
-          target_url_redacted?: string | null
-          test_received_at?: string | null
-          test_requested_at?: string | null
-          updated_at?: string
-        }
-        Update: {
-          created_at?: string
-          event_type?: string
-          failed_count?: number
-          id?: string
-          last_error?: string | null
-          last_error_code?: string | null
-          last_error_message?: string | null
-          last_http_status?: number | null
-          last_processed_at?: string | null
-          last_received_at?: string | null
-          last_verified_at?: string | null
-          platform_integration_id?: string
-          processed_count?: number
-          provider_active?: boolean | null
-          received_count?: number
-          registered_at?: string | null
-          required?: boolean
-          status?: string
-          target_url_hash?: string
-          target_url_redacted?: string | null
-          test_received_at?: string | null
-          test_requested_at?: string | null
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "platform_rinkel_webhook_subscripti_platform_integration_id_fkey"
-            columns: ["platform_integration_id"]
-            isOneToOne: false
-            referencedRelation: "platform_integrations"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       platform_worker_heartbeats: {
         Row: {
@@ -9944,772 +9372,6 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "retention_runs_tenant_id_fkey"
-            columns: ["tenant_id"]
-            isOneToOne: false
-            referencedRelation: "tenants"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      rinkel_call_attempts_v2: {
-        Row: {
-          call_id: string
-          caller_id_allocation_id: string | null
-          caller_id_source: string | null
-          client_request_id: string
-          created_at: string
-          destination_number_e164: string
-          error_code: string | null
-          error_message: string | null
-          expires_at: string
-          external_call_id: string | null
-          external_rinkel_number_id: string
-          external_rinkel_user_id: string
-          id: string
-          idempotency_key: string
-          mapping_id: string
-          number_allocation_id: string
-          platform_integration_id: string
-          provider_request_finished_at: string | null
-          provider_request_started_at: string | null
-          requested_at: string
-          rinkel_device_id: string
-          rinkel_number_id: string
-          rinkel_user_id: string
-          selected_device_id: string | null
-          seller_user_id: string
-          source_number_e164: string
-          status: string
-          tenant_id: string
-          updated_at: string
-          user_allocation_id: string
-          webphone_session_id: string | null
-        }
-        Insert: {
-          call_id: string
-          caller_id_allocation_id?: string | null
-          caller_id_source?: string | null
-          client_request_id: string
-          created_at?: string
-          destination_number_e164: string
-          error_code?: string | null
-          error_message?: string | null
-          expires_at?: string
-          external_call_id?: string | null
-          external_rinkel_number_id: string
-          external_rinkel_user_id: string
-          id?: string
-          idempotency_key: string
-          mapping_id: string
-          number_allocation_id: string
-          platform_integration_id: string
-          provider_request_finished_at?: string | null
-          provider_request_started_at?: string | null
-          requested_at?: string
-          rinkel_device_id: string
-          rinkel_number_id: string
-          rinkel_user_id: string
-          selected_device_id?: string | null
-          seller_user_id: string
-          source_number_e164: string
-          status?: string
-          tenant_id: string
-          updated_at?: string
-          user_allocation_id: string
-          webphone_session_id?: string | null
-        }
-        Update: {
-          call_id?: string
-          caller_id_allocation_id?: string | null
-          caller_id_source?: string | null
-          client_request_id?: string
-          created_at?: string
-          destination_number_e164?: string
-          error_code?: string | null
-          error_message?: string | null
-          expires_at?: string
-          external_call_id?: string | null
-          external_rinkel_number_id?: string
-          external_rinkel_user_id?: string
-          id?: string
-          idempotency_key?: string
-          mapping_id?: string
-          number_allocation_id?: string
-          platform_integration_id?: string
-          provider_request_finished_at?: string | null
-          provider_request_started_at?: string | null
-          requested_at?: string
-          rinkel_device_id?: string
-          rinkel_number_id?: string
-          rinkel_user_id?: string
-          selected_device_id?: string | null
-          seller_user_id?: string
-          source_number_e164?: string
-          status?: string
-          tenant_id?: string
-          updated_at?: string
-          user_allocation_id?: string
-          webphone_session_id?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "rinkel_call_attempts_v2_caller_id_allocation_id_tenant_fk"
-            columns: ["tenant_id", "caller_id_allocation_id"]
-            isOneToOne: false
-            referencedRelation: "rinkel_number_allocations"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "rinkel_call_attempts_v2_mapping_id_tenant_fk"
-            columns: ["tenant_id", "mapping_id"]
-            isOneToOne: false
-            referencedRelation: "rinkel_user_mappings_v2"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "rinkel_call_attempts_v2_number_allocation_id_tenant_fk"
-            columns: ["tenant_id", "number_allocation_id"]
-            isOneToOne: false
-            referencedRelation: "rinkel_number_allocations"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "rinkel_call_attempts_v2_platform_integration_id_fkey"
-            columns: ["platform_integration_id"]
-            isOneToOne: false
-            referencedRelation: "platform_integrations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "rinkel_call_attempts_v2_rinkel_number_id_fkey"
-            columns: ["rinkel_number_id"]
-            isOneToOne: false
-            referencedRelation: "platform_rinkel_numbers"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "rinkel_call_attempts_v2_rinkel_user_id_fkey"
-            columns: ["rinkel_user_id"]
-            isOneToOne: false
-            referencedRelation: "platform_rinkel_users"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "rinkel_call_attempts_v2_selected_device_id_fkey"
-            columns: ["selected_device_id"]
-            isOneToOne: false
-            referencedRelation: "platform_rinkel_devices"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "rinkel_call_attempts_v2_tenant_id_call_id_fkey"
-            columns: ["tenant_id", "call_id"]
-            isOneToOne: false
-            referencedRelation: "calls"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "rinkel_call_attempts_v2_tenant_id_fkey"
-            columns: ["tenant_id"]
-            isOneToOne: false
-            referencedRelation: "tenants"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "rinkel_call_attempts_v2_tenant_id_seller_user_id_fkey"
-            columns: ["tenant_id", "seller_user_id"]
-            isOneToOne: false
-            referencedRelation: "tenant_memberships"
-            referencedColumns: ["tenant_id", "user_id"]
-          },
-          {
-            foreignKeyName: "rinkel_call_attempts_v2_user_allocation_id_tenant_fk"
-            columns: ["tenant_id", "user_allocation_id"]
-            isOneToOne: false
-            referencedRelation: "rinkel_user_allocations"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "rinkel_call_attempts_v2_webphone_session_tenant_fk"
-            columns: ["tenant_id", "webphone_session_id"]
-            isOneToOne: false
-            referencedRelation: "webphone_sessions"
-            referencedColumns: ["tenant_id", "id"]
-          },
-        ]
-      }
-      rinkel_capabilities: {
-        Row: {
-          ai_insights: boolean
-          api_access: boolean
-          connection_id: string
-          details: Json
-          detected_at: string
-          dial: boolean
-          recordings: boolean
-          tenant_id: string
-          transcription: boolean
-          webhooks: boolean
-        }
-        Insert: {
-          ai_insights?: boolean
-          api_access?: boolean
-          connection_id: string
-          details?: Json
-          detected_at?: string
-          dial?: boolean
-          recordings?: boolean
-          tenant_id: string
-          transcription?: boolean
-          webhooks?: boolean
-        }
-        Update: {
-          ai_insights?: boolean
-          api_access?: boolean
-          connection_id?: string
-          details?: Json
-          detected_at?: string
-          dial?: boolean
-          recordings?: boolean
-          tenant_id?: string
-          transcription?: boolean
-          webhooks?: boolean
-        }
-        Relationships: [
-          {
-            foreignKeyName: "rinkel_capabilities_tenant_id_connection_id_fkey"
-            columns: ["tenant_id", "connection_id"]
-            isOneToOne: false
-            referencedRelation: "tenant_integrations"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "rinkel_capabilities_tenant_id_fkey"
-            columns: ["tenant_id"]
-            isOneToOne: false
-            referencedRelation: "tenants"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      rinkel_number_allocations: {
-        Row: {
-          allocated_by: string | null
-          allocation_reason: string | null
-          created_at: string
-          id: string
-          revoked_by: string | null
-          rinkel_number_id: string
-          status: string
-          tenant_id: string
-          updated_at: string
-          valid_from: string
-          valid_to: string | null
-        }
-        Insert: {
-          allocated_by?: string | null
-          allocation_reason?: string | null
-          created_at?: string
-          id?: string
-          revoked_by?: string | null
-          rinkel_number_id: string
-          status?: string
-          tenant_id: string
-          updated_at?: string
-          valid_from?: string
-          valid_to?: string | null
-        }
-        Update: {
-          allocated_by?: string | null
-          allocation_reason?: string | null
-          created_at?: string
-          id?: string
-          revoked_by?: string | null
-          rinkel_number_id?: string
-          status?: string
-          tenant_id?: string
-          updated_at?: string
-          valid_from?: string
-          valid_to?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "rinkel_number_allocations_rinkel_number_id_fkey"
-            columns: ["rinkel_number_id"]
-            isOneToOne: false
-            referencedRelation: "platform_rinkel_numbers"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "rinkel_number_allocations_tenant_id_fkey"
-            columns: ["tenant_id"]
-            isOneToOne: false
-            referencedRelation: "tenants"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      rinkel_number_grants: {
-        Row: {
-          access_level: string
-          active: boolean
-          created_at: string
-          created_by: string | null
-          id: string
-          is_default: boolean
-          number_allocation_id: string
-          team_id: string | null
-          tenant_id: string
-          updated_at: string
-          user_id: string | null
-        }
-        Insert: {
-          access_level?: string
-          active?: boolean
-          created_at?: string
-          created_by?: string | null
-          id?: string
-          is_default?: boolean
-          number_allocation_id: string
-          team_id?: string | null
-          tenant_id: string
-          updated_at?: string
-          user_id?: string | null
-        }
-        Update: {
-          access_level?: string
-          active?: boolean
-          created_at?: string
-          created_by?: string | null
-          id?: string
-          is_default?: boolean
-          number_allocation_id?: string
-          team_id?: string | null
-          tenant_id?: string
-          updated_at?: string
-          user_id?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "rinkel_number_grants_number_allocation_id_tenant_fk"
-            columns: ["tenant_id", "number_allocation_id"]
-            isOneToOne: false
-            referencedRelation: "rinkel_number_allocations"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "rinkel_number_grants_tenant_id_fkey"
-            columns: ["tenant_id"]
-            isOneToOne: false
-            referencedRelation: "tenants"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "rinkel_number_grants_tenant_id_team_id_fkey"
-            columns: ["tenant_id", "team_id"]
-            isOneToOne: false
-            referencedRelation: "teams"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "rinkel_number_grants_tenant_id_user_id_fkey"
-            columns: ["tenant_id", "user_id"]
-            isOneToOne: false
-            referencedRelation: "tenant_memberships"
-            referencedColumns: ["tenant_id", "user_id"]
-          },
-        ]
-      }
-      rinkel_numbers: {
-        Row: {
-          active: boolean
-          connection_id: string
-          country_code: string | null
-          created_at: string
-          display_name: string | null
-          external_number_id: string
-          id: string
-          last_synced_at: string
-          phone_number_e164: string
-          phone_number_id: string | null
-          raw_provider_data: Json
-          recording_enabled: boolean
-          tenant_id: string
-          updated_at: string
-        }
-        Insert: {
-          active?: boolean
-          connection_id: string
-          country_code?: string | null
-          created_at?: string
-          display_name?: string | null
-          external_number_id: string
-          id?: string
-          last_synced_at?: string
-          phone_number_e164: string
-          phone_number_id?: string | null
-          raw_provider_data?: Json
-          recording_enabled?: boolean
-          tenant_id: string
-          updated_at?: string
-        }
-        Update: {
-          active?: boolean
-          connection_id?: string
-          country_code?: string | null
-          created_at?: string
-          display_name?: string | null
-          external_number_id?: string
-          id?: string
-          last_synced_at?: string
-          phone_number_e164?: string
-          phone_number_id?: string | null
-          raw_provider_data?: Json
-          recording_enabled?: boolean
-          tenant_id?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "rinkel_numbers_tenant_id_connection_id_fkey"
-            columns: ["tenant_id", "connection_id"]
-            isOneToOne: false
-            referencedRelation: "tenant_integrations"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "rinkel_numbers_tenant_id_fkey"
-            columns: ["tenant_id"]
-            isOneToOne: false
-            referencedRelation: "tenants"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "rinkel_numbers_tenant_id_phone_number_id_fkey"
-            columns: ["tenant_id", "phone_number_id"]
-            isOneToOne: false
-            referencedRelation: "phone_numbers"
-            referencedColumns: ["tenant_id", "id"]
-          },
-        ]
-      }
-      rinkel_user_allocations: {
-        Row: {
-          allocated_by: string | null
-          allocation_reason: string | null
-          created_at: string
-          id: string
-          revoked_by: string | null
-          rinkel_user_id: string
-          status: string
-          tenant_id: string
-          updated_at: string
-          valid_from: string
-          valid_to: string | null
-        }
-        Insert: {
-          allocated_by?: string | null
-          allocation_reason?: string | null
-          created_at?: string
-          id?: string
-          revoked_by?: string | null
-          rinkel_user_id: string
-          status?: string
-          tenant_id: string
-          updated_at?: string
-          valid_from?: string
-          valid_to?: string | null
-        }
-        Update: {
-          allocated_by?: string | null
-          allocation_reason?: string | null
-          created_at?: string
-          id?: string
-          revoked_by?: string | null
-          rinkel_user_id?: string
-          status?: string
-          tenant_id?: string
-          updated_at?: string
-          valid_from?: string
-          valid_to?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "rinkel_user_allocations_rinkel_user_id_fkey"
-            columns: ["rinkel_user_id"]
-            isOneToOne: false
-            referencedRelation: "platform_rinkel_users"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "rinkel_user_allocations_tenant_id_fkey"
-            columns: ["tenant_id"]
-            isOneToOne: false
-            referencedRelation: "tenants"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      rinkel_user_mappings: {
-        Row: {
-          active: boolean
-          connection_id: string
-          created_at: string
-          created_by: string | null
-          default_number_id: string
-          id: string
-          kundexa_user_id: string
-          rinkel_user_id: string
-          tenant_id: string
-          updated_at: string
-        }
-        Insert: {
-          active?: boolean
-          connection_id: string
-          created_at?: string
-          created_by?: string | null
-          default_number_id: string
-          id?: string
-          kundexa_user_id: string
-          rinkel_user_id: string
-          tenant_id: string
-          updated_at?: string
-        }
-        Update: {
-          active?: boolean
-          connection_id?: string
-          created_at?: string
-          created_by?: string | null
-          default_number_id?: string
-          id?: string
-          kundexa_user_id?: string
-          rinkel_user_id?: string
-          tenant_id?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "rinkel_user_mappings_tenant_id_connection_id_fkey"
-            columns: ["tenant_id", "connection_id"]
-            isOneToOne: false
-            referencedRelation: "tenant_integrations"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "rinkel_user_mappings_tenant_id_default_number_id_fkey"
-            columns: ["tenant_id", "default_number_id"]
-            isOneToOne: false
-            referencedRelation: "rinkel_numbers"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "rinkel_user_mappings_tenant_id_fkey"
-            columns: ["tenant_id"]
-            isOneToOne: false
-            referencedRelation: "tenants"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "rinkel_user_mappings_tenant_id_kundexa_user_id_fkey"
-            columns: ["tenant_id", "kundexa_user_id"]
-            isOneToOne: false
-            referencedRelation: "tenant_memberships"
-            referencedColumns: ["tenant_id", "user_id"]
-          },
-          {
-            foreignKeyName: "rinkel_user_mappings_tenant_id_rinkel_user_id_fkey"
-            columns: ["tenant_id", "rinkel_user_id"]
-            isOneToOne: false
-            referencedRelation: "rinkel_users"
-            referencedColumns: ["tenant_id", "id"]
-          },
-        ]
-      }
-      rinkel_user_mappings_v2: {
-        Row: {
-          active: boolean
-          created_at: string
-          created_by: string | null
-          default_number_allocation_id: string
-          id: string
-          kundexa_user_id: string
-          rinkel_user_allocation_id: string
-          selected_device_id: string | null
-          tenant_id: string
-          updated_at: string
-        }
-        Insert: {
-          active?: boolean
-          created_at?: string
-          created_by?: string | null
-          default_number_allocation_id: string
-          id?: string
-          kundexa_user_id: string
-          rinkel_user_allocation_id: string
-          selected_device_id?: string | null
-          tenant_id: string
-          updated_at?: string
-        }
-        Update: {
-          active?: boolean
-          created_at?: string
-          created_by?: string | null
-          default_number_allocation_id?: string
-          id?: string
-          kundexa_user_id?: string
-          rinkel_user_allocation_id?: string
-          selected_device_id?: string | null
-          tenant_id?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "rinkel_user_mappings_v2_default_number_allocation_id_tenant_fk"
-            columns: ["tenant_id", "default_number_allocation_id"]
-            isOneToOne: false
-            referencedRelation: "rinkel_number_allocations"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "rinkel_user_mappings_v2_rinkel_user_allocation_id_tenant_fk"
-            columns: ["tenant_id", "rinkel_user_allocation_id"]
-            isOneToOne: false
-            referencedRelation: "rinkel_user_allocations"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "rinkel_user_mappings_v2_selected_device_id_fkey"
-            columns: ["selected_device_id"]
-            isOneToOne: false
-            referencedRelation: "platform_rinkel_devices"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "rinkel_user_mappings_v2_tenant_id_fkey"
-            columns: ["tenant_id"]
-            isOneToOne: false
-            referencedRelation: "tenants"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "rinkel_user_mappings_v2_tenant_id_kundexa_user_id_fkey"
-            columns: ["tenant_id", "kundexa_user_id"]
-            isOneToOne: false
-            referencedRelation: "tenant_memberships"
-            referencedColumns: ["tenant_id", "user_id"]
-          },
-        ]
-      }
-      rinkel_users: {
-        Row: {
-          active: boolean
-          connection_id: string
-          created_at: string
-          display_name: string
-          email: string | null
-          external_device_id: string | null
-          external_user_id: string
-          id: string
-          last_synced_at: string
-          provider_created_at: string | null
-          raw_provider_data: Json
-          tenant_id: string
-          updated_at: string
-        }
-        Insert: {
-          active?: boolean
-          connection_id: string
-          created_at?: string
-          display_name: string
-          email?: string | null
-          external_device_id?: string | null
-          external_user_id: string
-          id?: string
-          last_synced_at?: string
-          provider_created_at?: string | null
-          raw_provider_data?: Json
-          tenant_id: string
-          updated_at?: string
-        }
-        Update: {
-          active?: boolean
-          connection_id?: string
-          created_at?: string
-          display_name?: string
-          email?: string | null
-          external_device_id?: string | null
-          external_user_id?: string
-          id?: string
-          last_synced_at?: string
-          provider_created_at?: string | null
-          raw_provider_data?: Json
-          tenant_id?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "rinkel_users_tenant_id_connection_id_fkey"
-            columns: ["tenant_id", "connection_id"]
-            isOneToOne: false
-            referencedRelation: "tenant_integrations"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "rinkel_users_tenant_id_fkey"
-            columns: ["tenant_id"]
-            isOneToOne: false
-            referencedRelation: "tenants"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      rinkel_webhook_subscriptions: {
-        Row: {
-          connection_id: string
-          created_at: string
-          event_type: string
-          id: string
-          last_error: string | null
-          last_verified_at: string | null
-          status: string
-          target_url_hash: string
-          tenant_id: string
-          updated_at: string
-        }
-        Insert: {
-          connection_id: string
-          created_at?: string
-          event_type: string
-          id?: string
-          last_error?: string | null
-          last_verified_at?: string | null
-          status?: string
-          target_url_hash: string
-          tenant_id: string
-          updated_at?: string
-        }
-        Update: {
-          connection_id?: string
-          created_at?: string
-          event_type?: string
-          id?: string
-          last_error?: string | null
-          last_verified_at?: string | null
-          status?: string
-          target_url_hash?: string
-          tenant_id?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "rinkel_webhook_subscriptions_tenant_id_connection_id_fkey"
-            columns: ["tenant_id", "connection_id"]
-            isOneToOne: false
-            referencedRelation: "tenant_integrations"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "rinkel_webhook_subscriptions_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
@@ -12068,6 +10730,7 @@ export type Database = {
       teams: {
         Row: {
           archived_at: string | null
+          caller_id_phone_number_id: string | null
           code: string | null
           created_at: string
           default_dialing_mode: string
@@ -12081,7 +10744,6 @@ export type Database = {
           name: string
           office: string | null
           office_id: string | null
-          rinkel_number_allocation_id: string | null
           settings: Json
           status: string
           tenant_id: string
@@ -12089,6 +10751,7 @@ export type Database = {
         }
         Insert: {
           archived_at?: string | null
+          caller_id_phone_number_id?: string | null
           code?: string | null
           created_at?: string
           default_dialing_mode?: string
@@ -12102,7 +10765,6 @@ export type Database = {
           name: string
           office?: string | null
           office_id?: string | null
-          rinkel_number_allocation_id?: string | null
           settings?: Json
           status?: string
           tenant_id: string
@@ -12110,6 +10772,7 @@ export type Database = {
         }
         Update: {
           archived_at?: string | null
+          caller_id_phone_number_id?: string | null
           code?: string | null
           created_at?: string
           default_dialing_mode?: string
@@ -12123,13 +10786,19 @@ export type Database = {
           name?: string
           office?: string | null
           office_id?: string | null
-          rinkel_number_allocation_id?: string | null
           settings?: Json
           status?: string
           tenant_id?: string
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "teams_caller_id_phone_number_tenant_fk"
+            columns: ["tenant_id", "caller_id_phone_number_id"]
+            isOneToOne: false
+            referencedRelation: "phone_numbers"
+            referencedColumns: ["tenant_id", "id"]
+          },
           {
             foreignKeyName: "teams_department_tenant_fk"
             columns: ["tenant_id", "department_id"]
@@ -12142,13 +10811,6 @@ export type Database = {
             columns: ["tenant_id", "office_id"]
             isOneToOne: false
             referencedRelation: "offices"
-            referencedColumns: ["tenant_id", "id"]
-          },
-          {
-            foreignKeyName: "teams_rinkel_number_allocation_fk"
-            columns: ["tenant_id", "rinkel_number_allocation_id"]
-            isOneToOne: false
-            referencedRelation: "rinkel_number_allocations"
             referencedColumns: ["tenant_id", "id"]
           },
           {
@@ -12171,7 +10833,7 @@ export type Database = {
           allowed_start_time: string
           automatic_dialer_enabled: boolean
           created_at: string
-          default_number_allocation_id: string | null
+          default_caller_id_phone_number_id: string | null
           delete_provider_recording_on_retention: boolean
           disposition_required: boolean
           manual_dialer_enabled: boolean
@@ -12179,7 +10841,6 @@ export type Database = {
           recording_enabled: boolean
           recording_retention_days: number
           recording_storage_mode: string
-          sync_notes_to_rinkel: boolean
           telephony_enabled: boolean
           tenant_id: string
           timezone: string
@@ -12196,7 +10857,7 @@ export type Database = {
           allowed_start_time?: string
           automatic_dialer_enabled?: boolean
           created_at?: string
-          default_number_allocation_id?: string | null
+          default_caller_id_phone_number_id?: string | null
           delete_provider_recording_on_retention?: boolean
           disposition_required?: boolean
           manual_dialer_enabled?: boolean
@@ -12204,7 +10865,6 @@ export type Database = {
           recording_enabled?: boolean
           recording_retention_days?: number
           recording_storage_mode?: string
-          sync_notes_to_rinkel?: boolean
           telephony_enabled?: boolean
           tenant_id: string
           timezone?: string
@@ -12221,7 +10881,7 @@ export type Database = {
           allowed_start_time?: string
           automatic_dialer_enabled?: boolean
           created_at?: string
-          default_number_allocation_id?: string | null
+          default_caller_id_phone_number_id?: string | null
           delete_provider_recording_on_retention?: boolean
           disposition_required?: boolean
           manual_dialer_enabled?: boolean
@@ -12229,7 +10889,6 @@ export type Database = {
           recording_enabled?: boolean
           recording_retention_days?: number
           recording_storage_mode?: string
-          sync_notes_to_rinkel?: boolean
           telephony_enabled?: boolean
           tenant_id?: string
           timezone?: string
@@ -12238,10 +10897,10 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "telephony_policies_default_rinkel_number_allocation_fk"
-            columns: ["tenant_id", "default_number_allocation_id"]
+            foreignKeyName: "telephony_policies_default_caller_id_phone_number_tenant_fk"
+            columns: ["tenant_id", "default_caller_id_phone_number_id"]
             isOneToOne: false
-            referencedRelation: "rinkel_number_allocations"
+            referencedRelation: "phone_numbers"
             referencedColumns: ["tenant_id", "id"]
           },
           {
@@ -13199,15 +11858,6 @@ export type Database = {
         }
         Returns: string
       }
-      allocate_platform_rinkel_resource: {
-        Args: {
-          p_reason?: string
-          p_resource_id: string
-          p_resource_type: string
-          p_tenant_id: string
-        }
-        Returns: string
-      }
       anonymize_customer_record: {
         Args: {
           p_actor?: string
@@ -13256,7 +11906,6 @@ export type Database = {
         }
         Returns: Json
       }
-      apply_rinkel_call_event: { Args: { p_event_id: string }; Returns: Json }
       approve_contract_template_version: {
         Args: { p_version_id: string }
         Returns: undefined
@@ -13278,24 +11927,15 @@ export type Database = {
         }
         Returns: undefined
       }
-      assign_platform_rinkel_number: {
-        Args: {
-          p_activate_telephony?: boolean
-          p_number_id: string
-          p_reason?: string
-          p_rinkel_user_id?: string
-          p_scope: string
-          p_team_ids?: string[]
-          p_tenant_id?: string
-          p_user_ids?: string[]
-        }
-        Returns: Json
-      }
-      assign_platform_rinkel_number_to_teams: {
-        Args: { p_number_id: string; p_reason?: string; p_team_ids: string[] }
-        Returns: Json
-      }
       call_status_rank: { Args: { p_status: string }; Returns: number }
+      caller_id_options_for_current_user: {
+        Args: never
+        Returns: {
+          caller_id_source: string
+          id: string
+          number_e164: string
+        }[]
+      }
       can_access_call: { Args: { p_call_id: string }; Returns: boolean }
       can_access_contract: { Args: { p_contract_id: string }; Returns: boolean }
       can_access_contract_row: {
@@ -13549,39 +12189,6 @@ export type Database = {
           isSetofReturn: true
         }
       }
-      claim_platform_rinkel_jobs: {
-        Args: {
-          p_lease_timeout?: string
-          p_limit?: number
-          p_worker_id: string
-        }
-        Returns: {
-          aggregate_id: string | null
-          attempts: number
-          available_at: string
-          completed_at: string | null
-          created_at: string
-          dead_lettered_at: string | null
-          id: string
-          idempotency_key: string
-          job_type: string
-          last_error: string | null
-          last_error_code: string | null
-          last_error_message: string | null
-          locked_at: string | null
-          locked_by: string | null
-          max_attempts: number
-          payload: Json
-          status: string
-          updated_at: string
-        }[]
-        SetofOptions: {
-          from: "*"
-          to: "platform_rinkel_jobs"
-          isOneToOne: false
-          isSetofReturn: true
-        }
-      }
       claim_segment_refresh_jobs: {
         Args: { p_limit?: number; p_worker: string }
         Returns: {
@@ -13807,21 +12414,6 @@ export type Database = {
         Args: { p_action: string; p_run_id: string }
         Returns: Json
       }
-      correlate_rinkel_incoming_event: {
-        Args: {
-          p_allocation_id: string
-          p_event_id: string
-          p_from: string
-          p_number_id: string
-          p_tenant_id: string
-          p_to: string
-        }
-        Returns: Json
-      }
-      correlate_rinkel_outgoing_event: {
-        Args: { p_attempt_id: string; p_event_id: string }
-        Returns: Json
-      }
       create_contract_draft: {
         Args: {
           p_commercial_terms: Json
@@ -14019,7 +12611,6 @@ export type Database = {
         Returns: Database["public"]["Enums"]["membership_role"]
       }
       current_tenant_id: { Args: never; Returns: string }
-      current_user_dial_path: { Args: never; Returns: Json }
       current_user_security_state: {
         Args: never
         Returns: {
@@ -14071,6 +12662,7 @@ export type Database = {
         Returns: undefined
       }
       delivery_status_rank: { Args: { p_status: string }; Returns: number }
+      dial_attempt_holds_seat: { Args: { p_status: string }; Returns: boolean }
       directory_entity_for_tenant: {
         Args: { p_entity_id: string; p_tenant_id: string }
         Returns: {
@@ -14362,6 +12954,17 @@ export type Database = {
         Args: { p_invitation_id: string; p_reason: string }
         Returns: undefined
       }
+      finalize_dial: {
+        Args: {
+          p_attempt_id: string
+          p_call_id: string
+          p_error_code?: string
+          p_error_message?: string
+          p_external_call_id?: string
+          p_outcome: string
+        }
+        Returns: Json
+      }
       finalize_signing_envelope: {
         Args: {
           p_envelope_id: string
@@ -14372,17 +12975,6 @@ export type Database = {
       }
       finalize_tenant_invitation: {
         Args: { p_invitation_id: string; p_invited_user_id: string }
-        Returns: string
-      }
-      finish_platform_rinkel_job: {
-        Args: {
-          p_error_code?: string
-          p_error_message?: string
-          p_job_id: string
-          p_retry_at?: string
-          p_succeeded: boolean
-          p_worker_id: string
-        }
         Returns: string
       }
       geometry: { Args: { "": string }; Returns: unknown }
@@ -14487,9 +13079,6 @@ export type Database = {
         Args: { p_call_id: string; p_customer_id: string }
         Returns: Json
       }
-      get_current_user_rinkel_numbers: { Args: never; Returns: Json }
-      get_managed_team_rinkel_resources: { Args: never; Returns: Json }
-      get_tenant_rinkel_resources: { Args: never; Returns: Json }
       get_user_security_state_for_provisioning: {
         Args: { p_user_id: string }
         Returns: {
@@ -14526,20 +13115,13 @@ export type Database = {
         Args: { p_amount?: number; p_metric: string; p_tenant_id: string }
         Returns: undefined
       }
-      ingest_platform_rinkel_webhook_event: {
+      ingest_sinch_voice_event: {
         Args: {
-          p_content_type: string
-          p_event_at: string
-          p_event_type: string
+          p_event: string
           p_external_call_id: string
-          p_headers: Json
           p_payload: Json
-          p_payload_hash: string
           p_provider_event_id: string
           p_received_at?: string
-          p_source_ip: string
-          p_target_url_hash: string
-          p_target_url_redacted: string
         }
         Returns: Json
       }
@@ -14907,20 +13489,6 @@ export type Database = {
         Args: { p_entity_id: string }
         Returns: number
       }
-      reconcile_rinkel_call_from_cdr: {
-        Args: {
-          p_answered_at?: string
-          p_call_id: string
-          p_cause?: string
-          p_duration_seconds?: number
-          p_ended_at?: string
-          p_external_call_id: string
-          p_provider_payload?: Json
-          p_recording_id?: string
-          p_started_at?: string
-        }
-        Returns: Json
-      }
       record_contract_acceptance: {
         Args: {
           p_acceptance_code?: string
@@ -14987,33 +13555,6 @@ export type Database = {
         }
         Returns: string
       }
-      record_platform_rinkel_webhook_failure: {
-        Args: {
-          p_error_code: string
-          p_error_message: string
-          p_event_id: string
-          p_retry_at: string
-        }
-        Returns: undefined
-      }
-      record_platform_rinkel_webhook_processed: {
-        Args: {
-          p_event_type: string
-          p_platform_integration_id: string
-          p_processed_at: string
-        }
-        Returns: boolean
-      }
-      record_platform_rinkel_webhook_receipt: {
-        Args: {
-          p_event_type: string
-          p_http_status: number
-          p_is_test_receipt?: boolean
-          p_platform_integration_id: string
-          p_received_at: string
-        }
-        Returns: undefined
-      }
       record_platform_worker_heartbeat: {
         Args: {
           p_error_code?: string
@@ -15030,14 +13571,6 @@ export type Database = {
           p_worker_key: string
         }
         Returns: undefined
-      }
-      record_rinkel_seat_dial_policy: {
-        Args: {
-          p_error?: string
-          p_provider_user_id: string
-          p_raw_provider_data: Json
-        }
-        Returns: Json
       }
       record_webphone_leg_event: {
         Args: {
@@ -15105,34 +13638,13 @@ export type Database = {
         Args: { p_limit?: number; p_max_silence?: string }
         Returns: Json
       }
+      release_stale_dial_attempts: {
+        Args: { p_limit?: number; p_max_age?: string }
+        Returns: Json
+      }
       remove_managed_team_member: {
         Args: { p_team_id: string; p_user_id: string }
         Returns: undefined
-      }
-      replace_rinkel_user_mapping: {
-        Args: {
-          p_default_number_id: string
-          p_kundexa_user_id: string
-          p_rinkel_user_id: string
-        }
-        Returns: string
-      }
-      replace_rinkel_user_mapping_v2: {
-        Args: {
-          p_default_number_allocation_id: string
-          p_kundexa_user_id: string
-          p_rinkel_user_allocation_id: string
-        }
-        Returns: string
-      }
-      replace_rinkel_user_mapping_v3: {
-        Args: {
-          p_default_number_allocation_id: string
-          p_kundexa_user_id: string
-          p_rinkel_user_allocation_id: string
-          p_selected_device_id: string
-        }
-        Returns: string
       }
       report_customer_nix_listing: {
         Args: { p_customer_id: string; p_notes?: string }
@@ -15148,9 +13660,21 @@ export type Database = {
         }
         Returns: number
       }
-      requeue_platform_rinkel_job: {
-        Args: { p_job_id: string; p_reason: string }
-        Returns: undefined
+      reserve_outbound_call: {
+        Args: {
+          p_callback_activity_id: string
+          p_caller_id_phone_number_id?: string
+          p_client_request_id: string
+          p_contact_person_id: string
+          p_customer_id: string
+          p_idempotency_key: string
+          p_list_member_id: string
+          p_purpose?: string
+          p_session_id: string
+          p_target_phone: string
+          p_webphone_session_id?: string
+        }
+        Returns: Json
       }
       reserve_provider_ingestion_usage: {
         Args: { p_run_id: string; p_units?: number }
@@ -15185,6 +13709,20 @@ export type Database = {
         Args: { p_amount?: number; p_metric: string; p_tenant_id: string }
         Returns: undefined
       }
+      resolve_caller_id_phone_number: {
+        Args: {
+          p_campaign_id: string
+          p_explicit_phone_number_id: string
+          p_list_id: string
+          p_team_id: string
+          p_tenant_id: string
+        }
+        Returns: {
+          caller_id_source: string
+          number_e164: string
+          phone_number_id: string
+        }[]
+      }
       resolve_contract_eligible_calls: {
         Args: { p_customer_id: string }
         Returns: {
@@ -15203,133 +13741,9 @@ export type Database = {
           user_id: string
         }[]
       }
-      resolve_rinkel_caller_id: {
-        Args: {
-          p_campaign_id: string
-          p_explicit_number_allocation_id: string
-          p_list_id: string
-          p_mapping_default_number_allocation_id: string
-          p_team_id: string
-          p_tenant_id: string
-          p_user_id: string
-        }
-        Returns: {
-          allocation_source: string
-          grant_id: string
-          number_allocation_id: string
-          phone_number_e164: string
-          provider_number_id: string
-          rinkel_number_id: string
-        }[]
-      }
       revoke_platform_list_allocation: {
         Args: { p_allocation_id: string; p_reason: string }
         Returns: number
-      }
-      revoke_platform_rinkel_number_team_grant: {
-        Args: { p_grant_id: string; p_reason?: string }
-        Returns: Json
-      }
-      revoke_platform_rinkel_resource: {
-        Args: {
-          p_allocation_id: string
-          p_reason?: string
-          p_resource_type: string
-        }
-        Returns: undefined
-      }
-      rinkel_attempt_holds_seat: {
-        Args: { p_status: string }
-        Returns: boolean
-      }
-      rinkel_effective_provider_device: {
-        Args: { p_rinkel_user_id: string; p_selected_device_id?: string }
-        Returns: {
-          device_row_id: string
-          provider_device_id: string
-        }[]
-      }
-      rinkel_finalize_dial_request: {
-        Args: {
-          p_attempt_id: string
-          p_call_id: string
-          p_error_code?: string
-          p_error_message?: string
-          p_outcome: string
-        }
-        Returns: undefined
-      }
-      rinkel_finalize_platform_dial: {
-        Args: {
-          p_attempt_id: string
-          p_call_id: string
-          p_error_code?: string
-          p_error_message?: string
-          p_outcome: string
-        }
-        Returns: undefined
-      }
-      rinkel_link_seller_to_provider_user: {
-        Args: {
-          p_actor: string
-          p_number_allocation_id: string
-          p_reason: string
-          p_rinkel_user_id: string
-          p_tenant_id: string
-          p_user_id: string
-        }
-        Returns: string
-      }
-      rinkel_release_stale_call_attempts: {
-        Args: { p_limit?: number; p_max_age?: string }
-        Returns: Json
-      }
-      rinkel_reserve_outbound_call: {
-        Args: {
-          p_callback_activity_id: string
-          p_client_request_id: string
-          p_contact_person_id: string
-          p_customer_id: string
-          p_idempotency_key: string
-          p_list_member_id: string
-          p_purpose?: string
-          p_session_id: string
-          p_target_phone: string
-        }
-        Returns: Json
-      }
-      rinkel_reserve_platform_outbound_call: {
-        Args: {
-          p_callback_activity_id: string
-          p_client_request_id: string
-          p_contact_person_id: string
-          p_customer_id: string
-          p_idempotency_key: string
-          p_list_member_id: string
-          p_purpose?: string
-          p_session_id: string
-          p_target_phone: string
-        }
-        Returns: Json
-      }
-      rinkel_reserve_platform_outbound_call_v2: {
-        Args: {
-          p_callback_activity_id: string
-          p_client_request_id: string
-          p_contact_person_id: string
-          p_customer_id: string
-          p_idempotency_key: string
-          p_list_member_id: string
-          p_number_allocation_id?: string
-          p_purpose?: string
-          p_session_id: string
-          p_target_phone: string
-        }
-        Returns: Json
-      }
-      rinkel_seat_dial_path_state: {
-        Args: { p_expected_number_id: string; p_raw: Json }
-        Returns: Json
       }
       rollback_import_run: { Args: { p_import_run_id: string }; Returns: Json }
       run_retention_maintenance: {
@@ -15451,10 +13865,6 @@ export type Database = {
           p_status?: string
           p_user_id: string
         }
-        Returns: undefined
-      }
-      set_platform_rinkel_default_number: {
-        Args: { p_number_id: string }
         Returns: undefined
       }
       set_tenant_feature: {
@@ -16086,7 +14496,6 @@ export type Database = {
         Returns: string
       }
       telephony_status_for_current_user: { Args: never; Returns: Json }
-      tenant_rinkel_dial_path_report: { Args: never; Returns: Json }
       tenant_user_security_states: {
         Args: never
         Returns: {
@@ -16114,7 +14523,6 @@ export type Database = {
           p_lock_to_seller: boolean
           p_max_attempts: number
           p_name: string
-          p_outbound_phone_number_id: string
           p_priority: number
           p_recording_enabled: boolean
           p_retry_delay_minutes: number

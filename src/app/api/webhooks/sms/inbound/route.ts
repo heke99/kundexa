@@ -1,0 +1,176 @@
+import { NextResponse } from "next/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { authenticateSmsNumber, smsWebhookAdapter, verifySmsCallbackNetwork } from "@/lib/messaging/provider";
+import { decideAcceptance, normalizeAcceptanceText } from "@/lib/domain/acceptance";
+
+export async function POST(request: Request) {
+  const adapter = smsWebhookAdapter();
+  if (!await verifySmsCallbackNetwork(request, adapter.id)) return new NextResponse(null, { status: 403 });
+  // Held outside the try so a failure can be correlated with the provider's retry.
+  let providerEventId: string | null = null;
+  try {
+    const token = new URL(request.url).searchParams.get("token") ?? "";
+    const inbound = await adapter.parseInbound(request);
+    // The provider posts several callback kinds to one URL. Acknowledge what is
+    // not an inbound text instead of interpreting it as one -- a delivery report
+    // read as a reply would be recorded as the customer's answer to a contract.
+    if (!inbound) return new NextResponse(null, { status: 204 });
+    const { from, to, body: message, payload } = inbound;
+    const number = await authenticateSmsNumber(to, token);
+    if (!number) return new NextResponse(null, { status: 403 });
+
+    const admin = createAdminClient();
+    const providerId = inbound.providerMessageId;
+    providerEventId = providerId;
+    // `ignoreDuplicates` returns no row for a redelivery — and also no row when
+    // the write fails. Conflating the two answered 204 to a database error, and
+    // no SMS provider redelivers after a 2xx: an inbound SMS, contract acceptance
+    // included, was lost for good. The Resend webhook already separates the two;
+    // this one did not.
+    const { data: event, error: eventError } = await admin.from("provider_webhook_events").upsert({
+      tenant_id: number.tenant_id,
+      provider: adapter.id,
+      event_type: "sms.inbound",
+      provider_event_id: providerId,
+      route_key: to,
+      payload,
+      status: "received",
+    }, { onConflict: "provider,provider_event_id", ignoreDuplicates: true }).select("id").maybeSingle();
+    if (eventError) throw eventError;
+    if (providerId && !event) return new NextResponse(null, { status: 204 });
+
+    const { data: customer } = await admin.from("customers")
+      .select("id")
+      .eq("tenant_id", number.tenant_id)
+      .eq("phone_e164", from)
+      .is("deleted_at", null)
+      .limit(1)
+      .maybeSingle();
+
+    const { data: conversation, error: conversationError } = await admin.from("sms_conversations").upsert({
+      tenant_id: number.tenant_id,
+      customer_id: customer?.id ?? null,
+      phone_number_id: number.id,
+      external_number: from,
+      status: "open",
+      last_message_at: new Date().toISOString(),
+      assigned_user_id: number.assigned_user_id,
+      assigned_team_id: number.assigned_team_id,
+    }, { onConflict: "tenant_id,phone_number_id,external_number" }).select("id").single();
+    if (conversationError) throw conversationError;
+
+    const { data: sms, error: smsError } = await admin.from("sms_messages").upsert({
+      tenant_id: number.tenant_id,
+      conversation_id: conversation.id,
+      customer_id: customer?.id ?? null,
+      provider_message_id: providerId,
+      direction: "inbound",
+      from_number: from,
+      to_number: to,
+      body: message,
+      status: "delivered",
+      delivered_at: inbound.receivedAt,
+    }, { onConflict: "tenant_id,provider_message_id" }).select("id").single();
+    if (smsError) throw smsError;
+
+    // PostgREST returns an error rather than throwing, so an unchecked read looks
+    // exactly like "no recipients": the customer's "JA" would be stored as an
+    // ordinary inbound SMS, the acceptance would never be recorded, and the
+    // provider would get a 204 and never retry. Throwing gives a 500 and a
+    // redelivery.
+    const { data: recipients, error: recipientsError } = await admin.from("contract_recipients")
+      .select("id")
+      .eq("tenant_id", number.tenant_id)
+      .eq("phone_e164", from);
+    if (recipientsError) throw recipientsError;
+
+    if (recipients?.length) {
+      const { data: acceptanceRequests, error: acceptanceRequestsError } = await admin.from("contract_acceptance_requests")
+        .select("id,tenant_id,contract_id,contract_version_id,recipient_id,acceptance_code,allowed_phrases,decline_phrases,require_code,call_ended_at,contracts(audience)")
+        .eq("tenant_id", number.tenant_id)
+        .in("recipient_id", recipients.map((recipient) => recipient.id))
+        .eq("status", "pending")
+        .gt("expires_at", new Date().toISOString())
+        .order("created_at", { ascending: false });
+      // Same again, and worse: an unchecked failure here skips the loop *and* the
+      // manual-review fallback, so an answer to a contract would vanish entirely.
+      if (acceptanceRequestsError) throw acceptanceRequestsError;
+
+      let matched = false;
+      for (const acceptanceRequest of acceptanceRequests ?? []) {
+        const decision = decideAcceptance(
+          message,
+          acceptanceRequest.acceptance_code ?? "",
+          !acceptanceRequest.require_code && (acceptanceRequests?.length ?? 0) === 1,
+          acceptanceRequest.allowed_phrases ?? undefined,
+          acceptanceRequest.decline_phrases ?? undefined,
+        );
+        if (decision === "manual_review") continue;
+
+        const contractRaw = acceptanceRequest.contracts as unknown as { audience?: string } | { audience?: string }[] | null;
+        const contract = Array.isArray(contractRaw) ? contractRaw[0] : contractRaw;
+        let status: "accepted_via_sms" | "declined" | "manual_review_required" = decision === "accepted" ? "accepted_via_sms" : "declined";
+        if (decision === "accepted" && contract?.audience === "B2C" && !acceptanceRequest.call_ended_at) {
+          status = "manual_review_required";
+        }
+
+        const normalized = normalizeAcceptanceText(message);
+        const { error } = await admin.rpc("record_contract_acceptance_v3", {
+          p_request_id: acceptanceRequest.id,
+          p_method: "sms",
+          p_status: status,
+          p_raw_response: message,
+          p_normalized_response: normalized,
+          p_acceptance_phrase: normalized.split(" ")[0] ?? null,
+          p_acceptance_code: acceptanceRequest.acceptance_code,
+          p_ip_address: null,
+          p_user_agent: null,
+          p_provider_message_id: providerId,
+          p_evidence: {
+            incoming_sms_id: sms.id,
+            provider_payload: payload,
+            call_ended_at: acceptanceRequest.call_ended_at,
+          },
+        });
+        if (error) throw error;
+        matched = true;
+        break;
+      }
+
+      // Preserve an ambiguous reply for human review only when there is one
+      // unambiguous pending request to attach it to.
+      if (!matched && acceptanceRequests?.length === 1) {
+        const acceptanceRequest = acceptanceRequests[0];
+        const normalized = normalizeAcceptanceText(message);
+        const { error } = await admin.rpc("record_contract_acceptance_v3", {
+          p_request_id: acceptanceRequest.id,
+          p_method: "sms",
+          p_status: "manual_review_required",
+          p_raw_response: message,
+          p_normalized_response: normalized,
+          p_acceptance_phrase: null,
+          p_acceptance_code: acceptanceRequest.acceptance_code,
+          p_ip_address: null,
+          p_user_agent: null,
+          p_provider_message_id: providerId,
+          p_evidence: { incoming_sms_id: sms.id, provider_payload: payload },
+        });
+        if (error) throw error;
+      }
+    }
+
+    if (event) {
+      await admin.from("provider_webhook_events").update({ status: "processed", processed_at: new Date().toISOString() }).eq("id", event.id);
+    }
+    return new NextResponse(null, { status: 204 });
+  } catch (error) {
+    // The provider needs a non-2xx so it redelivers; it does not need our internal
+    // error text. Keep the detail on our side, where it can be acted on.
+    console.error("inbound_sms_webhook_failed", {
+      provider: adapter.id,
+      providerEventId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return NextResponse.json({ error: "webhook_processing_failed" }, { status: 500 });
+  }
+}

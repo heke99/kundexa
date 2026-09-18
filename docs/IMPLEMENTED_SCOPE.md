@@ -23,8 +23,8 @@
 - Geografiskt referensregister, normalisering och versionsstyrd import
 - NIX-konfiguration, kö, claim, provideradapter, separat giltighet och automatisk kampanjresume
 - Många-till-många-säljtilldelning, manuella/automatiska listor, atomiska prospektclaims, återkomstprioritet och daglig säljargräns
-- Central Rinkel-plattformsintegration med ett server-side API-secret, central katalog, historiserade tenantallokeringar, nummergrants och säljar­mappningar
-- Sekventiell Rinkel click-to-call/power dialer med serverhärledda resurser, atomisk reservation, säljar-/enhetslås, caller-ID, inspelningspolicy, centrala webhookar, avstämning och obligatoriskt transaktionellt efterarbete
+- Central telefoniintegration mot Sinch med serverns nycklar, företagets egna nummer och ingenting att provisionera per säljare
+- Sekventiell click-to-call/power dialer där webbläsaren bär samtalet: atomisk reservation, en plats per säljare, caller-ID ur företagets nummer, inspelningspolicy, signaturverifierade webhookar och obligatoriskt transaktionellt efterarbete
 - Fristående manuell dialer med kanonisk nummermatchning, callbackkoppling, utfall, anteckning och kontaktspärr
 - Personliga/globala återkomster med claim, snooze, omfördelning, session-release, badges och tenanttidszon
 - Kanoniska anteckningar med typer, synlighet, fästning, revisionshistorik och arkivering
@@ -50,8 +50,8 @@
 - Visuell drag-and-drop-editor för PDF-signaturfält kräver vald e-signmotor.
 - Extern kalender-/mailboxsynk kräver OAuth-provider.
 - Betalprovider för faktisk abonnemangsdebitering är inte inkopplad; usage, limits och faktureringsunderlag finns.
-- Rinkel måste ha API-access och verifierade capabilities för dial, webhookar, inspelningar, transkribering och AI Insights; otillgängliga planfunktioner visas som capabilities och får inte fejkas.
+- Telefonikontot måste ha nummer med svensk originering och en registrerad callback-adress; funktioner abonnemanget saknar visas som hinder och får inte fejkas.
 
 ## Produktionsstatus
 
-Leveransen är en sammanhängande och körbar produktgrund. Produktionsstatus är `NOT READY` tills relevanta punkter i `PRODUCTION_GATES.md`, inklusive riktiga Rinkel-samtal och webhookar, har verifierats i staging och produktion.
+Leveransen är en sammanhängande och körbar produktgrund. Produktionsstatus är `NOT READY` tills relevanta punkter i `PRODUCTION_GATES.md`, inklusive riktiga samtal och webhookar, har verifierats i staging och produktion.

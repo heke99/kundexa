@@ -3,8 +3,6 @@ import { getAppContext } from "@/lib/auth";
 import { assertPermission } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createPlatformRinkelClient } from "@/lib/integrations/rinkel/client";
-import { safeRinkelError } from "@/lib/integrations/rinkel/errors";
 
 export async function GET(
   request: Request,
@@ -39,9 +37,13 @@ export async function GET(
       if (error || !data?.signedUrl) throw new Error("recording_signed_url_failed");
       target = data.signedUrl;
     } else {
-      if (!recording.provider_recording_id) throw new Error("recording_provider_reference_missing");
-      target = await createPlatformRinkelClient(`recording:${callId}`)
-        .getRecordingUrl(recording.provider_recording_id);
+      // Inspelningen ligger kvar hos telefonitjänsten och har inte hämtats hem.
+      //
+      // Den gamla leverantören hade en endpoint som gav en tillfällig adress att
+      // spela upp från. Hämtningen mot den nya är inte byggd ännu, så säg det i
+      // stället för att skicka säljaren till en trasig länk: en inspelning som
+      // finns men inte går att spela upp är inte samma sak som en som saknas.
+      throw new Error("recording_not_fetched_from_provider");
     }
     // The access log is the point of the policy above. Playing a recording with
     // no trail is worse than refusing to play it, so this fails the request
@@ -66,7 +68,7 @@ export async function GET(
       entity_id: callId,
       after_data: { reason: error instanceof Error ? error.message.slice(0, 100) : "unknown" },
     });
-    const safe = safeRinkelError(error);
+    const safe = { code: "recording_unavailable", message: "Inspelningen kunde inte hämtas." };
     const message = error instanceof Error && error.message.startsWith("recording_")
       ? error.message
       : safe.message;

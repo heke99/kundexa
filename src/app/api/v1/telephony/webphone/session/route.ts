@@ -3,14 +3,12 @@ import { z } from "zod";
 import { getAppContext } from "@/lib/auth";
 import { assertPermission } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
-import { provisionWebphone } from "@/lib/telephony/webphone";
+import { provisionWebphone, telephonyProviderKey } from "@/lib/telephony/webphone";
 import { turnConfigured } from "@/lib/telephony/webphone/ice";
 
-// Kundexa har en central telefonitjänst, inte en per företag, så platsens
-// leverantör är densamma för alla. Den skrivs ändå på sessionsraden, eftersom
-// hela webbtelefonen är byggd för att kunna byta leverantör utan att gammal
-// historik blir tvetydig.
-const TELEPHONY_PROVIDER = "rinkel";
+// Namnet står i registret, inte här. Den här rutten ska inte behöva ändras för
+// att vi byter telefonitjänst.
+const TELEPHONY_PROVIDER = telephonyProviderKey();
 
 const openSchema = z.object({
   userAgent: z.string().trim().max(400).nullable().optional(),
@@ -57,10 +55,25 @@ export async function POST(request: Request) {
     }
 
     const sessionId = String((session as { sessionId: unknown }).sessionId);
+
+    // A-numret måste med redan här. Telefonitjänsten binder det till klienten
+    // när den byggs, inte till det enskilda samtalet, så det går inte att skjuta upp
+    // till uppringningen. Saknas det svarar adaptern med ett nej som går att
+    // läsa, i stället för att dela ut uppgifter för samtal som aldrig kopplas.
+    const { data: callerId } = await supabase
+      .from("telephony_policies")
+      .select("phone_numbers!telephony_policies_default_caller_id_phone_number_tenant_fk(number_e164)")
+      .eq("tenant_id", context.tenantId)
+      .maybeSingle();
+    const callerIdentifier =
+      (callerId as { phone_numbers?: { number_e164?: string | null } | null } | null)
+        ?.phone_numbers?.number_e164?.trim() || null;
+
     const provisioned = await provisionWebphone(TELEPHONY_PROVIDER, {
       tenantId: context.tenantId,
       sellerUserId: context.userId,
       sessionId,
+      callerIdentifier,
     });
 
     // Uppgifterna kunde inte skapas. Sessionen stängs direkt i stället för att
@@ -82,8 +95,12 @@ export async function POST(request: Request) {
       available: true,
       credentials: provisioned.credentials,
       // Ett samtal utan TURN kopplas upp och blir sedan tyst bakom en
-      // företagsbrandvägg. Säg det före samtalet i stället för under det.
-      relayConfigured: turnConfigured(),
+      // företagsbrandvägg, så det ska sägas före samtalet och inte under det.
+      // Men TURN gäller bara SIP-vägen. Telefonitjänstens egen SDK sköter ICE, och att
+      // rapportera vår TURN-status för ett samtal som inte använder den hade
+      // varit en uppgift utan täckning.
+      relayConfigured:
+        provisioned.credentials.kind === "sip" ? turnConfigured() : null,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

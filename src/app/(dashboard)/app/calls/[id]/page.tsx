@@ -7,7 +7,6 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { createClient } from "@/lib/supabase/server";
 import { formatDate } from "@/lib/utils";
-import { TranscriptionRetryButton } from "@/components/transcription-retry-button";
 
 export default async function CallDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -22,7 +21,7 @@ export default async function CallDetailPage({ params }: { params: Promise<{ id:
     ok(supabase.from("calls").select("*,customers(display_name)").eq("id", id).single()),
     ok(supabase.from("call_events").select("id,event_type,occurred_at,processing_status").eq("call_id", id).order("occurred_at")),
     ok(supabase.from("call_recordings").select("id,status,mime_type,duration_seconds,size_bytes,retention_delete_at,deleted_at").eq("call_id", id).is("deleted_at", null).order("created_at", { ascending: true }).limit(1).maybeSingle()),
-    ok(supabase.from("call_transcripts").select("status,raw_transcript,structured_transcript,generated_at,deleted_at").eq("call_id", id).eq("provider", "rinkel").maybeSingle()),
+    ok(supabase.from("call_transcripts").select("status,raw_transcript,structured_transcript,generated_at,deleted_at").eq("call_id", id).maybeSingle()),
     ok(supabase.from("call_insights").select("source,status,sentiment,topics,summary,generated_at").eq("call_id", id).order("generated_at", { ascending: false })),
   ]);
   if (!call) notFound();
@@ -56,11 +55,11 @@ export default async function CallDetailPage({ params }: { params: Promise<{ id:
 
       <Card><CardHeader><h2>Transkribering</h2><Badge>{transcript?.status ?? call.transcription_status}</Badge></CardHeader><CardContent>
         {transcriptText ? <pre style={{ whiteSpace: "pre-wrap", maxHeight: 420, overflow: "auto" }}>{transcriptText}</pre> : <p>Transkribering är inte tillgänglig ännu.</p>}
-        {transcript?.status === "pending" ? <TranscriptionRetryButton callId={id} /> : null}
+        
       </CardContent></Card>
 
       <Card><CardHeader><h2>AI Insights</h2><Badge>{insights?.[0]?.status ?? call.insights_status}</Badge></CardHeader><CardContent>
-        {insights?.length ? insights.map((item) => <div key={item.source} className="activity-line"><div><strong>{item.source === "rinkel" ? "Telefoni" : item.source} · {item.sentiment ?? "utan sentiment"}</strong><p>{item.summary ?? "Ingen sammanfattning"}</p><p className="muted">{item.topics?.join(", ")}</p></div></div>) : <p>Inga insights tillgängliga ännu.</p>}
+        {insights?.length ? insights.map((item) => <div key={item.source} className="activity-line"><div><strong>{item.source === "manual" ? "Manuell" : "Telefoni"} · {item.sentiment ?? "utan sentiment"}</strong><p>{item.summary ?? "Ingen sammanfattning"}</p><p className="muted">{item.topics?.join(", ")}</p></div></div>) : <p>Inga insights tillgängliga ännu.</p>}
       </CardContent></Card>
     </div>
     <Card style={{ marginTop: 16 }}><CardHeader><h2>Telefonihändelser</h2><Badge>{events?.length ?? 0}</Badge></CardHeader><CardContent>

@@ -6,12 +6,12 @@ ZIP-filen har projektroten som arkivrot och ska extraheras till en temporär kat
 
 ```bash
 cd /Users/hekmath/Downloads
-rm -rf kundexa-rinkel-production-hardening-changes
-mkdir -p kundexa-rinkel-production-hardening-changes
-unzip -o kundexa-rinkel-production-hardening-changes.zip -d kundexa-rinkel-production-hardening-changes
+rm -rf kundexa-changes
+mkdir -p kundexa-changes
+unzip -o kundexa-changes.zip -d kundexa-changes
 
 rsync -av --checksum --itemize-changes \
-  /Users/hekmath/Downloads/kundexa-rinkel-production-hardening-changes/ \
+  /Users/hekmath/Downloads/kundexa-changes/ \
   /Users/hekmath/Desktop/Projects/kundexa/
 ```
 
@@ -42,19 +42,15 @@ Genererade typer ska komma från den migrerade stagingdatabasen. Handredigera in
 
 ```bash
 npx supabase@2.109.1 secrets set --project-ref PROJECT_REF \
-  RINKEL_API_KEY='REDACTED' \
-  RINKEL_API_BASE_URL='https://api.rinkel.com/v1' \
-  RINKEL_WEBHOOK_PUBLIC_BASE_URL='https://STAGING_DOMAIN' \
-  RINKEL_WEBHOOK_SECRET='REDACTED_HIGH_ENTROPY_SECRET' \
-  RINKEL_WEBHOOK_ALLOWED_IPS='82.199.77.220,188.122.73.177' \
-  RINKEL_REQUEST_TIMEOUT_MS='15000' \
-  RINKEL_ENFORCE_WEBHOOK_IP_ALLOWLIST='true' \
-  RINKEL_TRUST_X_REAL_IP='false' \
-  RINKEL_RECONCILIATION_ENABLED='true' \
+  SINCH_APPLICATION_KEY='REDACTED' \
+  SINCH_APPLICATION_SECRET='REDACTED' \
+  SMS_SERVICE_PLAN_ID='REDACTED' \
+  SMS_API_TOKEN='REDACTED' \
+  SMS_REGION='eu' \
   CRON_SECRET='REDACTED'
 ```
 
-Sätt motsvarande servervariabler i Vercel. Inga Rinkel-/service-role-hemligheter får vara `NEXT_PUBLIC_*`.
+Sätt motsvarande servervariabler i Vercel. Inga leverantörs- eller service-role-hemligheter får vara `NEXT_PUBLIC_*`. Hela listan står i `docs/integrations/telefoni.md`.
 
 ## Deploya Edge Functions
 
@@ -62,11 +58,11 @@ Sätt motsvarande servervariabler i Vercel. Inga Rinkel-/service-role-hemlighete
 npm run functions:deploy -- --project-ref PROJECT_REF
 ```
 
-Kontrollera särskilt att `rinkel-platform-worker`, `maintenance-worker` och `process-outbox` deployas.
+Kontrollera särskilt att `maintenance-worker` och `process-outbox` deployas. Den förra släpper hängande uppringningsförsök och tappade webbtelefonsessioner; den senare skickar varje avtal, SMS och påminnelse.
 
 ## Scheduler
 
-`vercel.json` kör `/api/cron/rinkel-platform-worker` varje minut. Vercel skickar `Authorization: Bearer $CRON_SECRET`; route-handlern anropar därefter Edge Function server-to-server med samma hemlighet.
+`vercel.json` schemalägger varje Edge-worker via `/api/cron/edge-workers/<worker>`. Vercel skickar `Authorization: Bearer $CRON_SECRET`; route-handlern anropar därefter Edge Function server-to-server med samma hemlighet och skriver en heartbeat.
 
 Befintlig scheduler ska även fortsätta anropa:
 
@@ -89,7 +85,7 @@ npx supabase@2.109.1 migration list
 npx supabase@2.109.1 db lint --linked
 ```
 
-Kör därefter det manuella liveprotokollet i `docs/RINKEL_STAGING_PROTOCOL.md`. Ett riktigt testsamtal får inte markeras verifierat förrän Rinkel-device, destination, webhookkedja och CDR faktiskt har observerats.
+Kör därefter ett riktigt testsamtal. Det får inte markeras verifierat förrän webbtelefonen registrerat sig, destinationen faktiskt ringt, och leverantörens händelser observerats på `/api/webhooks/sinch`.
 
 ## Git och Vercel
 
@@ -101,7 +97,7 @@ git add \
   src \
   supabase \
   vercel.json
-git commit -m "Harden central Rinkel dialer lifecycle"
+git commit -m "Beskriv ändringen"
 git push origin HEAD
 
 npx vercel@latest deploy --prebuilt   # endast om projektets vanliga CI-flöde använder prebuilt

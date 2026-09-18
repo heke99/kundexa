@@ -5,7 +5,7 @@ name: deploy-edge-functions
 # imports it is deployed again — and nothing in the repository makes that gap
 # visible, because the repository only describes what *should* be running.
 #
-# That gap is not hypothetical: production ran a `_shared/rinkel.ts` from before
+# That gap is not hypothetical: production ran a shared provider client from before
 # 2026-09-07 for 34 days while the repository, the type check and the whole SQL
 # suite were green (FAILURE-0055). This workflow closes it by making the deploy
 # follow the merge, so "merged to main" and "running in production" mean the same
@@ -42,7 +42,6 @@ jobs:
       # were running older code than main while every check was green:
       #
       #   process-outbox          deployed 09-11 08:14, changed 09-14 17:04
-      #   rinkel-platform-worker  deployed 09-10 13:38, changed 09-15 08:37
       #   maintenance-worker      deployed 09-10 11:26, changed 09-11 16:36
       #   automation-runner       deployed 09-11 14:56, changed 09-11 16:36
       #

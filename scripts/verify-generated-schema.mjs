@@ -5,6 +5,7 @@ const file = path.join(process.cwd(), "src/lib/supabase/database.types.ts");
 const source = await readFile(file, "utf8");
 
 const requiredTables = [
+  "dial_attempts",
   "email_delivery_events",
   "signing_envelopes",
   "signing_recipients",
@@ -14,10 +15,12 @@ const requiredTables = [
   "contract_post_sign_runs",
 ];
 const requiredFunctions = [
-  "apply_rinkel_call_event",
-  "correlate_rinkel_incoming_event",
-  "correlate_rinkel_outgoing_event",
-  "reconcile_rinkel_call_from_cdr",
+  "ingest_sinch_voice_event",
+  "reserve_outbound_call",
+  "finalize_dial",
+  "resolve_caller_id_phone_number",
+  "caller_id_options_for_current_user",
+  "release_stale_dial_attempts",
   "apply_resend_delivery_event",
   "finalize_signing_envelope",
   "mark_acceptance_opened",

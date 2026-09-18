@@ -5,7 +5,7 @@
   },
   "/calls": {
     "classification": "internal",
-    "reason": "Session-bound Rinkel dial/list workflow relies on auth.uid() and the current user device mapping"
+    "reason": "Session-bound dial and list workflow; the seat it reserves belongs to auth.uid() and means nothing to another caller"
   },
   "/calls/complete": {
     "classification": "internal",
@@ -18,10 +18,6 @@
   "/calls/{id}/recording": {
     "classification": "internal",
     "reason": "Session-bound playback policy and short-lived redirect; not API-key compatible"
-  },
-  "/calls/{id}/transcription/retry": {
-    "classification": "internal",
-    "reason": "Session-bound user operation against the current call scope"
   },
   "/contract-templates/extract-text": {
     "classification": "internal",
@@ -111,10 +107,6 @@
   "/integrations/resend/test": {
     "classification": "public"
   },
-  "/integrations/rinkel/status": {
-    "classification": "internal",
-    "reason": "Deprecated alias of /telephony/status"
-  },
   "/platform/lists/import": {
     "classification": "internal",
     "reason": "Platform-owner import surface"
@@ -131,9 +123,13 @@
   "/segments/{id}/refresh": {
     "classification": "public"
   },
+  "/telephony/numbers/available": {
+    "classification": "internal",
+    "reason": "Admin-only search against the platform's own provider account; it exposes which account Kundexa runs on and what numbers cost, and the next button after it sends an invoice"
+  },
   "/telephony/status": {
     "classification": "internal",
-    "reason": "Current-user readiness projection depends on auth.uid() and the session Rinkel mapping"
+    "reason": "Current-user readiness projection depends on auth.uid() and the tenant this session is acting in"
   },
   "/telephony/webphone/heartbeat": {
     "classification": "internal",
@@ -145,10 +141,14 @@
   },
   "/telephony/webphone/session": {
     "classification": "internal",
-    "reason": "Mints short-lived SIP credentials for the signed-in seller's own browser; publishing it would invite callers to request credentials they cannot use"
+    "reason": "Mints short-lived webphone credentials for the signed-in seller's own browser; publishing it would invite callers to request credentials they cannot use"
   },
   "/voice-client": {
     "classification": "internal",
     "reason": "410 legacy endpoint"
+  },
+  "/calls/dialing": {
+    "classification": "internal",
+    "reason": "Browser reports the provider call id for the seat it already holds"
   }
 }

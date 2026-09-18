@@ -1,70 +1,17 @@
 import { ok } from "@/lib/supabase/read";
 import { KeyRound, Phone, Plug } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
-import { addPhoneNumber, generateResendWebhookAddress, save46ElksIntegration, saveContractReminderPolicy, saveEmailIntegration, testResendIntegration } from "@/app/actions/admin";
+import { addPhoneNumber, generateResendWebhookAddress, saveSmsIntegration, saveContractReminderPolicy, saveEmailIntegration, testResendIntegration } from "@/app/actions/admin";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
-import { RinkelUserMappingForm } from "@/components/rinkel-user-mapping-form";
 import { Field, SelectField } from "@/components/ui/form-field";
 import { Badge } from "@/components/ui/badge";
+import { NumberRental } from "@/components/number-rental";
 import { formatDate } from "@/lib/utils";
-import {
-  repairTenantDialPath,
-  saveRinkelCallerIdDefault,
-  saveTelephonyPolicy,
-} from "@/app/actions/rinkel";
+import { saveCallerIdDefault, saveTelephonyPolicy } from "@/app/actions/telephony";
 
 type Config = Record<string, unknown>;
-type DialPathReport = {
-  expectedNumberId: string | null;
-  incorrectCount: number;
-  seats: Array<{
-    providerUserRowId: string;
-    externalUserId: string;
-    displayName: string | null;
-    sellerName: string | null;
-    appliedAt: string | null;
-    error: string | null;
-    state: {
-      webphoneOnly: boolean;
-      ringDevices: string | null;
-      seatPhoneE164: string | null;
-      outboundNumberMatches: boolean | null;
-      correct: boolean;
-    };
-  }>;
-};
-type TenantRinkelResources = {
-  users: Array<{
-    allocationId: string;
-    userId: string;
-    displayName: string;
-    email: string | null;
-    hasDevice: boolean;
-    activeDeviceCount?: number;
-    deviceInventoryComplete?: boolean;
-    deviceInventorySource?: string | null;
-    deviceInventoryError?: string | null;
-    active: boolean;
-    devices: Array<{ id: string; providerDeviceId: string; displayName: string | null; deviceType: string | null; status: string; active: boolean; lastSyncedAt: string }>;
-  }>;
-  numbers: Array<{ allocationId: string; numberId: string; number: string; displayName: string | null; recordingEnabled: boolean; active: boolean }>;
-  mappings: Array<{ id: string; kundexaUserId: string; userAllocationId: string; numberAllocationId: string; selectedDeviceId: string | null; active: boolean }>;
-  callerIdDefaults: {
-    tenantDefaultAllocationId: string | null;
-    teams: Array<{ id: string; name: string; numberAllocationId: string | null }>;
-    lists: Array<{ id: string; name: string; numberAllocationId: string | null }>;
-    campaigns: Array<{ id: string; name: string; numberAllocationId: string | null }>;
-  };
-  capabilities: {
-    recordingDetected?: boolean;
-    transcriptionSupported?: boolean;
-    insightsSupported?: boolean;
-    noteSyncSupported?: boolean;
-    privateRecordingCopySupported?: boolean;
-  };
-};
 
 export default async function IntegrationsPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string; webhookToken?: string; resendWebhook?: string }> }) {
   const params = await searchParams;
@@ -75,127 +22,56 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
     { data: members },
     { data: features },
     { data: reminderPolicy },
-    { data: rinkelResourceData },
     { data: telephonyPolicy },
-    { data: dialPathData },
   ] = await Promise.all([
     ok(supabase.from("tenant_integrations").select("id,provider_type,provider,name,status,last_verified_at,configuration,credentials_ciphertext").order("created_at")),
     ok(supabase.from("phone_numbers").select("*").order("number_e164")),
     ok(supabase.from("tenant_memberships").select("user_id,role,profiles:user_id(full_name)").eq("status", "active")),
     ok(supabase.from("tenant_features").select("feature_key,enabled").in("feature_key", ["outbound_email", "contract_delivery_email", "outbound_sms", "contract_delivery_sms"])),
     ok(supabase.from("contract_reminder_policies").select("*").maybeSingle()),
-    ok(supabase.rpc("get_tenant_rinkel_resources")),
     ok(supabase.from("telephony_policies").select("*").maybeSingle()),
-    ok(supabase.rpc("tenant_rinkel_dial_path_report")),
   ]);
-  const rinkelResources = (rinkelResourceData ?? {
-    users: [], numbers: [], mappings: [],
-    callerIdDefaults: { tenantDefaultAllocationId: null, teams: [], lists: [], campaigns: [] },
-    capabilities: {},
-  }) as TenantRinkelResources;
-  const callerIdDefaults = rinkelResources.callerIdDefaults ?? { tenantDefaultAllocationId: null, teams: [], lists: [], campaigns: [] };
-  const numberLabel = (allocationId: string | null) => rinkelResources.numbers.find((number) => number.allocationId === allocationId)?.number ?? "inte vald";
+  // Bara nummer som är aktiva och bär röst kan visas för en mottagare. Att
+  // erbjuda de andra i listan vore att låta någon välja ett val som sedan får
+  // varje samtal att avvisas.
+  const voiceNumbers = (numbers ?? []).filter((number) => number.status === "active" && number.supports_voice);
   const resend = integrations?.find((integration) => integration.provider === "resend") ?? null;
   const resendConfig = (resend?.configuration ?? {}) as Config;
   const featureMap = new Map((features ?? []).map((feature) => [feature.feature_key, feature.enabled]));
   const resendActive = resend?.status === "active";
-  const dialPath = (dialPathData ?? { expectedNumberId: null, seats: [], incorrectCount: 0 }) as DialPathReport;
 
   return <>
     <PageHeader title="Integrationer" description="Tenantseparerade leverantörsanslutningar för telefoni, SMS, e-post och avtalsleverans." />
     {params.error ? <p className="form-error">{params.error}</p> : null}
     {params.message ? <p className="notice">{params.message}</p> : null}
-    {params.webhookToken ? <div className="notice warning"><strong>Spara 46elks callback-token nu:</strong> <code>{params.webhookToken}</code></div> : null}
+    {params.webhookToken ? <div className="notice warning"><strong>Spara numrets callback-token nu:</strong> <code>{params.webhookToken}</code></div> : null}
     {params.resendWebhook ? <div className="notice warning"><strong>Resend-webhookadress:</strong><br /><code style={{ wordBreak: "break-all" }}>{params.resendWebhook}</code><br />Lägg in adressen i Resend och spara webhook signing secret i formuläret. Adressen visas efter skapande eller rotation.</div> : null}
 
     <div className="grid grid-2" style={{ marginTop: 16 }}>
       <Card><CardHeader><h2><Plug size={17} /> Anslutningar</h2><Badge>{integrations?.length ?? 0}</Badge></CardHeader><CardContent>{integrations?.map((integration) => {
-        const isTelephony = integration.provider === "rinkel" || integration.provider_type === "voice" || integration.provider_type === "telephony";
+        const isTelephony = integration.provider_type === "voice" || integration.provider_type === "telephony";
         return <div className="activity-line" key={integration.id}><span className="activity-dot"><Plug size={14} /></span><div><strong>{isTelephony ? "Telefoni" : integration.name}</strong><p>{isTelephony ? "centralt hanterad" : `${integration.provider_type} · ${integration.provider}`}{integration.last_verified_at ? ` · verifierad ${formatDate(integration.last_verified_at)}` : ""}</p></div><Badge className={integration.status === "active" ? "badge-success" : integration.status === "error" ? "badge-warning" : "badge-info"}>{integration.status}</Badge></div>;
       })}</CardContent></Card>
 
       <Card><CardHeader><h2><Phone size={17} /> Telefoni</h2><Badge className="badge-info">Centralt hanterad</Badge></CardHeader><CardContent>
-        <div className="notice">
-          <strong>Telefoni tillhandahålls och administreras centralt av Kundexa.</strong><br />
-          Företaget ansluter inget eget telefonikonto och lagrar ingen egen API-nyckel.
-        </div>
-        <p style={{ marginTop: 12 }}>Tilldelat: {rinkelResources.users.length} telefoni-användare och {rinkelResources.numbers.length} utgående nummer.</p>
+        <p className="muted">Samtalen kopplas i säljarens webbläsare. Ingen säljare behöver konto eller enhet hos telefonitjänsten — det räcker att hon är inloggad i Kundexa.</p>
+        <p style={{ marginTop: 12 }}>{voiceNumbers.length} nummer kan användas som utgående nummer.</p>
       </CardContent></Card>
 
-      <Card><CardHeader><h2>Säljarmappning för telefoni</h2><Badge>{rinkelResources.mappings.filter((mapping) => mapping.active).length}</Badge></CardHeader><CardContent>
-        <RinkelUserMappingForm
-          members={(members ?? []).map((member) => {
-            const profile = Array.isArray(member.profiles) ? member.profiles[0] : member.profiles;
-            return { userId: member.user_id, label: `${profile?.full_name ?? member.user_id} · ${member.role}` };
-          })}
-          users={rinkelResources.users}
-          numbers={rinkelResources.numbers}
-        />
-        <div style={{ marginTop: 14 }}>{rinkelResources.mappings.filter((mapping) => mapping.active).map((mapping) => {
-          const member = members?.find((item) => item.user_id === mapping.kundexaUserId);
-          const profile = member && (Array.isArray(member.profiles) ? member.profiles[0] : member.profiles);
-          const user = rinkelResources.users.find((item) => item.allocationId === mapping.userAllocationId);
-          const number = rinkelResources.numbers.find((item) => item.allocationId === mapping.numberAllocationId);
-          const device = user?.devices.find((item) => item.id === mapping.selectedDeviceId)
-            ?? user?.devices.find((item) => item.active);
-          const deviceLabel = device
-            ? device.displayName ?? "Telefonienhet"
-            : "väntar på registrerad enhet";
-          return <div className="activity-line" key={mapping.id}><span className="activity-dot"><Phone size={13} /></span><div><strong>{profile?.full_name ?? mapping.kundexaUserId}</strong><p>{user?.displayName ?? "Telefoni-användare saknas"} · {deviceLabel} · {number?.number ?? "nummer saknas"}</p></div><Badge className={device ? "badge-success" : "badge-warning"}>{device ? "Ringklar" : "Väntar på enhet"}</Badge></div>;
-        })}</div>
+      <Card><CardHeader><h2>Utgående nummer</h2><Badge>{voiceNumbers.length}</Badge></CardHeader><CardContent>
+        <p className="muted">Numret mottagaren ser. Det mest specifika valet vinner: lista, kampanj, team, företagets förval.</p>
+        {voiceNumbers.length === 0
+          ? <div className="notice warning" style={{ marginTop: 12 }}>Företaget har inget aktivt nummer med rösttrafik. Utan ett sådant kan inga samtal ringas — lägg till ett nummer nedan först.</div>
+          : <form action={saveCallerIdDefault} className="form-stack" style={{ marginTop: 12 }}>
+            <input type="hidden" name="scope" value="tenant" />
+            <SelectField label="Företagets förvalda nummer" name="phone_number_id" defaultValue={telephonyPolicy?.default_caller_id_phone_number_id ?? ""}>
+              <option value="">Inget valt</option>
+              {voiceNumbers.map((number) => <option key={number.id} value={number.id}>{number.number_e164}</option>)}
+            </SelectField>
+            <button className="button button-secondary">Spara utgående nummer</button>
+          </form>}
       </CardContent></Card>
 
-      {/* Uppringningsvägen. Rinkels `/dial` startar alltid samtalet genom en
-          platsens enhet — det går inte att ringa "från numret" — så en plats som
-          fortfarande ringer på en mobil skickar samtalet via den telefonen hur
-          rätt caller-ID Kundexa än väljer. Rättningen sätter Rinkels
-          "call only Webphone when available" och företagets utgående nummer. */}
-      <Card><CardHeader><h2><Phone size={17} /> Uppringningsväg</h2><Badge className={dialPath.incorrectCount ? "badge-warning" : "badge-success"}>{dialPath.incorrectCount ? `${dialPath.incorrectCount} att rätta` : "Rätt inställd"}</Badge></CardHeader><CardContent>
-        <p className="muted">
-          Telefonitjänsten kopplar upp säljarens egen enhet först och ringer kunden därifrån. Ringer platsen
-          på en mobil går samtalet via den telefonen — kunden ser fortfarande företagets nummer, men samtalet
-          sker inte i webbtelefonen. Rättningen ställer om platsen till att bara ringa i webbtelefonen och att
-          ringa ut från företagets nummer. Säljarens språk, ringsignal och aviseringar rörs inte.
-        </p>
-        {dialPath.seats.length ? <div style={{ marginTop: 14 }}>{dialPath.seats.map((seat) => <div className="activity-line" key={seat.providerUserRowId}>
-          <span className="activity-dot"><Phone size={13} /></span>
-          <div>
-            <strong>{seat.sellerName ?? seat.displayName ?? seat.externalUserId}</strong>
-            <p>
-              {seat.state.correct
-                ? `Ringer i webbtelefonen${seat.appliedAt ? ` · rättad ${formatDate(seat.appliedAt)}` : ""}`
-                : `Ringer ${seat.state.seatPhoneE164 ?? "en annan enhet"} först${seat.state.outboundNumberMatches === false ? " · fel utgående nummer på platsen" : ""}`}
-            </p>
-            {seat.error ? <p className="form-error" style={{ marginTop: 6 }}>{seat.error}</p> : null}
-          </div>
-          <Badge className={seat.state.correct ? "badge-success" : "badge-warning"}>{seat.state.correct ? "Rätt" : "Rättas"}</Badge>
-        </div>)}</div> : <p className="notice warning" style={{ marginTop: 12 }}>Ingen säljare är mappad till telefoni ännu, så det finns ingen plats att rätta.</p>}
-        {!dialPath.expectedNumberId && dialPath.seats.length ? <p className="notice warning" style={{ marginTop: 12 }}>
-          Företaget saknar ett aktivt utgående telefonnummer, så platsen kan inte peka på något nummer. Be plattformsadministratören tilldela ett nummer först.
-        </p> : null}
-        <form action={repairTenantDialPath} style={{ marginTop: 14 }}>
-          <button className="button button-primary" disabled={!dialPath.seats.length || !dialPath.expectedNumberId}>
-            <Phone size={15} /> Rätta uppringningsvägen
-          </button>
-        </form>
-      </CardContent></Card>
-
-      <Card><CardHeader><h2>Caller-ID-standarder</h2><Badge>Prioriterad resolver</Badge></CardHeader><CardContent>
-        <p className="muted">Prioritet: explicit samtalsval → lista → kampanj → kundteam → säljarstandard → säljarteam → tenant → plattform.</p>
-        <form action={saveRinkelCallerIdDefault} className="form-stack" style={{ marginTop: 12 }}>
-          <SelectField label="Scope" name="scope_target" required>
-            <option value="tenant">Tenantstandard · {numberLabel(callerIdDefaults.tenantDefaultAllocationId)}</option>
-            <optgroup label="Team">{callerIdDefaults.teams.map((team) => <option key={team.id} value={`team:${team.id}`}>{team.name} · {numberLabel(team.numberAllocationId)}</option>)}</optgroup>
-            <optgroup label="Ringlistor">{callerIdDefaults.lists.map((list) => <option key={list.id} value={`list:${list.id}`}>{list.name} · {numberLabel(list.numberAllocationId)}</option>)}</optgroup>
-            <optgroup label="Kampanjer">{callerIdDefaults.campaigns.map((campaign) => <option key={campaign.id} value={`campaign:${campaign.id}`}>{campaign.name} · {numberLabel(campaign.numberAllocationId)}</option>)}</optgroup>
-          </SelectField>
-          <SelectField label="Utgående telefonnummer" name="number_allocation_id">
-            <option value="">Rensa scope-standard</option>
-            {rinkelResources.numbers.map((number) => <option key={number.allocationId} value={number.allocationId} disabled={!number.active}>{number.displayName ? `${number.displayName} · ` : ""}{number.number}</option>)}
-          </SelectField>
-          <button className="button button-secondary">Spara caller-ID-standard</button>
-        </form>
-      </CardContent></Card>
 
       <Card><CardHeader><h2>Telefonipolicy</h2><Badge>{telephonyPolicy?.recording_enabled ? "Inspelning aktiv" : "Inspelning av"}</Badge></CardHeader><CardContent>
         <form action={saveTelephonyPolicy} className="form-stack">
@@ -206,11 +82,13 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
           <SelectField label="Lagringsläge" name="recording_storage_mode" defaultValue="provider_only"><option value="provider_only">Endast hos telefonitjänsten</option></SelectField>
           <div className="notice">Privat Kundexa-kopia exponeras inte förrän den provideroberoende arkiveringskedjan är verifierad. UI:t sparar därför inte en kosmetisk inställning.</div>
           <div className="grid grid-2"><Field label="Retention, dagar" name="recording_retention_days" type="number" min={1} max={3650} defaultValue={telephonyPolicy?.recording_retention_days ?? 90} /><Field label="Råevent, dagar" name="raw_event_retention_days" type="number" min={1} max={365} defaultValue={telephonyPolicy?.raw_event_retention_days ?? 30} /></div>
-          <div className="grid grid-2"><Field label="Tillåtet från" name="allowed_start_time" type="time" defaultValue={String(telephonyPolicy?.allowed_start_time ?? "09:00").slice(0, 5)} /><Field label="Tillåtet till" name="allowed_end_time" type="time" defaultValue={String(telephonyPolicy?.allowed_end_time ?? "18:00").slice(0, 5)} /></div>
+          <div className="grid grid-2"><Field label="Tillåtet från" name="allowed_start_time" type="time" defaultValue={String(telephonyPolicy?.allowed_start_time ?? "08:00").slice(0, 5)} /><Field label="Tillåtet till" name="allowed_end_time" type="time" defaultValue={String(telephonyPolicy?.allowed_end_time ?? "21:00").slice(0, 5)} /></div>
+          <fieldset className="form-stack" style={{ border: 0, padding: 0 }}>
+            <legend className="muted">Veckodagar då samtal får ringas</legend>
+            {[[1,"Måndag"],[2,"Tisdag"],[3,"Onsdag"],[4,"Torsdag"],[5,"Fredag"],[6,"Lördag"],[7,"Söndag"]].map(([day, label]) =>
+              <label key={String(day)}><input type="checkbox" name={`allowed_day_${day}`} defaultChecked={(telephonyPolicy?.allowed_days ?? [1,2,3,4,5,6,7]).includes(Number(day))} /> {label}</label>)}
+          </fieldset>
           <Field label="Tidszon" name="timezone" defaultValue={telephonyPolicy?.timezone ?? "Europe/Stockholm"} />
-          <label><input type="checkbox" name="transcription_enabled" disabled={!rinkelResources.capabilities.transcriptionSupported} defaultChecked={Boolean(rinkelResources.capabilities.transcriptionSupported && telephonyPolicy?.transcription_enabled)} /> Hämta transkribering {rinkelResources.capabilities.transcriptionSupported ? "" : "(ej verifierat stöd)"}</label>
-          <label><input type="checkbox" name="ai_analysis_enabled" disabled={!rinkelResources.capabilities.insightsSupported} defaultChecked={Boolean(rinkelResources.capabilities.insightsSupported && telephonyPolicy?.ai_analysis_enabled)} /> Tillåt AI Insights {rinkelResources.capabilities.insightsSupported ? "" : "(ej verifierat stöd)"}</label>
-          <div className="notice">Anteckningssynk till telefonitjänsten visas inte eftersom note-API-kapabiliteten ännu inte är verifierad. Kundexas CRM-anteckning är fortsatt primär.</div>
           <label><input type="checkbox" name="disposition_required" defaultChecked={telephonyPolicy?.disposition_required ?? true} /> Kräv samtalsresultat före nästa prospekt</label>
           <label><input type="checkbox" name="allow_seller_playback" defaultChecked={telephonyPolicy?.allow_seller_playback ?? false} /> Säljare får lyssna på egna inspelningar</label>
           <label><input type="checkbox" name="allow_team_leader_playback" defaultChecked={telephonyPolicy?.allow_team_leader_playback ?? false} /> Teamledare får lyssna på teamets inspelningar</label>
@@ -239,10 +117,22 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
 
       <Card><CardHeader><h2>Avtalspåminnelser</h2><Badge>{reminderPolicy?.enabled ? "Aktiva" : "Avstängda"}</Badge></CardHeader><CardContent><form action={saveContractReminderPolicy} className="form-stack"><label><input type="checkbox" name="enabled" defaultChecked={reminderPolicy?.enabled ?? true} /> Automatiska påminnelser aktiva</label><div className="grid grid-2"><Field label="Första efter timmar" name="first_reminder_after_hours" type="number" min={1} max={8760} defaultValue={reminderPolicy?.first_reminder_after_hours ?? 24} /><Field label="Andra efter timmar" name="second_reminder_after_hours" type="number" min={1} max={8760} defaultValue={reminderPolicy?.second_reminder_after_hours ?? 72} /></div><Field label="Sista före utgång, timmar" name="final_reminder_before_expiry_hours" type="number" min={1} max={8760} defaultValue={reminderPolicy?.final_reminder_before_expiry_hours ?? 24} /><Field label="Max automatiska påminnelser" name="max_automatic_reminders" type="number" min={0} max={10} defaultValue={reminderPolicy?.max_automatic_reminders ?? 3} /><SelectField label="Standardkanal" name="default_channel" defaultValue={reminderPolicy?.default_channel ?? "email"}><option value="email">E-post</option><option value="sms">SMS</option><option value="both">Båda</option></SelectField><div className="grid grid-2"><Field label="Tyst tid börjar" name="quiet_hours_start" type="time" defaultValue={String(reminderPolicy?.quiet_hours_start ?? "20:00").slice(0, 5)} /><Field label="Tyst tid slutar" name="quiet_hours_end" type="time" defaultValue={String(reminderPolicy?.quiet_hours_end ?? "08:00").slice(0, 5)} /></div><Field label="Tidszon" name="timezone" defaultValue={reminderPolicy?.timezone ?? "Europe/Stockholm"} /><label><input type="checkbox" name="attach_pdf" defaultChecked={reminderPolicy?.attach_pdf ?? true} /> Bifoga kanonisk PDF i e-postpåminnelser</label><button className="button button-secondary">Spara påminnelsepolicy</button></form></CardContent></Card>
 
-      <Card><CardHeader><h2><KeyRound size={17} /> 46elks SMS</h2></CardHeader><CardContent><div className="notice warning">46elks används endast för befintlig SMS-trafik. All telefoni och click-to-call hanteras centralt av Kundexa.</div><form action={save46ElksIntegration} className="form-stack" style={{ marginTop: 14 }}><SelectField label="Kontomodell" name="account_mode"><option value="tenant_owned">Tenantens eget konto</option><option value="kundexa_subaccount">Kundexa-subkonto</option></SelectField><Field label="API-användarnamn" name="username" required /><Field label="API-lösenord" name="password" type="password" required /><button className="button button-primary">Kryptera och spara</button></form></CardContent></Card>
+      <Card><CardHeader><h2><KeyRound size={17} /> SMS</h2></CardHeader><CardContent><div className="notice">SMS bär avtalsutskick och kundsvar. Kör i Kundexas konto om ni inte har ett eget avtal med leverantören.</div><form action={saveSmsIntegration} className="form-stack" style={{ marginTop: 14 }}><SelectField label="Kontomodell" name="account_mode"><option value="platform_managed">Kundexas konto</option><option value="tenant_owned">Eget konto</option></SelectField><Field label="Service plan-id (endast eget konto)" name="service_plan_id" /><Field label="API-token (endast eget konto)" name="api_token" type="password" /><SelectField label="Region" name="region"><option value="eu">EU</option><option value="us">US</option></SelectField><button className="button button-primary">Kryptera och spara</button></form></CardContent></Card>
 
       <Card><CardHeader><h2><Phone size={17} /> Telefonnummer</h2><Badge>{numbers?.length ?? 0}</Badge></CardHeader><CardContent style={{ padding: 0 }}><DataTable headers={["Nummer", "Voice", "SMS", "MMS", "Status"]}>{numbers?.map((number) => <tr key={number.id}><td><strong>{number.number_e164}</strong></td><td>{number.supports_voice ? "Ja" : "Nej"}</td><td>{number.supports_sms ? "Ja" : "Nej"}</td><td>{number.supports_mms ? "Ja" : "Nej"}</td><td><Badge className={number.status === "active" ? "badge-success" : ""}>{number.status}</Badge></td></tr>)}</DataTable></CardContent></Card>
-      <Card><CardHeader><h2>Lägg till SMS-nummer</h2></CardHeader><CardContent><form action={addPhoneNumber} className="form-stack"><Field label="E.164-nummer" name="number_e164" placeholder="+46700000000" required /><input type="hidden" name="voice" value="" /><label><input type="checkbox" name="sms" /> SMS-capability</label><button className="button button-secondary">Registrera nummer</button></form></CardContent></Card>
+      <Card><CardHeader><h2><Phone size={17} /> Hyr ett nytt nummer</h2></CardHeader><CardContent><NumberRental /></CardContent></Card>
+
+      <Card><CardHeader><h2>Lägg till ett nummer ni redan har</h2></CardHeader><CardContent>
+        <p className="muted" style={{ marginBottom: 12 }}>
+          För nummer som är köpta någon annanstans. Ett nummer som hyrs här ovanför läggs in automatiskt.
+        </p>
+        <form action={addPhoneNumber} className="form-stack">
+          <Field label="E.164-nummer" name="number_e164" placeholder="+46700000000" required />
+          <label><input type="checkbox" name="voice" /> Kan bära samtal</label>
+          <label><input type="checkbox" name="sms" /> Kan bära SMS</label>
+          <button className="button button-secondary">Registrera nummer</button>
+        </form>
+      </CardContent></Card>
     </div>
   </>;
 }

@@ -3,7 +3,6 @@ import { createClient } from "npm:@supabase/supabase-js@2.110.7";
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const cronSecret = Deno.env.get("CRON_SECRET")!;
-const rinkelReconciliationEnabled = Deno.env.get("RINKEL_RECONCILIATION_ENABLED") !== "false";
 const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
 type SegmentJob = { id: string; tenant_id: string; segment_id: string };
@@ -11,7 +10,7 @@ type SegmentJob = { id: string; tenant_id: string; segment_id: string };
 Deno.serve(async (request) => {
   if (request.method !== "POST") return new Response("method_not_allowed", { status: 405 });
   if (!cronSecret || request.headers.get("x-cron-secret") !== cronSecret) return new Response("unauthorized", { status: 401 });
-  const body = await request.json().catch(() => ({})) as { segmentLimit?: number; retentionLimit?: number; geographyLimit?: number; allocationLimit?: number; rateLimitPruneLimit?: number; workerId?: string };
+  const body = await request.json().catch(() => ({})) as { segmentLimit?: number; retentionLimit?: number; geographyLimit?: number; allocationLimit?: number; rateLimitPruneLimit?: number; staleDialAttemptLimit?: number; lostWebphoneSessionLimit?: number; workerId?: string };
   const workerId = String(body.workerId ?? `maintenance-worker:${crypto.randomUUID()}`).slice(0, 200);
   await supabase.rpc("queue_due_segment_refreshes", { p_limit: Math.max(1, Math.min(Number(body.segmentLimit ?? 100), 500)) });
   const { data: claimed, error: claimError } = await supabase.rpc("claim_segment_refresh_jobs", { p_worker: workerId, p_limit: Math.max(1, Math.min(Number(body.segmentLimit ?? 10), 50)) });
@@ -41,45 +40,39 @@ Deno.serve(async (request) => {
   });
   if (rateLimitPruneError) return Response.json({ error: rateLimitPruneError.message }, { status: 500 });
 
+  // Ett uppringningsförsök som aldrig fick ett leverantörssvar håller säljarens
+  // plats för alltid. Skyddsnätet fanns men var aldrig schemalagt -- vilket
+  // betyder att ingen säljare någonsin blev frisläppt av det. Nu körs det.
+  // Timgränsen är funktionens egen nedre gräns: kortare än så läser en
+  // nätverkshicka som ett tappat samtal.
+  const { data: releasedAttempts, error: releaseError } = await supabase.rpc("release_stale_dial_attempts", {
+    p_max_age: "01:00:00",
+    p_limit: Math.max(1, Math.min(Number(body.staleDialAttemptLimit ?? 200), 1000)),
+  });
+  if (releaseError) return Response.json({ error: releaseError.message }, { status: 500 });
+
+  const { data: lostSessions, error: lostSessionError } = await supabase.rpc("release_lost_webphone_sessions", {
+    p_max_silence: "00:05:00",
+    p_limit: Math.max(1, Math.min(Number(body.lostWebphoneSessionLimit ?? 200), 1000)),
+  });
+  if (lostSessionError) return Response.json({ error: lostSessionError.message }, { status: 500 });
+
   const { data: tenants, error: tenantError } = await supabase.from("tenants").select("id").eq("status", "active").limit(500);
   if (tenantError) return Response.json({ error: tenantError.message }, { status: 500 });
   const retentionResults: unknown[] = [];
-  const maintenanceBucket = new Date().toISOString().slice(0, 13);
   const retentionBucket = new Date().toISOString().slice(0, 10);
-  if (rinkelReconciliationEnabled) {
-    const { data: platformRinkel } = await supabase.from("platform_integrations").select("id")
-      .eq("provider", "rinkel").is("disabled_at", null).in("status", ["connected", "degraded"]).limit(1).maybeSingle();
-    if (platformRinkel) {
-      const { error: reconciliationQueueError } = await supabase.from("platform_rinkel_jobs").upsert({
-        job_type: "rinkel.reconcile_platform",
-        aggregate_id: platformRinkel.id,
-        idempotency_key: `rinkel.reconcile_platform:${maintenanceBucket}`,
-        payload: { platform_integration_id: platformRinkel.id },
-      }, { onConflict: "idempotency_key", ignoreDuplicates: true });
-      if (reconciliationQueueError) return Response.json({ error: reconciliationQueueError.message }, { status: 500 });
-
-      const { error: platformRetentionQueueError } = await supabase.from("platform_rinkel_jobs").upsert({
-        job_type: "rinkel.retention_platform",
-        aggregate_id: platformRinkel.id,
-        idempotency_key: `rinkel.retention_platform:${retentionBucket}`,
-        payload: { platform_integration_id: platformRinkel.id },
-        available_at: new Date().toISOString(),
-      }, { onConflict: "idempotency_key", ignoreDuplicates: true });
-      if (platformRetentionQueueError) return Response.json({ error: platformRetentionQueueError.message }, { status: 500 });
-    }
-  }
   for (const tenant of tenants ?? []) {
     await supabase.from("outbox_jobs").upsert({
       tenant_id: tenant.id,
-      job_type: "rinkel.retention",
+      job_type: "telephony.retention",
       aggregate_type: "tenant",
       aggregate_id: tenant.id,
       payload: {},
-      idempotency_key: `rinkel.retention:${tenant.id}:${retentionBucket}`,
+      idempotency_key: `telephony.retention:${tenant.id}:${retentionBucket}`,
       priority: 90,
     }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true });
     const { data, error } = await supabase.rpc("run_retention_maintenance", { p_tenant_id: tenant.id, p_limit: Math.max(1, Math.min(Number(body.retentionLimit ?? 1000), 10000)) });
     retentionResults.push(error ? { tenantId: tenant.id, error: error.message } : data);
   }
-  return Response.json({ workerId, geographyNormalized: Number(geographyNormalized ?? 0), expiredAllocations, prunedRateLimits: Number(prunedRateLimits ?? 0), segmentResults, dynamicLists, retentionResults });
+  return Response.json({ workerId, geographyNormalized: Number(geographyNormalized ?? 0), expiredAllocations, prunedRateLimits: Number(prunedRateLimits ?? 0), releasedAttempts, lostSessions, segmentResults, dynamicLists, retentionResults });
 });

@@ -98,7 +98,6 @@ export async function updateCustomerList(form: FormData) {
     p_script: value(form, "script"),
     p_timezone: timezone,
     p_allowed_days: allowedDays,
-    p_outbound_phone_number_id: value(form, "outbound_phone_number_id") || null,
     p_recording_enabled: checked(form, "recording_enabled"),
     p_starts_at: startsAt,
     p_ends_at: endsAt,

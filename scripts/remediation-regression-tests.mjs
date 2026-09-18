@@ -12,6 +12,9 @@ const [
   telephonyStatus,
   openapi,
   dialerHook,
+  webphoneSession,
+  webphoneAdapter,
+  callsMigration,
   platformPage,
   platformListsPage,
   authUsers,
@@ -25,23 +28,15 @@ const [
   outbox,
   auth,
   appLayout,
-  platformTelephonyPage,
-  rinkelActions,
   proxy,
   organizationActions,
   topbar,
   onboarding,
   bootstrapPlatformOwner,
-  rinkelClient,
-  deviceMigration,
-  rinkelMappingForm,
-  rinkelWebhookRoute,
-  rinkelWebhookRepairMigration,
   verifier,
   sqlVerifier,
   invitationMigration,
   listDistributionMigration,
-  rinkelRuntimeMigration,
   contractGenerationMigration,
   publicContractAction,
   smsInboundRoute,
@@ -62,7 +57,10 @@ const [
   read("src/app/api/v1/calls/route.ts"),
   read("src/app/api/v1/telephony/status/route.ts"),
   read("src/app/api/openapi.json/route.ts"),
-  read("src/hooks/use-rinkel-dialer.ts"),
+  read("src/hooks/use-dialer.ts"),
+  read("src/app/api/v1/telephony/webphone/session/route.ts"),
+  read("src/lib/telephony/webphone/sinch.ts"),
+  read("supabase/migrations/202609170003_dial_on_sinch.sql"),
   read("src/app/(dashboard)/app/platform/page.tsx"),
   read("src/app/(dashboard)/app/platform/lists/page.tsx"),
   read("src/lib/supabase/auth-admin-users.ts"),
@@ -72,30 +70,22 @@ const [
   read("src/app/actions/customers.ts"),
   read("src/app/actions/admin.ts"),
   read("supabase/functions/automation-runner/index.ts"),
-  read("src/app/api/webhooks/46elks/sms/delivery/route.ts"),
+  read("src/app/api/webhooks/sms/delivery/route.ts"),
   read("supabase/functions/process-outbox/index.ts"),
   read("src/lib/auth.ts"),
   read("src/app/(dashboard)/app/layout.tsx"),
-  read("src/app/(dashboard)/app/platform/telephony/page.tsx"),
-  read("src/app/actions/rinkel.ts"),
   read("src/lib/supabase/proxy.ts"),
   read("src/app/actions/organization.ts"),
   read("src/components/app-shell/topbar.tsx"),
   read("src/app/onboarding/page.tsx"),
   read("scripts/bootstrap-platform-owner.mjs"),
-  read("supabase/functions/_shared/rinkel.ts"),
-  read("supabase/migrations/202608100002_rinkel_device_inventory_mapping_hardening.sql"),
-  read("src/components/rinkel-user-mapping-form.tsx"),
-  read("src/app/api/webhooks/rinkel/[secret]/[event]/route.ts"),
-  read("supabase/migrations/202608100003_rinkel_webhook_live_verification_repair.sql"),
   read("scripts/verify.mjs"),
   read("scripts/verify-sql.mjs"),
   read("supabase/migrations/202608100004_invitation_membership_team_hardening.sql"),
   read("supabase/migrations/202608100005_list_distribution_dialer_authorization.sql"),
-  read("supabase/migrations/202608100006_rinkel_runtime_authorization_and_failure_recovery.sql"),
   read("supabase/migrations/202608100007_contract_acceptance_generation_and_policy.sql"),
   read("src/app/actions/public-contract.ts"),
-  read("src/app/api/webhooks/46elks/sms/inbound/route.ts"),
+  read("src/app/api/webhooks/sms/inbound/route.ts"),
   read("src/lib/permissions.ts"),
   read("src/components/app-shell/sidebar.tsx"),
   read(".github/workflows/verify.yml"),
@@ -109,8 +99,8 @@ const [
 
 const [
   securityProjectionMigration, signingCompletionMigration, performanceMigration, workerScheduler, edgeWorkerCron,
-  navConfig, customerSearch, customerMultiSearch, rinkelDialer, dialerPage, listPage, contractsPage, reportsPage, dashboardPage,
-  apiAuth, routeClassification, processOutboxCurrent, teamDailyLeadLimitMigration, rinkelProjectionMonotonicMigration,
+  navConfig, customerSearch, customerMultiSearch, dialerPanel, dialerPage, listPage, contractsPage, reportsPage, dashboardPage,
+  apiAuth, routeClassification, processOutboxCurrent, teamDailyLeadLimitMigration, callProjectionMonotonicMigration,
   canonicalProvisioningMigration, provisionUserSource, changePasswordAction, registerPage, usersPage, platformListActions, authActions,
 ] = await Promise.all([
   read("supabase/migrations/202608100008_security_resource_projection_and_rls.sql"),
@@ -121,7 +111,7 @@ const [
   read("src/components/app-shell/nav-config.ts"),
   read("src/components/customer-search-select.tsx"),
   read("src/components/customer-multi-search-select.tsx"),
-  read("src/components/rinkel-dialer.tsx"),
+  read("src/components/dialer-panel.tsx"),
   read("src/app/(dashboard)/app/dialer/page.tsx"),
   read("src/app/(dashboard)/app/lists/[id]/page.tsx"),
   read("src/app/(dashboard)/app/contracts/page.tsx"),
@@ -131,7 +121,7 @@ const [
   read("scripts/api-route-classification.json"),
   read("supabase/functions/process-outbox/index.ts"),
   read("supabase/migrations/202608100011_team_daily_lead_limit_enforcement.sql"),
-  read("supabase/migrations/202608100012_rinkel_projection_monotonic_outcome_recording.sql"),
+  read("supabase/migrations/202609170009_drop_rinkel_schema.sql"),
   read("supabase/migrations/202608100013_canonical_user_provisioning_and_first_login.sql"),
   read("src/lib/users/provision-user.ts"),
   read("src/app/actions/change-password.ts"),
@@ -148,11 +138,13 @@ assert.match(teamDailyLeadLimitMigration, /claimed\.last_claimed_by=a\.user_id/)
 assert.match(teamDailyLeadLimitMigration, /a\.daily_capacity is null/);
 assert.match(teamDailyLeadLimitMigration, /not tm\.assignment_paused/);
 
-// Rinkel provider projection is monotonic across late/out-of-order lifecycle events.
-assert.match(rinkelProjectionMonotonicMigration, /old\.recording_status in \('available_at_provider','copy_pending','stored_privately'\)/);
-assert.match(rinkelProjectionMonotonicMigration, /old\.provider_outcome is not null and new\.provider_outcome is null/);
-assert.match(rinkelProjectionMonotonicMigration, /new\.provider_outcome:=old\.provider_outcome/);
-assert.match(rinkelProjectionMonotonicMigration, /public\.call_status_rank\(old\.status\)=100/);
+// Call projection is monotonic across late/out-of-order lifecycle events, for
+// every provider. The guard used to open with `if old.provider<>'rinkel'`, which
+// silently turned it off for every call placed after the switch.
+assert.match(callProjectionMonotonicMigration, /old\.recording_status in \('available_at_provider','copy_pending','stored_privately'\)/);
+assert.match(callProjectionMonotonicMigration, /old\.provider_outcome is not null and new\.provider_outcome is null/);
+assert.match(callProjectionMonotonicMigration, /new\.provider_outcome:=old\.provider_outcome/);
+assert.match(callProjectionMonotonicMigration, /public\.call_status_rank\(old\.status\)=100/);
 
 assert.match(migration, /audit_logs_customer_api_idempotency_uidx/);
 assert.match(lintMigration, /set search_path = public, extensions/);
@@ -170,10 +162,22 @@ assert.match(products, /_initial_price/);
 assert.doesNotMatch(products, /from\("products"\)\.delete\(/);
 assert.doesNotMatch(products, /from\("product_price_versions"\)\.insert\(/);
 
-for (const source of [calls, telephonyStatus, dialerHook]) {
-  assert.match(source, /RINKEL_RUNTIME_API_KEY_MISSING|runtimeConfigured/);
-}
-assert.match(calls, /if \(!isPlatformRinkelRuntimeConfigured\(\)\)/);
+// Telephony that is not configured must be said out loud, not discovered as a
+// call that never connects. The refusal used to live on the dial route, which
+// asked the provider to ring a device; now the browser places the call, so the
+// route that hands out the webphone's credentials is where "not configured" is
+// known and where it has to be refused.
+assert.match(webphoneSession, /webphone_provider_not_configured|provisioned\.available/);
+assert.match(webphoneAdapter, /webphone_provider_not_configured/);
+
+// A call with no caller ID gets a call id from Sinch and never reaches anyone.
+// Both the reservation and the route that reports its failures have to name it.
+assert.match(callsMigration, /CALLER_ID_MISSING/);
+assert.match(calls, /CALLER_ID_MISSING/);
+
+// The dial route no longer asks a provider to ring anything, so nothing about a
+// provider runtime key belongs in it.
+assert.doesNotMatch(calls, /isPlatformRuntimeConfigured/);
 
 // Platform control-plane authorization must never depend on tenant workspace state.
 const platformContextBody = auth.slice(auth.indexOf("export const getPlatformContext"));
@@ -184,38 +188,6 @@ assert.match(auth, /if \(platformRole\) redirect\("\/app\/platform"\)/);
 assert.match(proxy, /requestHeaders\.set\("x-kundexa-path", request\.nextUrl\.pathname\)/);
 assert.match(appLayout, /platformMode = pathname === "\/app\/platform"/);
 assert.match(appLayout, /const platform = await getPlatformContext\(\)/);
-assert.match(platformTelephonyPage, /const context = await getPlatformContext\(\)/);
-assert.doesNotMatch(platformTelephonyPage, /getAppContext/);
-assert.match(rinkelActions, /async function platformAdminContext\(\)[\s\S]*getPlatformContext\(\)/);
-assert.match(rinkelClient, /async testWebhook\(event: RinkelWebhookEvent, url: string\)[\s\S]*body: \{ url \}/);
-assert.match(rinkelActions, /status: "test_pending"[\s\S]*test_requested_at: testRequestedAt[\s\S]*client\.testWebhook\(event, url\)/);
-assert.match(rinkelActions, /const coreWebhooksVerified = verifiedCoreCount === RINKEL_CORE_WEBHOOK_EVENTS\.length[\s\S]*webhooks: coreWebhooksVerified[\s\S]*core_webhooks_verified: coreWebhooksVerified/);
-assert.match(rinkelClient, /async listUsersWithDeviceDetails\(\)/);
-assert.match(rinkelClient, /async getUser\(userId: string, fallback\?: RinkelUser\)/);
-assert.match(rinkelClient, /deviceInventoryComplete: hasDeviceArray/);
-assert.match(rinkelClient, /if \(user\.deviceInventoryError\) return \[\]/);
-assert.match(rinkelActions, /client\.listUsersWithDeviceDetails\(\)/);
-assert.match(rinkelActions, /staleRinkelDeviceIds/);
-assert.match(rinkelActions, /repairUniqueRinkelDeviceMappings/);
-assert.match(rinkelActions, /_kundexa_sync/);
-assert.match(deviceMigration, /RINKEL_USER_DEVICE_MISSING/);
-assert.match(deviceMigration, /deviceInventoryComplete/);
-assert.match(deviceMigration, /activeDeviceCount/);
-assert.match(deviceMigration, /set search_path=''/);
-assert.match(rinkelMappingForm, /if \(nextDevices\.length === 1\) setSelectedDeviceId\(nextDevices\[0\]\.id\)/);
-assert.match(rinkelMappingForm, /ingen registrerad enhet ännu/);
-
-// The public Rinkel callback owns validation + one atomic ingest RPC. Durable
-// event/job/idempotency invariants belong to the latest forward-only migration.
-assert.match(rinkelWebhookRoute, /admin\.rpc\("ingest_platform_rinkel_webhook_event"/);
-assert.doesNotMatch(rinkelWebhookRoute, /\.from\("platform_rinkel_webhook_events"\)/);
-assert.match(rinkelWebhookRepairMigration, /insert into public\.platform_rinkel_webhook_events/);
-assert.match(rinkelWebhookRepairMigration, /insert into public\.platform_rinkel_jobs/);
-assert.match(rinkelWebhookRepairMigration, /'rinkel\.process_event'/);
-assert.match(rinkelWebhookRepairMigration, /on conflict\(idempotency_key\) do nothing/);
-assert.match(verifier, /ingest_platform_rinkel_webhook_event/);
-const verifierWebhookBlock = verifier.slice(verifier.indexOf("const rinkelWebhook ="), verifier.indexOf("const rinkelCalls ="));
-assert.doesNotMatch(verifierWebhookBlock, /\/platform_rinkel_webhook_events\//);
 
 assert.match(organizationActions, /export async function switchTenant[\s\S]*supabase\.auth\.getUser\(\)/);
 assert.doesNotMatch(organizationActions.match(/export async function switchTenant[\s\S]*$/)?.[0] ?? "", /await getAppContext\(\)/);
@@ -267,23 +239,17 @@ assert.doesNotMatch(resendRoute, /do_not_email/);
 assert.match(resendRoute, /webhook_event_replay_lookup_failed/);
 assert.match(resendRoute, /\["processed", "ignored"\]\.includes\(existingEvent\.status\)/);
 
-assert.match(outbox, /reconcileSubmitted46ElksSms/);
+assert.match(outbox, /provider\.findSubmitted/);
 assert.match(outbox, /message_id=\$\{encodeURIComponent\(sms\.id\)\}/);
 assert.match(outbox, /sms_submission_reconciliation_pending/);
-assert.ok(outbox.indexOf("permanent_sms_outbound_feature_disabled") < outbox.indexOf("const credentials = await get46ElksCredentials(job.tenant_id)"), "SMS feature gate must run before provider credentials/reconciliation");
+assert.ok(outbox.indexOf("permanent_sms_outbound_feature_disabled") < outbox.indexOf("const provider = await getSmsProvider(job.tenant_id)"), "SMS feature gate must run before provider credentials/reconciliation");
 assert.match(smsDelivery, /message_id/);
-assert.match(smsDelivery, /provider_message_id: providerId/);
+assert.match(smsDelivery, /provider_message_id: report\.providerMessageId/);
 assert.match(smsDelivery, /from_number/);
 
-// Migration hygiene: the device hardening must use a unique version and SQL special
-// forms such as COALESCE must never be schema-qualified as functions.
-assert.doesNotMatch(deviceMigration, /pg_catalog\.coalesce\s*\(/i);
-assert.match(sqlVerifier, /rejectedCrossTenantNumberAllocation/);
-assert.match(sqlVerifier, /RINKEL_NUMBER_TENANT_CONFLICT/);
-assert.match(sqlVerifier, /singleTenantPlatformAllocation/);
-assert.match(sqlVerifier, /Tenant B caller-ID projection leaked another tenant's Rinkel number/);
-assert.doesNotMatch(sqlVerifier, /Central Rinkel number was not shareable across tenants/);
-assert.doesNotMatch(sqlVerifier, /Shared caller ID was not visible in tenant B/);
+// Ett nummer hör till ett företag. Att en annan tenant kan välja det som A-nummer
+// är den allvarligaste läckan i hela telefonin, och den prövas i SQL-sviten.
+assert.match(sqlVerifier, /callerIdTenantIsolation/);
 
 // 2026-08-10 production remediation invariants.
 assert.match(invitationMigration, /active_tenant_member_already_exists/);
@@ -306,18 +272,25 @@ assert.match(listDistributionMigration, /allow_browse/);
 assert.match(listDistributionMigration, /claim_expires_at<now\(\)/);
 assert.match(listDistributionMigration, /can_operate_in_team/);
 
-assert.match(rinkelRuntimeMigration, /can_access_customer\(p_customer_id\)/);
-assert.match(rinkelRuntimeMigration, /create or replace function public\.evaluate_exact_call_policy/);
-assert.match(rinkelRuntimeMigration, /exact_call_policy_denied/);
-assert.match(rinkelRuntimeMigration, /evaluate_contact_policy_for_tenant/);
-assert.match(rinkelRuntimeMigration, /v_purpose:='direct_marketing'/);
-assert.match(rinkelRuntimeMigration, /provider_rejected_before_start/);
-assert.match(rinkelRuntimeMigration, /not tm\.assignment_paused/);
-assert.match(rinkelRuntimeMigration, /RINKEL_MAPPING_TENANT_ADMIN_REQUIRED/);
+// Reservationen bär hela behörighets- och efterlevnadskedjan. Den överlevde
+// leverantörsbytet ordagrant, eftersom ingenting i den handlar om vem som kopplar.
+for (const pattern of [
+  /tenant_not_active/,
+  /outbound_calls_feature_disabled/,
+  /TELEPHONY_DISABLED/,
+  /TELEPHONY_OUTSIDE_ALLOWED_TIME/,
+  /evaluate_exact_call_policy/,
+  /exact_call_policy_denied/,
+  /SELF_DIAL_NOT_ALLOWED/,
+  /active_call_already_exists/,
+  /idempotentReplay/,
+]) {
+  assert.match(callsMigration, pattern, `Dial reservation invariant missing: ${pattern}`);
+}
 assert.match(sqlVerifier, /00000000-0000-0000-0000-000000000025','\+46702222225','runtime','1','not_listed'/);
 assert.match(sqlVerifier, /centralResult\.purpose !== \"direct_marketing\"/);
 assert.match(sqlVerifier, /create function auth\.jwt\(\) returns jsonb/);
-assert.match(sqlVerifier, /set_config\('request\.jwt\.claim\.role','service_role',false\)[\s\S]*rinkel_finalize_platform_dial[\s\S]*set_config\('request\.jwt\.claim\.role','authenticated',false\)/);
+assert.match(sqlVerifier, /set_config\('request\.jwt\.claim\.role','service_role',false\)[\s\S]*finalize_dial[\s\S]*set_config\('request\.jwt\.claim\.role','authenticated',false\)/);
 
 assert.match(contractGenerationMigration, /acceptance_generation/);
 assert.match(contractGenerationMigration, /source_call_eligibility_snapshot/);
@@ -351,9 +324,6 @@ assert.doesNotMatch(openapi.match(/"\/calls": \{[\s\S]*?\n      \},/)?.[0] ?? ""
 
 // Latest production-readiness layers: scoped provider projections, generation-safe
 // signing, source-controlled workers and bounded database-backed UI queries.
-assert.match(securityProjectionMigration, /create or replace function public\.get_tenant_rinkel_resources/);
-assert.match(securityProjectionMigration, /create or replace function public\.get_current_user_rinkel_numbers/);
-assert.match(securityProjectionMigration, /create or replace function public\.get_managed_team_rinkel_resources/);
 assert.match(securityProjectionMigration, /tm\.role/);
 assert.doesNotMatch(securityProjectionMigration, /tm\.team_role/);
 assert.match(securityProjectionMigration, /not tm\.assignment_paused/);
@@ -403,7 +373,7 @@ assert.match(dashboardPage, /Teamdashboard/);
 assert.match(customerSearch, /setTimeout[\s\S]*350/);
 assert.match(customerSearch, /AbortError/);
 assert.match(customerMultiSearch, /limit", "30"/);
-assert.match(rinkelDialer, /Dialer customer search failed/);
+assert.match(dialerPanel, /Dialer customer search failed/);
 assert.doesNotMatch(dialerPage, /\.limit\(500\)/);
 assert.doesNotMatch(listPage, /from\("customers"\)[\s\S]*\.limit\(500\)/);
 assert.match(listPage, /CustomerMultiSearchSelect/);
@@ -467,7 +437,6 @@ console.log("Remediation regression tests passed.");
   const scheduledPaths = JSON.parse(vercelConfig).crons.map((entry) => entry.path);
   const scheduledWorkers = scheduledPaths
     .map((path) => path.replace("/api/cron/edge-workers/", "").replace("/api/cron/", ""))
-    .filter((worker) => worker !== "rinkel-platform-worker")
     .sort();
   const monitored = [...scheduledEdgeWorker.matchAll(/^\s*"([a-z-]+)",$/gm)].map((match) => match[1]).sort();
   assert.deepEqual(monitored, scheduledWorkers,
@@ -726,31 +695,41 @@ console.log("Every action redirect lands on a page that renders the parameter.")
 }
 console.log("Every page read is error-checked or wrapped in ok().");
 
-// The telephony service has no hangup endpoint — `POST /dial` is its only
-// call-control surface. A control labelled "Avsluta samtalet" therefore promises
-// something the system cannot do, and on 2026-09-15 the owner pressed it and the
-// phone went on ringing. Kundexa releases the seat; the leg is dropped on the
-// device. Explaining that in small print under the button was not enough: people
-// act on the label.
+// Knappen som avslutar samtalet.
+//
+// Regeln här var tidigare den omvända: leverantören hade ingen hangup-endpoint,
+// samtalet låg på en bordstelefon, och en knapp som lovade att avsluta det var
+// en osanning -- ägaren tryckte på den 2026-09-15 och telefonen fortsatte ringa.
+// Nu ligger samtalet i fliken och `hangupWebphone` river ned det på riktigt.
+//
+// Det som måste hålla är att knappen gör det den säger, i rätt ordning: lägg på
+// först, släpp platsen sedan. Omvänd ordning lämnar ett fönster där platsen är
+// fri medan ljudet fortfarande går, och då kan säljaren ringa nästa nummer med
+// kunden kvar i luren. Och den gamla texten om en telefon att lägga på i får
+// inte stå kvar -- den pekar på en app säljaren aldrig loggat in i.
 {
   const { readFileSync } = await import("node:fs");
   const base = new URL("..", import.meta.url).pathname;
   const dialers = [
-    "src/components/rinkel-dialer.tsx",
+    "src/components/dialer-panel.tsx",
     "src/components/list-dialer-workspace.tsx",
   ];
   for (const file of dialers) {
     const source = readFileSync(base + file, "utf8");
-    assert.ok(!source.includes("Avsluta samtalet"),
-      `${file} labels a control "Avsluta samtalet", which the telephony service cannot do`);
-    // The honest pair: cancel while it is still ringing, release once answered.
-    assert.ok(source.includes("Avbryt uppringningen") && source.includes("Frigör för nästa samtal"),
-      `${file} must distinguish cancelling an unanswered dial from releasing an answered one`);
-    assert.ok(source.includes("kan inte kopplas ned härifrån"),
-      `${file} must say that the call is hung up on the device`);
+    assert.ok(!source.includes("kan inte kopplas ned härifrån"),
+      `${file} still tells the seller to hang up somewhere else; the browser is the phone now`);
+    assert.ok(!source.includes("pågår på din telefon"),
+      `${file} still points the seller at a device that no longer carries the call`);
+    assert.ok(source.includes("hangupWebphone()"),
+      `${file} releases the seat without hanging up the call the browser is carrying`);
+    const body = source.slice(source.indexOf("async function endCurrentCall"));
+    assert.ok(body.indexOf("hangupWebphone()") < body.indexOf("endCall("),
+      `${file} frees the seat before hanging up, which lets the next call start mid-conversation`);
+    assert.ok(source.includes("Avbryt uppringningen"),
+      `${file} must still distinguish cancelling a dial that is only ringing`);
   }
 }
-console.log("No dialer offers to end a call the telephony service cannot end.");
+console.log("Ending a call hangs up the browser leg first, then frees the seat.");
 
 // A commit that changes an Edge Function and does not deploy it leaves production
 // running code nobody chose. That used to pass as a warning on a green run, and
@@ -796,24 +775,25 @@ console.log("A skipped Edge Function deploy fails the run instead of passing as 
 }
 console.log("Contract e-mail is sent in the name of the legal entity that issued the contract.");
 
-// Kundexa contains no webphone — no SIP, no WebRTC, no audio — and the provider's
-// muteOtherDevicesOnWebphone only silences other devices while one is online. So a
-// correct dial policy does not mean the call rings in the browser: it rings the
-// phone on the seat. Telling the seller "Webbtelefonen" is the same false claim
-// that was just removed from the warning beneath it, and with the warning gone
-// there would be nothing left to contradict it.
+// Kundexa har numera en webbtelefon: leverantörens In-App Calling-SDK bär ljudet
+// i webbläsaren. Den gamla regeln här förbjöd dialern att säga "Webbtelefonen",
+// därför att det då var en osanning -- samtalet ringde en bordstelefon på
+// leverantörens plats. Den regeln förbjuder nu sanningen och är därför ersatt.
+//
+// Det som fortfarande måste hålla är att knappen inte lovar mer än
+// registreringen bär. En dialer som låter säljaren ringa innan webbtelefonen är
+// registrerad ger ett samtal som aldrig lämnar fliken, och en säljare som sitter
+// och väntar på ett svar som inte kan komma.
 {
   const { readFileSync } = await import("node:fs");
   const base = new URL("..", import.meta.url).pathname;
-  for (const file of ["src/components/rinkel-dialer.tsx", "src/components/list-dialer-workspace.tsx"]) {
+  for (const [file, flag] of [["src/components/dialer-panel.tsx", "dialer.registered"], ["src/components/list-dialer-workspace.tsx", "voice.registered"]]) {
     const source = readFileSync(base + file, "utf8");
-    const claims = source.split("\n").filter((line) =>
-      /["'`]Webbtelefonen/.test(line) && !line.trimStart().startsWith("//") && !line.trimStart().startsWith("*"));
-    assert.deepEqual(claims, [],
-      `${file} tells the seller the call rings a webphone that does not exist:\n${claims.join("\n")}`);
+    assert.ok(source.includes(`disabled={!${flag}`) || source.includes(`!${flag} ||`),
+      `${file} lets the seller dial before the webphone has registered.`);
   }
 }
-console.log("No dialer claims the call rings a webphone Kundexa does not have.");
+console.log("No dialer lets the seller call before the webphone has registered.");
 
 // Being signed out is a claim about authentication, and neither of these is one.
 //

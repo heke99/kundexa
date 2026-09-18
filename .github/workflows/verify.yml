@@ -55,8 +55,8 @@ jobs:
       - name: Run contract tests
         run: npm run test:contracts
 
-      - name: Run Rinkel tests
-        run: npm run test:rinkel
+      - name: Run telephony tests
+        run: npm run test:telephony
 
       - name: Run import tests
         run: npm run test:imports
