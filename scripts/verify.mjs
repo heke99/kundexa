@@ -879,4 +879,13 @@ assert.ok(readinessIndex > 0, "The dialer must check whether the webphone is reg
 assert.ok(readinessIndex < reserveIndex,
   "The webphone readiness check must come before the reservation, or an unregistered webphone burns a seat and writes a failed call row");
 
+// Leverantörens callback bär samtalets id i `callid`, gemener. Det ser ut som
+// en felstavning, och leverantörens översiktssidor skriver `callId` -- men
+// referensen för både ace och dice säger gemener. En "rättelse" till camelCase
+// gör att fältet aldrig hittas: rutten svarar 400 på varje riktig händelse och
+// inget samtal får något utfall.
+const sinchWebhookRoute = await readFile(join(root, "src/app/api/webhooks/sinch/route.ts"), "utf8");
+assert.match(sinchWebhookRoute, /payload\.callid/,
+  "The provider sends `callid` in lower case; reading `callId` finds nothing and rejects every real event");
+
 console.log(`Verified ${migrations.length} migrations, monotonic call/Resend projections, non-truncating imports, multi-recipient signing, dialer recovery, canonical contracts, tenant isolation and worker deployment.`);
