@@ -1,11 +1,8 @@
 import { authenticateRequest } from "@/lib/api-auth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { decryptJson } from "@/lib/crypto";
 import { serverEnv } from "@/lib/env";
 import { apiJson, getCorrelationId, withCorrelation } from "@/lib/api-correlation";
 import { readJsonObject, toJson, toJsonObject } from "@/lib/supabase/json";
-
-type ResendCredentials = { apiKey?: string; from?: string };
 
 export async function POST(request: Request) {
   const correlationId = getCorrelationId(request);
@@ -14,12 +11,13 @@ export async function POST(request: Request) {
     const env = serverEnv();
     const admin = createAdminClient();
     const [{ data: integration }, { data: tenant }] = await Promise.all([
-      admin.from("tenant_integrations").select("id,credentials_ciphertext,configuration")
+      admin.from("tenant_integrations").select("id,configuration")
         .eq("tenant_id", identity.tenantId).eq("provider_type", "email").eq("provider", "resend").limit(1).maybeSingle(),
       admin.from("tenants").select("name,legal_name").eq("id", identity.tenantId).single(),
     ]);
-    if (!integration?.credentials_ciphertext) return apiJson(correlationId, { error: "resend_configuration_required" }, { status: 409 });
-    const credentials = decryptJson<ResendCredentials>(integration.credentials_ciphertext, env.KUNDEXA_ENCRYPTION_KEY);
+    // Se kommentaren i serveråtgärden: nyckeln är Kundexas, så en krypterad
+    // tenantpost är inte längre ett villkor för att få testa.
+    if (!integration) return apiJson(correlationId, { error: "resend_configuration_required" }, { status: 409 });
     const configuration = readJsonObject(integration.configuration);
     // Kundexas konto, alltid. Se kommentaren i utskicksarbetaren.
     const apiKey = env.RESEND_API_KEY;

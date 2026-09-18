@@ -176,15 +176,27 @@ export async function testResendIntegration(form: FormData) {
   const context = await adminContext();
   const env = serverEnv();
   const admin = createAdminClient();
-  const { data: integration } = await admin.from("tenant_integrations").select("id,status,credentials_ciphertext,configuration").eq("tenant_id", context.tenantId).eq("provider_type", "email").eq("provider", "resend").limit(1).maybeSingle();
-  if (!integration?.credentials_ciphertext) redirect("/app/integrations?error=Spara Resend-konfigurationen först");
-  const credentials = decryptJson<ResendCredentials>(integration.credentials_ciphertext, env.KUNDEXA_ENCRYPTION_KEY);
+  const { data: integration } = await admin.from("tenant_integrations").select("id,status,configuration").eq("tenant_id", context.tenantId).eq("provider_type", "email").eq("provider", "resend").limit(1).maybeSingle();
+  // Testet krävde tidigare en sparad krypterad post, och dekrypterade den utan
+  // att använda resultatet. Det var sant när nyckeln var företagets egen. Nu
+  // skickar testet med Kundexas nyckel, och det enda testet behöver från raden
+  // är avsändarnamnet och testmottagaren -- båda i klartext i konfigurationen.
+  // Kravet stod kvar och stoppade varje företag vars rad lades upp av
+  // uppsättningen: knappen svarade "spara först" på ett formulär som redan var
+  // sparat i den mening testet bryr sig om. Raden måste finnas, resten prövas
+  // nedan med ett besked som säger vad som saknas.
+  if (!integration) redirect("/app/integrations?error=" + encodeURIComponent("Resend-integrationen saknas för företaget"));
   const configuration = readJsonObject(integration.configuration);
   const apiKey = env.RESEND_API_KEY;
   const fromAddress = String(env.DEFAULT_EMAIL_FROM_ADDRESS ?? "");
   const fromName = String(configuration.from_name ?? context.tenantLegalName);
   const testRecipient = String(configuration.test_recipient ?? "");
-  if (!apiKey || !/^\S+@\S+\.\S+$/.test(fromAddress) || !/^\S+@\S+\.\S+$/.test(testRecipient)) redirect("/app/integrations?error=API-nyckel, från-adress eller testmottagare saknas");
+  // Två olika fel med två olika mottagare. Nyckeln och avsändaradressen är
+  // Kundexas och sätts i driften -- en företagsadministratör kan inte göra
+  // något åt dem och ska inte skickas iväg för att leta. Testmottagaren är
+  // deras egen och står i formuläret ovanför knappen.
+  if (!apiKey || !/^\S+@\S+\.\S+$/.test(fromAddress)) redirect("/app/integrations?error=" + encodeURIComponent("Kundexas e-postkonto är inte färdigkonfigurerat. Kontakta supporten -- det är inget ni kan åtgärda här."));
+  if (!/^\S+@\S+\.\S+$/.test(testRecipient)) redirect("/app/integrations?error=" + encodeURIComponent("Fyll i en testmottagare i formuläret ovan och spara, kör sedan testet."));
   let response: Response | null = null;
   let result: Record<string, unknown> = {};
   let safeError: string | null = null;

@@ -940,6 +940,27 @@ for (const [name, pattern, what] of [
     `${name} must take the account from the platform, unconditionally: ${what} belongs to the platform`);
 }
 
+// Anslutningstestet får inte kräva en krypterad tenantpost.
+//
+// Testet skickar med Kundexas nyckel och behöver bara avsändarnamn och
+// testmottagare, båda i klartext. Kravet på `credentials_ciphertext` var kvar
+// från den tenantägda modellen och stoppade varje företag vars rad lades upp av
+// uppsättningen: knappen svarade "spara först" på en rad som inte saknade något
+// testet läser. Utan testet blir integrationen aldrig `active`, och utan
+// `active` vägrar utskicksarbetaren -- hela avtalsposten stod på den raden.
+for (const [file, entry] of [
+  ["src/app/actions/admin.ts", "export async function testResendIntegration"],
+  ["src/app/api/v1/integrations/resend/test/route.ts", "export async function POST"],
+]) {
+  const source = await readFile(join(root, file), "utf8");
+  const start = source.indexOf(entry);
+  assert.ok(start >= 0, `${file} must still contain ${entry}`);
+  const body = source.slice(start, source.indexOf("\nexport ", start + 1) >= 0 ? source.indexOf("\nexport ", start + 1) : undefined)
+    .replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
+  assert.doesNotMatch(body, /credentials_ciphertext/,
+    `${file} gates the Resend test on a stored tenant secret the test never reads; a backfilled integration can then never be tested, and never becomes active`);
+}
+
 // Ett tenantägt SMS-konto går inte att skicka från: numret hör till kontot.
 const smsIntegrationAction = (await readFile(join(root, "src/app/actions/admin.ts"), "utf8"))
   .replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
