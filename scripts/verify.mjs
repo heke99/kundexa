@@ -657,7 +657,25 @@ assert.equal(packageJson.overrides.postcss, "8.5.19");
 assert.equal(packageJson.scripts["functions:deploy"], "node scripts/deploy-functions.mjs");
 assert.equal(packageJson.scripts["geography:import"], "node scripts/import-geography.mjs");
 const deployFunctions = await readFile(join(root, "scripts/deploy-functions.mjs"), "utf8");
-for (const worker of ["process-outbox", "automation-runner", "data-worker", "ingestion-worker", "maintenance-worker", "compliance-worker", "parsehub-worker"]) assert.match(deployFunctions, new RegExp(worker), `Deployment must include ${worker}`);
+// Listan stod tidigare i skriptet, och prövades här mot en kopia av samma lista
+// -- två handskrivna listor som bekräftade varandra. En ny funktion kördes inte
+// förrän någon fyllde på båda, och en borttagen låg kvar i produktionen: den
+// gamla leverantörens arbetare låg ACTIVE i tre dagar efter att källkoden
+// försvann. Listan läses nu ur katalogen, och det är katalogen som prövas.
+assert.match(deployFunctions, /readdirSync\(functionsDir/,
+  "The deploy list must be read from the functions directory, not hand-maintained beside it");
+const deployedWorkers = (await readdir(join(root, "supabase/functions"), { withFileTypes: true }))
+  .filter((entry) => entry.isDirectory() && !entry.name.startsWith("_"))
+  .map((entry) => entry.name).sort();
+for (const worker of ["process-outbox", "automation-runner", "data-worker", "ingestion-worker", "maintenance-worker", "compliance-worker", "parsehub-worker"]) {
+  assert.ok(deployedWorkers.includes(worker), `Deployment must include ${worker}`);
+}
+// Deployen deployar det repot har; utan det här tas det som lämnat repot aldrig
+// bort någonstans, och ligger kvar anropbart i produktionen.
+assert.match(deployFunctions, /functions", "delete"/,
+  "The deploy must remove retired functions, or a deleted worker stays live in production forever");
+assert.match(deployFunctions, /if \(functions\.length === 0\)/,
+  "An empty directory listing must abort the deploy rather than read as `remove everything`");
 assert.match(packageJson.scripts.verify, /typecheck:edge/, "Full verification must type-check Edge Functions");
 
 // Varje npm-skript en workflow anropar måste finnas. Ett borttaget skript syns
@@ -742,9 +760,13 @@ for (const relative of scanned) {
   // fyller i.
   // Ett namn får stå kvar på exakt ett ställe: i listan över jobbtyper som ska
   // dödbrevas när de dyker upp ur kön. Den listan är själva avvecklingen.
+  // Samma undantag gäller listan över avvecklade Edge-funktioner: en deploy som
+  // ska *ta bort* en funktion måste kunna peka ut den vid namn. Bara listan
+  // strippas -- namnet någon annanstans i filen är fortfarande ett återfall.
   const withoutQueueDrain = source
     .replace(/const LEGACY_TELEPHONY_JOB_TYPES = \[[^\]]*\];/, "")
-    .replace(/job\.job_type === "rinkel\.retention"/, "");
+    .replace(/job\.job_type === "rinkel\.retention"/, "")
+    .replace(/const RETIRED = \[[^\]]*\];/, "");
   if (/rinkel|46\s?elks/i.test(withoutQueueDrain)) removedProviderMentions.push(relative);
   if (/\bsinch\b/i.test(source)) providerLeaks.push(relative);
 }
@@ -829,5 +851,41 @@ assert.match(readyRoute, /platform_worker_heartbeats/,
   "Readiness must read the worker's own report: the web app cannot see the Edge Function's SMS credentials");
 assert.match(readyRoute, /linkHostAligned/,
   "Readiness must compare the worker's link host with the app's, so a reminder cannot point at another host");
+
+// ---------------------------------------------------------------------------
+// En oregistrerad webbtelefon ska inte se ut som ett trasigt samtal
+// ---------------------------------------------------------------------------
+// Ett byggt men oregistrerat SDK-objekt har ändå ett `callClient`, så kontrollen
+// "finns objektet?" släppte igenom ett samtal som leverantören avvisade med
+// "Invalid operation". Säljaren fick "Samtalet kunde inte kopplas upp", vilket
+// pekar på samtalet när problemet är registreringen -- och platsen var redan
+// tagen och samtalsraden skriven för ett samtal som aldrig kunde ringas.
+const webphoneHook = await readFile(join(root, "src/hooks/use-sinch-webphone.ts"), "utf8");
+assert.match(webphoneHook, /registeredRef\.current = true/,
+  "The webphone must record that the provider accepted the registration, not just that start was called");
+assert.match(webphoneHook, /!client\?\.callClient \|\| !registeredRef\.current/,
+  "Placing a call must require a registered client: a built-but-unregistered client still exposes callClient");
+// Hjärtslaget är det enda som håller sessionen vid liv. Rutten och
+// databasfunktionen fanns, men ingen anropade dem, så varje session tystnade
+// direkt och sopades bort efter fem minuter -- med samtalsraden stämplad
+// `failed` medan säljaren fortfarande pratade.
+assert.match(webphoneHook, /"\/api\/v1\/telephony\/webphone\/heartbeat"/,
+  "The webphone must send the heartbeat, or every session is swept as lost while the seller is still on the call");
+assert.match(webphoneHook, /setInterval\(\(\) => \{ void beat\(\); \}/,
+  "One heartbeat is not enough: the session must keep reporting for as long as the tab is open");
+const reserveIndex = dialerHook.indexOf('fetch("/api/v1/calls"');
+const readinessIndex = dialerHook.indexOf("webphone.state.phase");
+assert.ok(readinessIndex > 0, "The dialer must check whether the webphone is registered");
+assert.ok(readinessIndex < reserveIndex,
+  "The webphone readiness check must come before the reservation, or an unregistered webphone burns a seat and writes a failed call row");
+
+// Leverantörens callback bär samtalets id i `callid`, gemener. Det ser ut som
+// en felstavning, och leverantörens översiktssidor skriver `callId` -- men
+// referensen för både ace och dice säger gemener. En "rättelse" till camelCase
+// gör att fältet aldrig hittas: rutten svarar 400 på varje riktig händelse och
+// inget samtal får något utfall.
+const sinchWebhookRoute = await readFile(join(root, "src/app/api/webhooks/sinch/route.ts"), "utf8");
+assert.match(sinchWebhookRoute, /payload\.callid/,
+  "The provider sends `callid` in lower case; reading `callId` finds nothing and rejects every real event");
 
 console.log(`Verified ${migrations.length} migrations, monotonic call/Resend projections, non-truncating imports, multi-recipient signing, dialer recovery, canonical contracts, tenant isolation and worker deployment.`);

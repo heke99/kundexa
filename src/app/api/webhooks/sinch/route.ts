@@ -64,6 +64,11 @@ export async function POST(request: Request) {
   }
 
   const event = typeof payload.event === "string" ? payload.event.toLowerCase() : null;
+  // `callid`, gemener. Det ser ut som en felstavning och leverantörens egna
+  // översiktssidor skriver `callId`, men referensen för både ace och dice säger
+  // gemener -- "callid (string): the unique ID assigned to this call". Att
+  // "rätta" det till camelCase gör att fältet aldrig hittas, rutten svarar 400
+  // på varje riktig händelse, och inget samtal får något utfall alls.
   const externalCallId = typeof payload.callid === "string" ? payload.callid : null;
   if (!event || !externalCallId) {
     return NextResponse.json({ error: "event_or_callid_missing" }, { status: 400 });

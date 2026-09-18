@@ -73,6 +73,51 @@ export function useSinchWebphone() {
   // en andra klient mot samma användare, och den första tappar sin plats utan
   // att någon får veta.
   const startedRef = useRef(false);
+  /**
+   * Har klienten faktiskt registrerat sig?
+   *
+   * `startedRef` betyder bara att uppstarten är påbörjad. Den här säger att
+   * leverantören har svarat ja. Skillnaden är inte akademisk: en klient som
+   * byggts men aldrig registrerats har ändå ett `callClient`-objekt, så en
+   * kontroll av att objektet finns släpper igenom ett samtal som sedan avvisas
+   * med "Invalid operation" -- ett fel som pekar på samtalet när problemet är
+   * registreringen.
+   */
+  const registeredRef = useRef(false);
+  const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  /**
+   * Hjärtslaget som håller sessionen vid liv.
+   *
+   * `release_lost_webphone_sessions` stänger varje session som varit tyst i fem
+   * minuter och markerar samtalet som misslyckat. Rutten och databasfunktionen
+   * fanns, men ingenting i klienten anropade dem -- så varje session tystnade
+   * direkt och sopades bort medan säljaren satt kvar med fliken öppen. Ett
+   * samtal som pågick över gränsen fick sin samtalsrad stämplad `failed` med
+   * `webphone_session_lost` medan samtalet fortfarande pågick.
+   *
+   * Det är också det enda som flyttar sessionen från `registering` till
+   * `registered`, och bara när ett registrerings-id följer med. Därför skickas
+   * identiteten vi faktiskt registrerade oss med vid första slaget.
+   */
+  const beat = useCallback(async (registrationId?: string) => {
+    const sessionId = sessionRef.current;
+    if (!sessionId) return;
+    const result = await postJson("/api/v1/telephony/webphone/heartbeat", {
+      sessionId, registrationId: registrationId ?? null,
+    }).catch(() => null);
+    // `alive: false` betyder att sessionen är stängd eller bortsopad. Att fortsätta
+    // slå mot den vore att låtsas vara registrerad; säljaren ska ladda om i stället.
+    if (result?.ok && result.data && result.data.alive === false) {
+      registeredRef.current = false;
+      if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
+      setState({
+        phase: "unavailable",
+        code: "webphone_session_lost",
+        message: "Webbtelefonens anslutning tappades. Ladda om sidan för att registrera om den.",
+      });
+    }
+  }, []);
 
   const reportLeg = useCallback(async (callId: string, event: LegEvent) => {
     const sessionId = sessionRef.current;
@@ -142,9 +187,20 @@ export function useSinchWebphone() {
             })
             .catch(() => registration.registerFailed());
         },
-        onClientStarted: () => setState({ phase: "ready" }),
+        onClientStarted: () => {
+          registeredRef.current = true;
+          setState({ phase: "ready" });
+          // Första slaget bär registrerings-id:t, som är det enda som flyttar
+          // sessionen till `registered`. Intervallet är satt med god marginal
+          // till sopningens fem minuter: ett tappat slag får inte räcka.
+          void beat(credentials.userId);
+          if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+          heartbeatRef.current = setInterval(() => { void beat(); }, 30_000);
+        },
         onClientFailed: (_c: unknown, error: unknown) => {
           startedRef.current = false;
+          registeredRef.current = false;
+          if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
           console.error("webphone_client_failed", { name: error instanceof Error ? error.name : "unknown" });
           setState({
             phase: "unavailable",
@@ -164,7 +220,7 @@ export function useSinchWebphone() {
         message: "Webbtelefonen kunde inte laddas i den här webbläsaren.",
       });
     }
-  }, []);
+  }, [beat]);
 
   /**
    * Ringer ett redan reserverat samtal.
@@ -177,10 +233,11 @@ export function useSinchWebphone() {
    */
   const placeCall = useCallback(async (input: { callId: string; attemptId: string; to: string }) => {
     const client = clientRef.current as { callClient?: { callPhoneNumber: (n: string) => Promise<unknown> } } | null;
-    if (!client?.callClient) {
+    // Registreringen måste vara klar, inte bara påbörjad. Se `registeredRef`.
+    if (!client?.callClient || !registeredRef.current) {
       await postJson("/api/v1/calls/dialing", {
         callId: input.callId, attemptId: input.attemptId, outcome: "failed",
-        errorCode: "webphone_not_ready", errorMessage: "Webbtelefonen var inte registrerad.",
+        errorCode: "webphone_not_ready", errorMessage: "Webbtelefonen var inte registrerad hos leverantören.",
       });
       throw new Error("webphone_not_ready");
     }
@@ -271,6 +328,7 @@ export function useSinchWebphone() {
   useEffect(() => () => {
     // Fliken stängs. Släpp samtalet och sessionen, annars håller platsen kvar
     // säljaren tills sopningen tar den en och en halv minut senare.
+    if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
     callRef.current?.hangup();
     const sessionId = sessionRef.current;
     if (sessionId) {

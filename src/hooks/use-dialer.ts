@@ -110,6 +110,21 @@ export function useDialerPanel() {
   }, [startWebphone]);
 
   const startCall = useCallback(async (payload: Record<string, unknown>) => {
+    // Platsen tas och samtalsraden skrivs på servern innan webbläsaren ringer.
+    // Är webbtelefonen inte registrerad blir det en reservation och en
+    // misslyckad samtalsrad för ett problem som inte har med samtalet att göra
+    // -- och säljaren får läsa att samtalet inte kunde kopplas upp, vilket
+    // pekar åt fel håll. Frågan ställs därför före reservationen.
+    const phase = webphone.state.phase;
+    if (phase !== "ready" && phase !== "calling") {
+      const message = phase === "unavailable"
+        ? webphone.state.message
+        : "Webbtelefonen registrerar sig fortfarande. Vänta några sekunder och försök igen.";
+      setCalling(false);
+      setStatus(message);
+      throw new Error(message);
+    }
+
     setCalling(true);
     setStatus("Kopplar upp samtalet i webbtelefonen…");
     const body = {
