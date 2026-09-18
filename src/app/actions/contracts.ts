@@ -15,6 +15,7 @@ import { buildTemplateRenderContext } from "@/lib/contracts/template-context";
 import { zonedLocalDateTimeToIso } from "@/lib/domain/time";
 import { assertContractCallEligibility } from "@/lib/contracts/call-eligibility";
 import { ensureCanonicalContractDocument } from "@/lib/contracts/canonical-document";
+import { contractDeliveryBlocker } from "@/lib/contracts/delivery-readiness";
 import { renderContractDeliveryEmail } from "@/lib/email/templates/contract-delivery";
 import { normalizeVariableFees } from "@/lib/contracts/price-terms";
 
@@ -511,6 +512,14 @@ export async function sendContract(form: FormData) {
   if (phone) { try { phone = normalizePhone(phone); } catch { phone = null; } }
   if ((channel === "sms" || channel === "both") && !phone) redirect(`/app/contracts/${contractId}?error=Kunden saknar giltigt mobilnummer`);
   if ((channel === "email" || channel === "both") && (!email || !/^\S+@\S+\.\S+$/.test(email))) redirect(`/app/contracts/${contractId}?error=Kunden saknar giltig e-post`);
+
+  // Före varje annan förutsättning: får företaget alls skicka på den här
+  // kanalen? Utan den här kontrollen dödbrevas jobbet i arbetaren, medan
+  // säljaren fått veta att utskicket är köat.
+  let deliveryBlocker;
+  try { deliveryBlocker = await contractDeliveryBlocker(admin, ctx.tenantId, channel); }
+  catch { redirect(`/app/contracts/${contractId}?error=Kunde inte läsa företagets leveransinställningar. Försök igen om en stund.`); }
+  if (deliveryBlocker) redirect(`/app/contracts/${contractId}?error=${encodeURIComponent(deliveryBlocker.message)}`);
 
   const env = serverEnv();
   let emailFrom = "pending@kundexa.local";

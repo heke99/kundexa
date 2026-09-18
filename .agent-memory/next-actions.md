@@ -1,15 +1,24 @@
 # Next actions
 
-Uppdaterad 2026-09-17. Bytet till Sinch är genomfört: Rinkel och 46elks finns varken i
-källkoden, i schemat eller i driftdokumentationen, och `npm run verify` är grön i sin
-helhet. Det som återstår kräver leverantörskonto eller ett riktigt samtal.
+Uppdaterad 2026-09-18. Bytet till Sinch är genomfört och **mergat till main** (PR #19,
+`69f5d6f`). Webben och Edge-funktionerna är deployade; `/api/ready` svarar
+`telephonyConfigured: true`, och de tre webhookarna svarar 403 på en osignerad begäran.
+Det som återstår kräver leverantörskonto, ett nummer eller ett riktigt samtal.
+
+**Ingen avtalsleverans har någonsin körts i produktion.** Det finns noll rader i
+`sms_messages` och `email_messages` med en acceptlänk, så hela kedjan är oprövad skarpt.
 
 ## Användarens egna steg
 
-1. **Registrera callback-adressen** i Sinch kontrollpanel:
-   `https://kundexa.se/api/webhooks/sinch`. Den går inte att läsa tillbaka via API, så
-   `GET /api/ready` rapporterar vilken adress den borde vara (`checks.webhookUrl`).
-2. **Köp eller porta numren med svensk originering.** Ett svenskt nummer som origineras
+1. **Registrera callback-adressen** i Sinch kontrollpanel. Använd den adress
+   `GET /api/ready` skriver ut (`checks.webhookUrl`) — i dag
+   `https://www.kundexa.se/api/webhooks/sinch`, alltså **med `www`**. Apex redirectar
+   till www, och en POST som möter en omdirigering kan tappas tyst.
+2. **Köp eller porta numren med svensk originering.** I dag finns **ett enda nummer i
+   hela systemet**, `+1 208 581 0392` (US, röst men inte SMS). Gridex skulle alltså ringa
+   svenska mottagare med ett amerikanskt nummer, Trustcall har inget alls, och
+   `queue_sms_message` kastar `sms_sender_missing` för båda — inget avtals-SMS kan skickas
+   av någon förrän ett svenskt nummer med både röst och SMS finns. Ett svenskt nummer som origineras
    utomlands blockeras av operatörerna enligt PTS föreskrift — det avgör både om samtalet
    kopplas och minutpriset (originerings­prefixet är ungefär elva gånger i skillnad).
 3. **Sätt SMS-nycklarna** i Vercel och Supabase Edge Secrets: `SMS_SERVICE_PLAN_ID`,
@@ -20,12 +29,21 @@ helhet. Det som återstår kräver leverantörskonto eller ett riktigt samtal.
 4. **Testsamtalet.** Ring, svara, lägg på. Det är enda sättet att se att webbtelefonen
    registrerar sig, att A-numret syns hos mottagaren och att händelserna når webhooken.
 5. **Test-SMS med ett avtal.** Skicka, svara "JA", kontrollera att acceptansen registreras.
+5b. **Slå på `outbound_sms` för Gridex.** Flaggan är `false` i produktion medan
+   `contract_delivery_sms` är `true`. Utskicket stoppas nu före köandet med en
+   förklaring till säljaren i stället för att dödbrevas i arbetaren, men avtalet går
+   fortfarande inte iväg förrän flaggan är på. Trustcall har dessutom
+   `contract_delivery_sms: false`.
 6. Resend: verifiera `kundexa.se`, sätt `RESEND_API_KEY`, `DEFAULT_EMAIL_FROM_ADDRESS`,
    `DEFAULT_EMAIL_FROM_NAME` i Vercel, lägg till Gridex domän.
 7. Godkänn en avtalsmall; rätta de två ogiltiga organisationsnumren.
-8. Sätt `NEXT_PUBLIC_APP_URL` och `APP_URL` till `https://kundexa.se`, och gör apex till
-   primär domän i Vercel. Callback-adressen härleds ur app-URL:en, så de två kan inte
-   längre glida isär — men appen ligger i dag på `www` medan produkten ska ligga på apex.
+8. Sätt `NEXT_PUBLIC_APP_URL` (Vercel) och `APP_URL` (Supabase Edge Secrets) till
+   **samma** adress, och gör den till primär domän i Vercel. Webbappen bygger första
+   utskickets länk ur den första, utskicksarbetaren bygger påminnelsens länk och
+   SMS-leveransens callback ur den andra. Går de isär pekar påminnelsen på en annan värd
+   än avtalet. `/api/ready` rapporterar nu `checks.delivery.linkHostAligned`, som är
+   `false` precis när de två skiljer sig åt. Appen ligger i dag på `www` medan produkten
+   var tänkt på apex — välj en av dem och sätt båda variablerna till den.
 
 ## Kvar att bygga
 

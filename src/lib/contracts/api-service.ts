@@ -7,6 +7,7 @@ import { normalizePhone } from "@/lib/domain/phone";
 import { acceptanceCode, encryptJson, randomToken, sha256 } from "@/lib/crypto";
 import { canonicalAppBaseUrl, serverEnv } from "@/lib/env";
 import { ensureCanonicalContractDocument } from "@/lib/contracts/canonical-document";
+import { contractDeliveryBlocker } from "@/lib/contracts/delivery-readiness";
 import { renderContractDeliveryEmail } from "@/lib/email/templates/contract-delivery";
 import { normalizeVariableFees } from "@/lib/contracts/price-terms";
 import { readJsonObject, toJson, toJsonObject } from "@/lib/supabase/json";
@@ -221,6 +222,12 @@ export async function sendContractFromApi(identity: ApiIdentity, contractId: str
   if (["sms", "both"].includes(input.channel) && !phone) throw new Error("recipient_phone_required");
   const expiresAt = new Date(input.expires_at);
   if (expiresAt <= new Date()) throw new Error("acceptance_expiry_must_be_future");
+
+  // Samma spärr som i gränssnittet. En integration som skickar via API:t ska
+  // inte kunna köa ett avtal på en kanal företaget har stängd -- svaret ska
+  // säga nej direkt, inte tyst dödbrevas en minut senare.
+  const deliveryBlocker = await contractDeliveryBlocker(admin, identity.tenantId, input.channel);
+  if (deliveryBlocker) throw new Error(`contract_delivery_channel_disabled:${deliveryBlocker.featureKey}`);
 
   const env = serverEnv();
   let emailFrom = "pending@kundexa.local";

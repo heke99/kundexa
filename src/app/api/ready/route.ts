@@ -5,6 +5,52 @@ import { telephonyConfigured } from "@/lib/telephony/webphone";
 
 export const dynamic = "force-dynamic";
 
+type DeliveryChecks = {
+  /** Arbetaren har rapporterat sin konfiguration minst en gång. */
+  reported: boolean;
+  smsProvider: string | null;
+  platformSmsConfigured: boolean | null;
+  platformEmailConfigured: boolean | null;
+  /**
+   * Bygger arbetaren sina avtalslänkar mot samma adress som webbappen?
+   *
+   * Första utskicket bygger länken i webbappen (`NEXT_PUBLIC_APP_URL`),
+   * påminnelsen bygger den i utskicksarbetaren (`APP_URL`). Går de isär pekar
+   * påminnelsen på en annan värd än avtalet, och en POST som möter en
+   * omdirigering tappas tyst. Det är två variabler som måste vara samma sak, och
+   * ingenting jämförde dem.
+   */
+  linkHostAligned: boolean | null;
+  reportedAt: string | null;
+};
+
+const UNREPORTED: DeliveryChecks = {
+  reported: false,
+  smsProvider: null,
+  platformSmsConfigured: null,
+  platformEmailConfigured: null,
+  linkHostAligned: null,
+  reportedAt: null,
+};
+
+function readDelivery(metadata: unknown, appBaseUrl: string | null): DeliveryChecks | null {
+  if (!metadata || typeof metadata !== "object") return null;
+  const delivery = (metadata as Record<string, unknown>).delivery;
+  if (!delivery || typeof delivery !== "object") return null;
+  const record = delivery as Record<string, unknown>;
+  const workerAppUrl = typeof record.appUrl === "string" ? record.appUrl.replace(/\/$/, "") : "";
+  return {
+    reported: true,
+    smsProvider: typeof record.smsProvider === "string" && record.smsProvider ? record.smsProvider : null,
+    platformSmsConfigured: record.platformSmsConfigured === true,
+    platformEmailConfigured: record.platformEmailConfigured === true,
+    // Utan en av de två adresserna finns inget att jämföra, och `false` vore ett
+    // påstående om olikhet som ingen mätning stöder.
+    linkHostAligned: workerAppUrl && appBaseUrl ? workerAppUrl === appBaseUrl.replace(/\/$/, "") : null,
+    reportedAt: null,
+  };
+}
+
 export async function GET() {
   const startedAt = Date.now();
   // The configured public base URL is what customers receive in acceptance and
@@ -32,21 +78,35 @@ export async function GET() {
       return NextResponse.json({
         status: "not_ready",
         service: "kundexa-web",
-        checks: { database: false, telephonyConfigured: configured, appBaseUrl, appBaseUrlUsable, webhookUrl },
+        checks: { database: false, telephonyConfigured: configured, appBaseUrl, appBaseUrlUsable, webhookUrl, delivery: UNREPORTED },
         durationMs: Date.now() - startedAt,
       }, { status: 503, headers: { "cache-control": "no-store" } });
     }
+
+    // SMS- och e-postnycklarna bor i Edge-funktionen, inte här. Webbappen kan
+    // inte läsa dem, så den enda vägen till ett svar är arbetarens egen
+    // rapport. Saknas den säger vi att den saknas -- inte att allt är bra.
+    let delivery: DeliveryChecks = UNREPORTED;
+    const { data: heartbeat } = await admin.from("platform_worker_heartbeats")
+      .select("metadata,updated_at")
+      .eq("worker_key", "process-outbox")
+      .maybeSingle();
+    if (heartbeat) {
+      const read = readDelivery(heartbeat.metadata, appBaseUrl);
+      if (read) delivery = { ...read, reportedAt: heartbeat.updated_at ?? null };
+    }
+
     return NextResponse.json({
       status: "ready",
       service: "kundexa-web",
-      checks: { database: true, telephonyConfigured: configured, appBaseUrl, appBaseUrlUsable, webhookUrl },
+      checks: { database: true, telephonyConfigured: configured, appBaseUrl, appBaseUrlUsable, webhookUrl, delivery },
       durationMs: Date.now() - startedAt,
     }, { headers: { "cache-control": "no-store" } });
   } catch {
     return NextResponse.json({
       status: "not_ready",
       service: "kundexa-web",
-      checks: { database: false, telephonyConfigured: false, appBaseUrl, appBaseUrlUsable, webhookUrl },
+      checks: { database: false, telephonyConfigured: false, appBaseUrl, appBaseUrlUsable, webhookUrl, delivery: UNREPORTED },
       durationMs: Date.now() - startedAt,
     }, { status: 503, headers: { "cache-control": "no-store" } });
   }

@@ -6,7 +6,7 @@ import { DEFAULT_SMS_PROVIDER, smsProviderFor, type SmsProviderCredentials } fro
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const encryptionKey = Deno.env.get("KUNDEXA_ENCRYPTION_KEY")!;
-const appUrl = Deno.env.get("APP_URL")!;
+const appUrl = (Deno.env.get("APP_URL") ?? "").trim().replace(/\/$/, "");
 const cronSecret = Deno.env.get("CRON_SECRET")!;
 const globalResendKey = Deno.env.get("RESEND_API_KEY") ?? "";
 // Plattformens eget SMS-konto. En tenant som kör i Kundexas konto använder
@@ -19,6 +19,42 @@ const globalSmsRegion = Deno.env.get("SMS_REGION") ?? "eu";
 const globalEmailFromAddress = Deno.env.get("DEFAULT_EMAIL_FROM_ADDRESS") ?? "";
 const globalEmailFromName = Deno.env.get("DEFAULT_EMAIL_FROM_NAME") ?? "Kundexa";
 const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+
+/**
+ * Adressen kundens avtalslänk pekar på.
+ *
+ * `Deno.env.get("APP_URL")!` tystade bara typkontrollen. En osatt variabel gav
+ * strängen `undefined/accept/<token>` -- en länk kunden inte kan öppna, i ett
+ * SMS som rapporterades som skickat. Ingenting i systemet hade upptäckt det.
+ *
+ * Ett osatt APP_URL är ett konfigurationsfel som går att rätta, inte ett trasigt
+ * jobb. Därför saknar felet prefixet `permanent_`: jobbet köas om och går igenom
+ * när adressen är satt, i stället för att dödbrevas med avtalet osänt.
+ */
+function requireAppUrl() {
+  if (!/^https?:\/\/[^\s/]+$/.test(appUrl)) throw new Error("app_url_not_configured");
+  return appUrl;
+}
+
+/**
+ * Vad den här arbetaren faktiskt kan leverera.
+ *
+ * Webbappen kan inte läsa Edge-funktionens hemligheter, så utan det här svaret
+ * finns det ingen väg att utifrån se om SMS-nycklarna är satta. Först när ett
+ * avtal inte kommer fram märks det -- och då hos kunden.
+ *
+ * Bara närvaro rapporteras, aldrig värdet. `appUrl` är inte hemlig: det är
+ * adressen kunden ser i sin länk, och hela poängen är att kunna jämföra den med
+ * webbappens egen.
+ */
+function deliveryConfiguration() {
+  return {
+    appUrl,
+    smsProvider: globalSmsProvider,
+    platformSmsConfigured: Boolean(globalSmsServicePlanId && globalSmsApiToken),
+    platformEmailConfigured: Boolean(globalResendKey && globalEmailFromAddress),
+  };
+}
 
 /** Jobbtyper från tidigare telefonileverantörer som aldrig ska köras igen. */
 const LEGACY_TELEPHONY_JOB_TYPES = ["rinkel.process_event", "rinkel.enrich_call", "rinkel.reconcile_calls"];
@@ -190,13 +226,18 @@ async function processSms(job: Job) {
   if (!number?.webhook_token_ciphertext) throw new Error("sms_number_token_missing");
   const token = await decryptJson<{ token: string }>(number.webhook_token_ciphertext, encryptionKey);
 
+  // Adressen tas fram innan raden flaggas som "submitting". Gör man tvärtom
+  // lämnar ett osatt APP_URL meddelandet i ett läge som betyder "kan ha nått
+  // leverantören", och det tar en kvarts avstämning att ta sig ur -- för ett fel
+  // som aldrig rörde leverantören.
+  const deliveryCallbackUrl = `${requireAppUrl()}/api/webhooks/sms/delivery?token=${encodeURIComponent(token.token)}&message_id=${encodeURIComponent(sms.id)}&from_number=${encodeURIComponent(sms.from_number)}`;
   await supabase.from("sms_messages").update({ status: "submitting" }).eq("id", sms.id);
   const submission = await provider.send({
     from: sms.from_number,
     to: sms.to_number,
     body: sms.body,
     clientReference: String(sms.id),
-    deliveryCallbackUrl: `${appUrl}/api/webhooks/sms/delivery?token=${encodeURIComponent(token.token)}&message_id=${encodeURIComponent(sms.id)}&from_number=${encodeURIComponent(sms.from_number)}`,
+    deliveryCallbackUrl,
   });
   const sentAt = submission.sentAt;
   await supabase.from("sms_messages").update({
@@ -342,7 +383,7 @@ async function processContractReminder(job: Job) {
   if (!request.public_token_ciphertext) throw new Error("permanent_reminder_token_missing");
   const token = await decryptJson<{ token: string }>(request.public_token_ciphertext, encryptionKey);
   if (!token.token) throw new Error("permanent_reminder_token_invalid");
-  const acceptUrl = `${appUrl}/accept/${token.token}`;
+  const acceptUrl = `${requireAppUrl()}/accept/${token.token}`;
   const expiresLabel = new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeStyle: "short", timeZone: timezone }).format(new Date(request.expires_at));
   const firstSentLabel = contract.first_sent_at ? new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeStyle: "short", timeZone: timezone }).format(new Date(contract.first_sent_at)) : "tidigare";
   const tenant = await getTenant(job.tenant_id);
@@ -1013,5 +1054,5 @@ Deno.serve(async (request) => {
       results.push({ id: job.id, status: permanent ? "dead_letter" : "failed", error: message });
     }
   }
-  return Response.json({ worker, reminders_enqueued: remindersEnqueued ?? 0, claimed: jobs?.length ?? 0, results });
+  return Response.json({ worker, reminders_enqueued: remindersEnqueued ?? 0, claimed: jobs?.length ?? 0, results, delivery: deliveryConfiguration() });
 });
