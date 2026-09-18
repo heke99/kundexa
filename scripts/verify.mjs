@@ -843,6 +843,14 @@ assert.match(webphoneHook, /registeredRef\.current = true/,
   "The webphone must record that the provider accepted the registration, not just that start was called");
 assert.match(webphoneHook, /!client\?\.callClient \|\| !registeredRef\.current/,
   "Placing a call must require a registered client: a built-but-unregistered client still exposes callClient");
+// Hjärtslaget är det enda som håller sessionen vid liv. Rutten och
+// databasfunktionen fanns, men ingen anropade dem, så varje session tystnade
+// direkt och sopades bort efter fem minuter -- med samtalsraden stämplad
+// `failed` medan säljaren fortfarande pratade.
+assert.match(webphoneHook, /"\/api\/v1\/telephony\/webphone\/heartbeat"/,
+  "The webphone must send the heartbeat, or every session is swept as lost while the seller is still on the call");
+assert.match(webphoneHook, /setInterval\(\(\) => \{ void beat\(\); \}/,
+  "One heartbeat is not enough: the session must keep reporting for as long as the tab is open");
 const reserveIndex = dialerHook.indexOf('fetch("/api/v1/calls"');
 const readinessIndex = dialerHook.indexOf("webphone.state.phase");
 assert.ok(readinessIndex > 0, "The dialer must check whether the webphone is registered");
