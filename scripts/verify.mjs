@@ -830,4 +830,23 @@ assert.match(readyRoute, /platform_worker_heartbeats/,
 assert.match(readyRoute, /linkHostAligned/,
   "Readiness must compare the worker's link host with the app's, so a reminder cannot point at another host");
 
+// ---------------------------------------------------------------------------
+// En oregistrerad webbtelefon ska inte se ut som ett trasigt samtal
+// ---------------------------------------------------------------------------
+// Ett byggt men oregistrerat SDK-objekt har ändå ett `callClient`, så kontrollen
+// "finns objektet?" släppte igenom ett samtal som leverantören avvisade med
+// "Invalid operation". Säljaren fick "Samtalet kunde inte kopplas upp", vilket
+// pekar på samtalet när problemet är registreringen -- och platsen var redan
+// tagen och samtalsraden skriven för ett samtal som aldrig kunde ringas.
+const webphoneHook = await readFile(join(root, "src/hooks/use-sinch-webphone.ts"), "utf8");
+assert.match(webphoneHook, /registeredRef\.current = true/,
+  "The webphone must record that the provider accepted the registration, not just that start was called");
+assert.match(webphoneHook, /!client\?\.callClient \|\| !registeredRef\.current/,
+  "Placing a call must require a registered client: a built-but-unregistered client still exposes callClient");
+const reserveIndex = dialerHook.indexOf('fetch("/api/v1/calls"');
+const readinessIndex = dialerHook.indexOf("webphone.state.phase");
+assert.ok(readinessIndex > 0, "The dialer must check whether the webphone is registered");
+assert.ok(readinessIndex < reserveIndex,
+  "The webphone readiness check must come before the reservation, or an unregistered webphone burns a seat and writes a failed call row");
+
 console.log(`Verified ${migrations.length} migrations, monotonic call/Resend projections, non-truncating imports, multi-recipient signing, dialer recovery, canonical contracts, tenant isolation and worker deployment.`);

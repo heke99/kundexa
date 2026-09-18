@@ -73,6 +73,17 @@ export function useSinchWebphone() {
   // en andra klient mot samma användare, och den första tappar sin plats utan
   // att någon får veta.
   const startedRef = useRef(false);
+  /**
+   * Har klienten faktiskt registrerat sig?
+   *
+   * `startedRef` betyder bara att uppstarten är påbörjad. Den här säger att
+   * leverantören har svarat ja. Skillnaden är inte akademisk: en klient som
+   * byggts men aldrig registrerats har ändå ett `callClient`-objekt, så en
+   * kontroll av att objektet finns släpper igenom ett samtal som sedan avvisas
+   * med "Invalid operation" -- ett fel som pekar på samtalet när problemet är
+   * registreringen.
+   */
+  const registeredRef = useRef(false);
 
   const reportLeg = useCallback(async (callId: string, event: LegEvent) => {
     const sessionId = sessionRef.current;
@@ -142,9 +153,13 @@ export function useSinchWebphone() {
             })
             .catch(() => registration.registerFailed());
         },
-        onClientStarted: () => setState({ phase: "ready" }),
+        onClientStarted: () => {
+          registeredRef.current = true;
+          setState({ phase: "ready" });
+        },
         onClientFailed: (_c: unknown, error: unknown) => {
           startedRef.current = false;
+          registeredRef.current = false;
           console.error("webphone_client_failed", { name: error instanceof Error ? error.name : "unknown" });
           setState({
             phase: "unavailable",
@@ -177,10 +192,11 @@ export function useSinchWebphone() {
    */
   const placeCall = useCallback(async (input: { callId: string; attemptId: string; to: string }) => {
     const client = clientRef.current as { callClient?: { callPhoneNumber: (n: string) => Promise<unknown> } } | null;
-    if (!client?.callClient) {
+    // Registreringen måste vara klar, inte bara påbörjad. Se `registeredRef`.
+    if (!client?.callClient || !registeredRef.current) {
       await postJson("/api/v1/calls/dialing", {
         callId: input.callId, attemptId: input.attemptId, outcome: "failed",
-        errorCode: "webphone_not_ready", errorMessage: "Webbtelefonen var inte registrerad.",
+        errorCode: "webphone_not_ready", errorMessage: "Webbtelefonen var inte registrerad hos leverantören.",
       });
       throw new Error("webphone_not_ready");
     }
