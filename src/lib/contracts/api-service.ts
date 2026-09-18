@@ -238,10 +238,9 @@ export async function sendContractFromApi(identity: ApiIdentity, contractId: str
       .eq("provider_type", "email").eq("provider", "resend").limit(1).maybeSingle();
     if (integration?.status !== "active") throw new Error("resend_integration_not_active");
     const configuration = readJsonObject(integration.configuration);
-    const accountMode = String(configuration.account_mode ?? "tenant_owned");
-    if (accountMode === "platform_managed" && !env.RESEND_API_KEY) throw new Error("platform_resend_key_missing");
-    if (accountMode !== "platform_managed" && !integration.credentials_ciphertext) throw new Error("tenant_resend_key_missing");
-    emailFrom = String(configuration.from_address ?? configuration.from ?? env.DEFAULT_EMAIL_FROM_ADDRESS ?? "");
+    // Kundexas konto och Kundexas verifierade domän, alltid. Se sendContract.
+    if (!env.RESEND_API_KEY) throw new Error("platform_resend_key_missing");
+    emailFrom = String(env.DEFAULT_EMAIL_FROM_ADDRESS ?? "");
     replyTo = replyTo ?? (configuration.reply_to ? String(configuration.reply_to) : null);
     if (!/^\S+@\S+\.\S+$/.test(emailFrom)) throw new Error("verified_from_address_required");
   }

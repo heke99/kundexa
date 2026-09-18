@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAppContext, isAdmin } from "@/lib/auth";
+import { getPlatformContext, isPlatformAdmin } from "@/lib/auth";
 import { NumberProviderError, numberProvider } from "@/lib/telephony/numbers";
 
 export const runtime = "nodejs";
@@ -7,13 +7,14 @@ export const runtime = "nodejs";
 /**
  * Lediga nummer hos leverantören.
  *
- * Bara administratörer. Sökningen kostar ingenting, men den avslöjar vilket
- * leverantörskonto Kundexa kör på och hur mycket numren kostar -- och nästa steg
- * efter en sökning är en knapp som skickar en faktura.
+ * Bara plattformsadministratörer, inte företagens egna administratörer.
+ * Numren hyrs i Kundexas leverantörskonto och faktureras Kundexa, så ett
+ * företag som kunde trycka på knappen skulle skicka en räkning till någon
+ * annan. Sökningen är dessutom gratis men avslöjar kontot och prislistan.
  */
 export async function GET(request: Request) {
-  const context = await getAppContext();
-  if (!isAdmin(context.role)) {
+  const context = await getPlatformContext();
+  if (!isPlatformAdmin(context.platformRole)) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 

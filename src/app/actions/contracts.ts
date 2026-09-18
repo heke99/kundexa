@@ -529,13 +529,13 @@ export async function sendContract(form: FormData) {
       .select("status,configuration,credentials_ciphertext")
       .eq("tenant_id", ctx.tenantId).eq("provider_type", "email").eq("provider", "resend").limit(1).maybeSingle();
     const configuration = (integration?.configuration ?? {}) as Record<string, unknown>;
-    const accountMode = String(configuration.account_mode ?? "tenant_owned");
     if (integration?.status !== "active") redirect(`/app/contracts/${contractId}?error=Resend-integrationen måste testas och vara aktiv innan utskick`);
-    if (accountMode === "platform_managed" && !env.RESEND_API_KEY) redirect(`/app/contracts/${contractId}?error=Kundexas plattformshanterade Resend-konto är inte konfigurerat`);
-    if (accountMode !== "platform_managed" && !integration.credentials_ciphertext) redirect(`/app/contracts/${contractId}?error=Tenantens Resend API-nyckel saknas`);
-    emailFrom = String(configuration.from_address ?? configuration.from ?? env.DEFAULT_EMAIL_FROM_ADDRESS ?? "");
+    // Avsändaradressen är Kundexas, alltid: det är den domän som är verifierad
+    // hos leverantören. Företaget syns som avsändarnamn, inte som domän.
+    if (!env.RESEND_API_KEY) redirect(`/app/contracts/${contractId}?error=Kundexas e-postkonto är inte konfigurerat`);
+    emailFrom = String(env.DEFAULT_EMAIL_FROM_ADDRESS ?? "");
     replyTo = replyTo || (configuration.reply_to ? String(configuration.reply_to) : null);
-    if (!/^\S+@\S+\.\S+$/.test(emailFrom)) redirect(`/app/contracts/${contractId}?error=Verifierad från-adress saknas`);
+    if (!/^\S+@\S+\.\S+$/.test(emailFrom)) redirect(`/app/contracts/${contractId}?error=Kundexas verifierade från-adress saknas`);
   }
 
   let smsFrom: string | null = null;

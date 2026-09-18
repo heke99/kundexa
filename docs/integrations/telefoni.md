@@ -89,7 +89,7 @@ SMS bär avtalsutskick och kundens svar, så det är lastbärande.
 
 ```text
 outbox_jobs: sms.send
-→ getSmsProvider(tenant)           kontomodell: Kundexas konto eller företagets eget
+→ getSmsProvider(tenant)           Kundexas konto; företaget bidrar med avsändarnumret
 → provider.send(...)               vår egen id följer med som client_reference
 → POST /api/webhooks/sms/delivery  leveransrapport, autentiserad per nummer
 → POST /api/webhooks/sms/inbound   kundens svar; ett "JA" blir en avtalsacceptans
@@ -107,16 +107,20 @@ kan därför inte rapportera för ett annat nummer eller ett annat företag.
 
 ## Att skaffa ett nummer
 
-Numren hyrs under Integrationer: sök på land, typ och siffror, se priset per
-rad, bekräfta. Numret hamnar direkt i `phone_numbers` med sin callback-token och
-med de kapabiliteter leverantören faktiskt rapporterar -- inte de kryssrutor
-någon råkade fylla i.
+Numren hyrs från plattformssidan, inte av företagen: sök på land, typ och
+siffror, se priset per rad, välj vilket företag numret ska höra till, bekräfta.
+Numret hamnar direkt i `phone_numbers` med sin callback-token och med de
+kapabiliteter leverantören faktiskt rapporterar -- inte de kryssrutor någon
+råkade fylla i.
 
 Två saker som är medvetet gjorda så här:
 
 - **Hyrningen kontrollerar först om vi redan äger numret.** Anropet är
   debiterbart, och ett försök vars svar tappades kan ha lyckats. Att hyra igen
   vore en andra faktura för samma nummer.
+- **Företaget väljs uttryckligen.** Plattformskontexten har ingen tenant, och att
+  gissa den senast besökta hade lagt ett nummer och en månadskostnad på fel
+  företag.
 - **Ett nummer som kräver identitetshandlingar går inte att hyra härifrån.**
   Det kräver leverantörens beställningsflöde med KYC, så raden visar "Kräver
   dokumentation" i stället för en knapp som alltid misslyckas.
@@ -151,8 +155,22 @@ WEBPHONE_TURN_URLS
 WEBPHONE_TURN_SECRET
 ```
 
-Ett företag som har eget avtal med leverantören lägger in sina SMS-nycklar under
-Integrationer; de krypteras innan de lämnar servern.
+### Ett konto, inte ett val
+
+All utgående post -- SMS och e-post -- går genom Kundexas konton hos
+leverantörerna. Det är inte en förenkling utan vad leverantörerna kräver:
+avsändardomänen måste vara verifierad hos e-postleverantören, och avsändarnumret
+måste höra till det SMS-konto som skickar. Båda ägs av Kundexa.
+
+Det som skiljer företagens utskick åt är avsändarnamnet -- avtalets utställande
+bolag -- svarsadressen, och avsändarnumret. Inget av det är ett konto.
+
+Kontomodellen lästes tidigare på fem ställen med två olika defaultvärden, så ett
+företag utan uttrycklig inställning fick olika svar beroende på vilken kodväg som
+frågade: utskicket kunde prövas mot en nyckel och skickas med en annan.
+
+Numren hyrs av samma skäl från plattformssidan och inte av företagen: de hyrs i
+Kundexas leverantörskonto och faktureras Kundexa.
 
 ## Att byta leverantör
 

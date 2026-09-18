@@ -21,9 +21,9 @@ export async function POST(request: Request) {
     if (!integration?.credentials_ciphertext) return apiJson(correlationId, { error: "resend_configuration_required" }, { status: 409 });
     const credentials = decryptJson<ResendCredentials>(integration.credentials_ciphertext, env.KUNDEXA_ENCRYPTION_KEY);
     const configuration = readJsonObject(integration.configuration);
-    const accountMode = String(configuration.account_mode ?? "tenant_owned");
-    const apiKey = accountMode === "platform_managed" ? env.RESEND_API_KEY : credentials.apiKey;
-    const fromAddress = String(configuration.from_address ?? credentials.from ?? "");
+    // Kundexas konto, alltid. Se kommentaren i utskicksarbetaren.
+    const apiKey = env.RESEND_API_KEY;
+    const fromAddress = env.DEFAULT_EMAIL_FROM_ADDRESS ?? "";
     const fromName = String(configuration.from_name ?? tenant?.legal_name ?? tenant?.name ?? "Kundexa").replace(/[<>\r\n]/g, " ");
     const testRecipient = String(configuration.test_recipient ?? "");
     if (!apiKey || !/^\S+@\S+\.\S+$/.test(fromAddress) || !/^\S+@\S+\.\S+$/.test(testRecipient)) {
