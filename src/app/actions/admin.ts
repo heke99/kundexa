@@ -233,6 +233,64 @@ export async function testResendIntegration(form: FormData) {
   redirect(`/app/integrations?${success ? "message" : "error"}=${encodeURIComponent(success ? "Resend-testet lyckades. Integrationen är nu aktiv." : safeError ?? "Resend-testet misslyckades")}`);
 }
 
+/**
+ * Vilka domäner ser leverantören för Kundexas nyckel?
+ *
+ * "Domänen är verifierad" och "leverantören svarar 403: domänen är inte
+ * verifierad" kan båda vara sanna samtidigt, för de handlar om olika konton.
+ * En nyckel skapad i ett team ser inte domänen som verifierats i ett annat, och
+ * ingenting i vare sig kontrollpanelen eller felmeddelandet säger vilket konto
+ * nyckeln tillhör. Skillnaden gick bara att gissa sig till.
+ *
+ * Den här frågar leverantören direkt med den nyckel utskicken faktiskt använder
+ * och visar svaret. Domännamn och status är inte hemligheter -- nyckeln lämnar
+ * aldrig servern.
+ */
+export async function inspectResendDomains() {
+  await adminContext();
+  const env = serverEnv();
+  const apiKey = env.RESEND_API_KEY;
+  if (!apiKey) {
+    redirect("/app/integrations?error=" + encodeURIComponent("Kundexas e-postnyckel är inte konfigurerad."));
+  }
+  const expectedDomain = String(env.DEFAULT_EMAIL_FROM_ADDRESS ?? "").split("@")[1]?.toLowerCase() ?? "";
+  let payload: { data?: { name?: string; status?: string; region?: string }[] } = {};
+  let failure: string | null = null;
+  try {
+    const response = await fetch("https://api.resend.com/domains", {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    payload = await response.json() as typeof payload;
+    if (!response.ok) failure = `Resend svarade ${response.status}`;
+  } catch (error) {
+    failure = error instanceof Error ? error.message.slice(0, 200) : "Nätverksfel mot Resend";
+  }
+  if (failure) redirect(`/app/integrations?error=${encodeURIComponent(failure)}`);
+  const domains = payload.data ?? [];
+  // Noll domäner är ett svar, inte ett fel: nyckeln tillhör ett konto utan
+  // domäner. Det är nästan alltid fel konto.
+  if (domains.length === 0) {
+    redirect("/app/integrations?error=" + encodeURIComponent(
+      `Nyckeln tillhör ett Resend-konto utan några domäner alls. Avsändardomänen ${expectedDomain} är verifierad i ett annat konto eller team -- skapa nyckeln i samma team som domänen står i.`,
+    ));
+  }
+  const listed = domains.map((domain) => `${domain.name ?? "?"} (${domain.status ?? "okänd status"})`).join(", ");
+  const match = domains.find((domain) => (domain.name ?? "").toLowerCase() === expectedDomain);
+  if (!match) {
+    redirect("/app/integrations?error=" + encodeURIComponent(
+      `Avsändardomänen ${expectedDomain} finns inte i det konto nyckeln tillhör. Kontot har: ${listed}. Antingen pekar DEFAULT_EMAIL_FROM_ADDRESS på fel domän, eller så skapades nyckeln i fel team.`,
+    ));
+  }
+  if ((match.status ?? "").toLowerCase() !== "verified") {
+    redirect("/app/integrations?error=" + encodeURIComponent(
+      `${expectedDomain} finns i kontot men har status "${match.status ?? "okänd"}", inte "verified". Utskick avvisas tills den är färdigverifierad.`,
+    ));
+  }
+  redirect("/app/integrations?message=" + encodeURIComponent(
+    `${expectedDomain} är verifierad i det konto nyckeln tillhör. Kontot har: ${listed}.`,
+  ));
+}
+
 export async function generateResendWebhookAddress(form: FormData) {
   const context = await adminContext();
   const integrationId = value(form, "integration_id");
