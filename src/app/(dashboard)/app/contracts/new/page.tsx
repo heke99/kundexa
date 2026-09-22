@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
 import { formatDate } from "@/lib/utils";
 import { getAppContext } from "@/lib/auth";
-import { can } from "@/lib/permissions";
+import { can, canAuthorContracts } from "@/lib/permissions";
 import { isoToZonedDateOnly, isoToZonedLocalDateTime } from "@/lib/domain/time";
 import { CustomerSearchSelect, type CustomerSearchOption } from "@/components/customer-search-select";
 
@@ -27,14 +27,14 @@ export default async function NewContractPage({ searchParams }: { searchParams: 
   // could reach this page and every one of its three forms would be refused.
   // The two inner forms have their own permissions again: a contract_manager
   // may write contracts but not create customers or register calls.
-  const mayWrite = can(ctx.role, "contracts.write");
+  const mayWrite = canAuthorContracts(ctx.role, ctx.platformRole);
   const mayCreateCustomer = can(ctx.role, "customers.write");
   const mayRegisterCall = can(ctx.role, "calls.create");
   if (!mayWrite) {
     return <>
       <Link href="/app/contracts" className="muted" style={{ display: "inline-flex", gap: 6, alignItems: "center", marginBottom: 16 }}><ArrowLeft size={15} /> Till avtal</Link>
-      <PageHeader title="Nytt avtal" description="Skapa avtal kräver behörighet att skriva avtal." />
-      <Card><CardContent><p className="muted">Din roll kan läsa avtal men inte skapa nya. Be en säljare, teamledare eller avtalsansvarig att lägga upp avtalet.</p></CardContent></Card>
+      <PageHeader title="Nytt avtal" description="Din roll kan inte skapa avtal." />
+      <Card><CardContent><p className="muted">Avtal läggs upp av teamledare, avtalsansvarig, administratör eller ägare. Be någon av dem skapa avtalet — du kan skicka det när det finns.</p></CardContent></Card>
     </>;
   }
   const supabase = await createClient();

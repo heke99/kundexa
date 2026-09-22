@@ -1,6 +1,6 @@
 import { ok } from "@/lib/supabase/read";
 import { getAppContext } from "@/lib/auth";
-import { can } from "@/lib/permissions";
+import { can, canAuthorContracts } from "@/lib/permissions";
 import { cancelContract, deleteContract } from "@/app/actions/contracts";
 import Link from "next/link";
 import { FileSignature, Plus } from "@/components/icons";
@@ -58,6 +58,9 @@ const PAGE_SIZE = 100;
 export default async function ContractsPage({ searchParams }: { searchParams: Promise<Search> }) {
   const params = await searchParams;
   const [supabase, ctx] = await Promise.all([createClient(), getAppContext()]);
+  // Knappen visas bara för den som får använda den. En knapp som leder till ett
+  // nej är ett sämre besked än ingen knapp.
+  const mayCreate = canAuthorContracts(ctx.role, ctx.platformRole);
   const mayWrite = can(ctx.role, "contracts.write");
   const maySend = can(ctx.role, "contracts.send");
   // Deletion is a tenant-admin act and the database enforces it too
@@ -104,7 +107,7 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
     return `/app/contracts?${next.toString()}`;
   };
   return <>
-    <PageHeader title="Avtal" description="Spårbara avtalsversioner med källsamtal, kanonisk PDF, leveransstatus och påminnelser." action={<Link href="/app/contracts/new" className="button button-primary"><Plus size={16} /> Nytt avtal</Link>} />
+    <PageHeader title="Avtal" description="Spårbara avtalsversioner med källsamtal, kanonisk PDF, leveransstatus och påminnelser." action={mayCreate ? <Link href="/app/contracts/new" className="button button-primary"><Plus size={16} /> Nytt avtal</Link> : undefined} />
     {params.error ? <p className="form-error">{params.error}</p> : null}
     {params.message ? <p className="notice">{params.message}</p> : null}
     {/* The status dropdown covers all fourteen statuses; these five are the

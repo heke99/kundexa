@@ -3,17 +3,17 @@ export type Permission =
   | "campaigns.manage" | "lists.manage" | "products.manage"
   | "calls.read" | "calls.create" | "recordings.read"
   | "messages.read" | "messages.send"
-  | "contracts.read" | "contracts.write" | "contracts.send" | "contracts.remind" | "contracts.manage_expiry" | "contracts.activate" | "contracts.manage_templates"
+  | "contracts.read" | "contracts.create" | "contracts.write" | "contracts.send" | "contracts.remind" | "contracts.manage_expiry" | "contracts.activate" | "contracts.manage_templates"
   | "integrations.manage" | "integrations.test"
   | "automations.manage" | "callbacks.create" | "orders.read" | "users.manage" | "settings.manage" | "reports.read"
   | "directory.read" | "directory.refresh" | "segments.manage" | "providers.manage";
 
 const rolePermissions: Record<string, Permission[]> = {
-  owner: ["customers.read", "customers.write", "customers.export", "imports.manage", "campaigns.manage", "lists.manage", "products.manage", "calls.read", "calls.create", "recordings.read", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "contracts.remind", "contracts.manage_expiry", "contracts.activate", "contracts.manage_templates", "integrations.manage", "integrations.test", "automations.manage", "callbacks.create", "orders.read", "users.manage", "settings.manage", "reports.read", "directory.read", "directory.refresh", "segments.manage", "providers.manage"],
-  admin: ["customers.read", "customers.write", "customers.export", "imports.manage", "campaigns.manage", "lists.manage", "products.manage", "calls.read", "calls.create", "recordings.read", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "contracts.remind", "contracts.manage_expiry", "contracts.activate", "contracts.manage_templates", "integrations.manage", "integrations.test", "automations.manage", "callbacks.create", "orders.read", "users.manage", "settings.manage", "reports.read", "directory.read", "directory.refresh", "segments.manage", "providers.manage"],
-  team_lead: ["customers.read", "customers.write", "imports.manage", "campaigns.manage", "lists.manage", "calls.read", "calls.create", "recordings.read", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "contracts.remind", "contracts.manage_expiry", "contracts.manage_templates", "callbacks.create", "orders.read", "reports.read", "directory.read", "directory.refresh", "segments.manage"],
+  owner: ["customers.read", "customers.write", "customers.export", "imports.manage", "campaigns.manage", "lists.manage", "products.manage", "calls.read", "calls.create", "recordings.read", "messages.read", "messages.send", "contracts.read", "contracts.create", "contracts.write", "contracts.send", "contracts.remind", "contracts.manage_expiry", "contracts.activate", "contracts.manage_templates", "integrations.manage", "integrations.test", "automations.manage", "callbacks.create", "orders.read", "users.manage", "settings.manage", "reports.read", "directory.read", "directory.refresh", "segments.manage", "providers.manage"],
+  admin: ["customers.read", "customers.write", "customers.export", "imports.manage", "campaigns.manage", "lists.manage", "products.manage", "calls.read", "calls.create", "recordings.read", "messages.read", "messages.send", "contracts.read", "contracts.create", "contracts.write", "contracts.send", "contracts.remind", "contracts.manage_expiry", "contracts.activate", "contracts.manage_templates", "integrations.manage", "integrations.test", "automations.manage", "callbacks.create", "orders.read", "users.manage", "settings.manage", "reports.read", "directory.read", "directory.refresh", "segments.manage", "providers.manage"],
+  team_lead: ["customers.read", "customers.write", "imports.manage", "campaigns.manage", "lists.manage", "calls.read", "calls.create", "recordings.read", "messages.read", "messages.send", "contracts.read", "contracts.create", "contracts.write", "contracts.send", "contracts.remind", "contracts.manage_expiry", "contracts.manage_templates", "callbacks.create", "orders.read", "reports.read", "directory.read", "directory.refresh", "segments.manage"],
   sales: ["customers.read", "customers.write", "calls.read", "calls.create", "recordings.read", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "contracts.remind", "callbacks.create", "orders.read", "directory.read"],
-  contract_manager: ["customers.read", "messages.read", "messages.send", "contracts.read", "contracts.write", "contracts.send", "contracts.remind", "contracts.manage_expiry", "contracts.activate", "contracts.manage_templates", "reports.read", "directory.read"],
+  contract_manager: ["customers.read", "messages.read", "messages.send", "contracts.read", "contracts.create", "contracts.write", "contracts.send", "contracts.remind", "contracts.manage_expiry", "contracts.activate", "contracts.manage_templates", "reports.read", "directory.read"],
   quality: ["customers.read", "calls.read", "recordings.read", "contracts.read", "reports.read"],
   backoffice: ["customers.read", "customers.write", "imports.manage", "messages.read", "messages.send", "contracts.read", "contracts.write", "callbacks.create", "orders.read", "directory.read", "directory.refresh", "segments.manage", "providers.manage"],
   finance: ["customers.read", "contracts.read", "reports.read"],
@@ -52,6 +52,31 @@ export const PERMISSION_DENIED_DIGEST = "permission_denied";
 export function permissionDeniedDigest(digest?: string | null): Permission | null {
   if (!digest?.startsWith(`${PERMISSION_DENIED_DIGEST}:`)) return null;
   return digest.slice(PERMISSION_DENIED_DIGEST.length + 1) as Permission;
+}
+
+/**
+ * Får den här personen författa ett avtal?
+ *
+ * Att skapa ett bindande avtal är inte samma sak som att arbeta med ett som
+ * redan finns. Säljaren ringer, registrerar samtalet och skickar avtalet till
+ * sin kund -- men innehållet sätts av den som svarar för det juridiskt.
+ *
+ * Plattformsrollen räknas separat och med flit: en superadmin arbetar i ett
+ * företag utan att vara anställd där, och `assertPermission` ser bara
+ * företagsrollen. Utan det här hade "även superadmin" varit beroende av att
+ * någon gav dem en medlemsroll i varje företag.
+ */
+export function canAuthorContracts(role: string, platformRole: string | null) {
+  return can(role, "contracts.create") || isPlatformContractAuthor(platformRole);
+}
+
+function isPlatformContractAuthor(platformRole: string | null) {
+  return platformRole === "platform_owner" || platformRole === "platform_admin";
+}
+
+export function assertContractAuthor(role: string, platformRole: string | null) {
+  if (canAuthorContracts(role, platformRole)) return;
+  assertPermission(role, "contracts.create");
 }
 
 export function assertPermission(role: string, permission: Permission) {

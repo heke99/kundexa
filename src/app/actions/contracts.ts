@@ -9,7 +9,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { acceptanceCode, encryptJson, randomToken, sha256, sha256Bytes } from "@/lib/crypto";
 import { canonicalAppBaseUrl, serverEnv } from "@/lib/env";
 import { normalizePhone } from "@/lib/domain/phone";
-import { assertPermission } from "@/lib/permissions";
+import { assertPermission, assertContractAuthor } from "@/lib/permissions";
 import { renderStrictTemplate } from "@/lib/domain/template";
 import { buildTemplateRenderContext } from "@/lib/contracts/template-context";
 import { zonedLocalDateTimeToIso } from "@/lib/domain/time";
@@ -24,7 +24,7 @@ const contractNumber = () => `KX-${new Date().getFullYear()}-${crypto.randomUUID
 
 export async function createContract(form: FormData) {
   const ctx = await getAppContext();
-  assertPermission(ctx.role, "contracts.write");
+  assertContractAuthor(ctx.role, ctx.platformRole);
 
   const parsed = z.object({
     customerId: z.uuid(),
@@ -276,7 +276,9 @@ export async function createContract(form: FormData) {
 
 export async function uploadContractPdf(form: FormData) {
   const ctx = await getAppContext();
-  assertPermission(ctx.role, "contracts.write");
+  // Att byta ut avtalets kanoniska dokument är att författa det, inte att
+  // arbeta med det.
+  assertContractAuthor(ctx.role, ctx.platformRole);
   const contractId = value(form, "contract_id");
   const file = form.get("file");
   if (!(file instanceof File) || file.type !== "application/pdf" || file.size > 20 * 1024 * 1024) {

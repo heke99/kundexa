@@ -940,6 +940,47 @@ for (const [name, pattern, what] of [
     `${name} must take the account from the platform, unconditionally: ${what} belongs to the platform`);
 }
 
+// Att författa ett avtal är inte samma sak som att arbeta med ett som finns.
+//
+// `contracts.write` gav samma roll rätten att skapa ett bindande avtal, ladda
+// upp dess kanoniska dokument, koppla ett källsamtal och radera det. Säljaren
+// behöver de mellersta två för sitt eget arbete, inte de yttre.
+{
+  const permissions = await readFile(join(root, "src/lib/permissions.ts"), "utf8");
+  const roleLine = (role) => {
+    const start = permissions.indexOf(`  ${role}: [`);
+    assert.ok(start >= 0, `${role} must exist in the role table`);
+    return permissions.slice(start, permissions.indexOf("\n", start));
+  };
+  for (const role of ["owner", "admin", "team_lead", "contract_manager"]) {
+    assert.ok(roleLine(role).includes('"contracts.create"'),
+      `${role} must be able to author a contract`);
+  }
+  // Just den här rollen var defekten: en säljare kunde skapa ett bindande avtal.
+  assert.ok(!roleLine("sales").includes('"contracts.create"'),
+    "sales must not author contracts; they register the call and send what someone else wrote");
+  assert.ok(roleLine("sales").includes('"contracts.send"'),
+    "sales must still be able to send a contract to their own customer");
+
+  // Superadmin arbetar i ett företag utan att vara anställd där, och
+  // `assertPermission` ser bara företagsrollen.
+  assert.match(permissions, /platformRole === "platform_owner" \|\| platformRole === "platform_admin"/,
+    "A platform administrator must be able to author contracts without a tenant role");
+
+  const actions = await readFile(join(root, "src/app/actions/contracts.ts"), "utf8");
+  for (const entry of ["export async function createContract", "export async function uploadContractPdf"]) {
+    const start = actions.indexOf(entry);
+    assert.ok(start >= 0, `${entry} must still exist`);
+    const body = actions.slice(start, actions.indexOf("\nexport ", start + 1));
+    assert.match(body, /assertContractAuthor\(ctx\.role, ctx\.platformRole\)/,
+      `${entry} must check the authoring right, not the general write right`);
+  }
+
+  const list = await readFile(join(root, "src/app/(dashboard)/app/contracts/page.tsx"), "utf8");
+  assert.match(list, /mayCreate \? <Link href="\/app\/contracts\/new"/,
+    "The new-contract button must be hidden from roles that cannot use it");
+}
+
 // Mallen ska gå att läsa och ändra, inte bara listas.
 //
 // Listan visade namn, typ och status -- aldrig vad som faktiskt stod i avtalet.
