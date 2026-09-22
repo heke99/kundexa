@@ -940,6 +940,28 @@ for (const [name, pattern, what] of [
     `${name} must take the account from the platform, unconditionally: ${what} belongs to the platform`);
 }
 
+// Svarsadressen är härledd och får inte återuppstå som ett fält i utskicket.
+//
+// Den togs ur integrationsrutan för att ingen skulle behöva fylla i den, och
+// låg sedan kvar i utskicksformuläret som en valfri override. Ett fält som
+// skriver över ett härlett värde är ett fält någon måste förstå för att kunna
+// låta bli.
+{
+  const detail = await readFile(join(root, "src/app/(dashboard)/app/contracts/[id]/page.tsx"), "utf8");
+  assert.ok(!detail.includes('name="reply_to"'),
+    "The send form must not offer a reply-to override; the address comes from the contract's issuing legal entity");
+  const actions = await readFile(join(root, "src/app/actions/contracts.ts"), "utf8");
+  assert.ok(!actions.includes('value(form, "reply_to")'),
+    "sendContract must not read a reply-to from the form");
+
+  // Beskedet när en mall saknar ett värde ska säga vad man gör åt det, och
+  // lämna tillbaka en till formuläret man fyllde i.
+  assert.match(actions, /gör fältet valfritt genom att sätta ett frågetecken sist/,
+    "An unresolved template field must say how to fix it, not only which field is missing");
+  assert.match(actions, /redirect\(`\/app\/contracts\/new\?customer_id=\$\{parsed\.data\.customerId\}&error=/,
+    "An unresolved template field must return to the form, not discard it into the list");
+}
+
 // Ett mallutkast ska gå att ta bort. En godkänd version ska aldrig gå att ta bort.
 //
 // Det fanns ingen väg alls: varje felskrivning, varje halvfärdigt försök och
@@ -1006,6 +1028,12 @@ for (const [name, pattern, what] of [
   const list = await readFile(join(root, "src/app/(dashboard)/app/contracts/page.tsx"), "utf8");
   assert.match(list, /mayCreate \? <Link href="\/app\/contracts\/new"/,
     "The new-contract button must be hidden from roles that cannot use it");
+  // Kundkortet har sin egen knapp till samma sida. Den stod kvar på den gamla
+  // rättigheten och hade visat sig för en säljare som sedan nekats på sidan
+  // bakom -- två knappar till samma nej.
+  const customerCard = await readFile(join(root, "src/app/(dashboard)/app/customers/[id]/page.tsx"), "utf8");
+  assert.match(customerCard, /canAuthorContracts\(context\.role, context\.platformRole\)/,
+    "The customer card's contract button must use the same authoring right as the page behind it");
 }
 
 // Mallen ska gå att läsa och ändra, inte bara listas.
