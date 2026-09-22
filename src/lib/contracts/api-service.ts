@@ -207,7 +207,7 @@ export async function sendContractFromApi(identity: ApiIdentity, contractId: str
 
   const admin = createAdminClient();
   const [{ data: contract }, { data: tenant }] = await Promise.all([
-    admin.from("contracts").select("id,contract_number,title,customer_id,source_call_id,seller_snapshot,customers(display_name,email,phone_e164)")
+    admin.from("contracts").select("id,contract_number,title,customer_id,source_call_id,seller_snapshot,legal_entity_id,customers(display_name,email,phone_e164)")
       .eq("tenant_id", identity.tenantId).eq("id", contractId).single(),
     admin.from("tenants").select("name,legal_name,timezone").eq("id", identity.tenantId).single(),
   ]);
@@ -234,14 +234,20 @@ export async function sendContractFromApi(identity: ApiIdentity, contractId: str
   let replyTo = input.reply_to ?? null;
   if (["email", "both"].includes(input.channel)) {
     const { data: integration } = await admin.from("tenant_integrations")
-      .select("status,configuration,credentials_ciphertext").eq("tenant_id", identity.tenantId)
+      .select("status").eq("tenant_id", identity.tenantId)
       .eq("provider_type", "email").eq("provider", "resend").limit(1).maybeSingle();
     if (integration?.status !== "active") throw new Error("resend_integration_not_active");
-    const configuration = readJsonObject(integration.configuration);
     // Kundexas konto och Kundexas verifierade domän, alltid. Se sendContract.
     if (!env.RESEND_API_KEY) throw new Error("platform_resend_key_missing");
     emailFrom = String(env.DEFAULT_EMAIL_FROM_ADDRESS ?? "");
-    replyTo = replyTo ?? (configuration.reply_to ? String(configuration.reply_to) : null);
+    // Svarsadressen tas ur avtalets utställande bolag, samma källa som
+    // avsändarnamnet. Se sendContract.
+    if (!replyTo && contract.legal_entity_id) {
+      const { data: issuer } = await admin.from("tenant_legal_entities")
+        .select("email").eq("tenant_id", identity.tenantId).eq("id", contract.legal_entity_id).maybeSingle();
+      const issuerEmail = issuer?.email ? String(issuer.email) : "";
+      if (/^\S+@\S+\.\S+$/.test(issuerEmail)) replyTo = issuerEmail;
+    }
     if (!/^\S+@\S+\.\S+$/.test(emailFrom)) throw new Error("verified_from_address_required");
   }
 

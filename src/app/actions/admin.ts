@@ -98,18 +98,12 @@ export async function saveEmailIntegration(form: FormData) {
   // utställande bolag, och svarsadressen.
   const env = serverEnv();
   const fromAddress = String(env.DEFAULT_EMAIL_FROM_ADDRESS ?? "").toLowerCase();
-  const fromName = value(form, "from_name").slice(0, 100) || context.tenantLegalName;
-  const replyTo = value(form, "reply_to").toLowerCase();
-  const testRecipient = value(form, "test_recipient").toLowerCase();
   const webhookSigningSecret = value(form, "webhook_signing_secret");
   const email = /^\S+@\S+\.\S+$/;
   if (!email.test(fromAddress)) {
     redirect("/app/integrations?error=" + encodeURIComponent(
       "Kundexas verifierade avsändaradress är inte konfigurerad. Plattformsadministratören behöver sätta DEFAULT_EMAIL_FROM_ADDRESS.",
     ));
-  }
-  if (!email.test(testRecipient) || (replyTo && !email.test(replyTo))) {
-    redirect("/app/integrations?error=En giltig testmottagare krävs, och svarsadressen måste vara en e-postadress om den anges");
   }
   const sendingDomain = fromAddress.split("@")[1] ?? "";
   const admin = createAdminClient();
@@ -139,15 +133,20 @@ export async function saveEmailIntegration(form: FormData) {
     webhookPathToken: pathToken,
     from: fromAddress,
   };
-  const oldConfig = readJsonObject(existing?.configuration);
+  // Avsändarnamn, svarsadress och testmottagare stod tidigare här, som tre fält
+  // någon fick fylla i innan företaget kunde skicka sitt första avtal. Inget av
+  // dem var en uppgift bara den personen kunde: namnet är det utställande
+  // bolagets, svarsadressen är det bolagets e-post, och testet ska nå den som
+  // trycker på knappen. Alla tre härleds nu där de hör hemma, och en kopia här
+  // hade bara kunnat bli inaktuell -- därför tas de gamla nycklarna bort ur
+  // konfigurationen i stället för att lämnas kvar och läsas av misstag.
+  const { from_name: _oldName, reply_to: _oldReplyTo, test_recipient: _oldRecipient, ...oldConfig } =
+    readJsonObject(existing?.configuration);
   const configuration = toJsonObject({
     ...oldConfig,
     account_mode: "platform_managed",
-    from_name: fromName,
     from_address: fromAddress,
-    reply_to: replyTo || null,
     sending_domain: sendingDomain || fromAddress.split("@")[1],
-    test_recipient: testRecipient,
     webhook_path_token_hash: sha256(pathToken + env.KUNDEXA_WEBHOOK_PEPPER),
     last_test_status: "pending",
     last_error: null,
@@ -166,7 +165,7 @@ export async function saveEmailIntegration(form: FormData) {
   await admin.from("audit_logs").insert({
     tenant_id: context.tenantId, actor_user_id: context.userId,
     action: existing ? "integration.resend_updated" : "integration.resend_created", entity_type: "tenant_integration", entity_id: saved.id,
-    after_data: { account_mode: "platform_managed", from_address: fromAddress, reply_to: replyTo || null, sending_domain: sendingDomain || null, webhook_secret_changed: Boolean(webhookSigningSecret), status: "pending" },
+    after_data: { account_mode: "platform_managed", from_address: fromAddress, sending_domain: sendingDomain || null, webhook_secret_changed: Boolean(webhookSigningSecret), status: "pending" },
   });
   revalidatePath("/app/integrations");
   redirect(`/app/integrations?message=${encodeURIComponent("Resend sparades som väntande. Kör Testa anslutning innan avtalsutskick.")}&resendWebhook=${encodeURIComponent(`${canonicalAppBaseUrl()}/api/webhooks/resend/${pathToken}`)}`);
@@ -189,14 +188,18 @@ export async function testResendIntegration(form: FormData) {
   const configuration = readJsonObject(integration.configuration);
   const apiKey = env.RESEND_API_KEY;
   const fromAddress = String(env.DEFAULT_EMAIL_FROM_ADDRESS ?? "");
-  const fromName = String(configuration.from_name ?? context.tenantLegalName);
-  const testRecipient = String(configuration.test_recipient ?? "");
+  const fromName = context.tenantLegalName;
+  // Testet går till den som trycker på knappen. En sparad testmottagare var ett
+  // fält att fylla i, och ett svar på fel fråga: den som vill veta om
+  // anslutningen fungerar är den som står vid skärmen, och adressen står redan
+  // i inloggningen.
+  const testRecipient = context.email;
   // Två olika fel med två olika mottagare. Nyckeln och avsändaradressen är
   // Kundexas och sätts i driften -- en företagsadministratör kan inte göra
   // något åt dem och ska inte skickas iväg för att leta. Testmottagaren är
   // deras egen och står i formuläret ovanför knappen.
   if (!apiKey || !/^\S+@\S+\.\S+$/.test(fromAddress)) redirect("/app/integrations?error=" + encodeURIComponent("Kundexas e-postkonto är inte färdigkonfigurerat. Kontakta supporten -- det är inget ni kan åtgärda här."));
-  if (!/^\S+@\S+\.\S+$/.test(testRecipient)) redirect("/app/integrations?error=" + encodeURIComponent("Fyll i en testmottagare i formuläret ovan och spara, kör sedan testet."));
+  if (!/^\S+@\S+\.\S+$/.test(testRecipient)) redirect("/app/integrations?error=" + encodeURIComponent("Ditt användarkonto saknar e-postadress, så testet har ingen mottagare."));
   let response: Response | null = null;
   let result: Record<string, unknown> = {};
   let safeError: string | null = null;
