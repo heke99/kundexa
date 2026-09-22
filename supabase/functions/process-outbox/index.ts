@@ -141,7 +141,7 @@ async function getSmsProvider(tenantId: string) {
 async function getEmailConfig(tenantId: string) {
   const tenant = await getTenant(tenantId);
   const { data, error } = await supabase.from("tenant_integrations")
-    .select("id,credentials_ciphertext,configuration,status")
+    .select("id,credentials_ciphertext,status")
     .eq("tenant_id", tenantId)
     .eq("provider_type", "email")
     .eq("provider", "resend")
@@ -152,7 +152,6 @@ async function getEmailConfig(tenantId: string) {
   // database blip — sending whoever investigated to a setting that was correct.
   if (error) throw new Error(`email_integration_read_failed:${error.code ?? "unknown"}`);
   if (!data || data.status !== "active") throw new Error("permanent_email_resend_integration_not_active");
-  const configuration = (data.configuration ?? {}) as Record<string, unknown>;
   const credentials = data.credentials_ciphertext
     ? await decryptJson<EmailCredentials>(data.credentials_ciphertext, encryptionKey)
     : {};
@@ -163,8 +162,13 @@ async function getEmailConfig(tenantId: string) {
   // sig mellan de fem ställen som läste den.
   const apiKey = globalResendKey;
   const address = globalEmailFromAddress;
-  const fromName = cleanHeaderName(String(configuration.from_name ?? tenant.legal_name ?? globalEmailFromName));
-  const replyTo = configuration.reply_to ? String(configuration.reply_to) : null;
+  // Namnet är företagets registrerade, inte en kopia i integrationsraden. Den
+  // kopian gick att skriva in för hand en gång och blev sedan liggande: byter
+  // bolaget namn följer utskicken inte med. Svarsadressen sätts på meddelandet
+  // när det köas, ur avtalets utställande bolag -- den hör till avtalet, inte
+  // till integrationen.
+  const fromName = cleanHeaderName(String(tenant.legal_name ?? globalEmailFromName));
+  const replyTo = null;
   if (!apiKey) throw new Error("permanent_email_provider_not_configured");
   if (!/^\S+@\S+\.\S+$/.test(address)) throw new Error("permanent_email_from_address_invalid");
   return { apiKey, address, replyTo, fromName, formattedFrom: `${fromName} <${address}>`, tenant, integrationId: data.id };

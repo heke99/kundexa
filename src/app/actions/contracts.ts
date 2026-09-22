@@ -496,7 +496,7 @@ export async function sendContract(form: FormData) {
   const admin = createAdminClient();
   const { data: contract, error: contractError } = await supabase
     .from("contracts")
-    .select("id,contract_number,title,customer_id,active_version_id,source_call_id,seller_snapshot,customers(display_name,email,phone_e164)")
+    .select("id,contract_number,title,customer_id,active_version_id,source_call_id,seller_snapshot,legal_entity_id,customers(display_name,email,phone_e164)")
     .eq("id", contractId).single();
   if (contractError || !contract?.active_version_id) redirect(`/app/contracts/${contractId}?error=Avtalet saknar aktiv version`);
   if (!contract.source_call_id) redirect(`/app/contracts/${contractId}?error=Giltigt tidigare samtal saknas`);
@@ -526,15 +526,24 @@ export async function sendContract(form: FormData) {
   let replyTo = replyToOverride || null;
   if (channel === "email" || channel === "both") {
     const { data: integration } = await admin.from("tenant_integrations")
-      .select("status,configuration,credentials_ciphertext")
+      .select("status")
       .eq("tenant_id", ctx.tenantId).eq("provider_type", "email").eq("provider", "resend").limit(1).maybeSingle();
-    const configuration = (integration?.configuration ?? {}) as Record<string, unknown>;
     if (integration?.status !== "active") redirect(`/app/contracts/${contractId}?error=Resend-integrationen måste testas och vara aktiv innan utskick`);
     // Avsändaradressen är Kundexas, alltid: det är den domän som är verifierad
     // hos leverantören. Företaget syns som avsändarnamn, inte som domän.
     if (!env.RESEND_API_KEY) redirect(`/app/contracts/${contractId}?error=Kundexas e-postkonto är inte konfigurerat`);
     emailFrom = String(env.DEFAULT_EMAIL_FROM_ADDRESS ?? "");
-    replyTo = replyTo || (configuration.reply_to ? String(configuration.reply_to) : null);
+    // Svaret ska gå till bolaget som ställt ut avtalet, inte till Kundexa och
+    // inte till en adress någon skrivit in i en integrationsruta. Avtalet bär
+    // redan sitt utställande bolag, och det bolaget har en e-postadress --
+    // samma källa som ger avsändarnamnet. Saknas adressen sätts ingen
+    // svarsadress alls; det är ärligare än att peka svaren fel.
+    if (!replyTo && contract.legal_entity_id) {
+      const { data: issuer } = await admin.from("tenant_legal_entities")
+        .select("email").eq("tenant_id", ctx.tenantId).eq("id", contract.legal_entity_id).maybeSingle();
+      const issuerEmail = issuer?.email ? String(issuer.email) : "";
+      if (/^\S+@\S+\.\S+$/.test(issuerEmail)) replyTo = issuerEmail;
+    }
     if (!/^\S+@\S+\.\S+$/.test(emailFrom)) redirect(`/app/contracts/${contractId}?error=Kundexas verifierade från-adress saknas`);
   }
 

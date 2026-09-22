@@ -940,6 +940,38 @@ for (const [name, pattern, what] of [
     `${name} must take the account from the platform, unconditionally: ${what} belongs to the platform`);
 }
 
+// Avsändaridentiteten får inte bli ett fält någon fyller i.
+//
+// `from_name`, `reply_to` och `test_recipient` låg som kopior i
+// integrationsraden och matades av tre formulärfält. Inget av dem var en
+// uppgift bara den personen kunde svara på: namnet står i företaget,
+// svarsadressen i avtalets utställande bolag, testmottagaren i inloggningen.
+// En kopia kan dessutom bli inaktuell utan att någon märker det -- hos ett av
+// företagen pekade den sparade svarsadressen på Kundexas egen adress, så
+// kundens svar hade landat hos fel part.
+for (const [file, forbidden] of [
+  ["src/app/actions/admin.ts", ['value(form, "from_name")', 'value(form, "reply_to")', 'value(form, "test_recipient")']],
+  ["src/app/(dashboard)/app/integrations/page.tsx", ['name="from_name"', 'name="reply_to"', 'name="test_recipient"']],
+  ["src/app/actions/contracts.ts", ["configuration.reply_to"]],
+  ["src/lib/contracts/api-service.ts", ["configuration.reply_to"]],
+  ["supabase/functions/process-outbox/index.ts", ["configuration.from_name", "configuration.reply_to"]],
+]) {
+  const source = (await readFile(join(root, file), "utf8")).replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
+  for (const needle of forbidden) {
+    assert.ok(!source.includes(needle),
+      `${file} still reads ${needle}; the sender identity is derived from the tenant and the issuing legal entity, never typed into the integration`);
+  }
+}
+
+// Svarsadressen ska komma från avtalets utställande bolag, på båda vägarna.
+for (const file of ["src/app/actions/contracts.ts", "src/lib/contracts/api-service.ts"]) {
+  const source = await readFile(join(root, file), "utf8");
+  assert.match(source, /from\("tenant_legal_entities"\)\s*\n?\s*\.select\("email"\)/,
+    `${file} must take the reply-to address from the contract's issuing legal entity`);
+  assert.match(source, /legal_entity_id/,
+    `${file} must carry the issuing legal entity on the contract it is sending`);
+}
+
 // Beredskapssvaret måste rapportera webbappens egen e-postkonfiguration.
 //
 // Arbetarens rapport läser Edge-funktionens miljö. Anslutningstestet, som är

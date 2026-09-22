@@ -9,12 +9,17 @@ import { Field, SelectField } from "@/components/ui/form-field";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
 import { saveCallerIdDefault, saveTelephonyPolicy } from "@/app/actions/telephony";
+import { getAppContext } from "@/lib/auth";
 
 type Config = Record<string, unknown>;
 
 export default async function IntegrationsPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string; webhookToken?: string; resendWebhook?: string }> }) {
   const params = await searchParams;
   const supabase = await createClient();
+  // Avsändarnamnet visas, det skrivs inte in. Samma källa som utskicket
+  // använder, så det som står här är det som faktiskt hamnar i mottagarens
+  // inkorg.
+  const { tenantLegalName } = await getAppContext();
   const [
     { data: integrations },
     { data: numbers },
@@ -100,14 +105,14 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
       <Card><CardHeader><h2>E-post och Resend</h2><Badge className={resendActive ? "badge-success" : "badge-warning"}>{resend?.status ?? "inte ansluten"}</Badge></CardHeader><CardContent>
         <div className="notice"><strong>Feature flags</strong><br />outbound_email: {featureMap.get("outbound_email") ? "aktiv" : "avstängd"}<br />contract_delivery_email: {featureMap.get("contract_delivery_email") ? "aktiv" : "avstängd"}<br />outbound_sms: {featureMap.get("outbound_sms") ? "aktiv" : "avstängd"}<br />contract_delivery_sms: {featureMap.get("contract_delivery_sms") ? "aktiv" : "avstängd"}</div>
         <form action={saveEmailIntegration} className="form-stack" style={{ marginTop: 14 }}>
-          <div className="notice">Avtalspost skickas från Kundexas e-postkonto och verifierade domän{resendConfig.from_address ? <> — <code>{String(resendConfig.from_address)}</code></> : null}. Det som skiljer era utskick från andras är avsändarnamnet och svarsadressen.</div>
-          <Field label="Avsändarnamn" name="from_name" defaultValue={String(resendConfig.from_name ?? "")} placeholder="Bolaget som står som avsändare" />
-          <Field label="Reply-to" name="reply_to" type="email" defaultValue={String(resendConfig.reply_to ?? "")} placeholder="kundservice@foretag.se" />
-          <Field label="Testmottagare" name="test_recipient" type="email" defaultValue={String(resendConfig.test_recipient ?? "")} required />
+          <div className="notice">
+            Avtalspost skickas från Kundexas e-postkonto och verifierade domän{resendConfig.from_address ? <> — <code>{String(resendConfig.from_address)}</code></> : null}.
+            <br />Avsändarnamnet är <strong>{tenantLegalName}</strong>, hämtat från företaget. Svarsadressen tas från det bolag som ställer ut avtalet, under Juridiska avsändarbolag — saknas den sätts ingen svarsadress. Inget av det fylls i här.
+          </div>
           <Field label="Webhook signing secret" name="webhook_signing_secret" type="password" placeholder="Sparad – lämna tomt för att behålla" />
           <button className="button button-primary">Spara krypterat som väntande</button>
         </form>
-        {resend ? <div className="grid grid-2" style={{ marginTop: 12 }}><form action={testResendIntegration}><input type="hidden" name="integration_id" value={resend.id} /><button className="button button-secondary">Testa anslutning</button></form><form action={generateResendWebhookAddress}><input type="hidden" name="integration_id" value={resend.id} /><button className="button button-ghost">Generera ny webhookadress</button></form></div> : null}
+        {resend ? <div className="grid grid-2" style={{ marginTop: 12 }}><form action={testResendIntegration}><input type="hidden" name="integration_id" value={resend.id} /><button className="button button-secondary">Testa anslutning</button><p className="muted" style={{ marginTop: 6 }}>Testmeddelandet går till din egen inloggningsadress.</p></form><form action={generateResendWebhookAddress}><input type="hidden" name="integration_id" value={resend.id} /><button className="button button-ghost">Generera ny webhookadress</button></form></div> : null}
         <div className="notice warning" style={{ marginTop: 14 }}>Avsändardomänen är verifierad hos Resend av Kundexa. Sparad signeringshemlighet visas aldrig igen. Senaste test: {String(resendConfig.last_test_status ?? "inte utfört")}{resendConfig.last_tested_at ? ` · ${formatDate(String(resendConfig.last_tested_at))}` : ""}{resendConfig.last_error ? <><br /><strong>Fel:</strong> {String(resendConfig.last_error)}</> : null}</div>
       </CardContent></Card>
 

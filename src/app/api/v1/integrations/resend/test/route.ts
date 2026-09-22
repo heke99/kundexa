@@ -10,10 +10,15 @@ export async function POST(request: Request) {
     const identity = await authenticateRequest(request, "integrations:test");
     const env = serverEnv();
     const admin = createAdminClient();
-    const [{ data: integration }, { data: tenant }] = await Promise.all([
+    const [{ data: integration }, { data: tenant }, { data: legalEntity }] = await Promise.all([
       admin.from("tenant_integrations").select("id,configuration")
         .eq("tenant_id", identity.tenantId).eq("provider_type", "email").eq("provider", "resend").limit(1).maybeSingle(),
       admin.from("tenants").select("name,legal_name").eq("id", identity.tenantId).single(),
+      // Serveråtgärden skickar testet till den inloggade administratören. Här
+      // finns ingen sådan: anroparen är en maskin. Bolagets egen adress är det
+      // närmaste en mottagare som inte behöver fyllas i någonstans.
+      admin.from("tenant_legal_entities").select("email")
+        .eq("tenant_id", identity.tenantId).eq("is_default", true).eq("active", true).limit(1).maybeSingle(),
     ]);
     // Se kommentaren i serveråtgärden: nyckeln är Kundexas, så en krypterad
     // tenantpost är inte längre ett villkor för att få testa.
@@ -22,10 +27,13 @@ export async function POST(request: Request) {
     // Kundexas konto, alltid. Se kommentaren i utskicksarbetaren.
     const apiKey = env.RESEND_API_KEY;
     const fromAddress = env.DEFAULT_EMAIL_FROM_ADDRESS ?? "";
-    const fromName = String(configuration.from_name ?? tenant?.legal_name ?? tenant?.name ?? "Kundexa").replace(/[<>\r\n]/g, " ");
-    const testRecipient = String(configuration.test_recipient ?? "");
-    if (!apiKey || !/^\S+@\S+\.\S+$/.test(fromAddress) || !/^\S+@\S+\.\S+$/.test(testRecipient)) {
-      return apiJson(correlationId, { error: "resend_api_key_from_or_test_recipient_missing" }, { status: 409 });
+    const fromName = String(tenant?.legal_name ?? tenant?.name ?? "Kundexa").replace(/[<>\r\n]/g, " ");
+    const testRecipient = String(legalEntity?.email ?? "");
+    if (!apiKey || !/^\S+@\S+\.\S+$/.test(fromAddress)) {
+      return apiJson(correlationId, { error: "resend_platform_account_not_configured" }, { status: 409 });
+    }
+    if (!/^\S+@\S+\.\S+$/.test(testRecipient)) {
+      return apiJson(correlationId, { error: "default_legal_entity_email_required" }, { status: 409 });
     }
     const requestKey = request.headers.get("idempotency-key")?.slice(0, 200)
       || `kundexa-resend-test/${integration.id}/${new Date().toISOString().slice(0, 13)}`;
