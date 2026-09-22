@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { getAppContext } from "@/lib/auth";
-import { can } from "@/lib/permissions";
+import { can, canAuthorContracts } from "@/lib/permissions";
 import { isoToZonedLocalDateTime } from "@/lib/domain/time";
 
 const labels: Record<string, string> = { draft: "Utkast", ready: "Redo", sent: "Skickat", delivered: "Levererat", opened: "Öppnat", accepted: "Accepterat", declined: "Avstått", expired: "Utgånget", superseded: "Ersatt", cancelled: "Avbrutet", signed: "Dokumenterat", active: "Aktivt", queued: "Köad", submitting: "Skickas", failed: "Misslyckad", bounced: "Studsad", complained: "Rapporterad", suppressed: "Undertryckt", clicked: "Länk klickad", delayed: "Fördröjd", dead_letter: "Kräver åtgärd", pending: "Väntar" };
@@ -26,6 +26,10 @@ export default async function ContractDetail({ params, searchParams }: { params:
   // they cannot perform, and backoffice reached utskick and påminnelser.
   // Each block below is now shown only to a role the action will accept.
   const mayWrite = can(ctx.role, "contracts.write");
+  // Ett eget dokument ersätter texten från produktens avtal, och det är
+  // författande. Kortet visades för alla som fick skriva och nekades sedan för
+  // säljaren efter uppladdningen.
+  const mayUploadDocument = canAuthorContracts(ctx.role, ctx.platformRole);
   const mayRegisterCall = can(ctx.role, "calls.create");
   const maySend = can(ctx.role, "contracts.send");
   const mayRemind = can(ctx.role, "contracts.remind");
@@ -91,7 +95,7 @@ export default async function ContractDetail({ params, searchParams }: { params:
 
         {maySend ? <Card><CardHeader><h3><Send size={16} /> Granska och skicka</h3></CardHeader><CardContent><form action={sendContract} className="form-stack"><input type="hidden" name="contract_id" value={id} /><Field label="Mottagarens namn" name="recipient_name" defaultValue={customer?.display_name ?? ""} required /><Field label="Mottagarens e-post" name="recipient_email" type="email" defaultValue={customer?.email ?? ""} /><SelectField label="Kanal" name="channel" defaultValue="both"><option value="both">E-post och SMS</option><option value="email">E-post</option><option value="sms">SMS</option></SelectField><TextareaField label="Personlig introduktion" name="introduction" placeholder="Tack för samtalet. Här kommer avtalet vi gick igenom." /><Field label="Sista svarsdatum" name="expires_at" type="datetime-local" defaultValue={localDateTime(contract.expires_at ?? new Date(Date.now() + 7 * 86400000).toISOString())} required /><div className="notice warning"><strong>Låser avtalet och skickar det till kunden.</strong>{contract.status === "expired" ? <><br />Den gamla länken har löpt ut — ett nytt utskick ger en ny.</> : null}<br />Källsamtal: {sourceCall ? formatDate(sourceCall.ended_at) : "saknas"}</div><button className="button button-primary" disabled={!sourceCall || !["ready", "sent", "delivered", "opened", "expired"].includes(contract.status)}><Send size={16} /> Lås och skicka</button></form></CardContent></Card> : null}
 
-        {mayWrite ? <Card><CardHeader><h3><Upload size={16} /> Ladda upp PDF</h3></CardHeader><CardContent><form action={uploadContractPdf} className="form-stack"><input type="hidden" name="contract_id" value={id} /><label className="field"><span>PDF-fil, högst 20 MB</span><input type="file" name="file" accept="application/pdf" required /></label><SelectField label="Användning" name="document_mode" defaultValue="attachment"><option value="attachment">Använd endast som bilaga</option><option value="canonical">Använd som kanoniskt avtalsdokument</option></SelectField><button className="button button-secondary"><Upload size={16} /> Kontrollera hash och ladda upp</button></form></CardContent></Card> : null}
+        {mayUploadDocument ? <Card><CardHeader><h3><Upload size={16} /> Ladda upp PDF</h3></CardHeader><CardContent><form action={uploadContractPdf} className="form-stack"><input type="hidden" name="contract_id" value={id} /><label className="field"><span>PDF-fil, högst 20 MB</span><input type="file" name="file" accept="application/pdf" required /></label><SelectField label="Användning" name="document_mode" defaultValue="attachment"><option value="attachment">Använd endast som bilaga</option><option value="canonical">Använd som kanoniskt avtalsdokument</option></SelectField><button className="button button-secondary"><Upload size={16} /> Kontrollera hash och ladda upp</button></form></CardContent></Card> : null}
 
         <Card><CardHeader><h3>Utskick</h3><Badge>{deliveries?.length ?? 0}</Badge></CardHeader><CardContent>{deliveries?.map((delivery) => { const recipient = Array.isArray(delivery.contract_recipients) ? delivery.contract_recipients[0] : delivery.contract_recipients; return <div className="activity-line" key={delivery.id}><span className="activity-dot"><Send size={14} /></span><div><strong>{recipient?.full_name ?? "Mottagare"}</strong><p>{delivery.delivery_kind} · {delivery.channel} · {labels[delivery.status] ?? delivery.status}{delivery.provider_status ? ` · ${delivery.provider_status}` : ""}</p>{delivery.failure_message ? <p className="form-error">{delivery.failure_message}</p> : null}</div><time>{formatDate(delivery.sent_at ?? delivery.created_at)}</time></div>; })}</CardContent></Card>
 

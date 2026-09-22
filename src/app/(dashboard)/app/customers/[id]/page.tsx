@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, Ban, CalendarPlus, ClipboardList, FileSignature, Mail, MessageSquareText, Phone, PhoneOff, StickyNote, Users } from "@/components/icons";
 import { addActivity, addNote, archiveNote, blockCustomer, reportCustomerNix, scheduleCallback, updateCustomerDetails, updateNote } from "@/app/actions/customers";
 import { getAppContext } from "@/lib/auth";
-import { can, canAuthorContracts } from "@/lib/permissions";
+import { can, canCreateContractFromProduct } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -26,7 +26,7 @@ export default async function CustomerDetail({ params, searchParams }: { params:
   // Samma regel som avtalssidan. Knappen stod kvar på den gamla rättigheten och
   // hade visat sig för en säljare som sedan nekats på sidan bakom -- en knapp
   // som leder till ett nej är ett sämre besked än ingen knapp.
-  const mayCreateContract = canAuthorContracts(context.role, context.platformRole);
+  const mayCreateContract = canCreateContractFromProduct(context.role, context.platformRole);
   const supabase = await createClient();
   const [{ data: customer }, { data: contacts }, { data: notes }, { data: activities }, { data: calls }, { data: contracts }, { data: deals }, { data: orders }, { data: lists }, { data: callerIdData }] = await Promise.all([
     ok(supabase.from("customers").select("*").eq("id", id).single()),

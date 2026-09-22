@@ -201,3 +201,13 @@ gissning.
 
 **Kvar som inte går att se härifrån:** produktionens migrationsregister syns inte
 för `npm run verify`, som kör mot PGlite. Den kontrollen är manuell.
+
+## 2026-09-22 — avtal under produkt
+
+| Kontroll | Resultat | Evidens |
+| --- | --- | --- |
+| `npm run verify` | PASS | typecheck, typecheck:edge, test, build, PGlite-repris |
+| Migration i produktion | PASS | `contract_belongs_to_product` applicerad via MCP |
+| Typer mot produktion | PASS | regenererade; diff = `product_id` + ny RPC |
+| Nya verify-kontroller | PASS | återinförda fel fäller: mallval i formuläret, PDF-kort för säljare, borttagen trigger |
+| Skarpt avtal end-to-end | NOT RUN | Gridex saknar produkt; noll avtal i databasen |

@@ -1,5 +1,12 @@
 # Current state
 
+## 2026-09-22 — Avtalet hör till produkten
+
+Mall ↔ produkt är kopplade (ADR-0019), migration applicerad i produktion. Säljaren väljer
+produkt; avtalet, versionen, bolaget och priset härleds. `npm run verify` PASS. Gridex saknar
+produkt, så inget avtal kan skapas förrän en produkt finns och mallen kopplats till den.
+Ingen avtalsleverans är ännu körd skarpt.
+
 Datum: 2026-08-07
 
 ## Kodstatus

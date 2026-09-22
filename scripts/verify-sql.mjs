@@ -3702,4 +3702,63 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   console.log("Only an untouched draft is deletable; anything that was sent or answered stays.");
 }
 
+// Avtalet hör till produkten: en produkt har ett aktivt avtal, avtalet används
+// bara med sin produkt, och en annan tenants produkt går inte att koppla.
+{
+  const T = "00000000-0000-0000-0000-000000000001";
+  const PRODUCT = "00000000-0000-0000-0000-000000000023";
+  await db.exec(`
+    insert into public.products(id,tenant_id,name,active)
+      values('00000000-0000-0000-0000-0000000000e1','00000000-0000-0000-0000-000000000051','Tenant B elavtal',true);
+    insert into public.products(id,tenant_id,name,active)
+      values('00000000-0000-0000-0000-0000000000e2','${T}','Annan produkt',true);
+    select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000093',false);
+  `);
+  const entity = (await db.query(`select id from public.tenant_legal_entities where tenant_id=$1 and active limit 1`, [T])).rows[0].id;
+  const author = (productId, templateId = null, name = "Elavtal rörligt") => db.query(
+    `select public.create_product_contract_template_version(
+       $1,$2,$3,'Elavtal','B2C','',$4,'{{contract.title}}',
+       'Avtal för {{customer.display_name}}, e-post {{customer.email?}}.',
+       'Villkoren gäller från {{today}} och är tillräckligt långa.',
+       '[]'::jsonb,'{}'::jsonb,'{}'::jsonb) as version_id`,
+    [productId, templateId, name, entity]);
+  const refusal = async (fn) => { try { await fn(); return "allowed"; } catch (error) { return String(error.message); } };
+
+  // En teamledare lägger avtalet i produkten, i samma transaktion.
+  const linked = (await author(PRODUCT)).rows[0].version_id;
+  const linkedTemplate = (await db.query(
+    `select t.id,t.product_id from public.contract_templates t join public.contract_template_versions v on v.template_id=t.id where v.id=$1`,
+    [linked])).rows[0];
+  if (linkedTemplate.product_id !== PRODUCT) throw new Error(`The contract was not placed under its product: ${JSON.stringify(linkedTemplate)}`);
+
+  // En ny version av samma avtal är tillåten; ett andra avtal på produkten är det inte.
+  await author(PRODUCT, linkedTemplate.id);
+  const second = await refusal(() => author(PRODUCT, null, "Elavtal rörligt 2"));
+  if (!second.includes("product_already_has_contract")) throw new Error(`A product accepted a second active contract: ${second}`);
+
+  // Negativt tvåtenanttest: tenant B:s produkt ser ut som en som inte finns.
+  const foreign = await refusal(() => author("00000000-0000-0000-0000-0000000000e1", null, "Stulen koppling"));
+  if (!foreign.includes("product_not_found")) throw new Error(`Another tenant's product could be given a contract: ${foreign}`);
+
+  // Säljaren använder avtalet men skriver det inte.
+  await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000020',false);`);
+  const seller = await refusal(() => author("00000000-0000-0000-0000-0000000000e2", null, "Säljarens"));
+  if (!seller.includes("contract_template_permission_required")) throw new Error(`A seller authored a product contract: ${seller}`);
+  await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);`);
+
+  // Databasen, inte formuläret, håller ihop produkt och avtal.
+  const insertContract = (number, productId, templateId) => refusal(() => db.query(
+    `insert into public.contracts(tenant_id,contract_number,customer_id,owner_user_id,audience,status,title,product_id,template_id)
+     values($1,$2,'10000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000002','B2C','draft','Prov',$3,$4)`,
+    [T, number, productId, templateId]));
+  const wrongProduct = await insertContract("VERIFY-PROD-1", "00000000-0000-0000-0000-0000000000e2", linkedTemplate.id);
+  if (!wrongProduct.includes("contract_template_belongs_to_other_product")) throw new Error(`A product's contract was used with another product: ${wrongProduct}`);
+  const noTemplate = await insertContract("VERIFY-PROD-2", PRODUCT, null);
+  if (!noTemplate.includes("contract_product_requires_its_contract")) throw new Error(`A product with a contract was sold without it: ${noTemplate}`);
+  const matching = await insertContract("VERIFY-PROD-3", PRODUCT, linkedTemplate.id);
+  if (matching !== "allowed") throw new Error(`A product sold with its own contract was refused: ${matching}`);
+  await db.query(`delete from public.contracts where contract_number='VERIFY-PROD-3'`);
+  console.log("A product carries one contract; it is authored by the right roles, cannot reach another tenant's product, and the database refuses a mismatched product and contract.");
+}
+
 await db.close();
