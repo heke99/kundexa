@@ -940,6 +940,33 @@ for (const [name, pattern, what] of [
     `${name} must take the account from the platform, unconditionally: ${what} belongs to the platform`);
 }
 
+// Ett mallutkast ska gå att ta bort. En godkänd version ska aldrig gå att ta bort.
+//
+// Det fanns ingen väg alls: varje felskrivning, varje halvfärdigt försök och
+// varje dubblett låg kvar i listan för alltid. Den godkända versionen är något
+// annat -- den är texten kunden fick, och `contract_versions.template_version_id`
+// pekar på den. Att kunna radera den vore att kunna radera bevisningen.
+{
+  const actions = await readFile(join(root, "src/app/actions/templates.ts"), "utf8");
+  const start = actions.indexOf("export async function deleteContractTemplateVersion");
+  assert.ok(start >= 0, "A template draft must be deletable");
+  const body = actions.slice(start).replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
+  assert.match(body, /version\.status !== "draft"/,
+    "Only a draft may be deleted; an approved version is the text the customer received");
+  assert.match(body, /from\("contract_versions"\)[\s\S]{0,200}?template_version_id/,
+    "The delete must ask which contracts use the version instead of letting a foreign key refuse it");
+  assert.match(body, /action: lastOne \? "contract_template\.deleted" : "contract_template_version\.deleted"/,
+    "Deleting a template must be audited");
+  assert.match(body, /eq\("tenant_id", ctx\.tenantId\)/,
+    "The delete uses the admin client and must scope every statement to the tenant itself");
+
+  const detail = await readFile(join(root, "src/app/(dashboard)/app/templates/[id]/page.tsx"), "utf8");
+  const gate = detail.slice(detail.indexOf("deleteContractTemplateVersion", detail.indexOf("<form action={deleteContractTemplateVersion}")) - 400);
+  assert.match(detail, /shown\.status === "draft"[\s\S]{0,1200}deleteContractTemplateVersion/,
+    "The delete button must only appear for a draft");
+  assert.ok(gate.length > 0);
+}
+
 // Att författa ett avtal är inte samma sak som att arbeta med ett som finns.
 //
 // `contracts.write` gav samma roll rätten att skapa ett bindande avtal, ladda
