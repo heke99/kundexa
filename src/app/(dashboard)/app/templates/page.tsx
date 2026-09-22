@@ -1,65 +1,70 @@
+import Link from "next/link";
 import { ok } from "@/lib/supabase/read";
 import { ScrollText } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
-import { getAppContext } from "@/lib/auth";
-import { createContractTemplateVersion, approveContractTemplateVersion } from "@/app/actions/templates";
+import { createContractTemplateVersion } from "@/app/actions/templates";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
 import { ContractTemplateDocumentUpload } from "@/components/contract-template-document-upload";
-import { templateContextFields, templateContextRoots, templateScalarRoots } from "@/lib/contracts/template-context";
+import { TemplateFieldReference } from "@/components/template-field-reference";
 import { formatDate } from "@/lib/utils";
 
-type TemplateVersion = {
-  id: string;
-  version: number;
-  status: string;
-  approved_at: string | null;
-  created_at: string;
-};
+type TemplateVersion = { id: string; version: number; status: string; approved_at: string | null; created_at: string };
 
 export default async function TemplatesPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string }> }) {
   const params = await searchParams;
-  const [ctx, supabase] = await Promise.all([getAppContext(), createClient()]);
+  const supabase = await createClient();
   const [{ data: templates }, { data: legalEntities }] = await Promise.all([
     ok(supabase.from("contract_templates").select("id,name,contract_type,audience,active,current_version_id,legal_entity_id,contract_template_versions!contract_template_versions_tenant_id_template_id_fkey(id,version,status,approved_at,created_at)").order("name")),
     ok(supabase.from("tenant_legal_entities").select("id,legal_name,organization_number,is_default").eq("active", true).order("is_default", { ascending: false }).order("legal_name")),
   ]);
 
   return <>
-    <PageHeader title="Avtalsmallar" description="Juridiska mallar versionshanteras som utkast och måste godkännas innan de kan användas i ett avtal." />
+    <PageHeader title="Avtalsmallar" description="En mall måste godkännas innan den kan användas i ett avtal." />
     {params.error ? <p className="form-error">{params.error}</p> : null}
     {params.message ? <div className="notice">{params.message}</div> : null}
     <div className="split-layout">
       <Card>
-        <CardHeader><h2><ScrollText size={17} /> Mallar och versioner</h2><Badge>{templates?.length ?? 0}</Badge></CardHeader>
+        <CardHeader><h2><ScrollText size={17} /> Mallar</h2><Badge>{templates?.length ?? 0}</Badge></CardHeader>
         <CardContent style={{ padding: 0 }}>
-          <DataTable headers={["Mall", "Typ", "Målgrupp", "Version", "Status", "Åtgärd"]}>
-            {templates?.flatMap((template) => {
-              const versions = (template.contract_template_versions ?? []) as TemplateVersion[];
-              return versions.sort((a, b) => b.version - a.version).map((version) => <tr key={version.id}>
-                <td><strong>{template.name}</strong><br /><span className="muted">{template.current_version_id === version.id ? "Aktuell godkänd version" : "Historisk/utkast"}</span></td>
+          {/* En rad per mall, inte per version. Versionerna hör hemma inne i
+              mallen -- listan svarar på "vilka mallar finns och går de att
+              använda", inte på "vilken historik har de". */}
+          <DataTable headers={["Mall", "Typ", "Målgrupp", "Status"]}>
+            {templates?.map((template) => {
+              const versions = ((template.contract_template_versions ?? []) as TemplateVersion[])
+                .slice().sort((a, b) => b.version - a.version);
+              const current = versions.find((version) => version.id === template.current_version_id) ?? null;
+              const latest = versions[0] ?? null;
+              return <tr key={template.id}>
+                <td>
+                  <Link href={`/app/templates/${template.id}`}><strong>{template.name}</strong></Link>
+                  <br /><span className="muted">{versions.length} version{versions.length === 1 ? "" : "er"}{latest ? ` · senast ändrad ${formatDate(latest.created_at)}` : ""}</span>
+                </td>
                 <td>{template.contract_type}</td>
                 <td>{template.audience}</td>
-                <td>v{version.version}<br /><span className="muted">{formatDate(version.created_at)}</span></td>
-                <td><Badge className={version.status === "approved" ? "badge-success" : version.status === "draft" ? "badge-warning" : ""}>{version.status}</Badge></td>
-                <td>{version.status === "draft" && ["owner", "admin"].includes(ctx.role) ? <form action={approveContractTemplateVersion}><input type="hidden" name="version_id" value={version.id} /><button className="button button-secondary">Godkänn version</button></form> : "—"}</td>
-              </tr>);
+                <td>
+                  {current
+                    ? <Badge className="badge-success">Godkänd v{current.version}</Badge>
+                    : <Badge className="badge-warning">Utkast — kan inte användas</Badge>}
+                </td>
+              </tr>;
             })}
           </DataTable>
+          {!templates?.length ? <p className="muted" style={{ padding: 16 }}>Inga mallar än. Skapa den första i formuläret bredvid.</p> : null}
         </CardContent>
       </Card>
       <Card>
-        <CardHeader><h2>Skapa ny mallversion</h2></CardHeader>
+        <CardHeader><h2>Ny mall</h2></CardHeader>
         <CardContent>
           {!legalEntities?.length ? <div className="notice warning">Skapa först ett juridiskt avsändarbolag under Administration.</div> : null}
+          {/* Ändra en befintlig mall gör man inne i mallen, med dess text
+              förifylld. Att välja den här i en rullgardin och skriva om allt
+              från början var det enda sättet tidigare. */}
           <form action={createContractTemplateVersion} className="form-stack">
-            <SelectField label="Befintlig mall (valfritt)" name="template_id">
-              <option value="">Skapa ny mall</option>
-              {templates?.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
-            </SelectField>
             <Field label="Mallnamn" name="name" placeholder="Standardavtal företag" required />
             <Field label="Avtalstyp" name="contract_type" placeholder="abonnemang" required />
             <SelectField label="Målgrupp" name="audience" defaultValue="B2B" required>
@@ -72,28 +77,12 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Pr
             <TextareaField label="Beskrivning" name="description" />
             <Field label="Dynamisk avtalstitel" name="title_template" defaultValue="{{contract.title}}" required />
             <ContractTemplateDocumentUpload target="body_template" label="Ladda upp avtalet (.docx)" />
-            <TextareaField label="Avtalstext" name="body_template" defaultValue={"Avtal mellan {{seller.legal_name}} och {{customer.display_name}}. Avtalet avser {{product.name}}. Månadspris: {{price.recurring_fee}} {{price.currency}}.\n\nKundens organisationsnummer: {{customer.organization_number?saknas}}\nKundens e-post: {{customer.email?}}"} required />
+            <TextareaField label="Avtalstext" name="body_template" defaultValue={"Avtal mellan {{seller.legal_name}} och {{customer.display_name}}. Avtalet avser {{product.name}}. Månadspris: {{price.recurring_fee}} {{price.currency}}."} required />
             <ContractTemplateDocumentUpload target="terms_template" label="Ladda upp villkoren (.docx)" />
-            <TextareaField label="Fullständiga villkor" name="terms_template" defaultValue={"Bindningstid: {{price.binding_months?ingen}}. Uppsägningstid: {{price.notice_months?ingen}}. Betalningsvillkor: {{price.payment_terms_days?enligt överenskommelse}} dagar. Avtalet upprättades {{today}}.\n\nHär ska era juridiskt granskade fullständiga villkor anges innan versionen godkänns."} required />
-            <button className="button button-primary" disabled={!legalEntities?.length}>Spara som nytt utkast</button>
+            <TextareaField label="Fullständiga villkor" name="terms_template" defaultValue={"Bindningstid: {{price.binding_months?ingen}}. Uppsägningstid: {{price.notice_months?ingen}}. Avtalet upprättades {{today}}.\n\nHär ska era juridiskt granskade fullständiga villkor anges."} required />
+            <TemplateFieldReference />
+            <button className="button button-primary" disabled={!legalEntities?.length}>Spara som utkast</button>
           </form>
-          <div className="notice" style={{ marginTop: 16 }}>
-            Ladda upp avtalet från Word och markera sedan var kundens uppgifter ska in — systemet fyller i dem från kundkortet när säljaren skickar avtalet. <strong>Använd bara de fält du faktiskt vill ha med.</strong> Texten ovan är ett förslag, inte ett krav: ta bort det du inte behöver.
-            <p style={{ marginTop: 10, marginBottom: 0 }}>
-              Ett fält måste ha ett värde — är det tomt på kundkortet stoppas avtalet innan det skickas, med namnet på det som fattas.
-              Vill du att fältet ska få vara tomt sätter du ett frågetecken sist: <code>{"{{customer.email?}}"}</code> visar ingenting,
-              och <code>{"{{customer.organization_number?saknas}}"}</code> visar ordet <em>saknas</em> i stället.
-              Ett fältnamn som inte finns avvisas redan när du sparar, med det riktiga namnet utskrivet.
-            </p>
-          </div>
-          <div className="notice" style={{ marginTop: 12 }}>
-            <strong>Fält du kan använda</strong> <span className="muted">— inget av dem är obligatoriskt</span>
-            {templateContextRoots.map((root) => <p key={root} style={{ marginTop: 8 }}>
-              <strong>{root}</strong>{" · "}
-              {templateContextFields[root].map((field, index) => <span key={field}>{index ? ", " : ""}<code>{`{{${root}.${field}}}`}</code></span>)}
-            </p>)}
-            <p style={{ marginTop: 8 }}>{templateScalarRoots.map((root) => <code key={root}>{`{{${root}}}`}</code>)}</p>
-          </div>
         </CardContent>
       </Card>
     </div>

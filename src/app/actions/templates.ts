@@ -68,9 +68,13 @@ export async function createContractTemplateVersion(form: FormData) {
     p_variables_schema: Object.fromEntries(variables.map((name) => [name, { type: "string", required: required.includes(name) }])),
     p_signing_configuration: { methods: ["web", "sms"], require_explicit_acceptance: true },
   });
-  if (error) redirect(`/app/templates?error=${encodeURIComponent(error.message)}`);
+  // Tillbaka dit man kom ifrån. Den som redigerar en mall står inne i den och
+  // vill se resultatet, inte kastas ut i listan.
+  const origin = parsed.data.templateId ? `/app/templates/${parsed.data.templateId}` : "/app/templates";
+  if (error) redirect(`${origin}?error=${encodeURIComponent(error.message)}`);
   revalidatePath("/app/templates");
-  redirect("/app/templates?message=Ny mallversion skapad som utkast. En ägare eller administratör måste godkänna den.");
+  if (parsed.data.templateId) revalidatePath(`/app/templates/${parsed.data.templateId}`);
+  redirect(`${origin}?message=${encodeURIComponent("Ny version sparad som utkast. En ägare eller administratör måste godkänna den innan den kan användas.")}`);
 }
 
 export async function approveContractTemplateVersion(form: FormData) {
@@ -79,9 +83,16 @@ export async function approveContractTemplateVersion(form: FormData) {
   const versionId = value(form, "version_id");
   if (!z.uuid().safeParse(versionId).success) redirect("/app/templates?error=Ogiltig mallversion");
   const supabase = await createClient();
+  // Mallen bakom versionen, så godkännandet kan lämna tillbaka en till samma
+  // sida man stod på. Ett läsfel här är inte ett skäl att avbryta godkännandet
+  // -- då hamnar man i listan i stället, och det är en sämre plats, inte ett fel.
+  const { data: version } = await supabase.from("contract_template_versions")
+    .select("template_id").eq("id", versionId).maybeSingle();
+  const origin = version?.template_id ? `/app/templates/${version.template_id}` : "/app/templates";
   const { error } = await supabase.rpc("approve_contract_template_version", { p_version_id: versionId });
-  if (error) redirect(`/app/templates?error=${encodeURIComponent(error.message)}`);
+  if (error) redirect(`${origin}?error=${encodeURIComponent(error.message)}`);
   revalidatePath("/app/templates");
+  if (version?.template_id) revalidatePath(`/app/templates/${version.template_id}`);
   revalidatePath("/app/contracts");
-  redirect("/app/templates?message=Mallversionen är godkänd och kan nu användas för nya avtal");
+  redirect(`${origin}?message=${encodeURIComponent("Versionen är godkänd och kan nu användas för nya avtal.")}`);
 }

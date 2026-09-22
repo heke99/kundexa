@@ -940,6 +940,37 @@ for (const [name, pattern, what] of [
     `${name} must take the account from the platform, unconditionally: ${what} belongs to the platform`);
 }
 
+// Mallen ska gå att läsa och ändra, inte bara listas.
+//
+// Listan visade namn, typ och status -- aldrig vad som faktiskt stod i avtalet.
+// Enda vägen till en ändring var att skriva om hela mallen från början i
+// formuläret bredvid, eftersom versionen tar hela texten. Innehållet fanns, det
+// visades bara inte, och därför kunde ingen se vad de godkände.
+{
+  const detail = await readFile(join(root, "src/app/(dashboard)/app/templates/[id]/page.tsx"), "utf8");
+  for (const field of ["title_template", "body_template", "terms_template"]) {
+    assert.ok(detail.includes(`shown.${field}`),
+      `The template page must show ${field}; approving a legal text nobody can read is not an approval`);
+    assert.ok(detail.includes(`defaultValue={shown.${field}}`),
+      `The template edit form must prefill ${field}; retyping the whole contract is not an edit`);
+  }
+  assert.match(detail, /name="template_id" value=\{template\.id\}/,
+    "Editing must create a new version of the same template, not a second template");
+
+  const list = await readFile(join(root, "src/app/(dashboard)/app/templates/page.tsx"), "utf8");
+  assert.match(list, /\/app\/templates\/\$\{template\.id\}/,
+    "Each template in the list must link to itself");
+  // Referensen är ett uppslagsverk. Utfälld permanent trängde den undan
+  // formuläret för alla som inte behövde den just då.
+  const reference = await readFile(join(root, "src/components/template-field-reference.tsx"), "utf8");
+  assert.match(reference, /<details/,
+    "The field reference must be collapsible");
+  for (const [file, source] of [["list", list], ["detail", detail]]) {
+    assert.ok(!source.includes("templateContextFields"),
+      `The ${file} page must not inline the field reference; it belongs in the collapsible component`);
+  }
+}
+
 // Ett nytt företag ska kunna skicka avtal utan att någon testar plattformens
 // konto åt det.
 //
