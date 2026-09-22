@@ -1,7 +1,7 @@
 import { ok } from "@/lib/supabase/read";
 import { KeyRound, Phone, Plug } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
-import { addPhoneNumber, generateResendWebhookAddress, saveSmsIntegration, saveContractReminderPolicy, saveEmailIntegration, testResendIntegration } from "@/app/actions/admin";
+import { addPhoneNumber, generateResendWebhookAddress, saveSmsIntegration, saveContractReminderPolicy, saveEmailIntegration, testResendIntegration, inspectResendDomains } from "@/app/actions/admin";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
@@ -113,6 +113,7 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
           <button className="button button-primary">Spara krypterat som väntande</button>
         </form>
         {resend ? <div className="grid grid-2" style={{ marginTop: 12 }}><form action={testResendIntegration}><input type="hidden" name="integration_id" value={resend.id} /><button className="button button-secondary">Testa anslutning</button><p className="muted" style={{ marginTop: 6 }}>Testmeddelandet går till din egen inloggningsadress.</p></form><form action={generateResendWebhookAddress}><input type="hidden" name="integration_id" value={resend.id} /><button className="button button-ghost">Generera ny webhookadress</button></form></div> : null}
+        <form action={inspectResendDomains} style={{ marginTop: 10 }}><button className="button button-ghost">Kontrollera avsändardomänen hos Resend</button><p className="muted" style={{ marginTop: 6 }}>Frågar Resend vilka domäner nyckeln faktiskt ser. Svarar leverantören att domänen inte är verifierad trots att den är det, tillhör nyckeln ett annat konto.</p></form>
         <div className="notice warning" style={{ marginTop: 14 }}>Avsändardomänen är verifierad hos Resend av Kundexa. Sparad signeringshemlighet visas aldrig igen. Senaste test: {String(resendConfig.last_test_status ?? "inte utfört")}{resendConfig.last_tested_at ? ` · ${formatDate(String(resendConfig.last_tested_at))}` : ""}{resendConfig.last_error ? <><br /><strong>Fel:</strong> {String(resendConfig.last_error)}</> : null}</div>
       </CardContent></Card>
 

@@ -940,6 +940,31 @@ for (const [name, pattern, what] of [
     `${name} must take the account from the platform, unconditionally: ${what} belongs to the platform`);
 }
 
+// Domänkontrollen får aldrig skicka nyckeln vidare till den som frågar.
+//
+// Den hämtar sitt svar från leverantören med Kundexas nyckel och visar det i
+// gränssnittet. Domännamn och status är publika uppgifter; nyckeln är det inte,
+// och en felsökningsfunktion som råkar eka den vore värre än problemet den
+// löser.
+{
+  const adminSource = await readFile(join(root, "src/app/actions/admin.ts"), "utf8");
+  const start = adminSource.indexOf("export async function inspectResendDomains");
+  assert.ok(start >= 0, "The Resend domain check must exist: the account mismatch is invisible without it");
+  const body = adminSource.slice(start, adminSource.indexOf("\nexport ", start + 1))
+    .replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
+  assert.match(body, /await adminContext\(\)/,
+    "The Resend domain check must be admin-gated");
+  assert.match(body, /https:\/\/api\.resend\.com\/domains/,
+    "The Resend domain check must ask the provider, not guess from stored configuration");
+  for (const line of body.split("\n")) {
+    if (!line.includes("apiKey")) continue;
+    assert.ok(/Bearer \$\{apiKey\}|const apiKey = env\.RESEND_API_KEY|!apiKey/.test(line),
+      "The Resend domain check must only use the key as a bearer credential, never place it in a message");
+  }
+  assert.ok(!/encodeURIComponent\([^)]*apiKey/.test(body),
+    "The Resend domain check must never put the key into a redirect message");
+}
+
 // Avsändaridentiteten får inte bli ett fält någon fyller i.
 //
 // `from_name`, `reply_to` och `test_recipient` låg som kopior i
