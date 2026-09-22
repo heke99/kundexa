@@ -177,3 +177,24 @@ export function canAccessRoute(role: string, pathname: string) {
   return rule.anyPermission?.some((permission) => can(role, permission)) ?? false;
 }
 
+
+/**
+ * Får den här personen skapa ett avtal från en produkt?
+ *
+ * Avtalstexten skrivs av den som svarar för den och ligger i produkten. Att
+ * välja produkten under ett samtal och få avtalet ifyllt är säljarens arbete,
+ * inte författande: säljaren sätter ingen text, bara vilken produkt kunden köper.
+ * Dialern skickar säljaren hit efter varje samtal, och en sida som då sa nej
+ * gjorde hela vägen från samtal till avtal oframkomlig.
+ *
+ * Ett eget avtal från en uppladdad PDF är fortfarande författande och kräver
+ * `canAuthorContracts`.
+ */
+export function canCreateContractFromProduct(role: string, platformRole: string | null) {
+  return can(role, "contracts.write") || canAuthorContracts(role, platformRole);
+}
+
+export function assertContractFromProduct(role: string, platformRole: string | null) {
+  if (canCreateContractFromProduct(role, platformRole)) return;
+  assertPermission(role, "contracts.write");
+}

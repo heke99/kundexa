@@ -2489,6 +2489,7 @@ export type Database = {
           id: string
           legal_entity_id: string | null
           name: string
+          product_id: string | null
           tenant_id: string
           updated_at: string
         }
@@ -2502,6 +2503,7 @@ export type Database = {
           id?: string
           legal_entity_id?: string | null
           name: string
+          product_id?: string | null
           tenant_id: string
           updated_at?: string
         }
@@ -2515,6 +2517,7 @@ export type Database = {
           id?: string
           legal_entity_id?: string | null
           name?: string
+          product_id?: string | null
           tenant_id?: string
           updated_at?: string
         }
@@ -2531,6 +2534,13 @@ export type Database = {
             columns: ["tenant_id", "legal_entity_id"]
             isOneToOne: false
             referencedRelation: "tenant_legal_entities"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "contract_templates_product_tenant_fk"
+            columns: ["tenant_id", "product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
             referencedColumns: ["tenant_id", "id"]
           },
           {
@@ -12595,6 +12605,24 @@ export type Database = {
           p_name: string
           p_organization_number?: string
           p_timezone?: string
+        }
+        Returns: string
+      }
+      create_product_contract_template_version: {
+        Args: {
+          p_audience: string
+          p_body_template: string
+          p_contract_type: string
+          p_description: string
+          p_legal_entity_id: string
+          p_name: string
+          p_product_id: string
+          p_signing_configuration?: Json
+          p_template_id: string
+          p_terms_template: string
+          p_title_template: string
+          p_variables?: Json
+          p_variables_schema?: Json
         }
         Returns: string
       }

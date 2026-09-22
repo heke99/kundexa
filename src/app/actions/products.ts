@@ -70,5 +70,6 @@ export async function createProduct(form: FormData) {
     after_data: { price_version: 1, payment_terms_days: parsed.data.paymentTermsDays },
   });
   revalidatePath("/app/products");
-  redirect("/app/products");
+  // Nästa steg är avtalet i produkten, så dit går man direkt.
+  redirect(`/app/templates?product_id=${product.id}&message=${encodeURIComponent(`${parsed.data.name} är skapad. Lägg nu in avtalet som hör till produkten.`)}`);
 }

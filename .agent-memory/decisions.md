@@ -171,3 +171,23 @@ e-post grindas uteslutande per företag.
 huruvida ett enskilt meddelande får skickas avgörs separat av kontaktpolicy och
 rättslig grund, och ingenting skickas alls innan en Resend-integration är aktiv.
 Att slå på flaggan tar bort en återvändsgränd, inte ett skydd.
+
+## ADR-0019 — Avtalet hör till produkten
+
+Beslutat 2026-09-22 på användarens uttryckliga modell: man skapar en produkt ("Elavtal
+rörligt"), lägger avtalet i den, och säljaren väljer produkten under samtalet; avtalet och
+kundens uppgifter följer.
+
+- `contract_templates.product_id` (FK `(tenant_id,product_id)`, `on delete set null (product_id)`),
+  högst ett aktivt avtal per produkt (partiellt unikt index).
+- Avtal skrivs genom `create_product_contract_template_version`, som skapar versionen och
+  kopplingen i en transaktion. Samma roller som tidigare: ägare, admin, avtalsansvarig, teamledare.
+- `contracts_enforce_product_template` (before insert) vägrar ett avtal vars mall hör till en
+  annan produkt, och en produkt med avtal som säljs utan det.
+- `createContract` tar bara kund och produkt från formuläret; mall, godkänd version,
+  utfärdande bolag och pris härleds. **Säljare får skapa avtal från produkt**
+  (`canCreateContractFromProduct` = `contracts.write` eller författare). Det ersätter ADR-beslutet
+  i PR #29 om att säljare inte skapar avtal: dialern skickar säljaren till "Nytt avtal" efter
+  varje samtal, och den sidan sa nej. Eget PDF-dokument är fortfarande författande
+  (`canAuthorContracts`).
+- En mall utan produkt kan inte väljas av någon; den visas med "Koppla till produkt".

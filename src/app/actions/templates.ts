@@ -18,6 +18,7 @@ export async function createContractTemplateVersion(form: FormData) {
 
   const parsed = z.object({
     templateId: z.union([z.uuid(), z.literal("")]),
+    productId: z.uuid(),
     name: z.string().min(2).max(120),
     contractType: z.string().min(2).max(80),
     audience: z.enum(["B2B", "B2C", "BOTH"]),
@@ -28,6 +29,7 @@ export async function createContractTemplateVersion(form: FormData) {
     termsTemplate: z.string().min(20).max(100_000),
   }).safeParse({
     templateId: value(form, "template_id"),
+    productId: value(form, "product_id"),
     name: value(form, "name"),
     contractType: value(form, "contract_type"),
     audience: value(form, "audience"),
@@ -37,7 +39,15 @@ export async function createContractTemplateVersion(form: FormData) {
     bodyTemplate: value(form, "body_template"),
     termsTemplate: value(form, "terms_template"),
   });
-  if (!parsed.success) redirect("/app/templates?error=Kontrollera mallens namn, målgrupp, juridiska bolag och fullständiga villkor");
+  if (!parsed.success) {
+    // Avtalet hör till en produkt. Utan den kan ingen säljare någonsin välja det.
+    const productMissing = !z.uuid().safeParse(value(form, "product_id")).success;
+    const templateId = value(form, "template_id");
+    const back = z.uuid().safeParse(templateId).success ? `/app/templates/${templateId}` : "/app/templates";
+    redirect(`${back}?error=${encodeURIComponent(productMissing
+      ? "Välj vilken produkt avtalet hör till."
+      : "Kontrollera mallens namn, målgrupp, juridiska bolag och fullständiga villkor.")}`);
+  }
 
   const variables = templateVariableNames(parsed.data.titleTemplate, parsed.data.bodyTemplate, parsed.data.termsTemplate);
   const required = requiredTemplateVariableNames(parsed.data.titleTemplate, parsed.data.bodyTemplate, parsed.data.termsTemplate);
@@ -49,11 +59,15 @@ export async function createContractTemplateVersion(form: FormData) {
   if (problems.length) {
     const message = problems.slice(0, 4).map(describeTemplateVariableProblem).join(" ");
     const more = problems.length > 4 ? ` (och ${problems.length - 4} till)` : "";
-    redirect(`/app/templates?error=${encodeURIComponent(message + more)}`);
+    const back = parsed.data.templateId ? `/app/templates/${parsed.data.templateId}` : `/app/templates?product_id=${parsed.data.productId}`;
+    redirect(`${back}${back.includes("?") ? "&" : "?"}error=${encodeURIComponent(message + more)}`);
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.rpc("create_contract_template_version", {
+  // Versionen och produktkopplingen i samma transaktion: ett avtal som skapas
+  // men inte hinner kopplas är en mall ingen säljare kan välja.
+  const { data: versionId, error } = await supabase.rpc("create_product_contract_template_version", {
+    p_product_id: parsed.data.productId,
     p_template_id: parsed.data.templateId || null,
     p_name: parsed.data.name,
     p_contract_type: parsed.data.contractType,
@@ -72,11 +86,25 @@ export async function createContractTemplateVersion(form: FormData) {
   });
   // Tillbaka dit man kom ifrån. Den som redigerar en mall står inne i den och
   // vill se resultatet, inte kastas ut i listan.
-  const origin = parsed.data.templateId ? `/app/templates/${parsed.data.templateId}` : "/app/templates";
-  if (error) redirect(`${origin}?error=${encodeURIComponent(error.message)}`);
+  if (error || !versionId) {
+    const origin = parsed.data.templateId ? `/app/templates/${parsed.data.templateId}` : `/app/templates?product_id=${parsed.data.productId}`;
+    redirect(`${origin}${origin.includes("?") ? "&" : "?"}error=${encodeURIComponent(describeTemplateSaveError(error?.message ?? ""))}`);
+  }
+  // En ny mall får sitt id först nu. Den som skapade den vill se den, inte listan.
+  const { data: saved } = await supabase.from("contract_template_versions").select("template_id").eq("id", versionId).maybeSingle();
+  const origin = saved?.template_id ? `/app/templates/${saved.template_id}` : "/app/templates";
   revalidatePath("/app/templates");
-  if (parsed.data.templateId) revalidatePath(`/app/templates/${parsed.data.templateId}`);
-  redirect(`${origin}?message=${encodeURIComponent("Ny version sparad som utkast. En ägare eller administratör måste godkänna den innan den kan användas.")}`);
+  revalidatePath("/app/products");
+  revalidatePath(origin);
+  redirect(`${origin}?message=${encodeURIComponent("Sparat som utkast. En ägare eller administratör godkänner det, sedan kan säljarna välja produkten.")}`);
+}
+
+function describeTemplateSaveError(message: string) {
+  if (message.includes("product_already_has_contract")) return "Produkten har redan ett avtal. Öppna det avtalet och spara en ny version i stället.";
+  if (message.includes("product_not_found")) return "Produkten finns inte.";
+  if (message.includes("contract_template_permission_required")) return "Din roll kan inte skriva avtal.";
+  if (message.includes("legal_entity_not_found")) return "Det juridiska bolaget finns inte eller är inaktivt.";
+  return message || "Avtalet kunde inte sparas.";
 }
 
 export async function approveContractTemplateVersion(form: FormData) {

@@ -9,7 +9,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { acceptanceCode, encryptJson, randomToken, sha256, sha256Bytes } from "@/lib/crypto";
 import { canonicalAppBaseUrl, serverEnv } from "@/lib/env";
 import { normalizePhone } from "@/lib/domain/phone";
-import { assertPermission, assertContractAuthor } from "@/lib/permissions";
+import { assertPermission, assertContractAuthor, assertContractFromProduct } from "@/lib/permissions";
 import { renderStrictTemplate } from "@/lib/domain/template";
 import { buildTemplateRenderContext } from "@/lib/contracts/template-context";
 import { zonedLocalDateTimeToIso } from "@/lib/domain/time";
@@ -22,16 +22,22 @@ import { normalizeVariableFees } from "@/lib/contracts/price-terms";
 const value = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
 const contractNumber = () => `KX-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
 
+/**
+ * Skapar ett avtal från en produkt.
+ *
+ * Säljaren väljer produkten. Avtalet, dess godkända text, det utfärdande bolaget
+ * och priset hämtas från produkten, och kundens uppgifter från kundkortet.
+ * Tidigare valde säljaren mall, bolag och produkt i tre separata listor, och
+ * ingenting hindrade att elavtalets text skickades med bredbandets pris.
+ */
 export async function createContract(form: FormData) {
   const ctx = await getAppContext();
-  assertContractAuthor(ctx.role, ctx.platformRole);
+  assertContractFromProduct(ctx.role, ctx.platformRole);
 
   const parsed = z.object({
     customerId: z.uuid(),
-    productId: z.union([z.uuid(), z.literal("")]),
-    templateVersionId: z.uuid(),
-    legalEntityId: z.uuid(),
-    title: z.string().min(2).max(200),
+    productId: z.uuid(),
+    title: z.union([z.string().min(2).max(200), z.literal("")]),
     salesChannel: z.enum(["telephone", "web", "email", "in_person", "partner", "api", "other"]),
     sourceCallId: z.union([z.uuid(), z.literal("")]),
     startsOn: z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.literal("")]),
@@ -49,8 +55,6 @@ export async function createContract(form: FormData) {
   }).safeParse({
     customerId: value(form, "customer_id"),
     productId: value(form, "product_id"),
-    templateVersionId: value(form, "template_version_id"),
-    legalEntityId: value(form, "legal_entity_id"),
     title: value(form, "title"),
     salesChannel: value(form, "sales_channel") || "other",
     sourceCallId: value(form, "source_call_id"),
@@ -67,28 +71,44 @@ export async function createContract(form: FormData) {
     teamId: value(form, "team_id"),
     expiresAt: value(form, "expires_at"),
   });
-  if (!parsed.success) redirect("/app/contracts?error=Kund, juridiskt bolag, godkänd mall och avtalstitel krävs");
+  // Tillbaka till formuläret med kunden och samtalet kvar, inte ut i listan.
+  const back: (message: string) => never = (message) => {
+    const customerId = value(form, "customer_id");
+    const callId = value(form, "source_call_id");
+    const query = new URLSearchParams();
+    if (z.uuid().safeParse(customerId).success) query.set("customer_id", customerId);
+    if (z.uuid().safeParse(callId).success) query.set("source_call_id", callId);
+    query.set("error", message);
+    redirect(`/app/contracts/new?${query.toString()}`);
+  };
+  if (!parsed.success) back(!z.uuid().safeParse(value(form, "product_id")).success ? "Välj produkt." : "Kontrollera uppgifterna i avtalet.");
+  const input = parsed.data;
 
   const supabase = await createClient();
-  const [{ data: customer }, { data: legalEntity }, { data: templateVersion }] = await Promise.all([
-    supabase.from("customers").select("id,display_name,customer_type,first_name,last_name,company_name,personal_identity_number,organization_number,email,phone_e164,address_line1,postal_code,city,country_code").eq("id", parsed.data.customerId).is("deleted_at", null).single(),
-    supabase.from("tenant_legal_entities").select("id,legal_name,organization_number,address_line1,postal_code,city,country_code,email,phone_e164,website,branding").eq("id", parsed.data.legalEntityId).eq("active", true).single(),
-    supabase.from("contract_template_versions").select("id,template_id,status,title_template,body_template,terms_template,variables,approved_at").eq("id", parsed.data.templateVersionId).single(),
+  const [{ data: customer }, { data: template }] = await Promise.all([
+    supabase.from("customers").select("id,display_name,customer_type,first_name,last_name,company_name,personal_identity_number,organization_number,email,phone_e164,address_line1,postal_code,city,country_code").eq("id", input.customerId).is("deleted_at", null).maybeSingle(),
+    supabase.from("contract_templates")
+      .select("id,name,audience,active,current_version_id,legal_entity_id")
+      .eq("product_id", input.productId).eq("active", true).maybeSingle(),
   ]);
-  if (!customer) redirect("/app/contracts?error=Kunden saknas eller är inte tillgänglig");
-  if (!legalEntity) redirect("/app/contracts?error=Det juridiska avsändarbolaget saknas eller är inaktivt");
-  if (!templateVersion || templateVersion.status !== "approved") redirect("/app/contracts?error=En godkänd avtalsmall krävs");
-
-  const { data: template } = await supabase.from("contract_templates")
-    .select("id,name,audience,active,current_version_id,legal_entity_id")
-    .eq("id", templateVersion.template_id).single();
+  if (!customer) back("Kunden saknas eller är inte tillgänglig.");
+  if (!template) back("Produkten har inget avtal. Be en teamledare eller administratör lägga in avtalet i produkten.");
+  if (!template.current_version_id) back("Produktens avtal är inte godkänt än. En ägare eller administratör godkänner det under Avtal.");
   const audience = customer.customer_type === "person" ? "B2C" : "B2B";
-  if (!template?.active || template.current_version_id !== templateVersion.id || ![audience, "BOTH"].includes(template.audience)) {
-    redirect("/app/contracts?error=Mallversionen är inte den aktuella godkända versionen för denna kundtyp");
+  if (![audience, "BOTH"].includes(template.audience)) {
+    back(template.audience === "B2B" ? "Produktens avtal gäller bara företagskunder." : "Produktens avtal gäller bara privatkunder.");
   }
-  if (template.legal_entity_id && template.legal_entity_id !== legalEntity.id) {
-    redirect("/app/contracts?error=Mallen är bunden till ett annat juridiskt bolag");
-  }
+
+  const [{ data: templateVersion }, { data: legalEntity }] = await Promise.all([
+    supabase.from("contract_template_versions").select("id,template_id,status,title_template,body_template,terms_template,variables,approved_at").eq("id", template.current_version_id).maybeSingle(),
+    // Bolaget som står på avtalet: det avtalet skrevs för, annars företagets
+    // förvalda. Ingen säljare ska behöva välja vem som utfärdar avtalet.
+    template.legal_entity_id
+      ? supabase.from("tenant_legal_entities").select("id,legal_name,organization_number,address_line1,postal_code,city,country_code,email,phone_e164,website,branding").eq("id", template.legal_entity_id).eq("active", true).maybeSingle()
+      : supabase.from("tenant_legal_entities").select("id,legal_name,organization_number,address_line1,postal_code,city,country_code,email,phone_e164,website,branding").eq("active", true).order("is_default", { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  if (!templateVersion || templateVersion.status !== "approved") back("Produktens avtal är inte godkänt än.");
+  if (!legalEntity) back("Bolaget som utfärdar avtalet är inaktivt. En administratör behöver aktivera det.");
 
   type ProductRecord = { id: string; name: string; sku: string | null; description: string | null };
   type PriceRecord = {
@@ -105,31 +125,34 @@ export async function createContract(form: FormData) {
   };
   let product: ProductRecord | null = null;
   let price: PriceRecord | null = null;
-  if (parsed.data.productId) {
+  {
     const [{ data: productData }, { data: priceData }] = await Promise.all([
-      supabase.from("products").select("id,name,sku,description").eq("id", parsed.data.productId).eq("active", true).single(),
-      supabase.from("product_price_versions").select("id,version,setup_fee,recurring_fee,variable_fees,currency,binding_months,notice_months,payment_terms_days,terms").eq("product_id", parsed.data.productId).eq("active", true).order("version", { ascending: false }).limit(1).maybeSingle(),
+      supabase.from("products").select("id,name,sku,description").eq("id", input.productId).eq("active", true).maybeSingle(),
+      supabase.from("product_price_versions").select("id,version,setup_fee,recurring_fee,variable_fees,currency,binding_months,notice_months,payment_terms_days,terms").eq("product_id", input.productId).eq("active", true).order("version", { ascending: false }).limit(1).maybeSingle(),
     ]);
-    if (!productData) redirect("/app/contracts?error=Produkten saknas eller är inaktiv");
-    if (!priceData) redirect("/app/contracts?error=Produkten saknar en aktiv prisversion");
+    if (!productData) back("Produkten saknas eller är inaktiv.");
+    if (!priceData) back("Produkten saknar ett aktivt pris. En administratör lägger in det under Produkter.");
     product = productData as ProductRecord;
     price = priceData as PriceRecord;
   }
+  // Titeln är produktens namn om ingen annan angetts. Säljaren ska inte behöva
+  // hitta på vad avtalet heter.
+  const title = input.title || product.name;
 
   const variableFees = normalizeVariableFees(price?.variable_fees);
-  const bindingMonths = parsed.data.bindingMonths === "" ? (price?.binding_months ?? null) : Number(parsed.data.bindingMonths);
-  const noticeMonths = parsed.data.noticeMonths === "" ? (price?.notice_months ?? null) : Number(parsed.data.noticeMonths);
-  const paymentTermsDays = parsed.data.paymentTermsDays === "" ? (price?.payment_terms_days ?? null) : Number(parsed.data.paymentTermsDays);
+  const bindingMonths = input.bindingMonths === "" ? (price?.binding_months ?? null) : Number(input.bindingMonths);
+  const noticeMonths = input.noticeMonths === "" ? (price?.notice_months ?? null) : Number(input.noticeMonths);
+  const paymentTermsDays = input.paymentTermsDays === "" ? (price?.payment_terms_days ?? null) : Number(input.paymentTermsDays);
   if ((bindingMonths ?? 0) > 240 || (noticeMonths ?? 0) > 120 || (paymentTermsDays ?? 0) > 365) {
-    redirect("/app/contracts?error=Bindningstid, uppsägningstid eller betalningsvillkor ligger utanför tillåtet intervall");
+    back("Bindningstid, uppsägningstid eller betalningsvillkor ligger utanför tillåtet intervall.");
   }
-  const contractValue = parsed.data.contractValue === "" ? Number(price?.recurring_fee ?? 0) : Number(parsed.data.contractValue);
+  const contractValue = input.contractValue === "" ? Number(price?.recurring_fee ?? 0) : Number(input.contractValue);
   const additionalTerms = {
     ...(price?.terms ?? {}),
-    ...(parsed.data.specialTerms ? { special_conditions: parsed.data.specialTerms } : {}),
+    ...(input.specialTerms ? { special_conditions: input.specialTerms } : {}),
   };
   const commercialTerms = {
-    currency: parsed.data.currency,
+    currency: input.currency,
     setup_fee: Number(price?.setup_fee ?? 0),
     recurring_fee: Number(price?.recurring_fee ?? 0),
     variable_fee: variableFees.total,
@@ -138,9 +161,9 @@ export async function createContract(form: FormData) {
     notice_months: noticeMonths,
     payment_terms_days: paymentTermsDays,
     contract_value: contractValue,
-    starts_on: parsed.data.startsOn || null,
-    ends_on: parsed.data.endsOn || null,
-    language: parsed.data.language,
+    starts_on: input.startsOn || null,
+    ends_on: input.endsOn || null,
+    language: input.language,
     product_id: product?.id ?? null,
     product_name: product?.name ?? null,
     price_version: price?.version ?? null,
@@ -189,13 +212,13 @@ export async function createContract(form: FormData) {
       payment_terms_days: commercialTerms.payment_terms_days,
     },
     contract: {
-      title: parsed.data.title,
-      sales_channel: parsed.data.salesChannel,
+      title,
+      sales_channel: input.salesChannel,
       audience,
-      starts_on: parsed.data.startsOn,
-      ends_on: parsed.data.endsOn,
-      language: parsed.data.language,
-      special_terms: parsed.data.specialTerms,
+      starts_on: input.startsOn,
+      ends_on: input.endsOn,
+      language: input.language,
+      special_terms: input.specialTerms,
     },
   });
 
@@ -216,27 +239,26 @@ export async function createContract(form: FormData) {
       ? raw.slice("unresolved_template_variables:".length).split(",").map((name) => name.trim()).filter(Boolean)
       : [];
     const message = missing.length
-      ? `Mallen kräver ${missing.join(", ")}, men avtalet har inget värde för ${missing.length === 1 ? "det" : "dem"}. Fyll i uppgiften på avtalet, eller öppna mallen och gör fältet valfritt genom att sätta ett frågetecken sist: {{${missing[0]}?}}`
+      ? `Avtalet kräver ${missing.join(", ")}, men det finns inget värde för ${missing.length === 1 ? "det" : "dem"}. Fyll i uppgiften på kundkortet, eller öppna produktens avtal och gör fältet valfritt genom att sätta ett frågetecken sist: {{${missing[0]}?}}`
       : "Mallrenderingen misslyckades.";
-    // Tillbaka till formuläret med kunden kvar, inte ut i listan.
-    redirect(`/app/contracts/new?customer_id=${parsed.data.customerId}&error=${encodeURIComponent(message)}`);
+    back(message);
   }
   const documentHash = sha256(`${renderedTitle}\n${renderedBody}\n${renderedTerms}\n${JSON.stringify(commercialTerms)}\n${JSON.stringify(sellerSnapshot)}\n${JSON.stringify(counterpartySnapshot)}`);
 
   let expiresAt: string | null = null;
-  if (parsed.data.expiresAt) {
+  if (input.expiresAt) {
     try {
-      expiresAt = zonedLocalDateTimeToIso(parsed.data.expiresAt, ctx.tenantTimezone);
+      expiresAt = zonedLocalDateTimeToIso(input.expiresAt, ctx.tenantTimezone);
       if (new Date(expiresAt).getTime() <= Date.now()) throw new Error("expiry_not_future");
     } catch {
-      redirect("/app/contracts?error=Sista svarsdatum måste vara ett giltigt framtida datum");
+      back("Sista svarsdatum måste vara ett giltigt framtida datum.");
     }
   }
 
   const { data: contractId, error } = await supabase.rpc("create_contract_draft_v3", {
     p_contract_number: contractNumber(),
-    p_customer_id: parsed.data.customerId,
-    p_product_id: parsed.data.productId || null,
+    p_customer_id: input.customerId,
+    p_product_id: input.productId,
     p_price_version_id: price?.id ?? null,
     p_template_id: template.id,
     p_template_version_id: templateVersion.id,
@@ -246,28 +268,28 @@ export async function createContract(form: FormData) {
     p_rendered_terms: renderedTerms,
     p_commercial_terms: commercialTerms,
     p_document_hash: documentHash,
-    p_sales_channel: parsed.data.salesChannel,
+    p_sales_channel: input.salesChannel,
     p_seller_snapshot: sellerSnapshot,
     p_counterparty_snapshot: counterpartySnapshot,
-    p_owner_user_id: parsed.data.ownerUserId || ctx.userId,
-    p_team_id: parsed.data.teamId || null,
-    p_starts_on: parsed.data.startsOn || null,
-    p_ends_on: parsed.data.endsOn || null,
+    p_owner_user_id: input.ownerUserId || ctx.userId,
+    p_team_id: input.teamId || null,
+    p_starts_on: input.startsOn || null,
+    p_ends_on: input.endsOn || null,
     p_binding_months: bindingMonths,
     p_notice_months: noticeMonths,
     p_contract_value: contractValue,
-    p_currency: parsed.data.currency,
+    p_currency: input.currency,
     p_expires_at: expiresAt,
   });
-  if (error || !contractId) redirect(`/app/contracts?error=${encodeURIComponent(error?.message ?? "Avtalet kunde inte skapas")}`);
+  if (error || !contractId) back(error?.message ?? "Avtalet kunde inte skapas.");
 
-  if (parsed.data.sourceCallId) {
+  if (input.sourceCallId) {
     try {
-      await assertContractCallEligibility(supabase, parsed.data.customerId, parsed.data.sourceCallId);
-      const { data: sourceCall } = await supabase.from("calls").select("dialer_session_id,metadata").eq("id", parsed.data.sourceCallId).single();
+      await assertContractCallEligibility(supabase, input.customerId, input.sourceCallId);
+      const { data: sourceCall } = await supabase.from("calls").select("dialer_session_id,metadata").eq("id", input.sourceCallId).single();
       const metadata = (sourceCall?.metadata ?? {}) as Record<string, unknown>;
       const sourceType = metadata.registered_manually === true ? "external_manual_call" : sourceCall?.dialer_session_id ? "dialer_call" : "manual_call";
-      const { error: sourceError } = await supabase.from("contracts").update({ source_call_id: parsed.data.sourceCallId, source_type: sourceType, prepared_at: new Date().toISOString() }).eq("id", contractId);
+      const { error: sourceError } = await supabase.from("contracts").update({ source_call_id: input.sourceCallId, source_type: sourceType, prepared_at: new Date().toISOString() }).eq("id", contractId);
       if (sourceError) throw sourceError;
     } catch (sourceError) {
       // Compensating delete. If it fails the draft survives with no source call,

@@ -135,3 +135,14 @@
   provider truth including removal; sync messaging describes the real provider state.
 - Tests: new runtime block in `verify-sql.mjs`, updated Deno unit test, updated `verify.mjs` and
   `remediation-regression-tests.mjs` assertions.
+
+## 2026-09-22 — Avtal under produkt
+
+- Migration `202609220003_contract_belongs_to_product.sql` (produktion + PGlite), RPC
+  `create_product_contract_template_version`, trigger `contracts_enforce_product_template`.
+- Negativa test i `verify-sql.mjs`: andra avtal på samma produkt, tenant B:s produkt,
+  säljare som författare, fel produkt/mall-kombination, produkt utan sitt avtal. Triggern
+  prövad genom borttagning.
+- UI: produktval i "Nytt avtal", produktkolumn/"Lägg till avtal" på Produkter, produktval och
+  fältknappar (`TemplateFieldButtons`) i mallformulären.
+- Behörighetsglapp stängda: säljare → nytt avtal, PDF-uppladdning, ny produkt, nytt avtal på mallsidan.

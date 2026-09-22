@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
 import { ContractTemplateDocumentUpload } from "@/components/contract-template-document-upload";
 import { TemplateFieldReference } from "@/components/template-field-reference";
+import { TemplateFieldButtons } from "@/components/template-field-buttons";
 import { formatDate } from "@/lib/utils";
 
 type Version = {
@@ -40,13 +41,18 @@ export default async function TemplateDetailPage({
   const { id } = await params;
   const query = await searchParams;
   const [ctx, supabase] = await Promise.all([getAppContext(), createClient()]);
-  const [{ data: template }, { data: legalEntities }] = await Promise.all([
+  const [{ data: template }, { data: legalEntities }, { data: products }, { data: linked }] = await Promise.all([
     ok(supabase.from("contract_templates")
-      .select("id,name,contract_type,audience,description,active,current_version_id,legal_entity_id,contract_template_versions!contract_template_versions_tenant_id_template_id_fkey(id,version,status,approved_at,created_at,title_template,body_template,terms_template)")
+      .select("id,name,contract_type,audience,description,active,current_version_id,legal_entity_id,product_id,contract_template_versions!contract_template_versions_tenant_id_template_id_fkey(id,version,status,approved_at,created_at,title_template,body_template,terms_template)")
       .eq("id", id).maybeSingle()),
     ok(supabase.from("tenant_legal_entities").select("id,legal_name,organization_number,is_default").eq("active", true).order("is_default", { ascending: false }).order("legal_name")),
+    ok(supabase.from("products").select("id,name").eq("active", true).order("name")),
+    ok(supabase.from("contract_templates").select("id,product_id").eq("active", true).not("product_id", "is", null)),
   ]);
   if (!template) notFound();
+  const product = (products ?? []).find((item) => item.id === template.product_id) ?? null;
+  // Andra avtals produkter går inte att välja: en produkt har ett avtal.
+  const taken = new Set((linked ?? []).filter((row) => row.id !== template.id).map((row) => row.product_id as string));
 
   const versions = ((template.contract_template_versions ?? []) as Version[])
     .slice().sort((a, b) => b.version - a.version);
@@ -62,11 +68,12 @@ export default async function TemplateDetailPage({
   return <>
     <PageHeader
       title={template.name}
-      description={`${template.contract_type} · ${template.audience}${template.description ? ` · ${template.description}` : ""}`}
+      description={`${product ? `Produkt: ${product.name}` : "Ingen produkt"} · ${template.audience}${template.description ? ` · ${template.description}` : ""}`}
     />
-    <Link href="/app/templates" className="button button-ghost" style={{ marginBottom: 14 }}><ArrowLeft size={16} /> Alla mallar</Link>
+    <Link href="/app/templates" className="button button-ghost" style={{ marginBottom: 14 }}><ArrowLeft size={16} /> Alla avtal</Link>
     {query.error ? <p className="form-error">{query.error}</p> : null}
     {query.message ? <div className="notice">{query.message}</div> : null}
+    {!template.product_id ? <div className="notice warning">Avtalet hör inte till någon produkt, så ingen säljare kan välja det. Välj produkt under Redigera och spara.</div> : null}
 
     <div className="split-layout">
       <Card>
@@ -130,7 +137,11 @@ export default async function TemplateDetailPage({
             <div className="notice">Ändringar sparas som en ny version. Den nuvarande texten är ifylld nedan — skriv om det du vill ändra.</div>
             <form action={createContractTemplateVersion} className="form-stack" style={{ marginTop: 12 }}>
               <input type="hidden" name="template_id" value={template.id} />
-              <Field label="Mallnamn" name="name" defaultValue={template.name} required />
+              <SelectField label="Produkt" name="product_id" defaultValue={template.product_id ?? ""} required>
+                <option value="">Välj produkt</option>
+                {products?.map((item) => <option key={item.id} value={item.id} disabled={taken.has(item.id)}>{item.name}{taken.has(item.id) ? " · har redan ett avtal" : ""}</option>)}
+              </SelectField>
+              <Field label="Avtalets namn" name="name" defaultValue={template.name} required />
               <Field label="Avtalstyp" name="contract_type" defaultValue={template.contract_type} required />
               <SelectField label="Målgrupp" name="audience" defaultValue={template.audience} required>
                 <option value="B2B">Företag</option><option value="B2C">Privatperson</option><option value="BOTH">Båda</option>
@@ -145,6 +156,7 @@ export default async function TemplateDetailPage({
               <TextareaField label="Avtalstext" name="body_template" defaultValue={shown.body_template} required />
               <ContractTemplateDocumentUpload target="terms_template" label="Ersätt villkoren från .docx" />
               <TextareaField label="Fullständiga villkor" name="terms_template" defaultValue={shown.terms_template} required />
+              <TemplateFieldButtons />
               <TemplateFieldReference />
               <button className="button button-secondary">Spara som ny version</button>
             </form>

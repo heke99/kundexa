@@ -1,5 +1,9 @@
 # Next actions
 
+**2026-09-22, först:** Skapa produkten (t.ex. "Elavtal rörligt") under Produkter, öppna mallen
+"Gridex hemsida · Mina sidor", välj produkten under Redigera och spara. Den godkända
+versionen gäller direkt. Skapa sedan ett avtal från en kund och skicka det till egen e-post.
+
 Uppdaterad 2026-09-18. Bytet till Sinch är genomfört och **mergat till main** (PR #19,
 `69f5d6f`). Webben och Edge-funktionerna är deployade; `/api/ready` svarar
 `telephonyConfigured: true`, och de tre webhookarna svarar 403 på en osignerad begäran.

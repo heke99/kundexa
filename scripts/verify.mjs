@@ -978,7 +978,9 @@ for (const [name, pattern, what] of [
   // lämna tillbaka en till formuläret man fyllde i.
   assert.match(actions, /gör fältet valfritt genom att sätta ett frågetecken sist/,
     "An unresolved template field must say how to fix it, not only which field is missing");
-  assert.match(actions, /redirect\(`\/app\/contracts\/new\?customer_id=\$\{parsed\.data\.customerId\}&error=/,
+  assert.match(actions, /query\.set\("customer_id", customerId\)[\s\S]{0,200}?redirect\(`\/app\/contracts\/new\?\$\{query\.toString\(\)\}`\)/,
+    "createContract's errors must return to the form with the customer kept, not discard it into the list");
+  assert.match(actions, /: "Mallrenderingen misslyckades\.";\s*back\(message\);/,
     "An unresolved template field must return to the form, not discard it into the list");
 }
 
@@ -1037,13 +1039,20 @@ for (const [name, pattern, what] of [
     "A platform administrator must be able to author contracts without a tenant role");
 
   const actions = await readFile(join(root, "src/app/actions/contracts.ts"), "utf8");
-  for (const entry of ["export async function createContract", "export async function uploadContractPdf"]) {
+  const actionBody = (entry) => {
     const start = actions.indexOf(entry);
     assert.ok(start >= 0, `${entry} must still exist`);
-    const body = actions.slice(start, actions.indexOf("\nexport ", start + 1));
-    assert.match(body, /assertContractAuthor\(ctx\.role, ctx\.platformRole\)/,
-      `${entry} must check the authoring right, not the general write right`);
-  }
+    return actions.slice(start, actions.indexOf("\nexport ", start + 1));
+  };
+  // Ett eget dokument ersätter produktens avtalstext: det är författande.
+  assert.match(actionBody("export async function uploadContractPdf"), /assertContractAuthor\(ctx\.role, ctx\.platformRole\)/,
+    "uploadContractPdf must check the authoring right, not the general write right");
+  // Att välja produkten och få dess avtal är säljarens arbete. Dialern skickar
+  // säljaren hit efter varje samtal; ett nej här gjorde vägen oframkomlig.
+  assert.match(actionBody("export async function createContract"), /assertContractFromProduct\(ctx\.role, ctx\.platformRole\)/,
+    "createContract must let a seller create a contract from a product");
+  assert.match(permissions, /export function canCreateContractFromProduct[\s\S]{0,200}?can\(role, "contracts\.write"\)/,
+    "Creating a contract from a product must follow contracts.write, which sales has");
 
   const list = await readFile(join(root, "src/app/(dashboard)/app/contracts/page.tsx"), "utf8");
   assert.match(list, /mayCreate \? <Link href="\/app\/contracts\/new"/,
@@ -1052,8 +1061,14 @@ for (const [name, pattern, what] of [
   // rättigheten och hade visat sig för en säljare som sedan nekats på sidan
   // bakom -- två knappar till samma nej.
   const customerCard = await readFile(join(root, "src/app/(dashboard)/app/customers/[id]/page.tsx"), "utf8");
-  assert.match(customerCard, /canAuthorContracts\(context\.role, context\.platformRole\)/,
-    "The customer card's contract button must use the same authoring right as the page behind it");
+  assert.match(customerCard, /canCreateContractFromProduct\(context\.role, context\.platformRole\)/,
+    "The customer card's contract button must use the same right as the page behind it");
+  const wizard = await readFile(join(root, "src/app/(dashboard)/app/contracts/new/page.tsx"), "utf8");
+  assert.match(wizard, /canCreateContractFromProduct\(ctx\.role, ctx\.platformRole\)/,
+    "The new-contract page must admit the same roles as createContract");
+  const contractPage = await readFile(join(root, "src/app/(dashboard)/app/contracts/[id]/page.tsx"), "utf8");
+  assert.match(contractPage, /mayUploadDocument \? <Card><CardHeader><h3><Upload/,
+    "The PDF upload card must be shown only to those uploadContractPdf admits");
 }
 
 // Mallen ska gå att läsa och ändra, inte bara listas.
@@ -1224,3 +1239,36 @@ assert.doesNotMatch(smsSaveBody.slice(0, smsSaveBody.indexOf("\n}")), /api_token
   "Saving SMS settings must not take tenant provider credentials: the sending number belongs to the platform's account");
 
 console.log(`Verified ${migrations.length} migrations, monotonic call/Resend projections, non-truncating imports, multi-recipient signing, dialer recovery, canonical contracts, tenant isolation and worker deployment.`);
+
+// Avtalet hör till produkten.
+//
+// Säljaren valde mall, bolag och produkt i tre listor, och ingenting hindrade
+// att elavtalets text skickades med bredbandets pris. Nu väljer säljaren
+// produkten och allt annat följer av den.
+{
+  const wizard = await readFile(join(root, "src/app/(dashboard)/app/contracts/new/page.tsx"), "utf8");
+  for (const removed of ['name="template_version_id"', 'name="legal_entity_id"']) {
+    assert.ok(!wizard.includes(removed), `The new-contract form must not ask the seller for ${removed}; the product decides it`);
+  }
+  assert.match(wizard, /<SelectField label="Produkt" name="product_id"[^>]*required>/,
+    "The new-contract form must ask for the product, and require it");
+
+  const actions = await readFile(join(root, "src/app/actions/contracts.ts"), "utf8");
+  const create = actions.slice(actions.indexOf("export async function createContract"), actions.indexOf("\nexport async function uploadContractPdf"));
+  assert.match(create, /from\("contract_templates"\)[\s\S]{0,200}?\.eq\("product_id", input\.productId\)/,
+    "createContract must find the contract through the product, not take a template from the form");
+  assert.ok(!create.includes('value(form, "template_version_id")') && !create.includes('value(form, "legal_entity_id")'),
+    "createContract must not accept a template or legal entity chosen in the form");
+
+  const templates = await readFile(join(root, "src/app/actions/templates.ts"), "utf8");
+  assert.match(templates, /rpc\("create_product_contract_template_version"/,
+    "A contract must be saved together with its product link, in one transaction");
+
+  for (const page of ["src/app/(dashboard)/app/templates/page.tsx", "src/app/(dashboard)/app/templates/[id]/page.tsx"]) {
+    const source = await readFile(join(root, page), "utf8");
+    assert.match(source, /<SelectField label="Produkt" name="product_id"/, `${page} must let the author choose the product`);
+    assert.match(source, /<TemplateFieldButtons \/>/, `${page} must offer buttons for the customer's fields, not only a list of names`);
+  }
+  const products = await readFile(join(root, "src/app/(dashboard)/app/products/page.tsx"), "utf8");
+  assert.match(products, /\/app\/templates\?product_id=\$\{product\.id\}/, "A product without a contract must link to adding one");
+}

@@ -199,3 +199,20 @@ Gridex `contract_delivery_sms`, som slogs på ensam och därför inte gör någo
 kräver båda. Dessutom finns bara ett nummer i hela systemet, `+12085810392`, med
 `supports_sms = false`. Knappen som ändrar flaggorna sitter under Administration;
 Integrationer visar dem men kan inte ändra dem.
+
+## 2026-09-22 — Avtalet under produkten
+
+Byggt enligt användarens modell (ADR-0019): migration `202609220003_contract_belongs_to_product.sql`
+applicerad i produktion, typer regenererade från länkat projekt (bara den nya kolumnen och RPC:n
+tillkom). "Nytt avtal" är nu kund → samtal → produkt; resten ligger under "Fler val".
+Mallredigeraren har knappar som sätter in kundfält där markören står, med val för "får vara tom".
+
+Andra flöden som var trasiga och rättades i samma pass:
+- Dialern skickar säljaren till `/app/contracts/new` efter samtal, men sidan nekade säljare
+  sedan PR #29 -- vägen samtal → avtal var stängd för just den som ringer.
+- "Ladda upp PDF" visades för alla med `contracts.write`; åtgärden kräver författarrätt.
+- "Ny produkt" visades för alla; `createProduct` kräver `products.manage` (ägare/admin).
+- Formuläret för nytt avtal på mallsidan visades för säljare, som nekades efter att ha skrivit klart.
+
+Produktionsdata: Gridex har **inga produkter**; mallen "Gridex hemsida · Mina sidor" är godkänd
+men saknar produkt och är därför inte valbar förrän den kopplas. Noll avtal i databasen.
