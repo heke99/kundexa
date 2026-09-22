@@ -1006,6 +1006,12 @@ for (const [name, pattern, what] of [
   const list = await readFile(join(root, "src/app/(dashboard)/app/contracts/page.tsx"), "utf8");
   assert.match(list, /mayCreate \? <Link href="\/app\/contracts\/new"/,
     "The new-contract button must be hidden from roles that cannot use it");
+  // Kundkortet har sin egen knapp till samma sida. Den stod kvar på den gamla
+  // rättigheten och hade visat sig för en säljare som sedan nekats på sidan
+  // bakom -- två knappar till samma nej.
+  const customerCard = await readFile(join(root, "src/app/(dashboard)/app/customers/[id]/page.tsx"), "utf8");
+  assert.match(customerCard, /canAuthorContracts\(context\.role, context\.platformRole\)/,
+    "The customer card's contract button must use the same authoring right as the page behind it");
 }
 
 // Mallen ska gå att läsa och ändra, inte bara listas.
