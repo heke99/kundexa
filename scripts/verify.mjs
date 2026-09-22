@@ -940,6 +940,48 @@ for (const [name, pattern, what] of [
     `${name} must take the account from the platform, unconditionally: ${what} belongs to the platform`);
 }
 
+// Beredskapssvaret måste rapportera webbappens egen e-postkonfiguration.
+//
+// Arbetarens rapport läser Edge-funktionens miljö. Anslutningstestet, som är
+// det som gör integrationen aktiv, körs i webbappen och läser Vercels. De två
+// var omöjliga att skilja utifrån: allt såg grönt ut medan testknappen svarade
+// att kontot inte är konfigurerat.
+{
+  const readyRoute = await readFile(join(root, "src/app/api/ready/route.ts"), "utf8");
+  assert.match(readyRoute, /webEmailConfigured: boolean;/,
+    "The readiness answer must carry the web app's own email configuration, not only the worker's");
+  assert.match(readyRoute, /env\.RESEND_API_KEY && env\.DEFAULT_EMAIL_FROM_ADDRESS/,
+    "The web app's email configuration must be read from the web app's own environment");
+  // Varje rad som alls nämner nyckeln måste reducera den till ett ja eller nej
+  // på samma rad. Svaret är publikt.
+  for (const line of readyRoute.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "").split("\n")) {
+    if (!line.includes("RESEND_API_KEY")) continue;
+    assert.match(line, /Boolean\(/,
+      "The readiness answer must report whether the key is set, never the key");
+  }
+}
+
+// Anslutningstestet får inte kräva en krypterad tenantpost.
+//
+// Testet skickar med Kundexas nyckel och behöver bara avsändarnamn och
+// testmottagare, båda i klartext. Kravet på `credentials_ciphertext` var kvar
+// från den tenantägda modellen och stoppade varje företag vars rad lades upp av
+// uppsättningen: knappen svarade "spara först" på en rad som inte saknade något
+// testet läser. Utan testet blir integrationen aldrig `active`, och utan
+// `active` vägrar utskicksarbetaren -- hela avtalsposten stod på den raden.
+for (const [file, entry] of [
+  ["src/app/actions/admin.ts", "export async function testResendIntegration"],
+  ["src/app/api/v1/integrations/resend/test/route.ts", "export async function POST"],
+]) {
+  const source = await readFile(join(root, file), "utf8");
+  const start = source.indexOf(entry);
+  assert.ok(start >= 0, `${file} must still contain ${entry}`);
+  const body = source.slice(start, source.indexOf("\nexport ", start + 1) >= 0 ? source.indexOf("\nexport ", start + 1) : undefined)
+    .replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
+  assert.doesNotMatch(body, /credentials_ciphertext/,
+    `${file} gates the Resend test on a stored tenant secret the test never reads; a backfilled integration can then never be tested, and never becomes active`);
+}
+
 // Ett tenantägt SMS-konto går inte att skicka från: numret hör till kontot.
 const smsIntegrationAction = (await readFile(join(root, "src/app/actions/admin.ts"), "utf8"))
   .replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");

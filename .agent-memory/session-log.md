@@ -164,3 +164,38 @@ finns kvar i databasen.
 borttagen rutt och tre motiveringar med leverantörens namn.
 
 **Kvar**: allt i `next-actions.md` kräver leverantörskonto eller ett riktigt samtal.
+
+---
+
+## 2026-09-18/20 — Avtalsposten stod på en rad som inte gick att testa
+
+**Två fel i samma kedja, båda hittade genom att mäta produktionen i stället för att läsa
+koden.**
+
+`testResendIntegration` (serveråtgärden) och `/api/v1/integrations/resend/test` krävde en
+sparad `credentials_ciphertext` och dekrypterade den utan att använda resultatet. Kravet
+var sant när API-nyckeln var företagets egen. Efter `202609180002` är nyckeln Kundexas,
+och testet läser bara `from_name` och `test_recipient` -- båda i klartext. Kravet träffade
+precis de rader migrationen backfillade: knappen svarade "Spara Resend-konfigurationen
+först" på en integration som inte saknade något testet läser. Utan godkänt test blir
+integrationen aldrig `active`, och utan `active` vägrar utskicksarbetaren. Hela
+avtalsposten för båda företagen stod still där. Fixat i `10ed8d0`.
+
+`platformEmailConfigured` i `/api/ready` är utskicksarbetarens rapport och läser
+Edge-funktionens miljö. Testet körs i webbappen och läser Vercels. Två uppsättningar
+variabler, satta var för sig, och den ena sa ingenting om den andra: svaret kunde vara
+helgrönt medan knappen sa att kontot inte är konfigurerat. Webbappen rapporterar nu
+`webEmailConfigured` (ja/nej, aldrig nyckeln). Fixat i `fe3c7d9`.
+
+**Mönstret är samma som resten av passet**: en spärr som var riktig i en tidigare modell
+och blev en fälla när modellen ändrades. Ingen av dem syntes i typkontroll, test eller
+bygge -- bara i produktionens rader.
+
+Tre nya `verify`-kontroller, alla prövade genom att återinföra felet.
+
+**Varför SMS är avstängt** (frågan kom upp, svaret är mätt): det är defaulten i
+`ensure_tenant_defaults`, och tidsstämplarna visar att flaggorna aldrig rörts -- alla utom
+Gridex `contract_delivery_sms`, som slogs på ensam och därför inte gör något. Grinden
+kräver båda. Dessutom finns bara ett nummer i hela systemet, `+12085810392`, med
+`supports_sms = false`. Knappen som ändrar flaggorna sitter under Administration;
+Integrationer visar dem men kan inte ändra dem.
