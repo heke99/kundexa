@@ -4,7 +4,7 @@ import { ok } from "@/lib/supabase/read";
 import { ArrowLeft, ScrollText } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
 import { getAppContext } from "@/lib/auth";
-import { createContractTemplateVersion, approveContractTemplateVersion } from "@/app/actions/templates";
+import { createContractTemplateVersion, approveContractTemplateVersion, deleteContractTemplateVersion } from "@/app/actions/templates";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -77,11 +77,25 @@ export default async function TemplateDetailPage({
         <CardContent>
           {shown ? <>
             {shown.status === "draft" ? <div className="notice warning">Den här versionen kan inte användas i ett avtal förrän den är godkänd.{mayApprove ? "" : " En ägare eller administratör godkänner den."}</div> : null}
-            {shown.status === "draft" && mayApprove
-              ? <form action={approveContractTemplateVersion} style={{ marginBottom: 14 }}>
-                  <input type="hidden" name="version_id" value={shown.id} />
-                  <button className="button button-primary">Godkänn version {shown.version}</button>
-                </form>
+            {shown.status === "draft"
+              ? <div className="toolbar-left" style={{ marginBottom: 14 }}>
+                  {mayApprove
+                    ? <form action={approveContractTemplateVersion}>
+                        <input type="hidden" name="version_id" value={shown.id} />
+                        <button className="button button-primary">Godkänn version {shown.version}</button>
+                      </form>
+                    : null}
+                  {/* Ett utkast bär ingen juridisk vikt. Den som får skriva en
+                      mall får ta bort sitt eget stavfel utan att be någon. */}
+                  {mayEdit
+                    ? <form action={deleteContractTemplateVersion}>
+                        <input type="hidden" name="version_id" value={shown.id} />
+                        <button className="button button-ghost" style={{ color: "#a72d37" }}>
+                          {versions.length === 1 ? "Radera mallen" : `Radera utkastet`}
+                        </button>
+                      </form>
+                    : null}
+                </div>
               : null}
             <h3>Avtalstitel</h3>
             <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.7 }}>{shown.title_template}</p>
