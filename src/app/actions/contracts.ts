@@ -207,8 +207,19 @@ export async function createContract(form: FormData) {
     renderedBody = renderStrictTemplate(templateVersion.body_template, context);
     renderedTerms = renderStrictTemplate(templateVersion.terms_template ?? "", context);
   } catch (error) {
-    const message = error instanceof Error ? error.message.replace("unresolved_template_variables:", "Mallen saknar kund- eller avtalsdata för: ") : "Mallrenderingen misslyckades";
-    redirect(`/app/contracts?error=${encodeURIComponent(message)}`);
+    // Beskedet sa vilket fält som fattades och inget mer. Den som läste det
+    // visste varken vilken av två saker som skulle göras -- fylla i värdet på
+    // avtalet eller göra fältet valfritt i mallen -- eller var mallen fanns.
+    // Och svaret kom på avtalslistan, så hela det ifyllda formuläret var borta.
+    const raw = error instanceof Error ? error.message : "";
+    const missing = raw.startsWith("unresolved_template_variables:")
+      ? raw.slice("unresolved_template_variables:".length).split(",").map((name) => name.trim()).filter(Boolean)
+      : [];
+    const message = missing.length
+      ? `Mallen kräver ${missing.join(", ")}, men avtalet har inget värde för ${missing.length === 1 ? "det" : "dem"}. Fyll i uppgiften på avtalet, eller öppna mallen och gör fältet valfritt genom att sätta ett frågetecken sist: {{${missing[0]}?}}`
+      : "Mallrenderingen misslyckades.";
+    // Tillbaka till formuläret med kunden kvar, inte ut i listan.
+    redirect(`/app/contracts/new?customer_id=${parsed.data.customerId}&error=${encodeURIComponent(message)}`);
   }
   const documentHash = sha256(`${renderedTitle}\n${renderedBody}\n${renderedTerms}\n${JSON.stringify(commercialTerms)}\n${JSON.stringify(sellerSnapshot)}\n${JSON.stringify(counterpartySnapshot)}`);
 
@@ -483,7 +494,6 @@ export async function sendContract(form: FormData) {
   const introduction = value(form, "introduction").slice(0, 1500);
   const recipientNameOverride = value(form, "recipient_name").slice(0, 200);
   const emailOverride = value(form, "recipient_email").toLowerCase();
-  const replyToOverride = value(form, "reply_to").toLowerCase();
   let expiresAt: Date;
   try {
     expiresAt = value(form, "expires_at")
@@ -525,7 +535,10 @@ export async function sendContract(form: FormData) {
 
   const env = serverEnv();
   let emailFrom = "pending@kundexa.local";
-  let replyTo = replyToOverride || null;
+  // Svarsadressen är det utställande bolagets och fylls i under Juridiska
+  // avsändarbolag, inte i utskicksformuläret. Ett fält som skriver över ett
+  // härlett värde är ett fält någon måste förstå för att kunna låta bli.
+  let replyTo: string | null = null;
   if (channel === "email" || channel === "both") {
     const { data: integration } = await admin.from("tenant_integrations")
       .select("status")

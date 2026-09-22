@@ -77,7 +77,7 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Pr
             <TextareaField label="Beskrivning" name="description" />
             <Field label="Dynamisk avtalstitel" name="title_template" defaultValue="{{contract.title}}" required />
             <ContractTemplateDocumentUpload target="body_template" label="Ladda upp avtalet (.docx)" />
-            <TextareaField label="Avtalstext" name="body_template" defaultValue={"Avtal mellan {{seller.legal_name}} och {{customer.display_name}}. Avtalet avser {{product.name}}. Månadspris: {{price.recurring_fee}} {{price.currency}}."} required />
+            <TextareaField label="Avtalstext" name="body_template" defaultValue={"Avtal mellan {{seller.legal_name}} och {{customer.display_name}}.\n\nAvtalet avser {{product.name?}}. Månadspris: {{price.recurring_fee?}} {{price.currency?}}."} required />
             <ContractTemplateDocumentUpload target="terms_template" label="Ladda upp villkoren (.docx)" />
             <TextareaField label="Fullständiga villkor" name="terms_template" defaultValue={"Bindningstid: {{price.binding_months?ingen}}. Uppsägningstid: {{price.notice_months?ingen}}. Avtalet upprättades {{today}}.\n\nHär ska era juridiskt granskade fullständiga villkor anges."} required />
             <TemplateFieldReference />
