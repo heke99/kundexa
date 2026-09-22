@@ -940,6 +940,32 @@ for (const [name, pattern, what] of [
     `${name} must take the account from the platform, unconditionally: ${what} belongs to the platform`);
 }
 
+// Ett nytt företag ska kunna skicka avtal utan att någon testar plattformens
+// konto åt det.
+//
+// Integrationen skapades som `pending` och blev `active` först efter ett test.
+// Det testet prövar Kundexas konto -- samma konto för varje företag -- så
+// kravet ställde samma fråga om och om igen medan avtalsposten stod still för
+// någon som inte saknade något. Statusen betyder nu vad den ser ut att betyda:
+// får företaget skicka.
+{
+  const defaults = await readFile(join(root, "supabase/migrations/202609220002_every_tenant_sends_through_the_same_account.sql"), "utf8");
+  assert.match(defaults, /'Resend',\s*'active'/,
+    "A new tenant's e-mail integration must be active from the start; the platform account is the same for every tenant");
+
+  const adminSource = await readFile(join(root, "src/app/actions/admin.ts"), "utf8");
+  for (const entry of ["export async function saveEmailIntegration", "export async function generateResendWebhookAddress"]) {
+    const start = adminSource.indexOf(entry);
+    assert.ok(start >= 0, `${entry} must still exist`);
+    const body = adminSource.slice(start, adminSource.indexOf("\nexport ", start + 1))
+      .replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
+    // Just den här formen var defekten: en orelaterad ändring stängde av
+    // avtalsposten.
+    assert.ok(!/status: "pending"/.test(body),
+      `${entry} must not set the integration back to pending; saving a secret or rotating a receipt address is not a reason to stop contract e-mail`);
+  }
+}
+
 // Domänstatusen ska hämtas från leverantören, inte påstås -- och nyckeln får
 // aldrig följa med ut.
 //

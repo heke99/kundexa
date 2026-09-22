@@ -145,11 +145,7 @@ export async function saveEmailIntegration(form: FormData) {
   const configuration = toJsonObject({
     ...oldConfig,
     account_mode: "platform_managed",
-    from_address: fromAddress,
-    sending_domain: sendingDomain || fromAddress.split("@")[1],
     webhook_path_token_hash: sha256(pathToken + env.KUNDEXA_WEBHOOK_PEPPER),
-    last_test_status: "pending",
-    last_error: null,
   });
   const { data: saved, error } = await admin.from("tenant_integrations").upsert({
     tenant_id: context.tenantId,
@@ -158,17 +154,21 @@ export async function saveEmailIntegration(form: FormData) {
     name: "Resend",
     credentials_ciphertext: encryptJson(credentials, env.KUNDEXA_ENCRYPTION_KEY),
     configuration,
-    status: "pending",
+    // Att spara en signeringshemlighet är inte ett skäl att stänga av
+    // avtalsposten. Statusen betydde tidigare "har någon kört testet", och det
+    // testet prövade plattformens konto -- samma konto för alla företag. Nu
+    // betyder den vad den ser ut att betyda: får företaget skicka.
+    status: "active",
     created_by: context.userId,
   }, { onConflict: "tenant_id,provider_type,provider,name" }).select("id").single();
   if (error || !saved) throw error ?? new Error("resend_integration_save_failed");
   await admin.from("audit_logs").insert({
     tenant_id: context.tenantId, actor_user_id: context.userId,
     action: existing ? "integration.resend_updated" : "integration.resend_created", entity_type: "tenant_integration", entity_id: saved.id,
-    after_data: { account_mode: "platform_managed", from_address: fromAddress, sending_domain: sendingDomain || null, webhook_secret_changed: Boolean(webhookSigningSecret), status: "pending" },
+    after_data: { account_mode: "platform_managed", from_address: fromAddress, sending_domain: sendingDomain || null, webhook_secret_changed: Boolean(webhookSigningSecret), status: "active" },
   });
   revalidatePath("/app/integrations");
-  redirect(`/app/integrations?message=${encodeURIComponent("Resend sparades som väntande. Kör Testa anslutning innan avtalsutskick.")}&resendWebhook=${encodeURIComponent(`${canonicalAppBaseUrl()}/api/webhooks/resend/${pathToken}`)}`);
+  redirect(`/app/integrations?message=${encodeURIComponent("Sparat.")}&resendWebhook=${encodeURIComponent(`${canonicalAppBaseUrl()}/api/webhooks/resend/${pathToken}`)}`);
 }
 
 export async function testResendIntegration(form: FormData) {
@@ -244,11 +244,14 @@ export async function generateResendWebhookAddress(form: FormData) {
   const token = randomToken(32);
   credentials.webhookPathToken = token;
   const configuration = toJsonObject({ ...readJsonObject(integration.configuration), webhook_path_token_hash: sha256(token + env.KUNDEXA_WEBHOOK_PEPPER) });
-  const { error } = await admin.from("tenant_integrations").update({ credentials_ciphertext: encryptJson(credentials, env.KUNDEXA_ENCRYPTION_KEY), configuration, status: "pending" }).eq("tenant_id", context.tenantId).eq("id", integration.id);
+  // Adressen som byts här tar emot leveranskvitton. Den har ingenting med
+  // rätten att skicka att göra, och att sätta integrationen till väntande hade
+  // stoppat avtalsposten för att någon roterade en webhookadress.
+  const { error } = await admin.from("tenant_integrations").update({ credentials_ciphertext: encryptJson(credentials, env.KUNDEXA_ENCRYPTION_KEY), configuration }).eq("tenant_id", context.tenantId).eq("id", integration.id);
   if (error) throw error;
   await admin.from("audit_logs").insert({ tenant_id: context.tenantId, actor_user_id: context.userId, action: "integration.resend_webhook_rotated", entity_type: "tenant_integration", entity_id: integration.id });
   revalidatePath("/app/integrations");
-  redirect(`/app/integrations?message=${encodeURIComponent("Ny webhookadress skapad. Integrationen måste testas igen.")}&resendWebhook=${encodeURIComponent(`${canonicalAppBaseUrl()}/api/webhooks/resend/${token}`)}`);
+  redirect(`/app/integrations?message=${encodeURIComponent("Ny webhookadress skapad. Registrera den hos Resend.")}&resendWebhook=${encodeURIComponent(`${canonicalAppBaseUrl()}/api/webhooks/resend/${token}`)}`);
 }
 
 export async function saveContractReminderPolicy(form: FormData) {
