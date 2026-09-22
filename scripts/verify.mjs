@@ -940,6 +940,26 @@ for (const [name, pattern, what] of [
     `${name} must take the account from the platform, unconditionally: ${what} belongs to the platform`);
 }
 
+// Avtalet måste bära det utställande bolagets namn, inte bara en adress.
+//
+// Arbetaren satte avsändarnamnet bara när raden bar platshållaren
+// `pending@kundexa.local`. Avtalsutskicket bär den inte -- `sendContract` slår
+// upp plattformsadressen direkt och sparar den -- så bekräftelsen kom från
+// "Gridex El AB" medan avtalet självt kom från en naken adress utan namn. Och
+// avtalet är det utskick där bolaget måste synas.
+{
+  const worker = await readFile(join(root, "supabase/functions/process-outbox/index.ts"), "utf8");
+  const start = worker.indexOf("async function processEmail");
+  assert.ok(start >= 0, "processEmail must exist");
+  const body = worker.slice(start, worker.indexOf("\nfunction escapeHtml", start))
+    .replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
+  assert.match(body, /^\s*from: senderIdentity,$/m,
+    "Every outgoing e-mail must carry the issuing company's name; the account is the platform's either way");
+  // Just den här formen var defekten: namnet villkorat på platshållaradressen.
+  assert.ok(!/from: email\.from_address === "pending@kundexa\.local"/.test(body),
+    "The sender name must not depend on a placeholder address the contract delivery never carries");
+}
+
 // Svarsadressen är härledd och får inte återuppstå som ett fält i utskicket.
 //
 // Den togs ur integrationsrutan för att ingen skulle behöva fylla i den, och
