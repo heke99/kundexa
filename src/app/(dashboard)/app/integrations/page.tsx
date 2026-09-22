@@ -1,7 +1,7 @@
 import { ok } from "@/lib/supabase/read";
 import { KeyRound, Phone, Plug } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
-import { addPhoneNumber, generateResendWebhookAddress, saveSmsIntegration, saveContractReminderPolicy, saveEmailIntegration, testResendIntegration, inspectResendDomains } from "@/app/actions/admin";
+import { addPhoneNumber, generateResendWebhookAddress, saveSmsIntegration, saveContractReminderPolicy, saveEmailIntegration, testResendIntegration } from "@/app/actions/admin";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
 import { saveCallerIdDefault, saveTelephonyPolicy } from "@/app/actions/telephony";
 import { getAppContext } from "@/lib/auth";
+import { describeResendSendingDomain } from "@/lib/email/resend-domains";
 
 type Config = Record<string, unknown>;
 
@@ -20,6 +21,8 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
   // använder, så det som står här är det som faktiskt hamnar i mottagarens
   // inkorg.
   const { tenantLegalName } = await getAppContext();
+  // Hämtat från leverantören, inte påstått. Se `describeResendSendingDomain`.
+  const sendingDomain = await describeResendSendingDomain();
   const [
     { data: integrations },
     { data: numbers },
@@ -113,8 +116,10 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
           <button className="button button-primary">Spara krypterat som väntande</button>
         </form>
         {resend ? <div className="grid grid-2" style={{ marginTop: 12 }}><form action={testResendIntegration}><input type="hidden" name="integration_id" value={resend.id} /><button className="button button-secondary">Testa anslutning</button><p className="muted" style={{ marginTop: 6 }}>Testmeddelandet går till din egen inloggningsadress.</p></form><form action={generateResendWebhookAddress}><input type="hidden" name="integration_id" value={resend.id} /><button className="button button-ghost">Generera ny webhookadress</button></form></div> : null}
-        <form action={inspectResendDomains} style={{ marginTop: 10 }}><button className="button button-ghost">Kontrollera avsändardomänen hos Resend</button><p className="muted" style={{ marginTop: 6 }}>Frågar Resend vilka domäner nyckeln faktiskt ser. Svarar leverantören att domänen inte är verifierad trots att den är det, tillhör nyckeln ett annat konto.</p></form>
-        <div className="notice warning" style={{ marginTop: 14 }}>Avsändardomänen är verifierad hos Resend av Kundexa. Sparad signeringshemlighet visas aldrig igen. Senaste test: {String(resendConfig.last_test_status ?? "inte utfört")}{resendConfig.last_tested_at ? ` · ${formatDate(String(resendConfig.last_tested_at))}` : ""}{resendConfig.last_error ? <><br /><strong>Fel:</strong> {String(resendConfig.last_error)}</> : null}</div>
+        <div className={`notice ${sendingDomain.kind === "verified" ? "" : "warning"}`} style={{ marginTop: 14 }}>
+          <strong>Avsändardomän hos Resend:</strong> {sendingDomain.message}
+        </div>
+        <div className="notice warning" style={{ marginTop: 10 }}>Sparad signeringshemlighet visas aldrig igen. Senaste test: {String(resendConfig.last_test_status ?? "inte utfört")}{resendConfig.last_tested_at ? ` · ${formatDate(String(resendConfig.last_tested_at))}` : ""}{resendConfig.last_error ? <><br /><strong>Fel:</strong> {String(resendConfig.last_error)}</> : null}</div>
       </CardContent></Card>
 
       <Card><CardHeader><h2>Avtalspåminnelser</h2><Badge>{reminderPolicy?.enabled ? "Aktiva" : "Avstängda"}</Badge></CardHeader><CardContent><form action={saveContractReminderPolicy} className="form-stack"><label><input type="checkbox" name="enabled" defaultChecked={reminderPolicy?.enabled ?? true} /> Automatiska påminnelser aktiva</label><div className="grid grid-2"><Field label="Första efter timmar" name="first_reminder_after_hours" type="number" min={1} max={8760} defaultValue={reminderPolicy?.first_reminder_after_hours ?? 24} /><Field label="Andra efter timmar" name="second_reminder_after_hours" type="number" min={1} max={8760} defaultValue={reminderPolicy?.second_reminder_after_hours ?? 72} /></div><Field label="Sista före utgång, timmar" name="final_reminder_before_expiry_hours" type="number" min={1} max={8760} defaultValue={reminderPolicy?.final_reminder_before_expiry_hours ?? 24} /><Field label="Max automatiska påminnelser" name="max_automatic_reminders" type="number" min={0} max={10} defaultValue={reminderPolicy?.max_automatic_reminders ?? 3} /><SelectField label="Standardkanal" name="default_channel" defaultValue={reminderPolicy?.default_channel ?? "email"}><option value="email">E-post</option><option value="sms">SMS</option><option value="both">Båda</option></SelectField><div className="grid grid-2"><Field label="Tyst tid börjar" name="quiet_hours_start" type="time" defaultValue={String(reminderPolicy?.quiet_hours_start ?? "20:00").slice(0, 5)} /><Field label="Tyst tid slutar" name="quiet_hours_end" type="time" defaultValue={String(reminderPolicy?.quiet_hours_end ?? "08:00").slice(0, 5)} /></div><Field label="Tidszon" name="timezone" defaultValue={reminderPolicy?.timezone ?? "Europe/Stockholm"} /><label><input type="checkbox" name="attach_pdf" defaultChecked={reminderPolicy?.attach_pdf ?? true} /> Bifoga kanonisk PDF i e-postpåminnelser</label><button className="button button-secondary">Spara påminnelsepolicy</button></form></CardContent></Card>
