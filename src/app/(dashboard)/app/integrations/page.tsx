@@ -109,13 +109,13 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
         <div className="notice"><strong>Feature flags</strong><br />outbound_email: {featureMap.get("outbound_email") ? "aktiv" : "avstängd"}<br />contract_delivery_email: {featureMap.get("contract_delivery_email") ? "aktiv" : "avstängd"}<br />outbound_sms: {featureMap.get("outbound_sms") ? "aktiv" : "avstängd"}<br />contract_delivery_sms: {featureMap.get("contract_delivery_sms") ? "aktiv" : "avstängd"}</div>
         <form action={saveEmailIntegration} className="form-stack" style={{ marginTop: 14 }}>
           <div className="notice">
-            Avtalspost skickas från Kundexas e-postkonto och verifierade domän{resendConfig.from_address ? <> — <code>{String(resendConfig.from_address)}</code></> : null}.
-            <br />Avsändarnamnet är <strong>{tenantLegalName}</strong>, hämtat från företaget. Svarsadressen tas från det bolag som ställer ut avtalet, under Juridiska avsändarbolag — saknas den sätts ingen svarsadress. Inget av det fylls i här.
+            Avtalspost skickas från Kundexas e-postkonto och verifierade domän — <code>{sendingDomain.domain || "ej konfigurerad"}</code>.
+            <br />Avsändarnamnet är <strong>{tenantLegalName}</strong>, hämtat från företaget. Svarsadressen tas från det bolag som ställer ut avtalet, under Juridiska avsändarbolag — saknas den sätts ingen svarsadress. Inget av det fylls i här, och inget behöver testas innan ni skickar: kontot är detsamma för alla företag.
           </div>
           <Field label="Webhook signing secret" name="webhook_signing_secret" type="password" placeholder="Sparad – lämna tomt för att behålla" />
           <button className="button button-primary">Spara krypterat som väntande</button>
         </form>
-        {resend ? <div className="grid grid-2" style={{ marginTop: 12 }}><form action={testResendIntegration}><input type="hidden" name="integration_id" value={resend.id} /><button className="button button-secondary">Testa anslutning</button><p className="muted" style={{ marginTop: 6 }}>Testmeddelandet går till din egen inloggningsadress.</p></form><form action={generateResendWebhookAddress}><input type="hidden" name="integration_id" value={resend.id} /><button className="button button-ghost">Generera ny webhookadress</button></form></div> : null}
+        {resend ? <div className="grid grid-2" style={{ marginTop: 12 }}><form action={testResendIntegration}><input type="hidden" name="integration_id" value={resend.id} /><button className="button button-secondary">Skicka testmeddelande</button><p className="muted" style={{ marginTop: 6 }}>Frivilligt. Går till din egen inloggningsadress — utskick fungerar utan det.</p></form><form action={generateResendWebhookAddress}><input type="hidden" name="integration_id" value={resend.id} /><button className="button button-ghost">Generera ny webhookadress</button></form></div> : null}
         <div className={`notice ${sendingDomain.kind === "verified" ? "" : "warning"}`} style={{ marginTop: 14 }}>
           <strong>Avsändardomän hos Resend:</strong> {sendingDomain.message}
         </div>
