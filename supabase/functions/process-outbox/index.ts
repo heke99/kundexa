@@ -319,7 +319,14 @@ async function processEmail(job: Job) {
       "Idempotency-Key": email.idempotency_key || `kundexa-email-${email.id}`,
     },
     body: JSON.stringify({
-      from: email.from_address === "pending@kundexa.local" ? senderIdentity : email.from_address,
+      // Alltid namnet plus Kundexas adress. Tidigare gällde det bara när raden
+      // bar platshållaren `pending@kundexa.local`, och avtalsutskicket bär den
+      // inte: `sendContract` slår upp plattformsadressen direkt och sparar den.
+      // Följden var att bekräftelsen kom från "Gridex El AB" medan avtalet
+      // självt kom från en naken adress utan avsändarnamn -- och avtalet är det
+      // utskick där bolaget måste synas. Adressen kan inte längre vara
+      // tenantens egen, så raden är en anteckning om avsikt, inte ett val.
+      from: senderIdentity,
       to: email.to_addresses,
       cc: email.cc_addresses?.length ? email.cc_addresses : undefined,
       bcc: email.bcc_addresses?.length ? email.bcc_addresses : undefined,
@@ -350,7 +357,8 @@ async function processEmail(job: Job) {
     status: "sent",
     provider_status: "email.sent",
     sent_at: sentAt,
-    from_address: email.from_address === "pending@kundexa.local" ? config.address : email.from_address,
+    // Vad som faktiskt skickades, inte vad raden gissade.
+    from_address: config.address,
   }).eq("id", email.id);
   if (sentError) throw new Error(`email_sent_state_write_failed:${sentError.code ?? "unknown"}`);
   await supabase.from("contract_deliveries").update({ status: "sent", provider_status: "email.sent", sent_at: sentAt }).eq("email_message_id", email.id);
