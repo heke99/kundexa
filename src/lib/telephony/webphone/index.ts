@@ -1,5 +1,6 @@
 import "server-only";
 import { sinchWebphoneProvider } from "./sinch";
+import { placeSinchTestCallout } from "@/lib/telephony/sinch/test-callout";
 import { probeSinchRegistration, type SinchRegistrationProbe } from "@/lib/telephony/sinch/registration-probe";
 import type { WebphoneProvider, WebphoneProvisionInput, WebphoneProvisionResult } from "./provider";
 
@@ -77,4 +78,9 @@ export type WebphoneRegistrationProbe = SinchRegistrationProbe;
  */
 export function probeWebphoneRegistration(): Promise<WebphoneRegistrationProbe> {
   return probeSinchRegistration();
+}
+
+/** Ett testsamtal direkt från telefonitjänsten, utan webbläsaren. */
+export function placeProviderTestCall(input: { cli: string; destination: string }) {
+  return placeSinchTestCallout(input);
 }

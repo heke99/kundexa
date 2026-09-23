@@ -703,6 +703,7 @@ const PROVIDER_NAME_EXEMPT = new Set([
   "src/lib/telephony/sinch/registration-token.ts",
   "src/lib/telephony/sinch/registration-probe.ts",
   "src/lib/telephony/sinch/svaml.ts",
+  "src/lib/telephony/sinch/test-callout.ts",
   "src/lib/telephony/webphone/connect-sources.ts",
   "src/lib/telephony/sinch/callback-signature.ts",
   "src/lib/telephony/webphone/sinch.ts",

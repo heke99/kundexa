@@ -307,3 +307,9 @@ men Sinch avslutade efter ~1 s: "Failure: Unable to connect call". Ingen DiCE/AC
 Kundexas sida fungerar (reservation, session, avslut, efterarbete "no_answer" sparat). Kvar hos Sinch:
 testkonto → mottagaren måste vara verifierad; CLI måste vara tilldelat appen. SVAML skalat till
 `connectPstn` + `cli` + `maxDuration` för att utesluta vårt svar.
+
+Sinch loggar för samtalen 09:18: "App Call ended … GENERALERROR FAILED". Verifierat nummer och
+tilldelat A-nummer bekräftade av användaren. Ingen CALLBACKERROR, så ICE-svaret godtogs; felet
+uppstår på PSTN-benet. Lade till "Testsamtal" under Integrationer (admin): `ttsCallout` direkt
+via Voice API från företagets förvalda nummer — skiljer konto/nummer från webbläsarvägen och
+ger Sinch felmeddelande i klartext. Loggas i audit_logs (`telephony.test_call`).
