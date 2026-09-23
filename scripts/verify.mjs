@@ -746,7 +746,6 @@ const PROVIDER_NAME_EXEMPT = new Set([
   // Rutten är namngiven efter leverantören därför att det är leverantören som
   // bestämmer nyttolastens form och därmed callback-URL:en.
   "src/app/api/webhooks/sinch/route.ts",
-  "src/app/api/v1/telephony/webphone/route.ts",
   "src/lib/env.ts",
   // Migrationen som tar bort leverantören måste få nämna den.
   "supabase/migrations/202609170009_drop_rinkel_schema.sql",

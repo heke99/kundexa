@@ -40,12 +40,17 @@ export default async function ImportDetailPage({ params, searchParams }: { param
   if (!run) notFound();
   const report = run.validation_report && typeof run.validation_report === "object" && !Array.isArray(run.validation_report) ? run.validation_report as Record<string, Json | undefined> : {};
   const executionError = typeof report.execution_error === "string" ? report.execution_error : null;
+  // En uppladdning som föll innan raderna var inlästa sparar sin orsak här.
+  const uploadFailure = typeof report.failure_reason === "string" ? report.failure_reason : null;
   const canCommit = ["preview_ready", "validated", "queued"].includes(run.status);
   const canRollback = ["completed", "completed_with_warnings"].includes(run.status);
   return <>
     <PageHeader title={run.name} description={`${run.source_provider}${run.source_website ? ` · ${run.source_website}` : ""} · ${run.source_type}`} action={<div style={{ display: "flex", gap: 8 }}><Link className="button button-secondary" href="/app/imports">Översikt</Link><Link className="button button-secondary" href={`/app/imports/${id}/mapping`}>Fältmappning</Link></div>} />
     {query.error ? <p className="form-error">{query.error}</p> : null}
     {query.message ? <p className="notice">{query.message}</p> : null}
+    {run.status === "failed" && !executionError && uploadFailure ? <div className="notice warning" style={{ marginBottom: 16 }}>
+      <strong>Filen kunde inte läsas in.</strong> Orsak: {uploadFailure}. Ladda upp filen igen.
+    </div> : null}
     {run.status === "failed" && executionError ? <div className="notice warning" style={{ marginBottom: 16 }}>
       <strong>Importen stoppades och inget sparades.</strong> Orsak: <code>{executionError}</code>. Rätta raden eller mappningen och verkställ igen.
     </div> : null}

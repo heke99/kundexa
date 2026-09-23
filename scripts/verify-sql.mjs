@@ -334,6 +334,10 @@ await db.exec(`
   insert into public.campaign_contact_candidates(tenant_id,campaign_id,customer_id,status,policy_reason)
   values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000012','00000000-0000-0000-0000-000000000011','pending_nix','nix_check_required');
 `);
+// FAILURE-0129: en importerad plats som väntar på NIX ligger `blocked`/`pending_nix`.
+const nixListId = String((await db.query(`select public.create_managed_customer_list('NIX-lista','Väntar på NIX','static',null,'manual',100,'00:00','23:59:59',7,60,0,'both',true,false,null) as id`)).rows[0].id);
+await db.query(`insert into public.customer_list_contact_candidates(tenant_id,list_id,customer_id,status,policy_reason) values('00000000-0000-0000-0000-000000000001',$1,'00000000-0000-0000-0000-000000000011','pending_nix','nix_check_required')`, [nixListId]);
+await db.query(`insert into public.customer_list_members(tenant_id,list_id,customer_id,added_by,state,compliance_status,compliance_reason) values('00000000-0000-0000-0000-000000000001',$1,'00000000-0000-0000-0000-000000000011','00000000-0000-0000-0000-000000000002','blocked','pending_nix','nix_check_required')`, [nixListId]);
 const queuedNix = await db.query(`select public.queue_nix_check_for_customer('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000011','00000000-0000-0000-0000-000000000002',false) as id`);
 if (!queuedNix.rows[0].id) throw new Error("NIX queue did not return a job");
 const claimedNix = await db.query(`select id,status,attempts from public.claim_nix_check_jobs('verify-nix-worker',10)`);
@@ -341,6 +345,10 @@ if (claimedNix.rows.length !== 1 || claimedNix.rows[0].status !== 'running') thr
 await db.query(`select public.complete_nix_check_job($1,'not_listed','verify-v1','{"responseHash":"verify"}'::jsonb)`, [String(claimedNix.rows[0].id)]);
 const nixResume = await db.query(`select c.status,c.policy_reason,exists(select 1 from public.campaign_members cm where cm.campaign_id=c.campaign_id and cm.customer_id=c.customer_id) as campaign_member from public.campaign_contact_candidates c where c.campaign_id='00000000-0000-0000-0000-000000000012' and c.customer_id='00000000-0000-0000-0000-000000000011'`);
 if (nixResume.rows.length !== 1 || nixResume.rows[0].status !== 'approved' || !nixResume.rows[0].campaign_member) throw new Error(`NIX campaign resume failed: ${JSON.stringify(nixResume.rows)}`);
+const nixListPlace = (await db.query(`select state,compliance_status from public.customer_list_members where list_id=$1 and customer_id='00000000-0000-0000-0000-000000000011'`, [nixListId])).rows[0];
+if (nixListPlace?.state !== "pending" || nixListPlace?.compliance_status !== "eligible") {
+  throw new Error(`A list place stayed blocked after its NIX check passed: ${JSON.stringify(nixListPlace)}`);
+}
 await db.exec(`insert into public.data_subject_requests(id,tenant_id,request_type,subject_reference,customer_id,status,identity_verified_at,created_by) values('00000000-0000-0000-0000-000000000013','00000000-0000-0000-0000-000000000001','erasure','runtime-person','00000000-0000-0000-0000-000000000011','processing',now(),'00000000-0000-0000-0000-000000000002')`);
 const dsarExport = await db.query(`select public.data_subject_export_for_request('00000000-0000-0000-0000-000000000013') as result`);
 if (dsarExport.rows[0].result.customer.display_name !== 'NIX Runtime Person') throw new Error(`DSAR export failed: ${JSON.stringify(dsarExport.rows[0])}`);
@@ -4302,7 +4310,42 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
     throw new Error(`A rollback reached another tenant's import: ${JSON.stringify({ crossTenant, foreignStatus })}`);
   }
   console.log("A rollback never reaches another tenant's import, and users only read ParseHub runs, projects, conflicts and list targets.");
+  // FAILURE-0129: profilens sammanslagningsregel följs för en befintlig kund.
+  const R6 = "00000000-0000-0000-0000-0000000001b6";
+  const R7 = "00000000-0000-0000-0000-0000000001b7";
+  const policyRun = (id, policy) => db.exec(`
+    insert into public.import_runs(id,tenant_id,name,source_type,status,uploaded_by,total_rows,simulation,scan_status,scan_provider,scan_sha256,scan_completed_at)
+    values('${id}','${T}','Policy ${policy}','csv','preview_ready','${OWNER}',1,false,'clean','verify','sha-${policy}',now());
+    insert into public.import_rows(tenant_id,import_run_id,row_number,raw_data,normalized_data,decision,row_status,errors)
+    values('${T}','${id}',1,'{}','{"display_name":"Nytt Namn Från Fil AB","customer_type":"company","phone_e164":"+46705550001","merge_policy":"${policy}"}','ready','valid','[]');
+  `);
+  await policyRun(R6, "create_only");
+  await db.query(`select public.process_import_run($1)`, [R6]);
+  const afterCreateOnly = (await db.query(`select display_name from public.customers where id=$1`, [EXISTING])).rows[0].display_name;
+  if (afterCreateOnly !== "Redan I Listan AB") throw new Error(`"Skapa endast nya" changed an existing customer: ${afterCreateOnly}`);
+  await policyRun(R7, "review_conflicts");
+  await db.query(`select public.process_import_run($1)`, [R7]);
+  const afterReview = (await db.query(`select c.display_name,
+      (select decision from public.import_rows where import_run_id=$2) decision,
+      (select count(*)::int from public.import_merge_conflicts where import_run_id=$2) conflicts
+    from public.customers c where c.id=$1`, [EXISTING, R7])).rows[0];
+  if (afterReview.display_name !== "Redan I Listan AB" || afterReview.decision !== "conflict" || afterReview.conflicts !== 1) {
+    throw new Error(`"Granska konflikter" did not hold the change for review: ${JSON.stringify(afterReview)}`);
+  }
+  console.log("An import profile's merge policy is honoured: create-only leaves an existing customer alone, review-conflicts puts it in the conflict list.");
   console.log("A re-import leaves a prospect being worked alone, logs only new list places, a rollback keeps what was there before, the same file imports again after a rollback, a failure mid-import stays failed with its reason, and users only read the import tables.");
+}
+
+// Ingen funktion får anropa Rinkel efter att schemat togs bort (202609170009).
+// Borttagningens egen kontroll såg bara namn; en funktion vars kropp anropade en
+// borttagen Rinkel-funktion låg kvar och hade fallerat vid första anrop.
+{
+  const rinkelBodies = (await db.query(`
+    select p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+    where n.nspname='public' and p.prolang in (select oid from pg_language where lanname in ('plpgsql','sql'))
+      and p.prosrc ~* 'rinkel_[a-z_]+\\('`)).rows.map((row) => row.proname);
+  if (rinkelBodies.length) throw new Error(`Functions still call removed Rinkel functions: ${rinkelBodies.join(", ")}`);
+  console.log("No database function calls a removed Rinkel function.");
 }
 
 await db.close();

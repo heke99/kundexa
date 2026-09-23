@@ -55,6 +55,10 @@ jobs:
       - name: Run contract tests
         run: npm run test:contracts
 
+      # Mallarna och .docx-läsningen testades lokalt av `npm test` men aldrig i CI.
+      - name: Run contract template tests
+        run: npm run test:contract-templates
+
       - name: Run telephony tests
         run: npm run test:telephony
 

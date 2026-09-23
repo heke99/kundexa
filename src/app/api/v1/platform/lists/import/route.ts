@@ -64,6 +64,8 @@ export async function POST(request: Request) {
     if (scan.status === "failed") throw new Error("platform_list_scan_failed");
     const parsed = await parseImportFile(buffer, file.name, file.type, { recordsPath, worksheetName, headerRow, maxRows: MAX_ROWS });
     if (!parsed.rows.length) throw new Error("platform_list_contains_no_rows");
+    // Resten av filen fick aldrig tyst försvinna (FAILURE-0129).
+    if (parsed.truncated) return redirectWith(request, "error", `Filen har fler än ${MAX_ROWS.toLocaleString("sv-SE")} rader. Dela upp den i mindre filer; inget importerades.`);
 
     const supabase = createAdminClient();
     const existing = await supabase.from("platform_lists").select("id,name").eq("source_file_sha256", scan.sha256).neq("status", "archived").maybeSingle();
@@ -181,6 +183,16 @@ export async function POST(request: Request) {
       if (cleanup.error) console.error("Platform list import cleanup failed", { reference, createdListId, error: cleanup.error });
     }
     console.error("Platform list import failed", { reference, error });
-    return redirectWith(request, "error", `Listan kunde inte importeras. Referens: ${reference}`);
+    const known: Record<string, string> = {
+      invalid_platform_list_file: "Välj en fil på högst 50 MB och ge listan ett namn.",
+      invalid_exclusivity_mode: "Välj hur listan får delas ut.",
+      invalid_header_row: "Rubrikraden måste vara mellan 1 och 100.",
+      invalid_default_exclusive_days: "Exklusivitetstiden måste vara mellan 1 och 3650 dagar.",
+      platform_list_file_infected: "Filen stoppades av virusskanningen.",
+      platform_list_scan_failed: "Filen kunde inte virusskannas. Försök igen.",
+      platform_list_contains_no_rows: "Filen innehåller inga rader.",
+    };
+    const code = error instanceof Error ? error.message : "";
+    return redirectWith(request, "error", known[code] ?? `Listan kunde inte importeras. Referens: ${reference}`);
   }
 }
