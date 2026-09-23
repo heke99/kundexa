@@ -10,7 +10,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DialerPanel } from "@/components/dialer-panel";
 import { Badge } from "@/components/ui/badge";
-import { Field } from "@/components/ui/form-field";
+import { Field, SelectField } from "@/components/ui/form-field";
 import { formatDate } from "@/lib/utils";
 
 export default async function DialerPage({ searchParams }: { searchParams: Promise<{ customer?: string; callback?: string; error?: string }> }) {
@@ -41,8 +41,12 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
           <form action={createManualProspect} className="form-grid">
             <Field label="Namn eller nummer" name="display_name" placeholder="Nytt prospekt" />
             <Field label="Telefonnummer" name="phone" type="tel" required placeholder="070 123 45 67" />
-            {/* Kundtypen rättas på kundkortet vid behov; här räcker numret. */}
-            <input type="hidden" name="customer_type" value="person" />
+            {/* Kundtypen avgör kontaktpolicyn: en privatperson kräver rättslig grund,
+                så fel typ här stoppar samtalet. Därför ett val, inte ett dolt förval. */}
+            <SelectField label="Typ" name="customer_type" defaultValue="company">
+              <option value="company">Företag</option>
+              <option value="person">Privatperson</option>
+            </SelectField>
             <button className="button button-secondary" style={{ alignSelf: "end" }}>Matcha och öppna</button>
           </form>
         </CardContent></Card>

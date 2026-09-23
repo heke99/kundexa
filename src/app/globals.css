@@ -56,3 +56,10 @@
 .form-stack > .span-2 {
   grid-column: 1 / -1;
 }
+
+/* Formulär som öppnas vid behov. Knappen som öppnar dem ska se ut och bete sig
+   som en knapp, inte som en listpunkt med triangel. */
+summary { cursor: pointer; }
+summary.button { list-style: none; cursor: pointer; }
+summary.button::-webkit-details-marker { display: none; }
+details[open] > summary.button { margin-bottom: 8px; }

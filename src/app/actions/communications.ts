@@ -96,10 +96,10 @@ export async function setCallDisposition(form: FormData) {
   if (call.list_id) redirect(`/app/dialer/lists/${call.list_id}?error=Listans efterarbete måste slutföras i ringsessionen`);
 
   if (!manualDispositions.has(disposition)) {
-    redirect("/app/calls?error=Välj ett giltigt samtalsresultat");
+    redirect(`/app/calls?call=${callId}&error=Välj ett giltigt samtalsresultat`);
   }
   if (disposition === "callback" && !callbackDueAt) {
-    redirect("/app/calls?error=Ange när återkomsten ska ske");
+    redirect(`/app/calls?call=${callId}&error=Ange när återkomsten ska ske`);
   }
 
   // The canonical after-call path, the same one the dialer uses. Writing the
@@ -120,7 +120,7 @@ export async function setCallDisposition(form: FormData) {
       ? zonedLocalDateTimeToIso(callbackDueAt, ctx.tenantTimezone)
       : null,
   });
-  if (error) redirect(`/app/calls?error=${encodeURIComponent(afterCallMessage(error))}`);
+  if (error) redirect(`/app/calls?call=${callId}&error=${encodeURIComponent(afterCallMessage(error))}`);
   revalidatePath("/app/calls");
   redirect("/app/calls?message=Efterarbetet är registrerat");
 }

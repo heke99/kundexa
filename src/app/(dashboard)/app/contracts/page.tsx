@@ -123,7 +123,7 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
         <div style={{ alignSelf: "end" }}><button className="button button-secondary">Sök</button> <Link href="/app/contracts" className="button button-ghost">Rensa</Link></div></div>
       {/* Snabbfiltren ovan täcker det man oftast letar efter. Resten ligger
           bakom en rad i stället för nio fält som alltid syns. */}
-      <details open={Boolean(params.status || params.owner_user_id || params.team_id || params.product_id || params.call || params.date_from || params.date_to)}>
+      <details open={Boolean(params.attention || params.status || params.owner_user_id || params.team_id || params.product_id || params.call || params.date_from || params.date_to)}>
       <summary className="muted" style={{ cursor: "pointer" }}>Fler filter</summary>
       <div className="grid grid-2" style={{ marginTop: 12 }}>
         <SelectField label="Status" name="status" defaultValue={params.status ?? ""}><option value="">Alla statusar</option>{Object.entries(statusLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</SelectField>
@@ -140,9 +140,9 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
     <Card><CardHeader><h2><FileSignature size={17} /> Avtalsregister</h2><Badge>{filteredContracts.length}</Badge></CardHeader><CardContent style={{ padding: 0 }}>
       <DataTable headers={isSeller ? ["Avtal", "Kund", "Produkt", "Status", "Utskick", "Sista svar", ""] : ["Avtal", "Kund", "Produkt", "Säljare / team", "Status", "Utskick", "Sista svar", ""]}>
         {filteredContracts.map((contract) => {
-          const stats = { sent: Number(contract.reminders_sent ?? 0), overdue: Number(contract.reminders_overdue ?? 0) };
+          const stats = { overdue: Number(contract.reminders_overdue ?? 0) };
           return <tr key={contract.id}>
-            <td><Link href={`/app/contracts/${contract.id}`}><strong>{contract.contract_number}</strong><br /><span className="muted">{contract.title}</span></Link></td>
+            <td><Link href={`/app/contracts/${contract.id}`}><strong>{contract.contract_number}</strong><br /><span className="muted">{contract.title}</span></Link>{contract.source_call_id ? null : <><br /><Badge className="badge-warning">Saknar samtal</Badge></>}</td>
             <td>
               <Link href={`/app/customers/${contract.customer_id}`}><strong>{contract.customer_name}</strong></Link>
               <br /><span className="muted">
