@@ -12,6 +12,10 @@ const TELEPHONY_PROVIDER = telephonyProviderKey();
 
 const openSchema = z.object({
   userAgent: z.string().trim().max(400).nullable().optional(),
+  // Förnyelse av inloggningsuppgifterna för en levande session. Att öppna en ny
+  // session stängde den gamla, och stängningen fällde ett samtal som pågick på
+  // den -- efter ungefär en timme, mitt i ett säljsamtal.
+  renewSessionId: z.uuid().optional(),
 });
 
 const closeSchema = z.object({
@@ -39,22 +43,36 @@ export async function POST(request: Request) {
     const body = openSchema.parse(await request.json().catch(() => ({})));
     const supabase = await createClient();
 
-    const { data: session, error } = await supabase.rpc("open_webphone_session", {
-      p_provider: TELEPHONY_PROVIDER,
-      p_user_agent: body.userAgent ?? null,
-    });
-    if (error) return rpcFailure(error.message, "webphone_session_failed");
-    // PostgREST rapporterar ett uteblivet svar likadant som ett tomt. En session
-    // utan id är ingen session, och att låta klienten börja slå hjärtslag mot
-    // den hade dolt felet i stället för att visa det.
-    if (!session || typeof session !== "object" || !("sessionId" in session)) {
-      return NextResponse.json(
-        { error: "webphone_session_failed", message: "Webbtelefonen kunde inte startas." },
-        { status: 500 },
-      );
+    // Hjärtslaget bekräftar att sessionen lever och är säljarens egen; bara då
+    // återanvänds den. Annars öppnas en ny, som vid första starten.
+    let sessionId: string | null = null;
+    let sessionPayload: Record<string, unknown> = {};
+    if (body.renewSessionId) {
+      const { data: beat } = await supabase.rpc("heartbeat_webphone_session", { p_session_id: body.renewSessionId });
+      if ((beat as { alive?: unknown } | null)?.alive === true) {
+        sessionId = body.renewSessionId;
+        sessionPayload = { sessionId, renewed: true };
+      }
     }
-
-    const sessionId = String((session as { sessionId: unknown }).sessionId);
+    if (!sessionId) {
+      const { data: session, error } = await supabase.rpc("open_webphone_session", {
+        p_provider: TELEPHONY_PROVIDER,
+        p_user_agent: body.userAgent ?? null,
+      });
+      if (error) return rpcFailure(error.message, "webphone_session_failed");
+      // PostgREST rapporterar ett uteblivet svar likadant som ett tomt. En session
+      // utan id är ingen session, och att låta klienten börja slå hjärtslag mot
+      // den hade dolt felet i stället för att visa det.
+      if (!session || typeof session !== "object" || !("sessionId" in session)) {
+        return NextResponse.json(
+          { error: "webphone_session_failed", message: "Webbtelefonen kunde inte startas." },
+          { status: 500 },
+        );
+      }
+      sessionId = String((session as { sessionId: unknown }).sessionId);
+      sessionPayload = session as Record<string, unknown>;
+    }
+    const renewed = sessionPayload.renewed === true;
 
     // A-numret måste med redan här. Telefonitjänsten binder det till klienten
     // när den byggs, inte till det enskilda samtalet, så det går inte att skjuta upp
@@ -87,7 +105,8 @@ export async function POST(request: Request) {
     // Uppgifterna kunde inte skapas. Sessionen stängs direkt i stället för att
     // lämnas öppen: en session utan samtalsben slår inga hjärtslag, och hade
     // legat kvar tills sopningen tog den, fem till tio minuter senare.
-    if (!provisioned.available) {
+    // En förnyad session stängs inte: den bär kanske ett pågående samtal.
+    if (!provisioned.available && !renewed) {
       await supabase.rpc("close_webphone_session", {
         p_session_id: sessionId,
         p_reason: "Webbtelefonen kunde inte förses med uppgifter",
@@ -98,8 +117,15 @@ export async function POST(request: Request) {
       );
     }
 
+    if (!provisioned.available) {
+      return NextResponse.json(
+        { error: provisioned.code, message: provisioned.message, available: false },
+        { status: 503 },
+      );
+    }
+
     return NextResponse.json({
-      ...session,
+      ...sessionPayload,
       available: true,
       credentials: provisioned.credentials,
       // Ett samtal utan TURN kopplas upp och blir sedan tyst bakom en

@@ -4336,6 +4336,47 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   console.log("A re-import leaves a prospect being worked alone, logs only new list places, a rollback keeps what was there before, the same file imports again after a rollback, a failure mid-import stays failed with its reason, and users only read the import tables.");
 }
 
+// Upptaget blir upptaget, även när webbläsaren hunnit säga "inget svar" först.
+{
+  const T = "00000000-0000-0000-0000-000000000001";
+  await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+  const busyCall = (await db.query(`
+    insert into public.calls(tenant_id,customer_id,user_id,direction,from_number,to_number,status,provider,callback_token_hash,purpose)
+    values($1,'00000000-0000-0000-0000-000000000021','00000000-0000-0000-0000-000000000002','outbound','+46401234567','+46702222266','dial_requested','sinch','busy-call','direct_marketing')
+    returning id`, [T])).rows[0].id;
+  await db.query(`
+    insert into public.dial_attempts(tenant_id,call_id,seller_user_id,provider,source_number_e164,destination_number_e164,client_request_id,idempotency_key,status,expires_at,external_call_id)
+    values($1,$2,'00000000-0000-0000-0000-000000000002','sinch','+46401234567','+46702222266',gen_random_uuid(),'busy-call','dial_requested',now()+interval '5 minutes','busy-ext')`, [T, busyCall]);
+  await db.query(`update public.calls set status='unanswered',ended_at=now(),end_cause='webphone_leg_ended' where id=$1`, [busyCall]);
+  await db.query(`select public.ingest_sinch_voice_event('dice','busy-ext','dice:busy-ext',$1::jsonb,now())`,
+    [JSON.stringify({ event: "dice", callid: "busy-ext", reason: "CALLEEHANGUP", result: "BUSY" })]);
+  const busy = (await db.query(`select status from public.calls where id=$1`, [busyCall])).rows[0].status;
+  if (busy !== "busy") throw new Error(`A busy call was recorded as ${busy}.`);
+  await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
+  console.log("A busy line is recorded as busy, even after the browser reported no answer first.");
+}
+
+// Webbläsarens "accepterat" efter ACE flyttar inte ett besvarat samtal tillbaka.
+{
+  const T = "00000000-0000-0000-0000-000000000001";
+  await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+  const liveCall = (await db.query(`
+    insert into public.calls(tenant_id,customer_id,user_id,direction,from_number,to_number,status,provider,callback_token_hash,purpose,answered_at)
+    values($1,'00000000-0000-0000-0000-000000000021','00000000-0000-0000-0000-000000000002','outbound','+46401234567','+46702222255','answered','sinch','late-accept','direct_marketing',now())
+    returning id`, [T])).rows[0].id;
+  const liveAttempt = (await db.query(`
+    insert into public.dial_attempts(tenant_id,call_id,seller_user_id,provider,source_number_e164,destination_number_e164,client_request_id,idempotency_key,status,expires_at)
+    values($1,$2,'00000000-0000-0000-0000-000000000002','sinch','+46401234567','+46702222255',gen_random_uuid(),'late-accept','matched',now()+interval '5 minutes')
+    returning id`, [T, liveCall])).rows[0].id;
+  await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
+  const late = (await db.query(`select public.finalize_dial($1,$2,'accepted','late-ext',null,null) as r`, [liveCall, liveAttempt])).rows[0].r;
+  const state = (await db.query(`select a.status attempt, c.status call, a.external_call_id ext from public.dial_attempts a join public.calls c on c.id=a.call_id where a.id=$1`, [liveAttempt])).rows[0];
+  if (state.attempt !== "matched" || state.call !== "answered" || state.ext !== "late-ext" || late.alreadySettled !== true) {
+    throw new Error(`A late browser report moved an answered call back: ${JSON.stringify({ late, state })}`);
+  }
+  console.log("A browser report that arrives after the answer keeps the call answered and still records its id.");
+}
+
 // Ingen funktion får anropa Rinkel efter att schemat togs bort (202609170009).
 // Borttagningens egen kontroll såg bara namn; en funktion vars kropp anropade en
 // borttagen Rinkel-funktion låg kvar och hade fallerat vid första anrop.
