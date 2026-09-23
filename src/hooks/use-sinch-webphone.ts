@@ -50,7 +50,18 @@ type ProviderCall = {
   unmute?: () => void;
   setMuted?: (muted: boolean) => void;
   sendDTMF?: (digit: string) => void;
+  details?: { endCause?: number; error?: { message?: string; code?: unknown } };
 };
+
+// Leverantörens avslutsorsak, i den ordning SDK:t numrerar dem (`CallEndCause`).
+const END_CAUSES = ["None", "Timeout", "Denied", "NoAnswer", "Failure", "HungUp", "Canceled", "OtherDeviceAnswered", "Inactive"];
+
+function describeEnd(call: ProviderCall | undefined) {
+  const cause = call?.details?.endCause;
+  const name = typeof cause === "number" ? END_CAUSES[cause] ?? `cause_${cause}` : "unknown";
+  const message = call?.details?.error?.message;
+  return `${name}${message ? `: ${message}` : ""}`.slice(0, 300);
+}
 
 async function postJson(url: string, body: unknown) {
   const response = await fetch(url, {
@@ -119,13 +130,13 @@ export function useSinchWebphone() {
     }
   }, []);
 
-  const reportLeg = useCallback(async (callId: string, event: LegEvent) => {
+  const reportLeg = useCallback(async (callId: string, event: LegEvent, detail?: string) => {
     const sessionId = sessionRef.current;
     if (!sessionId) return;
     // Klientens rapport är en komplettering, inte sanningen. Providerns webhook
     // äger utfallet; det här är bara för att gränssnittet ska hinna med.
     await postJson("/api/v1/telephony/webphone/leg", {
-      callId, sessionId, event, occurredAt: new Date().toISOString(),
+      callId, sessionId, event, occurredAt: new Date().toISOString(), detail: detail ?? null,
     }).catch(() => null);
   }, []);
 
@@ -295,6 +306,22 @@ export function useSinchWebphone() {
       throw error;
     }
 
+    // Lyssnaren kopplas på innan något annat väntas in. Den låg efter
+    // rapporten till servern, och ett samtal som hann ringa eller brytas under
+    // den väntan lämnade inga spår: dialern stod kvar på "ringer" och det gick
+    // inte att se varför.
+    call.addListener({
+      onCallRinging: () => void reportLeg(input.callId, "ringing"),
+      onCallAnswered: () => void reportLeg(input.callId, "answered"),
+      onCallEstablished: () => void reportLeg(input.callId, "answered"),
+      onCallEnded: (ended: ProviderCall) => {
+        callRef.current = null;
+        setMutedState(false);
+        setCapabilities({ mute: false, dtmf: false });
+        setState({ phase: "ready" });
+        void reportLeg(input.callId, "ended", describeEnd(ended));
+      },
+    });
     callRef.current = call;
     setMutedState(false);
     setCapabilities({
@@ -313,18 +340,6 @@ export function useSinchWebphone() {
       console.error("webphone_dialing_report_failed", { status: reported.status });
     }
 
-    call.addListener({
-      onCallRinging: () => void reportLeg(input.callId, "ringing"),
-      onCallAnswered: () => void reportLeg(input.callId, "answered"),
-      onCallEstablished: () => void reportLeg(input.callId, "answered"),
-      onCallEnded: () => {
-        callRef.current = null;
-        setMutedState(false);
-        setCapabilities({ mute: false, dtmf: false });
-        setState({ phase: "ready" });
-        void reportLeg(input.callId, "ended");
-      },
-    });
 
     return { providerCallId: call.id };
   }, [reportLeg]);
@@ -382,8 +397,15 @@ export function useSinchWebphone() {
     }
   }, []);
 
+  // Sessionen samtalet ringer från. Reservationen måste bära den: annars
+  // kopplas försöket aldrig till sessionen, och en flik som stängs eller laddas
+  // om mitt i ett samtal lämnar säljaren låst tills städningen tar försöket,
+  // tidigast efter en kvart.
+  const currentSessionId = useCallback(() => sessionRef.current, []);
+
   return {
     state, start, placeCall, hangup, toggleMute, sendDtmf, muted, capabilities,
     providerCallId: callRef.current?.id ?? null,
+    currentSessionId,
   };
 }

@@ -221,6 +221,16 @@ export async function POST(request: Request) {
     const context = await getAppContext();
     assertPermission(context.role, "calls.create");
     const parsed = bodySchema.parse(await request.json());
+    // Sessionen kopplas till försöket så att en stängd eller tappad flik släpper
+    // platsen direkt. Den måste vara säljarens egen och levande; annars kopplas
+    // ingen alls, och samtalet ringer ändå -- städningen tar då försöket.
+    let webphoneSessionId: string | null = null;
+    if (parsed.webphoneSessionId) {
+      const { data: ownSession } = await createAdminClient().from("webphone_sessions")
+        .select("id").eq("id", parsed.webphoneSessionId).eq("tenant_id", context.tenantId)
+        .eq("seller_user_id", context.userId).in("status", ["registering", "registered"]).maybeSingle();
+      webphoneSessionId = ownSession?.id ?? null;
+    }
     const supabase = await createClient();
 
     // Reservationen är allt servern gör. Samtalet kopplas av säljarens
@@ -239,7 +249,7 @@ export async function POST(request: Request) {
       p_idempotency_key: parsed.idempotencyKey,
       p_purpose: parsed.purpose,
       p_caller_id_phone_number_id: parsed.callerIdPhoneNumberId ?? null,
-      p_webphone_session_id: parsed.webphoneSessionId ?? null,
+      p_webphone_session_id: webphoneSessionId,
     });
     if (result.error || !result.data) {
       const failure = reservationFailure(result.error?.message ?? "call_reservation_failed", result.error?.code ?? null);

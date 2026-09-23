@@ -129,6 +129,7 @@ export function useDialerPanel() {
     setStatus("Kopplar upp samtalet i webbtelefonen…");
     const body = {
       ...payload,
+      webphoneSessionId: payload.webphoneSessionId ?? webphone.currentSessionId(),
       clientRequestId: payload.clientRequestId ?? crypto.randomUUID(),
       idempotencyKey: payload.idempotencyKey ?? `call:${crypto.randomUUID()}`,
     };

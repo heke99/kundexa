@@ -259,3 +259,18 @@ Fel som rättades:
 - Teamledare nådde inte Produkter (krävde `products.manage`), där avtalen nu ligger.
 - Säljarens meny: 16 → 6 val (Dialer, Återkomster, Mina samtal, Kunder, Ringlistor, Avtal).
 - Dialern: "Öppna kundkortet" för vald kund; kortet "Säkerhetskontroller" och långa texter bort.
+
+## 2026-09-23 — Första riktiga samtalet
+
+Användaren testade: webbtelefonen **registrerade sig** för första gången (CSP-fixen höll), Sinch
+tog emot samtalet (externt id), men det ringde inte och gick inte att lägga på; säljaren låstes.
+Loggen: reservation 08:11:46, `dialing accepted` 08:11:47, sedan inga benhändelser och inget
+`/calls/end`; sidan laddades om 08:12:29. Försöket stod kvar `dial_requested`.
+- Lyssnaren kopplades på efter en väntan på servern → tidiga händelser förlorades. Flyttad först.
+- Sinch avslutsorsak (`CallEndCause` + fel) rapporterades inte → nu `webphone.ended.detail` i
+  `call_events`. **Nästa test visar varför det inte ringde.**
+- Reservationen skickade aldrig `webphoneSessionId` → stängd flik släppte inte platsen (15 min lås).
+  Nu skickas den, prövad i rutten mot säljarens egen levande session.
+- Knappen "Lägg på/Avbryt" hängde på dialerns interna läge → nu `callId && !afterCall`.
+- Det fastnade testförsöket släpptes manuellt (`call.released_by_support`, audit).
+- Sinch har fortfarande skickat noll webhook-händelser: callback-URL ej registrerad.

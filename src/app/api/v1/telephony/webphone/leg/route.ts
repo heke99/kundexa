@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getAppContext } from "@/lib/auth";
 import { assertPermission } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 const schema = z.object({
   callId: z.uuid(),
@@ -11,6 +12,9 @@ const schema = z.object({
   // Klientens egen tidpunkt. Servern klipper den om den ligger i framtiden —
   // en webbläsares klocka är inte något att skriva historik efter.
   occurredAt: z.iso.datetime({ offset: true }).nullable().optional(),
+  // Leverantörens avslutsorsak ("Denied: …", "NoAnswer"). Utan den stod ett
+  // samtal som aldrig ringde kvar utan förklaring.
+  detail: z.string().trim().max(300).nullable().optional(),
 });
 
 const failures: Record<string, { message: string; status: number }> = {
@@ -50,6 +54,17 @@ export async function POST(request: Request) {
         { error: "webphone_leg_failed", message: "Samtalets förlopp kunde inte registreras." },
         { status: 500 },
       );
+    }
+    if (body.detail) {
+      // RPC:n har redan prövat att samtalet är säljarens eget. Orsaken skrivs
+      // bredvid som en egen händelse, så att den går att läsa i efterhand.
+      const { error: detailError } = await createAdminClient().from("call_events").insert({
+        tenant_id: context.tenantId,
+        call_id: body.callId,
+        event_type: `webphone.${body.event}.detail`,
+        payload: { detail: body.detail },
+      });
+      if (detailError) console.error("webphone_leg_detail_failed", { code: detailError.code ?? null });
     }
     return NextResponse.json(data);
   } catch (error) {

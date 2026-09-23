@@ -1304,3 +1304,21 @@ console.log(`Verified ${migrations.length} migrations, monotonic call/Resend pro
   const voice = await readFile(join(root, "src/app/api/webhooks/sinch/route.ts"), "utf8");
   assert.match(voice, /sinchSvamlFor\(event,/, "The voice webhook must answer ICE and ACE with SVAML, or Sinch disconnects the call");
 }
+
+// Första riktiga samtalet: det ringde inte, gick inte att lägga på, och
+// säljaren låstes. Tre fel samverkade.
+{
+  const hook = await readFile(join(root, "src/hooks/use-sinch-webphone.ts"), "utf8");
+  const listenerAt = hook.indexOf("call.addListener({");
+  const acceptedAt = hook.indexOf('outcome: "accepted", externalCallId: call.id');
+  assert.ok(listenerAt > 0 && acceptedAt > 0 && listenerAt < acceptedAt,
+    "The call listener must be attached before anything is awaited, or ringing and ended events are lost");
+  assert.match(hook, /reportLeg\(input\.callId, "ended", describeEnd\(ended\)\)/,
+    "The provider's end cause must be reported, or a call that never rang leaves no explanation");
+  const dialerHook = await readFile(join(root, "src/hooks/use-dialer.ts"), "utf8");
+  assert.match(dialerHook, /webphoneSessionId: payload\.webphoneSessionId \?\? webphone\.currentSessionId\(\)/,
+    "The reservation must carry the webphone session, or a closed tab leaves the seller locked for fifteen minutes");
+  const panel = await readFile(join(root, "src/components/dialer-panel.tsx"), "utf8");
+  assert.match(panel, /\{callId && !afterCall \? <div className="dialer-end">/,
+    "The end-call button must stay available for as long as there is a call, whatever the dialer thinks its state is");
+}
