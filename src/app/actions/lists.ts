@@ -121,6 +121,38 @@ export async function setCustomerListSellers(form: FormData) {
   redirect(`/app/lists/${listId}?saved=1`);
 }
 
+/**
+ * Delar listan med team och en kampanj. Alla aktiva säljare i de teamen (och i
+ * kampanjens team) ringer ur samma kö. Databasen avgör vilka team en teamledare
+ * får dela till; en säljare som tappar åtkomst släpper sitt låsta prospekt.
+ */
+export async function setCustomerListSharing(form: FormData) {
+  const context = await getAppContext();
+  assertPermission(context.role, "lists.manage");
+  const listId = value(form, "list_id");
+  const teamIds = form.getAll("team_ids").map(String).filter(Boolean);
+  const campaignId = value(form, "campaign_id");
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("set_customer_list_sharing", {
+    p_list_id: listId,
+    p_team_ids: teamIds,
+    p_campaign_id: (campaignId || null) as string,
+  });
+  if (error) redirect(`/app/lists/${listId}?error=${encodeURIComponent(sharingError(error.message))}`);
+  revalidatePath(`/app/lists/${listId}`);
+  revalidatePath("/app/dialer");
+  redirect(`/app/lists/${listId}?message=${encodeURIComponent("Listan är delad. Säljarna i teamen ser den i ringvyn.")}`);
+}
+
+function sharingError(code: string) {
+  if (code.includes("team_share_permission_required")) return "Du kan bara dela till team du leder.";
+  if (code.includes("campaign_share_permission_required")) return "Kampanjen har team du inte leder. Be en administratör dela den.";
+  if (code.includes("team_not_found")) return "Teamet finns inte eller är inte aktivt.";
+  if (code.includes("campaign_not_found")) return "Kampanjen finns inte.";
+  if (code.includes("list_manage_permission_required")) return "Du får inte hantera den här listan.";
+  return "Listan kunde inte delas.";
+}
+
 export async function updateCustomerListSellerAssignment(form: FormData) {
   const context = await getAppContext();
   assertPermission(context.role, "lists.manage");

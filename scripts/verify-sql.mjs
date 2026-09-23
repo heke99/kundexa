@@ -3978,4 +3978,67 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   console.log("Contract answers reach the seller: SMS delivery is monotonic and reaches the contract (never across tenants), opening the link marks it opened, acceptance is emitted as contract.accepted, and expiry leaves an event.");
 }
 
+// Listor och nummer delas med team (202609240001).
+{
+  const T = "00000000-0000-0000-0000-000000000001";
+  const TEAM2 = "00000000-0000-0000-0000-0000000001a1";
+  const SELLER = "00000000-0000-0000-0000-0000000001a2";
+  const NUMBER = "00000000-0000-0000-0000-0000000001a3";
+  const CUST = "00000000-0000-0000-0000-0000000001a4";
+  await db.exec(`
+    insert into auth.users(id,email,raw_user_meta_data) values('${SELLER}','share-seller@example.test','{"full_name":"Delad Säljare"}') on conflict do nothing;
+    insert into public.teams(id,tenant_id,name) values('${TEAM2}','${T}','Delningsteam') on conflict do nothing;
+    insert into public.tenant_memberships(tenant_id,user_id,role,status,joined_at,primary_team_id) values('${T}','${SELLER}','sales','active',now(),'${TEAM2}') on conflict do nothing;
+    insert into public.team_members(tenant_id,team_id,user_id,role,is_primary) values('${T}','${TEAM2}','${SELLER}','member',true) on conflict do nothing;
+    update public.profiles set active_tenant_id='${T}' where id='${SELLER}';
+    insert into public.phone_numbers(id,tenant_id,number_e164,supports_voice,status,webhook_token_hash) values('${NUMBER}','${T}','+46401234599',true,'active','share-hash') on conflict do nothing;
+    insert into public.customers(id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by)
+      values('${CUST}','${T}','company','prospect','Delad Kund','+46707770099',true,'legitimate_interest','00000000-0000-0000-0000-000000000002') on conflict do nothing;
+    insert into public.nix_checks(tenant_id,customer_id,phone_e164,source,source_version,result,checked_at,valid_until,evidence)
+      values('${T}','${CUST}','+46707770099','runtime','1','not_listed',now(),now()+interval '30 days','{}');
+  `);
+  const as = (user) => db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${user}',false);`);
+  await as("00000000-0000-0000-0000-000000000002");
+  const listId = String((await db.query(`select public.create_managed_customer_list('Delad lista','Delas med team','static',null,'manual',100,'00:00','23:59:59',7,60,0,'both',true,false,null) as id`)).rows[0].id);
+  await db.query(`update public.customer_lists set status='active',allowed_days='{1,2,3,4,5,6,7}',allowed_start_time='00:00',allowed_end_time='23:59:59',distribution_strategy='round_robin' where id=$1`, [listId]);
+  await db.query(`select public.add_customers_to_list($1,array['${CUST}']::uuid[])`, [listId]);
+  const canWork = async (user) => { await as(user); const r = (await db.query(`select public.can_work_customer_list($1) as ok`, [listId])).rows[0].ok; return r; };
+
+  if (await canWork(SELLER)) throw new Error("A seller outside every shared team could work the list.");
+
+  // Ett team från ett annat bolag går inte att dela med.
+  await as("00000000-0000-0000-0000-000000000002");
+  let foreignTeamRefused = false;
+  try { await db.query(`select public.set_customer_list_sharing($1,array['00000000-0000-0000-0000-000000000076']::uuid[],null)`, [listId]); }
+  catch (error) { foreignTeamRefused = String(error).includes("team_not_found"); }
+  if (!foreignTeamRefused) throw new Error("A list was shared with another tenant's team.");
+
+  await db.query(`select public.set_customer_list_sharing($1,array['${TEAM2}']::uuid[],null)`, [listId]);
+  if (!(await canWork(SELLER))) throw new Error("A seller in a shared team could not work the list.");
+
+  // Turvis fördelning utan tilldelade säljare spärrar inte längre.
+  await as(SELLER);
+  const session = String((await db.query(`select public.start_dialer_session($1) as id`, [listId])).rows[0].id);
+  const claim = (await db.query(`select public.claim_next_list_member($1,$2) as c`, [listId, session])).rows[0].c;
+  if (claim.empty || claim.customer?.id !== CUST) throw new Error(`A seller in a shared team could not take the next prospect: ${JSON.stringify(claim)}`);
+
+  // Numret: teamet som ger tillgång styr, och ett eget val märks som eget.
+  await as("00000000-0000-0000-0000-000000000002");
+  await db.query(`select public.set_team_caller_id($1,$2)`, [TEAM2, NUMBER]);
+  const team = (await db.query(`select public.list_team_for_seller($1,$2) as t`, [listId, SELLER])).rows[0].t;
+  const resolved = (await db.query(`select * from public.resolve_caller_id_phone_number($1,$2,$3,null,null)`, [T, team, listId])).rows[0];
+  const explicit = (await db.query(`select caller_id_source from public.resolve_caller_id_phone_number($1,null,null,null,$2)`, [T, NUMBER])).rows[0];
+  if (team !== TEAM2 || resolved?.phone_number_id !== NUMBER || resolved?.caller_id_source !== "team" || explicit?.caller_id_source !== "explicit") {
+    throw new Error(`The shared team's number was not used: ${JSON.stringify({ team, resolved, explicit })}`);
+  }
+
+  // Att ta bort delningen släpper säljarens låsta prospekt och stänger listan för hen.
+  await db.query(`select public.set_customer_list_sharing($1,'{}'::uuid[],null)`, [listId]);
+  const member = (await db.query(`select state,claimed_by from public.customer_list_members where list_id=$1 and customer_id=$2`, [listId, CUST])).rows[0];
+  if (member.state !== "pending" || member.claimed_by !== null) throw new Error(`Unsharing left the seller's claim in place: ${JSON.stringify(member)}`);
+  if (await canWork(SELLER)) throw new Error("A seller kept access after the list was unshared.");
+  await as("00000000-0000-0000-0000-000000000002");
+  console.log("Lists shared with a team reach every seller in it, never another tenant's team; the queue is shared, not turn-locked; the team's number is used; unsharing releases claims and access.");
+}
+
 await db.close();

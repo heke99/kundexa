@@ -162,3 +162,46 @@ export async function rentPhoneNumberForTenant(form: FormData) {
   revalidatePath("/app/platform");
   redirect(`/app/platform?webhookToken=${encodeURIComponent(token)}`);
 }
+
+/**
+ * Ge ett av företagets nummer direkt till ett av dess team.
+ *
+ * Numret och teamet måste höra till samma företag; ett team som visar ett
+ * annat företags nummer vore samma nummerkonflikt som hyrningen ovan stoppar.
+ */
+export async function assignPhoneNumberToTeam(form: FormData) {
+  const context = await getPlatformContext();
+  if (!isPlatformAdmin(context.platformRole)) redirect("/app/platform?error=Plattformsadmin krävs");
+
+  const parsed = z.object({ phoneNumberId: z.uuid(), teamId: z.uuid() })
+    .safeParse({ phoneNumberId: value(form, "phone_number_id"), teamId: value(form, "team_id") });
+  if (!parsed.success) redirect("/app/platform?error=Välj ett nummer och ett team");
+  const fail = (message: string): never => redirect(`/app/platform?error=${encodeURIComponent(message)}`);
+
+  const admin = createAdminClient();
+  const [{ data: number }, { data: team }] = await Promise.all([
+    admin.from("phone_numbers").select("id,tenant_id,number_e164,status,supports_voice").eq("id", parsed.data.phoneNumberId).maybeSingle(),
+    admin.from("teams").select("id,tenant_id,name,status").eq("id", parsed.data.teamId).maybeSingle(),
+  ]);
+  if (!number || !team) fail("Numret eller teamet finns inte.");
+  if (number!.tenant_id !== team!.tenant_id) fail("Numret och teamet hör till olika företag.");
+  if (number!.status !== "active" || !number!.supports_voice) fail("Numret är inte aktivt för utgående samtal.");
+  if (team!.status !== "active") fail("Teamet är inte aktivt.");
+
+  const { error } = await admin.from("teams").update({ caller_id_phone_number_id: number!.id })
+    .eq("tenant_id", team!.tenant_id).eq("id", team!.id);
+  if (error) fail("Numret kunde inte kopplas till teamet.");
+
+  const { error: auditError } = await admin.from("audit_logs").insert({
+    tenant_id: team!.tenant_id,
+    actor_user_id: context.userId,
+    action: "telephony.caller_id_changed",
+    entity_type: "team",
+    entity_id: team!.id,
+    after_data: { scope: "team", scope_id: team!.id, phone_number_id: number!.id, changed_by: "platform" },
+  });
+  if (auditError) fail("Numret kopplades men ändringen kunde inte loggas. Kontrollera revisionsloggen.");
+
+  revalidatePath("/app/platform");
+  redirect(`/app/platform?message=${encodeURIComponent(`${number!.number_e164} visas nu när ${team!.name} ringer.`)}`);
+}

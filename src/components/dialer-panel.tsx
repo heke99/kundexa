@@ -49,8 +49,9 @@ export function DialerPanel({
   const [customerOptions, setCustomerOptions] = useState<Customer[]>(customers);
   const [customerSearchLoading, setCustomerSearchLoading] = useState(false);
   const [callId, setCallId] = useState<string | null>(null);
-  const initialCallerId = callerIdOptions[0];
-  const [callerIdPhoneNumberId, setCallerIdPhoneNumberId] = useState(initialCallerId?.id ?? "");
+  // Tomt betyder automatiskt: numret följer kampanj, team och företagets förval,
+  // så som en administratör eller teamledare har bestämt.
+  const [callerIdPhoneNumberId, setCallerIdPhoneNumberId] = useState("");
   const [afterCall, setAfterCall] = useState(false);
   const [disposition, setDisposition] = useState("");
   const [notes, setNotes] = useState("");
@@ -106,8 +107,8 @@ export function DialerPanel({
 
   async function call() {
     if (!selected || dialer.calling) return;
-    if (!callerIdPhoneNumberId) {
-      setError("Du saknar ett tilldelat utgående telefonnummer.");
+    if (callerIdOptions.length === 0) {
+      setError("Företaget har inget utgående nummer ännu. Be en administratör lägga till ett.");
       return;
     }
     const customer = visibleCustomers.find((item) => item.id === selected);
@@ -119,7 +120,7 @@ export function DialerPanel({
         customerId: selected,
         targetPhone: customer.phone_e164,
         callbackActivityId: callbackActivityId ?? null,
-        callerIdPhoneNumberId,
+        callerIdPhoneNumberId: callerIdPhoneNumberId || null,
         clientRequestId: crypto.randomUUID(),
         idempotencyKey: requestKeyRef.current,
       });
@@ -227,16 +228,16 @@ export function DialerPanel({
       <select
         value={callerIdPhoneNumberId}
         onChange={(event) => setCallerIdPhoneNumberId(event.target.value)}
-        disabled={callerIdOptions.length === 1}
       >
+        <option value="">Automatiskt (team eller företag)</option>
         {callerIdOptions.map((number) => <option key={number.id} value={number.id}>
           {number.number_e164}
           
         </option>)}
       </select>
-    </label> : <p className="form-error">Du saknar ett tilldelat utgående telefonnummer.</p>}
+    </label> : <p className="form-error">Företaget har inget utgående nummer ännu. Be en administratör lägga till ett.</p>}
     <button type="button" className="call-button" onClick={call}
-      disabled={!dialer.registered || !selected || !callerIdPhoneNumberId || afterCall || dialer.calling}
+      disabled={!dialer.registered || !selected || callerIdOptions.length === 0 || afterCall || dialer.calling}
       aria-label="Ring via telefoni">
       <Phone size={25} />
     </button>

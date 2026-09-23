@@ -197,3 +197,11 @@ Projektionsspärren fryser avslutade samtal. Enda undantaget: `unanswered → fa
 och bara i en transaktion där DiCE-hanteringen satt `kundexa.provider_authoritative=on` (lokalt).
 Webbläsarens rapport stänger samtal (även besvarade) för att säljaren inte ska fastna; DiCE ersätter
 längd och orsak när statusen är densamma.
+
+## ADR-0021 — Listor delas med team, nummer följer teamet
+Användarens modell (2026-09-23): teamledare/ägare/superadmin delar en lista med team eller kampanj;
+säljarna i teamen får den automatiskt och tar prospekt ur en gemensam kö. Ingen uppdelning i flera
+listor vid import. Nummer ges till ett företag och delas inom det ut till team (superadmin kan ge
+direkt till team); inget nummer per säljare. Därför skickar dialern inget explicit nummer som
+standard — resolvern avgör, och ett explicit val loggas med källan `explicit`. Detta ersätter
+den tidigare regeln att dialern alltid skickar det valda numret.

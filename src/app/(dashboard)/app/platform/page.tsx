@@ -7,7 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Field, SelectField } from "@/components/ui/form-field";
 import { createClient } from "@/lib/supabase/server";
 import { canReadPlatformAdministration, getPlatformContext, isPlatformAdmin, isPlatformOwner } from "@/lib/auth";
-import { updatePlatformMembership, updateTenantPlatformStatus } from "@/app/actions/platform";
+import { assignPhoneNumberToTeam, updatePlatformMembership, updateTenantPlatformStatus } from "@/app/actions/platform";
+import { platformNumberAssignmentChoices } from "@/lib/platform/number-assignment";
 import { createPlatformTenantAndInviteOwner } from "@/app/actions/platform-lists";
 import { authUserEmailsById } from "@/lib/supabase/auth-admin-users";
 import { NumberRental } from "@/components/number-rental";
@@ -42,6 +43,8 @@ export default async function PlatformPage({ searchParams }: { searchParams: Pro
     ok(admin.from("platform_audit_logs").select("id,action,entity_type,entity_id,tenant_id,reason,created_at,actor_user_id").order("created_at", { ascending: false }).limit(50)),
     ok(admin.from("platform_lists").select("id,status,total_entries,available_entries")),
   ]);
+  const numberAssignment = await platformNumberAssignmentChoices();
+  const tenantName = new Map((tenants ?? []).map((tenant) => [tenant.id, tenant.legal_name || tenant.name]));
   const emailByUser = await authUserEmailsById([
     ...(platformMemberships ?? []).map((member) => member.user_id),
     ...(audits ?? []).map((audit) => audit.actor_user_id ?? ""),
@@ -75,6 +78,26 @@ export default async function PlatformPage({ searchParams }: { searchParams: Pro
         <div style={{ marginTop: 12 }}>
           <NumberRental tenants={(tenants ?? []).map((tenant) => ({ id: tenant.id, name: tenant.legal_name || tenant.name }))} />
         </div>
+      </CardContent>
+    </Card> : null}
+
+    {numberAssignment && numberAssignment.numbers.length ? <Card style={{ marginTop: 16 }}>
+      <CardHeader><h2>Ge ett nummer till ett team</h2></CardHeader>
+      <CardContent>
+        <p className="muted">Teamet visar numret när dess säljare ringer. Företagets egna administratörer och teamledare kan ändra det sedan.</p>
+        <form action={assignPhoneNumberToTeam} className="form-stack" style={{ marginTop: 12 }}>
+          <div className="form-grid">
+            <SelectField label="Nummer" name="phone_number_id" defaultValue="" required>
+              <option value="" disabled>Välj nummer</option>
+              {numberAssignment.numbers.map((number) => <option key={number.id} value={number.id}>{number.number_e164} · {tenantName.get(number.tenant_id) ?? "Okänt företag"}</option>)}
+            </SelectField>
+            <SelectField label="Team" name="team_id" defaultValue="" required>
+              <option value="" disabled>Välj team</option>
+              {numberAssignment.teams.map((team) => <option key={team.id} value={team.id}>{team.name} · {tenantName.get(team.tenant_id) ?? "Okänt företag"}</option>)}
+            </SelectField>
+          </div>
+          <button className="button button-secondary">Ge numret till teamet</button>
+        </form>
       </CardContent>
     </Card> : null}
 

@@ -3288,6 +3288,45 @@ export type Database = {
           },
         ]
       }
+      customer_list_team_shares: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          list_id: string
+          team_id: string
+          tenant_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          list_id: string
+          team_id: string
+          tenant_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          list_id?: string
+          team_id?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "customer_list_team_shares_list_fk"
+            columns: ["tenant_id", "list_id"]
+            isOneToOne: false
+            referencedRelation: "customer_lists"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "customer_list_team_shares_team_fk"
+            columns: ["tenant_id", "team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["tenant_id", "id"]
+          },
+        ]
+      }
       customer_lists: {
         Row: {
           allocation_level: string
@@ -3300,6 +3339,7 @@ export type Database = {
           auto_next_delay_seconds: number
           callback_policy: string
           caller_id_phone_number_id: string | null
+          campaign_id: string | null
           created_at: string
           description: string | null
           dialing_mode: string
@@ -3341,6 +3381,7 @@ export type Database = {
           auto_next_delay_seconds?: number
           callback_policy?: string
           caller_id_phone_number_id?: string | null
+          campaign_id?: string | null
           created_at?: string
           description?: string | null
           dialing_mode?: string
@@ -3382,6 +3423,7 @@ export type Database = {
           auto_next_delay_seconds?: number
           callback_policy?: string
           caller_id_phone_number_id?: string | null
+          campaign_id?: string | null
           created_at?: string
           description?: string | null
           dialing_mode?: string
@@ -3418,6 +3460,13 @@ export type Database = {
             columns: ["tenant_id", "caller_id_phone_number_id"]
             isOneToOne: false
             referencedRelation: "phone_numbers"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "customer_lists_campaign_tenant_fk"
+            columns: ["tenant_id", "campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
             referencedColumns: ["tenant_id", "id"]
           },
           {
@@ -13199,6 +13248,14 @@ export type Database = {
           tenant_timezone: string
         }[]
       }
+      list_team_access: {
+        Args: { p_list_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      list_team_for_seller: {
+        Args: { p_list_id: string; p_user_id: string }
+        Returns: string
+      }
       longtransactionsenabled: { Args: never; Returns: boolean }
       manual_contract_disposition_allowed: {
         Args: { p_disposition: string; p_tenant_id: string }
@@ -13886,6 +13943,10 @@ export type Database = {
         Args: { p_list_id: string; p_user_ids: string[] }
         Returns: number
       }
+      set_customer_list_sharing: {
+        Args: { p_campaign_id: string; p_list_id: string; p_team_ids: string[] }
+        Returns: Json
+      }
       set_managed_team_member: {
         Args: {
           p_assignment_paused?: boolean
@@ -13904,6 +13965,10 @@ export type Database = {
           p_status?: string
           p_user_id: string
         }
+        Returns: undefined
+      }
+      set_team_caller_id: {
+        Args: { p_phone_number_id: string; p_team_id: string }
         Returns: undefined
       }
       set_tenant_feature: {
