@@ -1,5 +1,65 @@
 # Current state
 
+## 2026-09-24 — Systemgenomgång: 31 brytpunkter åtgärdade (FAILURE-0101…0131)
+
+Gren `claude/charming-mendel-tsfomg` (från `bf83bb9`, PR #47). Fem kodcommits (PR 1–5 i planen) och en
+minnescommit. `npm run verify` PASS. **Inte mergat:** webbkoden går live när grenen mergas till main
+(Vercel), och Edge Functions `maintenance-worker`, `process-outbox` och `parsehub-worker` deployas av
+Actions vid merge. Databasen är redan uppdaterad och fungerar med den kod som körs nu.
+
+**Produktionen (`lhvifuxcqghtbiulzkrf`), mätt 2026-09-23 22:40 UTC:**
+- Migrationerna `202609240003`–`202609240010` är applicerade via MCP. Samma sak gäller `202609170010`,
+  som aldrig hade körts i produktion: svepet släppte besvarade samtal, eftersom
+  `dial_attempt_holds_seat` räknar `matched`.
+- RLS-delen av `202609240002` är applicerad (`imports_land_once_read_only_policies`). Importtabellerna
+  har bara `*_ops_select`.
+- Migrationsregistret har alla **128 av 128** repoversioner. 40 saknades (från `202609110006`) och är
+  registrerade som markörer med tom `statements`, eftersom var och en redan har en MCP-tidsstämpeltvilling.
+- Funktioner: alla plpgsql/sql-funktioner i `public` är identiska med PGlite när man bortser från
+  kommentarer och blanksteg. Enda undantaget är `ingest_sinch_voice_event`, där produktionen saknar den
+  oanvända deklarationen `v_duplicate`, en skillnad som fanns redan tidigare. Policyer (288),
+  RLS-flaggor (164) och triggrar (181) har identiska hashar.
+- Typerna regenererades efter `202609240006` (`set_campaign_teams`). Senare migrationer ändrar inga
+  signaturer. Den borttagna `keep_terminal_dial_attempt_terminal` är en triggerfunktion och ingår inte
+  i typerna.
+- 7/7 workers är `healthy` efter appliceringen. Säkerhetsrådgivaren visar bara kända poster (PostGIS i
+  public, avsiktliga RPC:er, leaked password protection av).
+
+**Beteende som ändrats (se ADR-0023…0026):**
+- Samtalsgrinden stänger vid fel: ICE kopplar bara ett reserverat, ej besvarat försök med samma säljare
+  och nummer. Numret och A-numret tas från reservationen, och vid DB-fel eller svaret "ingen match"
+  läggs samtalet på.
+- Avtal kan skapas från en produkt. Produkt- och mallkontrollen görs vid commit (deferred constraint
+  trigger), och `contract_manager` får skapa utkast i v1.
+- Delade listor:
+  - Dagsgränsen räknar inte det prospekt säljaren håller.
+  - En pausad enskild tilldelning spärrar.
+  - Kampanjer får team (`set_campaign_teams`).
+  - "Lägg om" köar med verkliga compliance-värden.
+  - Återkomster och `calls.team_id` följer teamet som gav åtkomsten.
+- Avtalsutskick:
+  - Kanalen räknas ut från det företaget faktiskt kan skicka.
+  - Koden står i e-posten när den krävs.
+  - Ett oklart SMS-svar lämnar begäran öppen och syns för säljaren.
+  - `sms_acceptance` och `web_acceptance` följs.
+- Import:
+  - Rollback stannar i sin tenant.
+  - `create_only` och `review_conflicts` följs.
+  - En godkänd NIX-kontroll släpper platsen.
+  - Avkapning ger fel i stället för tyst trunkering.
+  - ParseHub kör inte om permanenta fel och kan återuppta en delvis insättning.
+- Telefoni:
+  - Upptaget registreras som `busy`.
+  - En sen `finalize_dial` flyttar inte tillbaka ett besvarat försök.
+  - Tokenförnyelse behåller en levande session.
+- `maintenance-worker` kör frigöringsstegen först, varje steg isolerat, och schemaläggs var femte minut.
+
+**Aldrig körda skarpt (NOT RUN):**
+- riktigt samtal med team-A-nummer efter merge;
+- avtalsutskick till egen e-post;
+- inloggning som säljare med delad lista;
+- import med riktig fil.
+
 ## 2026-09-24 — Importen landar en gång (PR F)
 
 Migration `202609240002_imports_land_once.sql`. I prod: funktioner och index applicerade

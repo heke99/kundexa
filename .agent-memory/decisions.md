@@ -212,3 +212,34 @@ automatisk sammanslagning går inte att se i efterhand; dubblettrapporten (`impo
 visar kollisionerna före commit och förutsäger exakt vad importen gör. Importtabellerna är
 skrivskyddade för användare (en teamledare kunde annars sätta `scan_status='clean'`); uppladdningen
 och mappningen skriver med tjänsteklienten efter behörighetskontroll, alltid i användarens tenant.
+
+## ADR-0023 — Samtalsgrinden stänger vid fel
+Användarens beslut 2026-09-23. ICE kopplar ett samtal bara när databasen svarar `connect=true`. Det
+kräver ett försök som håller platsen, som inte redan är `matched` och som har samma säljare och samma
+destination som anropet. Numret och A-numret tas från reservationen, inte från webbläsarens payload.
+Svarar databasen med fel eller "ingen match" läggs samtalet på, även om en riktig kund då går miste om
+ett samtal. Alternativet, att koppla vid fel, gick förbi spärr, NIX, ringtider och lås.
+
+## ADR-0024 — En pausad tilldelning slår teamåtkomst
+En säljare som är `paused` på en lista får inte ringa den, även om säljarens team har tillgång via
+delning eller kampanj. `ended` tar bara bort den enskilda tilldelningen, och därefter gäller teamets
+regler igen. `set_customer_list_sellers` godtar medlemmar i alla team som har tillgång till listan.
+Dagsgränsen räknar inte det prospekt säljaren håller just nu, och bara listor som teamet når räknas.
+Roller som inte ringer (viewer, finance, quality) får ingen åtkomst via team.
+
+## ADR-0025 — Kampanjer har team
+Användarens beslut 2026-09-23. `set_campaign_teams(campaign, teams[])`: en admin väljer fritt, och en
+teamledare väljer bara bland team de leder. Ett team som förlorar åtkomsten släpper sina låsta prospekt.
+Ändringen loggas (`campaign.teams_set`). En lista kopplad till kampanjen når kampanjens team; en
+teamledare får bara byta bort en kampanj de själva leder.
+
+## ADR-0026 — Importprofilens sammanslagningsregel följs
+- `safe_upsert` (standard) uppdaterar en befintlig kund som förut.
+- `create_only` skapar nya kunder men lämnar befintliga orörda. Listplatsen läggs ändå.
+- `review_conflicts` lägger **varje** träff på en befintlig kund i `import_merge_conflicts`
+  (`existing_customer_requires_review`), och raden blir `conflict`. Den regeln skriver aldrig över en
+  befintlig kund.
+
+Tillägg till ADR-0019: produkt- och mallkontrollen görs vid commit, inte före INSERT.
+Tillägg till ADR-0020: leverantören får också ändra `unanswered` till `busy`, på samma villkor som
+till `failed`.

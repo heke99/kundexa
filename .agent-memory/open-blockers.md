@@ -162,5 +162,20 @@ Det avgör om avtal kan skapas från samtal: `is_contract_call_eligible` kräver
 `answered_at is not null`. Testet som avgör saken är ett enda riktigt besvarat
 samtal — ring, svara, lägg på, och se om `answered_at` fylls i.
 
-- 2026-09-24: RLS-delen av migration 202609240002 är inte applicerad i prod förrän PR F är mergad och
-  deployad (annars slutar dagens uppladdning att fungera). Stängs direkt efter merge.
+- ~~2026-09-24: RLS-delen av migration 202609240002 är inte applicerad i prod~~. LÖST 2026-09-23 21:10
+  UTC (`imports_land_once_read_only_policies`) efter att PR #47 var deployad.
+
+## 2026-09-24 — efter systemgenomgången
+
+- **Merge krävs.** Grenen `claude/charming-mendel-tsfomg` har webb- och Edge-koden för
+  FAILURE-0101…0136. Databasen är redan uppdaterad. Tills grenen är mergad:
+  - kopplar den gamla webhooken fortfarande alla samtal (0102);
+  - avgörs A-numret av sessionen (0103);
+  - ger standardkanalen fel (0118).
+- **Svenskt nummer med röst och SMS saknas.** Gridex har bara `+12085810392` (US, trial, bara röst), och
+  `outbound_sms=false`. SMS-utskick och SMS-svar är därför oprövade.
+- **Inbjudna användare har inte loggat in.** Teamledare och säljare står som `invited`, så delade listor,
+  kampanjteam och dagsgräns kan inte provas som säljare.
+- **Ingen produkt finns.** Mallen "Gridex hemsida · Mina sidor" måste kopplas till en produkt innan ett
+  avtal kan skapas (ADR-0019).
+- Leaked password protection är avstängd i Supabase Auth (rådgivaren varnar).

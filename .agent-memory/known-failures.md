@@ -1780,3 +1780,124 @@ sopades som `lost`. Samtalsförsök föll med `webphone_dial_rejected: Invalid o
 Orsak: `connect-src` i `src/lib/supabase/proxy.ts` saknade telefonitjänstens värdar. Servern fick
 200 på identisk registrering. Maskerades av att SDK:t ersätter felet med "Unable to create
 instance!" och att klienten bara loggade felnamnet. Rättat + vakt i `verify.mjs`.
+
+## FAILURE-0101 till FAILURE-0136 — systemgenomgången 2026-09-23/24
+
+Samtliga hittades vid läsning av kod och migrationer och bekräftades sedan med ett PGlite- eller
+enhetstest. Testet fallerade utan fixen och passerade med den. Status: `FIXED` på grenen
+`claude/charming-mendel-tsfomg`. Databasdelen är i produktion; koddelen går live vid merge.
+
+### P0
+
+- **0101 Inget avtal kunde skapas från en produkt.**
+  - Orsak: `contracts_enforce_product_template` var `BEFORE INSERT`, men `create_contract_draft` sätter
+    `template_id` först med en senare UPDATE. Varje avtal från en produkt föll därför på
+    `contract_product_requires_its_contract`.
+  - Testet dolde felet genom att använda produkt `null`.
+  - Fix: `202609240003` gör om kontrollen till en deferred constraint trigger som läser om raden vid commit.
+- **0102 Webbtelefonen kopplade alla samtal.**
+  - Orsak: webhooken svarade `connectPstn` även vid DB-fel och `matched:false`. Spärr, NIX, ringtider och
+    lås gick därför att kringgå.
+  - Fix: `202609240004` låter ICE-svaret bära `connect`, `destination` och `callerId`. `sinchSvamlFor`
+    lägger på i alla andra fall (fail-closed, ADR-0023).
+- **0103 Fel A-nummer.**
+  - Orsak: sessionen band företagets förval, och SVAML ekade `payload.cli`. Resolverns team- eller
+    listnummer nådde därför aldrig leverantören, och ett företag utan förval kunde inte starta telefonen.
+  - Fix: CLI:t tas från reservationen, och sessionen faller tillbaka på första numret i
+    `caller_id_options_for_current_user`.
+- **0104 Dokumentnedladdning förbi RLS.** Rutten läste avtalsdokumentet med admin-klienten, och
+  `assertApiObjectAccess` släppte igenom sessioner. Nu läses raden med `dataClientForIdentity` före
+  nedladdningen.
+- **0105 `rollback_import_run` skrev över tenantgränsen.**
+  - Orsak: ett främmande id gav `v_status` NULL, `NULL not in (…)` kastade inget, och den sista
+    UPDATE:n saknade tenantfilter.
+  - Fix i `202609240005`: funktionen kastar `import_run_not_found`, och UPDATE:n får tenantfilter.
+  - Sidotabellerna blir SELECT-only.
+- **0106 PR F halvt i produktion.** RLS-delen av `202609240002` saknades; den är nu applicerad.
+
+### P1: listor, kö och dialer
+
+- **0107 Dagsgränsen var fel med ett.** Anspråket räknades in och nekade det N:te prospektet.
+- **0108 En pausad enskild säljare kunde ringa ändå** via teamåtkomsten. `set_customer_list_sellers`
+  godtog bara listans eget team.
+- **0109 Kampanjdelning nådde ingen.** Inget skrev `campaign_teams`. Ny RPC `set_campaign_teams` och
+  UI på kampanjsidan.
+- **0110 "Lägg om" köade aldrig.** Villkoret krävde `compliance_status='allowed'`, som importen aldrig
+  skriver.
+- **0111 Återkomster på delade listor.**
+  - En global återkomst hamnade hos listans eget team.
+  - Säljarens egen `in_progress`-återkomst syntes inte i kön.
+  - Länken för en förfallen återkomst tappade `&callback=`.
+- **0112** `calls.team_id` blev kundens team i stället för teamet som gav åtkomst.
+- **0113 Autodialern låste prospektet.** Ett stopp vid spärr eller utanför ringtid lämnade det som
+  `dialing`.
+- **0114** "Öppna kundkortet" visades under pågående samtal och bröt samtalet vid klick.
+- **0115** Fem reservationsfelkoder blev generiskt 400.
+- **0116** En teamledare kunde koppla bort en kampanj de inte leder.
+- **0117 `maintenance-worker` avbröt vid första fel**, före stegen som släpper låsta platser. Den kördes
+  dessutom var 15:e minut, inte var 90:e sekund som kommentarerna sa.
+
+### P1: avtalsutskick och svar
+
+- **0118** Förvald kanal ("E-post och SMS") gick inte att använda för ett företag utan SMS-nummer.
+- **0119** Koden stod bara i SMS:et, så kunden kunde inte godkänna via e-postlänken.
+- **0120 Ett oklart SMS-svar låste avtalet för alltid.** Begäran blev `manual_review_required`, och
+  "JA 1234" ignorerades efter det. Fix `202609240007`: svaret blir en händelse, och begäran står kvar
+  `pending`.
+- **0121** En SMS-godkänd kund såg ett aktivt formulär. Omutskick förifyllde ett passerat datum.
+- **0122** `createContract` städade med `status='draft'` på ett utkast som redan var `ready`, och råa
+  felkoder visades.
+- **0123** `contract_manager` nekades i v1 trots att UI och v3 tillät rollen.
+- **0124 Ett misslyckat Resend-test stängde av all e-post**, trots att kontot är plattformens.
+- **0125** Kundtexter använde koncernnamnet i stället för `issuerLegalName`. SMS-statusen kunde skriva
+  över en snabbare leveransrapport.
+- **0126** Flaggorna `sms_acceptance` och `web_acceptance` lästes aldrig.
+
+### P2
+
+- **0127 Kundkortet.**
+  - Kundstatus `blocked`/`lost` bröt formuläret.
+  - En admin kunde avspärra tyst.
+  - Org.nr och personnummer delade fält, så det ena nollades vid varje sparning.
+- **0128** Roller, status, avtalshändelser och källsamtalets fält visades som råa koder.
+- **0129 Import.**
+  - En delvis inläst `failed`-körning kunde mappas om.
+  - Backoffice nekades ommappning.
+  - `create_only` och `review_conflicts` ignorerades.
+  - En NIX-godkänd plats förblev `blocked`.
+  - Plattformsimporten trunkerade tyst.
+  - Filfel lämnade föräldralösa filer.
+  - Fel dubbelkodades.
+  - API:t sparade org.nr onormaliserat.
+- **0130 ParseHub.**
+  - Tyst avkapning över 10 000 rader.
+  - En delvis insättning fastnade.
+  - Permanenta fel kördes om varje minut.
+  - Allt importerades som företag.
+  - Fel syntes inte.
+- **0131 CI och död kod.**
+  - CI körde inte `test:contract-templates`.
+  - `verify.mjs` pekade på en fil som inte finns.
+  - `keep_terminal_dial_attempt_terminal` anropade en borttagen funktion.
+  - En pausad team-delning försvann tyst när listan sparades.
+
+### Hittade under arbetet
+
+- **0132 Upptaget blev "Inget svar".** DiCE:s `result=BUSY` lästes inte. Fix `202609240009`.
+- **0133 Ett besvarat försök kunde gå tillbaka till "kopplas".**
+  - Orsak: webbläsarens `finalize_dial('accepted')` kom efter ACE och skrev `dial_requested` på ett
+    `matched` försök. Det skrev dessutom över ICE:s samtals-id.
+  - Fix `202609240010`.
+- **0134 Tokenförnyelse stängde ett pågående samtal.** Varje förnyelse skapade en ny session och
+  stängde den gamla. Nu förnyas en levande session (`renewSessionId`).
+- **0135 Produktionen saknade `202609170010`.**
+  - Följd: svepet för fastnade försök kunde släppa platsen för ett besvarat samtal. Dessutom var 40
+    repoversioner oregistrerade.
+  - Båda åtgärdade 2026-09-23 22:25–22:40 UTC.
+  - Regel: jämför funktionsdefinitioner (normaliserad md5) mellan produktion och PGlite, inte bara
+    migrationsnamn. En MCP-tidsstämpeltvilling bevisar inte att repofilens innehåll körts.
+- **0136 Mindre fel som bekräftades.**
+  - Inkommande SMS utan "+" matchade inget (`sinchMsisdnToE164`).
+  - Resend-webhooken slog upp e-post och replay per integrationens tenant, men kontot delas av alla.
+  - .docx saknade en gräns för uppackning (`maxOutputLength`).
+  - `list_team_access` saknade rollfilter, så viewer och finance såg delade listor.

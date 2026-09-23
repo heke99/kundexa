@@ -1,7 +1,23 @@
 # Next actions
 
-**2026-09-24, efter PR F-merge:** applicera RLS-delen av `202609240002` i prod (policyer
-`*_ops_select` + revoke insert/update/delete) och verifiera att en uppladdning fungerar.
+**2026-09-24, systemgenomgången:**
+1. Merga grenen `claude/charming-mendel-tsfomg` (PR skapas när användaren ber om det). Kontrollera
+   därefter:
+   - att Vercel är READY på merge-SHA:n;
+   - att `list_edge_functions.updated_at` är nyare än mergen för `maintenance-worker`,
+     `process-outbox` och `parsehub-worker`;
+   - att `maintenance-worker` kör var femte minut och rapporterar `results[].status`.
+2. Provsamtal efter merge: ett spärrat eller oreserverat nummer ska läggas på, ett reserverat ska
+   kopplas, och mottagaren ska se team- eller listnumret.
+3. Skapa en produkt, koppla mallen och skicka ett avtal till egen e-post. Koden ska stå i mejlet när
+   kanalen är e-post och metoden OTP.
+4. Aktivera en säljare, dela en lista med säljarens team eller kampanj, och prova dagsgräns 1, paus och
+   "Lägg om".
+5. Ladda upp en riktig fil. Prova sedan "Skapa endast nya" och "Granska konflikter" på en fil med
+   befintliga kunder.
+
+**2026-09-24, efter PR F-merge:** ~~applicera RLS-delen av `202609240002` i prod~~. Klart
+2026-09-23 (se current-state). Uppladdning med riktig fil är NOT RUN.
 
 **2026-09-24:** PR F — importfixar (dubbletter org.nr+telefon, återimport behåller ringläge,
 rollback rör inte befintliga platser, fel sparas, nytt försök efter rollback, direkt skrivrätt bort,

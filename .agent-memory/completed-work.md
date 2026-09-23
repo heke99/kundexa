@@ -153,3 +153,47 @@
 - 2026-09-23: PR D UI-regressioner (#45).
 - 2026-09-24: PR E dela listor med team/kampanj och nummer med team (migration 202609240001, prod).
 - 2026-09-24: PR F importfixar (migration 202609240002; funktioner/index i prod, RLS efter merge).
+
+## 2026-09-24 — Systemgenomgång och åtgärder (FAILURE-0101…0136)
+
+- **PR 1 (`8c10ec2`):**
+  - Avtal från produkt: `202609240003`, deferred constraint trigger, `contract_manager` i v1.
+  - Samtalsgrinden stänger vid fel: `202609240004`, `sinchSvamlFor` med ICE-beslut, CLI från
+    reservationen.
+  - Dokumentnedladdning via RLS.
+  - Rollback stannar i sin tenant, och sidotabellerna blir SELECT-only (`202609240005`).
+- **PR 2 (`e3b43a3`):** `202609240006`.
+  - `list_team_access` och `can_work_customer_list`: dagsgräns, paus och rollfilter.
+  - `set_campaign_teams` och kampanjsidans teamval.
+  - `requeue` med verkliga compliance-värden.
+  - Återkomster och `calls.team_id` via `list_team_for_seller`, egen `in_progress`-återkomst först.
+  - Autodialern släpper prospektet vid stopp; kundkortslänken döljs under samtal.
+  - Felkoder mappade till svenska meddelanden.
+  - `maintenance-worker` med isolerade steg, schemalagd `*/5`.
+- **PR 3 (`18e70e3`):** `202609240007`.
+  - Kanaler räknas ut per företag (`contractAcceptanceModes`); koden står i e-posten.
+  - Ett oklart SMS-svar blir en händelse.
+  - `issuerLegalName` i kundtexter; monoton SMS-status.
+  - Acceptsidan hanterar SMS-svar och avstängd webbacceptans.
+  - Resend: testet stänger inte av e-post, och webhooken slår upp utan tenantfilter.
+  - `maxOutputLength` för .docx.
+- **PR 4 (`aadd888`):**
+  - Kundkort med separata fält för org.nr och personnummer, alla livscykelstatusar, spärr kvar.
+  - Kund-API:t normaliserar org.nr.
+  - Etiketter för roller, händelser och källsamtal.
+  - Snabbvyn "Ej skickade".
+- **PR 5 (`0eff035`):** `202609240008`.
+  - Backoffice får mappa om.
+  - `create_only` och `review_conflicts` följs.
+  - En godkänd NIX-kontroll släpper platsen.
+  - `claim_parsehub_runs` tar bara `queued`; död funktion borttagen.
+  - ParseHub: avkapning ger fel, återupptagning, kundtyp från profilen, "Senaste körningar".
+  - Plattformsimporten felar vid avkapning; filfel lagras och filen tas bort.
+  - CI kör `test:contract-templates`.
+- **PR 5b (`1f328a4`):** `202609240009` (upptaget), `202609240010` (besvarat stannar besvarat),
+  tokenförnyelse behåller sessionen.
+- **Produktion:**
+  - `202609240003`–`0010` applicerade, samt den saknade `202609170010`.
+  - RLS-delen av `202609240002` applicerad.
+  - 40 repoversioner registrerade (128/128).
+  - Funktioner, policyer och triggrar avstämda mot PGlite.
