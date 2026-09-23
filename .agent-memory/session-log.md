@@ -313,3 +313,16 @@ tilldelat A-nummer bekräftade av användaren. Ingen CALLBACKERROR, så ICE-svar
 uppstår på PSTN-benet. Lade till "Testsamtal" under Integrationer (admin): `ttsCallout` direkt
 via Voice API från företagets förvalda nummer — skiljer konto/nummer från webbläsarvägen och
 ger Sinch felmeddelande i klartext. Loggas i audit_logs (`telephony.test_call`).
+
+## 2026-09-23 09:50 — Testsamtal ringde; ICE kopplas nu till försöket
+
+Testsamtalet (ttsCallout, call_id fa3959bc…) ringde +12089912106 och lade på efter uppläst mening
+(väntat). Konto, A-nummer, verifierad mottagare och PSTN fungerar alltså; felet sitter i
+webbläsarvägen (app → PSTN). SVAML-versionen utan locale/indications (PR #40, 09:28) har ännu inte
+provats från webbläsaren.
+
+Avstämningen visade 3 `unmatched` ICE: ICE kommer ~0,5 s före klientens rapport av samtals-id.
+Migration 202609230002 (tillämpad i prod): ICE utan träff på `external_call_id` matchas mot öppet
+försök med samma säljare (`user`) och nummer (`to.endpoint`) från senaste 2 min och får sitt id.
+PGlite-test inkl. negativt tvåtenanttest och DiCE-orsak som når samtalet. ACL oförändrad
+(service_role). Ingen DiCE har kommit för något webbläsarsamtal hittills.

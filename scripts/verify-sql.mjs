@@ -3780,4 +3780,42 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   console.log("An unanswered webphone call accepts after-call work; the finished status is kept.");
 }
 
+// ICE kommer före klientens rapport av samtals-id. Den ska ändå hitta sitt
+// försök via säljare och nummer -- och aldrig ett försök i ett annat bolag.
+{
+  await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);`);
+  const call = (await db.query(`
+    insert into public.calls(tenant_id,customer_id,user_id,direction,from_number,to_number,status,provider,callback_token_hash,purpose)
+    values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000021','00000000-0000-0000-0000-000000000002',
+      'outbound','+46401234567','+46702222277','dial_requested','sinch','ice-match','direct_marketing')
+    returning id`)).rows[0].id;
+  const attempt = (await db.query(`
+    insert into public.dial_attempts(tenant_id,call_id,seller_user_id,provider,source_number_e164,destination_number_e164,
+      client_request_id,idempotency_key,status,expires_at)
+    values('00000000-0000-0000-0000-000000000001',$1,'00000000-0000-0000-0000-000000000002','sinch','+46401234567','+46702222277',
+      gen_random_uuid(),'ice-match','dial_requested',now()+interval '5 minutes')
+    returning id`, [call])).rows[0].id;
+  const ice = (user, callid) => db.query(`select public.ingest_sinch_voice_event('ice',$1,$2,$3::jsonb,now()) as result`, [
+    callid, `ice:${callid}`,
+    JSON.stringify({ event: "ice", callid, user, cli: "46401234567", to: { type: "number", endpoint: "+46702222277" }, originationType: "MXP" }),
+  ]);
+
+  const foreign = (await ice("00000000-0000-0000-0000-000000000050", "ice-foreign")).rows[0].result;
+  if (foreign.matched !== false) throw new Error(`An ICE from another tenant's seller matched this tenant's attempt: ${JSON.stringify(foreign)}`);
+  const own = (await ice("00000000-0000-0000-0000-000000000002", "ice-own")).rows[0].result;
+  const row = (await db.query(`select external_call_id from public.dial_attempts where id=$1`, [attempt])).rows[0];
+  const event = (await db.query(`select status,tenant_id from public.provider_webhook_events where provider_event_id='ice:ice-own'`)).rows[0];
+  if (own.matched !== true || row.external_call_id !== "ice-own" || event.status !== "processed" || event.tenant_id !== "00000000-0000-0000-0000-000000000001") {
+    throw new Error(`An ICE that arrived before the client's report did not match its attempt: ${JSON.stringify({ own, row, event })}`);
+  }
+  const dice = (await db.query(`select public.ingest_sinch_voice_event('dice','ice-own','dice:ice-own',$1::jsonb,now()) as result`, [
+    JSON.stringify({ event: "dice", callid: "ice-own", reason: "GENERALERROR", result: "FAILED" }),
+  ])).rows[0].result;
+  const reason = (await db.query(`select payload->>'reason' as reason from public.call_events where call_id=$1 and event_type='sinch.call_ended'`, [call])).rows[0];
+  if (dice.matched !== true || reason?.reason !== "GENERALERROR") {
+    throw new Error(`The provider's end reason did not reach the call after ICE matched: ${JSON.stringify({ dice, reason })}`);
+  }
+  console.log("ICE finds its dial attempt by seller and number before the client reports the call id, never across tenants, and the end reason then lands on the call.");
+}
+
 await db.close();
