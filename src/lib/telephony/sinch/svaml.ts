@@ -32,7 +32,13 @@ export function sinchSvamlFor(event: string, payload: Payload): SinchSvaml | nul
     const origination = String(payload.originationType ?? "").toLowerCase();
     const endpoint = typeof to.endpoint === "string" ? to.endpoint : "";
     if (toType === "number" && origination !== "pstn" && E164.test(endpoint)) {
-      const cli = typeof payload.cli === "string" && E164.test(payload.cli) ? payload.cli : null;
+      // Sinch skickar klientens A-nummer utan plustecken ("12085810392").
+      // Kontrollen krävde plus, så svaret gick utan `cli` -- och Sinch skriver
+      // själva "You must provide a CLI or your call will fail". Det var
+      // precis så det första samtalet via webhooken bröts.
+      const rawCli = typeof payload.cli === "string" ? payload.cli.trim() : "";
+      const normalizedCli = /^[1-9][0-9]{7,14}$/.test(rawCli) ? `+${rawCli}` : rawCli;
+      const cli = E164.test(normalizedCli) ? normalizedCli : null;
       return {
         instructions: [],
         action: {
