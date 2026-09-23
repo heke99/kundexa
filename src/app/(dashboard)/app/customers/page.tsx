@@ -19,6 +19,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
   const params = await searchParams;
   const page = Math.max(1, Number(params.page ?? 1) || 1);
   const [supabase, context] = await Promise.all([createClient(), getAppContext()]);
+  const isSeller = context.role === "sales";
   // `customers.read` opens this page; `customers.write` is what the action
   // requires. Four roles could reach the form and none of them could use it —
   // and with no error boundary the refusal was a crash rather than a message.
@@ -60,13 +61,13 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
         <CardHeader><h2><Plus size={16} /> Ny kund</h2></CardHeader>
         <CardContent>
           {params.error ? <p className="form-error">{params.error}</p> : null}
-          {mayCreate ? <details open={Boolean(params.error)}><summary className="button button-secondary" style={{ display: "inline-flex" }}><Plus size={16} /> Lägg till kund</summary><form action={createCustomer} className="form-stack" style={{ marginTop: 12 }}>
+          {mayCreate ? <details open={Boolean(params.error)}><summary className="button button-secondary"><Plus size={16} /> Lägg till kund</summary><form action={createCustomer} className="form-stack" style={{ marginTop: 12 }}>
             <SelectField label="Kundtyp" name="customer_type" defaultValue="company"><option value="company">Företag</option><option value="person">Privatperson</option></SelectField>
             <Field label="Namn / företagsnamn" name="display_name" required />
             <Field label="Telefon" name="phone" placeholder="070-123 45 67" />
             <Field label="E-post" name="email" type="email" />
             <Field label="Ort" name="city" />
-            <input type="hidden" name="lifecycle" value="prospect" />
+            {isSeller ? <input type="hidden" name="lifecycle" value="prospect" /> : <SelectField label="Kundstatus" name="lifecycle" defaultValue="prospect"><option value="prospect">Prospekt</option><option value="lead">Lead</option><option value="customer">Kund</option></SelectField>}
             <button className="button button-primary"><Plus size={16} /> Skapa kund</button>
           </form></details> : <p className="muted">Din roll kan läsa kunder men inte skapa nya. Be en teamledare eller administratör att lägga upp kunden.</p>}
         </CardContent>

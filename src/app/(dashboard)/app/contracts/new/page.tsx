@@ -81,6 +81,13 @@ export default async function NewContractPage({ searchParams }: { searchParams: 
   const sellable = (products ?? []).filter((product) => !productBlocker(product.id));
   const selectableMembers = (members ?? []).filter((member) => ctx.role !== "sales" || member.user_id === ctx.userId);
   const selectableTeams = (teams ?? []).filter((team) => ["owner", "admin", "contract_manager"].includes(ctx.role) || ctx.teamIds.includes(team.id));
+  // Säljarens team väljs åt hen, men bara bland team där medlemskapet inte är
+  // pausat: `create_contract_draft_v3` vägrar ett pausat team, och det första
+  // teamet i bokstavsordning var ibland just ett sådant.
+  const { data: activeTeamRows } = isSeller
+    ? await supabase.from("team_members").select("team_id").eq("user_id", ctx.userId).eq("assignment_paused", false)
+    : { data: [] as Array<{ team_id: string }> };
+  const sellerTeams = selectableTeams.filter((team) => (activeTeamRows ?? []).some((row) => row.team_id === team.id));
   const now = new Date();
   const ended = new Date(now.getTime() - 5 * 60_000);
   // These values are pre-filled here and parsed back by the action with
@@ -176,7 +183,9 @@ export default async function NewContractPage({ searchParams }: { searchParams: 
                 <div className="grid grid-2"><Field label="Betalningsvillkor, dagar" name="payment_terms_days" type="number" min={0} max={365} placeholder="Från produkten" /><Field label="Avtalsvärde" name="contract_value" type="number" min={0} step="0.01" placeholder="Från produkten" /></div>
                 {isSeller ? <><input type="hidden" name="currency" value="SEK" /><input type="hidden" name="language" value="sv" /></> : <div className="grid grid-2"><Field label="Valuta" name="currency" defaultValue="SEK" minLength={3} maxLength={3} required /><SelectField label="Språk" name="language" defaultValue="sv"><option value="sv">Svenska</option><option value="en">Engelska</option></SelectField></div>}
                 <TextareaField label="Särskilda villkor" name="special_terms" placeholder="Valfritt" />
-                {isSeller ? <><input type="hidden" name="owner_user_id" value={ctx.userId} /><input type="hidden" name="team_id" value={selectableTeams.find((team) => ctx.teamIds.includes(team.id))?.id ?? ""} /></> : <div className="grid grid-2"><SelectField label="Ansvarig säljare" name="owner_user_id" defaultValue={ctx.userId} required>{selectableMembers.map((member) => { const profile = Array.isArray(member.profiles) ? member.profiles[0] : member.profiles; return <option key={member.user_id} value={member.user_id}>{profile?.full_name ?? member.user_id} · {member.role}</option>; })}</SelectField><SelectField label="Team" name="team_id" defaultValue={selectableTeams.find((team) => ctx.teamIds.includes(team.id))?.id ?? ""}><option value="">Inget team</option>{selectableTeams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</SelectField></div>}
+                {isSeller ? <><input type="hidden" name="owner_user_id" value={ctx.userId} />{sellerTeams.length > 1
+                  ? <SelectField label="Team" name="team_id" defaultValue={sellerTeams[0].id}>{sellerTeams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</SelectField>
+                  : <input type="hidden" name="team_id" value={sellerTeams[0]?.id ?? ""} />}</> : <div className="grid grid-2"><SelectField label="Ansvarig säljare" name="owner_user_id" defaultValue={ctx.userId} required>{selectableMembers.map((member) => { const profile = Array.isArray(member.profiles) ? member.profiles[0] : member.profiles; return <option key={member.user_id} value={member.user_id}>{profile?.full_name ?? member.user_id} · {member.role}</option>; })}</SelectField><SelectField label="Team" name="team_id" defaultValue={selectableTeams.find((team) => ctx.teamIds.includes(team.id))?.id ?? ""}><option value="">Inget team</option>{selectableTeams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</SelectField></div>}
                 {isSeller ? <><input type="hidden" name="sales_channel" value="telephone" /><Field label="Sista svarsdatum" name="expires_at" type="datetime-local" defaultValue={localInput(defaultExpiry)} /></> : <div className="grid grid-2"><SelectField label="Försäljningskanal" name="sales_channel" defaultValue="telephone"><option value="telephone">Telefon</option><option value="in_person">Fysiskt möte</option><option value="web">Webb</option><option value="email">E-post</option><option value="partner">Partner</option><option value="api">API</option><option value="other">Övrigt</option></SelectField><Field label="Sista svarsdatum" name="expires_at" type="datetime-local" defaultValue={localInput(defaultExpiry)} /></div>}
               </div>
             </details>

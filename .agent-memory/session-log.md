@@ -375,3 +375,10 @@ avtalsansvariga, äldre versioner ihopfällda. Nytt avtal: valuta/språk/kanal/�
 Dialer: "Senaste samtal" och "Typ" borta. Återkomster: statistikkort borta. Listor: säljarvy med
 Ring-knapp. Mallsidan heter "Avtalsmallar". Visuell kontroll med säljarroll: NOT RUN (inga
 app-credentials i miljön).
+
+## 2026-09-23 15:00 — PR D: UI-regressioner efter #44
+Nytt avtal: säljarens dolda team väljs bland icke-pausade medlemskap (annars vägrade
+create_contract_draft_v3); fler aktiva team → val. Kunder: kundstatus bara dold för säljare.
+Dialer: kundtyp tillbaka som val (standard Företag). Avtalslista: "Saknar samtal"-märke,
+attention öppnar "Fler filter". Samtal/kundkort: formulär öppna efter fel (calls?call=<id>).
+Avtalssida: äldre versioner i kort med villkor. CSS för summary-knappar; död CSS bort.

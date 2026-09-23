@@ -15,7 +15,7 @@ import { formatDate } from "@/lib/utils";
 import { callStatusLabel, dispositionLabel } from "@/lib/ui/labels";
 
 
-export default async function CallsPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string }> }) {
+export default async function CallsPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string; call?: string }> }) {
   const params = await searchParams;
   const [supabase, context] = await Promise.all([createClient(), getAppContext()]);
   // `calls.read` opens the page, but registering efterarbete goes through
@@ -50,7 +50,7 @@ export default async function CallsPage({ searchParams }: { searchParams: Promis
             <td><Badge className={call.status === "completed" ? "badge-success" : "badge-info"}>{callStatusLabel(call.status)}</Badge>{call.direction === "inbound" ? <><br /><span className="muted">Inkommande</span></> : null}</td>
             <td>{dispositionLabel(call.disposition)}{call.metadata && typeof call.metadata === "object" && (call.metadata as Record<string, unknown>).registered_manually === true ? <><br /><span className="muted">Manuellt registrerat</span></> : null}</td>
             <td>{formatDate(call.created_at)}</td>
-            <td>{call.disposition ? <div className="toolbar-left"><span>Klart</span>{contractEligible && call.customer_id ? <Link className="button button-secondary button-sm" href={`/app/contracts/new?customer_id=${call.customer_id}&source_call_id=${call.id}`}>Skapa avtal</Link> : null}</div> : mayLog ? <details><summary className="button button-secondary button-sm">Registrera utfall</summary><form action={setCallDisposition} className="form-stack" style={{ marginTop: 8, minWidth: 220 }}>
+            <td>{call.disposition ? <div className="toolbar-left"><span>Klart</span>{contractEligible && call.customer_id ? <Link className="button button-secondary button-sm" href={`/app/contracts/new?customer_id=${call.customer_id}&source_call_id=${call.id}`}>Skapa avtal</Link> : null}</div> : mayLog ? <details open={Boolean(params.error && params.call === call.id)}><summary className="button button-secondary button-sm">Registrera utfall</summary><form action={setCallDisposition} className="form-stack" style={{ marginTop: 8, minWidth: 220 }}>
               <input type="hidden" name="call_id" value={call.id} />
               {/* Exactly the set complete_manual_call_work accepts. "Avtal ska
                   skickas" is gone because the database refuses it — the contract
