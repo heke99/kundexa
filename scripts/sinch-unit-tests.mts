@@ -14,6 +14,7 @@ import {
   SINCH_MIN_TOKEN_TTL_SECONDS,
 } from "../src/lib/telephony/sinch/registration-token.ts";
 import { sinchSvamlFor } from "../src/lib/telephony/sinch/svaml.ts";
+import { legEventForSinchEnd } from "../src/lib/telephony/sinch/end-cause.ts";
 
 // Sinch signerar inte registreringstoken med applikationshemligheten direkt,
 // utan med en nyckel som härleds ur den en gång per dygn. Två fel är lätta att
@@ -268,4 +269,14 @@ Deno.test("ICE CLI without a plus sign, as Sinch actually sends it, is normalise
   });
   assert.equal(svaml?.action.name, "connectPstn");
   assert.equal(svaml?.action.cli, "+12085810392");
+});
+
+Deno.test("A call the provider broke is reported as failed; a call nobody answered as ended", () => {
+  // Failure (4) och Denied (2) är tekniska fel; NoAnswer (3), Canceled (6) och HungUp (5) är det inte.
+  assert.equal(legEventForSinchEnd(4), "failed");
+  assert.equal(legEventForSinchEnd(2), "failed");
+  assert.equal(legEventForSinchEnd(3), "ended");
+  assert.equal(legEventForSinchEnd(5), "ended");
+  assert.equal(legEventForSinchEnd(6), "ended");
+  assert.equal(legEventForSinchEnd(undefined), "ended");
 });

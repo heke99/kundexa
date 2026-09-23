@@ -333,3 +333,19 @@ Sinch-logg: Incoming MXP call → Callback sent → Received partner callback re
 GENERALERROR (≈1 s). ICE matchades nu (`processed`, 202609230002 fungerar). Ingen DiCE.
 Åtgärd: `connectPstn` anger nu `number` uttryckligen (= ICE `to.endpoint`), som varje exempel i
 Sinchs referens. Om det inte hjälper: supportärende hos Sinch med call-id bad86a0a-2025-448e-9f3c-bf90e92305b8.
+
+## 2026-09-23 12:30 — PR A: samtalsutfall och automatisk listuppringning
+
+Första riktiga webbläsarsamtalet (10:23) landade rätt: ICE/ACE/DiCE processed, completed, not_interested.
+Genomgång (3 utforskningar) → migration 202609230003 (prod, ACL oförändrad):
+- DiCE `failed` ersätter klientens `unanswered` (triggerundantag via `kundexa.provider_authoritative`);
+  DiCE fyller längd/orsak när status redan är samma.
+- Klientens `ended` på besvarat samtal → `completed` (tidigare fastnade `answered` utan DiCE).
+- `finalize_dial` uppdaterar bara platshållande försök som tillhör anroparen; sen accepted = alreadySettled.
+- Skip → next_attempt_at +10 min. Listor: `nix_listed` + contract_eligible för interested/order (backfill).
+- Manuellt not_interested/wrong_number/dnc/nix stänger kundens öppna listplatser.
+- Listutfall: next_activity_at = least(), skriver inte över.
+Klient: Failure/Denied → `failed` (end-cause.ts); auto-dialern pausar på failed och efter 3 snabba
+utfall; "Pausa efter samtalet" i alla faser; dial-fel pausar sessionen. calls/route.ts felväg använde
+admin-klient mot finalize_dial (authentication_required) → säljarens klient. Avtalsknapp följer
+tenantens manual_call_eligible_dispositions (dialer, kundkort) och listans egna utfall (samtalssidan).

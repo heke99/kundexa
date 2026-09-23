@@ -191,3 +191,9 @@ kundens uppgifter följer.
   varje samtal, och den sidan sa nej. Eget PDF-dokument är fortfarande författande
   (`canAuthorContracts`).
 - En mall utan produkt kan inte väljas av någon; den visas med "Koppla till produkt".
+
+## ADR-0020 — Leverantören får ändra ett avslutat samtal i exakt ett fall
+Projektionsspärren fryser avslutade samtal. Enda undantaget: `unanswered → failed` utan `answered_at`,
+och bara i en transaktion där DiCE-hanteringen satt `kundexa.provider_authoritative=on` (lokalt).
+Webbläsarens rapport stänger samtal (även besvarade) för att säljaren inte ska fastna; DiCE ersätter
+längd och orsak när statusen är densamma.

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Phone, PhoneOff, Pause, Play, StickyNote } from "@/components/icons";
@@ -60,6 +60,18 @@ const sessionStoppingCallStatuses: Record<string, string> = {
   outside_business_hours: "Samtalet avvisades utanför tillåten ringtid. Sessionen är pausad.",
 };
 
+// Ett tekniskt fel är inte "inget svar". Den automatiska dialern bokförde det så
+// och ringde nästa prospekt: med ett trasigt konto rusade den igenom listan och
+// förbrukade varje prospekts försök. Nu stannar den och säger varför.
+const automaticStopStatuses: Record<string, string> = {
+  failed: "Samtalet kopplades aldrig fram (tekniskt fel). Sessionen är pausad; prospektet är orört.",
+};
+
+// Tre automatiska utfall i rad som vart och ett kom inom några sekunder betyder
+// nästan alltid att samtalen inte går ut, inte att tre kunder lät bli att svara.
+const QUICK_OUTCOME_MS = 6000;
+const QUICK_OUTCOME_LIMIT = 3;
+
 function cleanError(value: string) { return value.replaceAll("_", " ").replace("outside list calling hours", "Listan är utanför tillåten ringtid"); }
 
 export function ListDialerWorkspace({ listId, listName, mode, dispositions, products }: {
@@ -82,6 +94,10 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
   const selectedDisposition = useMemo(() => dispositions.find((item) => item.key === dispositionKey), [dispositionKey, dispositions]);
   const voice = useDialerPanel();
   const [autoOutcome, setAutoOutcome] = useState<string | null>(null);
+  const [pauseRequested, setPauseRequested] = useState(false);
+  const pauseRequestedRef = useRef(false);
+  const dialStartedAtRef = useRef(0);
+  const quickOutcomesRef = useRef(0);
   const callState = useCallRealtime(callId, (status) => {
     voice.markEnded();
     void handleCallEnded(status);
@@ -152,6 +168,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
       return;
     }
     setPhase("dialing"); setError(null);
+    dialStartedAtRef.current = Date.now();
     try {
       const id = await voice.startCall({
         customerId: target.customer.id,
@@ -164,11 +181,20 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
         idempotencyKey: `list.call:${target.memberId}:${selectedTarget.phone}:${crypto.randomUUID()}`,
       });
       setCallId(id);
-    } catch (caught) { setError(cleanError(caught instanceof Error ? caught.message : "call_failed")); setPhase("ready"); }
+    } catch (caught) {
+      // Samtalet kom aldrig iväg. Reservationen har redan låst prospektet och
+      // satt sessionen i "ringer", så ett nytt försök skulle avvisas. Pausa
+      // sessionen: då släpps låset och säljaren kan fortsätta.
+      const message = cleanError(caught instanceof Error ? caught.message : "call_failed");
+      await pause("paused");
+      setError(`Samtalet kunde inte startas: ${message}. Sessionen är pausad.`);
+    }
   }
 
   async function pause(reason: "paused" | "skip" | "end") {
     if (!sessionId) return;
+    pauseRequestedRef.current = false;
+    setPauseRequested(false);
     try {
       await requestJson("/api/v1/dialer/pause", { sessionId, reason });
       setClaim(null); setCallId(null); setPhase(reason === "skip" ? "loading" : reason === "end" ? "ended" : "paused");
@@ -226,11 +252,29 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
     }
   }
 
+  // Nästa prospekt, om inte säljaren bett om paus under samtalet.
+  async function continueOrPause(activeSessionId: string, autoDial: boolean) {
+    if (pauseRequestedRef.current) { await pause("paused"); return; }
+    await claimNext(activeSessionId, autoDial);
+  }
+
+  function requestPause() {
+    pauseRequestedRef.current = true;
+    setPauseRequested(true);
+  }
+
   async function handleCallEnded(status: string) {
     const stopReason = sessionStoppingCallStatuses[status];
     if (stopReason) {
       setError(stopReason);
       setPhase("paused");
+      return;
+    }
+    const automaticStop = mode === "automatic" ? automaticStopStatuses[status] : undefined;
+    if (automaticStop) {
+      quickOutcomesRef.current = 0;
+      await pause("paused");
+      setError(automaticStop);
       return;
     }
     const unattended = mode === "automatic" ? unattendedDispositionFor(status) : null;
@@ -245,9 +289,17 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
     try {
       await saveDisposition(unattended.key);
       setAutoOutcome(`${claim?.customer?.displayName ?? "Prospektet"}: ${unattended.label} · registrerat automatiskt`);
+      const quick = Date.now() - dialStartedAtRef.current < QUICK_OUTCOME_MS;
+      quickOutcomesRef.current = quick ? quickOutcomesRef.current + 1 : 0;
+      if (quickOutcomesRef.current >= QUICK_OUTCOME_LIMIT) {
+        quickOutcomesRef.current = 0;
+        await pause("paused");
+        setError("Tre samtal i rad avslutades inom några sekunder. Sessionen är pausad; kontrollera telefonin innan du fortsätter.");
+        return;
+      }
       const delay = claim?.autoNextDelaySeconds ?? 0;
       if (delay) await new Promise((resolve) => window.setTimeout(resolve, delay * 1000));
-      await claimNext(sessionId, true);
+      await continueOrPause(sessionId, true);
     } catch (caught) {
       setError(cleanError(caught instanceof Error ? caught.message : "auto_disposition_failed"));
       setPhase("after_call");
@@ -277,10 +329,11 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
       }
       setAutoOutcome(null);
       const delay = claim?.autoNextDelaySeconds ?? 0;
+      quickOutcomesRef.current = 0;
       if (mode === "automatic") {
         if (delay) await new Promise((resolve) => window.setTimeout(resolve, delay * 1000));
-        await claimNext(sessionId, true);
-      } else await claimNext(sessionId, false);
+        await continueOrPause(sessionId, true);
+      } else await continueOrPause(sessionId, false);
     } catch (caught) { setError(cleanError(caught instanceof Error ? caught.message : "after_call_failed")); setPhase("after_call"); }
   }
 
@@ -290,6 +343,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
       <div className="toolbar-right">
         <Badge className={voice.registered ? "badge-success" : "badge-warning"}>{voice.status}</Badge>
         {sessionId && ["ready", "empty"].includes(phase) ? <button className="button button-secondary button-sm" type="button" onClick={() => pause("paused")}><Pause size={14} /> Pausa</button> : null}
+        {sessionId && ["loading", "dialing", "calling", "after_call"].includes(phase) ? <button className="button button-secondary button-sm" type="button" onClick={requestPause} disabled={pauseRequested}><Pause size={14} /> {pauseRequested ? "Pausar efter samtalet" : "Pausa efter samtalet"}</button> : null}
         {sessionId && ["ready", "empty", "paused"].includes(phase) ? <button className="button button-ghost button-sm" type="button" onClick={() => pause("end")}>Avsluta session</button> : null}
       </div>
     </div>

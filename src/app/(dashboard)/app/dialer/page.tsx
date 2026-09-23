@@ -5,6 +5,7 @@ import { Clock3, ListFilter, PhoneCall, Plus } from "@/components/icons";
 import { createManualProspect } from "@/app/actions/customers";
 import { createClient } from "@/lib/supabase/server";
 import { getAppContext } from "@/lib/auth";
+import { manualContractDispositions } from "@/lib/contracts/manual-dispositions";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DialerPanel } from "@/components/dialer-panel";
@@ -16,6 +17,7 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
   const params = await searchParams;
   const [supabase, context] = await Promise.all([createClient(), getAppContext()]);
   const now = new Date().toISOString();
+  const contractDispositionKeys = (await manualContractDispositions(supabase, context.tenantId)).map((item) => item.key);
   const [{ data: selectedCustomer }, { data: recent }, { data: lists }, { data: callbacks }, { data: callerIdData }] = await Promise.all([
     params.customer
       ? supabase.from("customers").select("id,display_name,phone_e164,do_not_call").eq("id", params.customer).not("phone_e164", "is", null).is("deleted_at", null).maybeSingle()
@@ -33,7 +35,7 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
       {!lists?.length ? <div className="notice">Du har inga aktiva och tilldelade ringlistor.</div> : null}
     </div>
     <div className="dialer-grid">
-      <div className="phone-panel"><DialerPanel customers={selectedCustomer ? [selectedCustomer] : []} initialCustomer={selectedCustomer?.id} callbackActivityId={params.callback} callerIdOptions={(callerIdData ?? []) as Array<{ id: string; number_e164: string }>} mayManageIntegrations={can(context.role, "integrations.manage")} /></div>
+      <div className="phone-panel"><DialerPanel customers={selectedCustomer ? [selectedCustomer] : []} initialCustomer={selectedCustomer?.id} callbackActivityId={params.callback} callerIdOptions={(callerIdData ?? []) as Array<{ id: string; number_e164: string }>} mayManageIntegrations={can(context.role, "integrations.manage")} contractDispositions={contractDispositionKeys} /></div>
       <div className="grid">
         <Card><CardHeader><h2><Plus size={17} /> Ring ett nytt nummer</h2></CardHeader><CardContent>
           <p className="muted">Kundkortet öppnas, eller skapas om numret är nytt. Du ringer därifrån.</p>

@@ -147,3 +147,4 @@
   fältknappar (`TemplateFieldButtons`) i mallformulären.
 - Behörighetsglapp stängda: säljare → nytt avtal, PDF-uppladdning, ny produkt, nytt avtal på mallsidan.
 - 2026-09-23: ICE matchas mot uppringningsförsöket via säljare + nummer (migration 202609230002, prod).
+- 2026-09-23: PR A samtalsutfall/auto-dialer (migration 202609230003, prod).

@@ -10,10 +10,9 @@ import { Field } from "@/components/ui/form-field";
 import { createClient } from "@/lib/supabase/server";
 import { getAppContext } from "@/lib/auth";
 import { can } from "@/lib/permissions";
-import { DEFAULT_MANUAL_CONTRACT_DISPOSITIONS } from "@/lib/contracts/manual-dispositions";
+import { manualContractDispositions } from "@/lib/contracts/manual-dispositions";
 import { formatDate } from "@/lib/utils";
 
-const defaultContractEligible = new Set<string>(DEFAULT_MANUAL_CONTRACT_DISPOSITIONS);
 
 export default async function CallsPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string }> }) {
   const params = await searchParams;
@@ -24,9 +23,15 @@ export default async function CallsPage({ searchParams }: { searchParams: Promis
   const mayLog = can(context.role, "calls.create");
   const [{ data }, { data: eligibleRows }] = await Promise.all([
     ok(supabase.from("calls").select("*,customers(display_name)").order("created_at", { ascending: false }).limit(100)),
-    ok(supabase.from("list_dispositions").select("key").eq("active", true).eq("contract_eligible", true)),
+    ok(supabase.from("list_dispositions").select("list_id,key").eq("active", true).eq("contract_eligible", true)),
   ]);
-  const eligible = new Set([...(eligibleRows ?? []).map((row) => row.key), ...defaultContractEligible]);
+  // Samma regel som `is_contract_call_eligible`: ett listsamtal följer sin egen
+  // listas utfall, ett manuellt samtal företagets inställning. En gemensam
+  // mängd visade "Skapa avtal" för samtal databasen sedan vägrade.
+  const manualEligible = new Set((await manualContractDispositions(supabase, context.tenantId)).map((item) => item.key));
+  const listEligible = new Set((eligibleRows ?? []).map((row) => `${row.list_id}:${row.key}`));
+  const isEligible = (call: { list_id: string | null; disposition: string | null }) => Boolean(call.disposition) && (
+    call.list_id ? listEligible.has(`${call.list_id}:${call.disposition}`) : manualEligible.has(String(call.disposition)));
 
   return <>
     <PageHeader title="Mina samtal" description="Samtalshistorik, resultat, anteckningar, återuppringningar och avtalsgrundande samtal." />
@@ -38,7 +43,7 @@ export default async function CallsPage({ searchParams }: { searchParams: Promis
       <DataTable headers={["Kund / nummer", "Riktning", "Status", "Resultat", "Tid", "Efterarbete"]}>
         {data?.map((call) => {
           const customer = Array.isArray(call.customers) ? call.customers[0] : call.customers;
-          const contractEligible = call.status === "completed" && call.answered_at && call.ended_at && call.disposition && eligible.has(call.disposition);
+          const contractEligible = call.status === "completed" && call.answered_at && call.ended_at && isEligible(call);
           return <tr key={call.id}>
             <td><Link href={`/app/calls/${call.id}`}><strong>{customer?.display_name ?? call.to_number}</strong></Link><br /><span className="muted">{call.from_number} → {call.to_number}</span></td>
             <td>{call.direction}</td>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { legEventForSinchEnd, sinchEndCauseName } from "@/lib/telephony/sinch/end-cause";
 
 /**
  * Säljarens webbtelefon.
@@ -31,7 +32,7 @@ type SinchCredentials = {
   expiresAt: string;
 };
 
-type LegEvent = "ringing" | "answered" | "ended";
+type LegEvent = "ringing" | "answered" | "ended" | "failed";
 
 /**
  * Vad det pågående samtalet faktiskt går att göra.
@@ -54,7 +55,6 @@ type ProviderCall = {
 };
 
 // Leverantörens avslutsorsak, i den ordning SDK:t numrerar dem (`CallEndCause`).
-const END_CAUSES = ["None", "Timeout", "Denied", "NoAnswer", "Failure", "HungUp", "Canceled", "OtherDeviceAnswered", "Inactive"];
 
 /**
  * Mikrofonen öppnas en gång och återanvänds.
@@ -92,7 +92,7 @@ function createReusableMicrophone() {
 
 function describeEnd(call: ProviderCall | undefined) {
   const cause = call?.details?.endCause;
-  const name = typeof cause === "number" ? END_CAUSES[cause] ?? `cause_${cause}` : "unknown";
+  const name = sinchEndCauseName(cause);
   const message = call?.details?.error?.message;
   return `${name}${message ? `: ${message}` : ""}`.slice(0, 300);
 }
@@ -355,7 +355,7 @@ export function useSinchWebphone() {
         setMutedState(false);
         setCapabilities({ mute: false, dtmf: false });
         setState({ phase: "ready" });
-        void reportLeg(input.callId, "ended", describeEnd(ended));
+        void reportLeg(input.callId, legEventForSinchEnd(ended?.details?.endCause), describeEnd(ended));
       },
     });
     callRef.current = call;

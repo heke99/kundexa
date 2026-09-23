@@ -21,6 +21,7 @@ export function DialerPanel({
   callerIdOptions = [],
   lockedToCustomer = false,
   mayManageIntegrations = false,
+  contractDispositions = ["interested"],
 }: {
   customers: Customer[];
   initialCustomer?: string;
@@ -34,6 +35,8 @@ export function DialerPanel({
    * whoever cannot gets told who to ask.
    */
   mayManageIntegrations?: boolean;
+  /** Utfallen som får leda till avtal, enligt företagets inställning (samma regel som databasen). */
+  contractDispositions?: string[];
   /**
    * On the customer card the dialer belongs to the record it sits on. Locking
    * it removes the search and the picker rather than hiding them, so there is
@@ -301,7 +304,7 @@ export function DialerPanel({
       </> : null}
       <div className="toolbar-left">
         <button className="button button-primary" type="submit" value="continue">Spara efterarbete</button>
-        {disposition === "interested"
+        {contractDispositions.includes(disposition)
           ? <button className="button button-secondary" type="submit" value="create_contract">Spara och skapa avtal</button>
           : null}
       </div>
