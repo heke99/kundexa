@@ -363,7 +363,10 @@ assert.match(complianceAdminActions, /saveComplianceScreeningPolicy/, "The scree
 assert.match(complianceAdminActions, /mode === "pre_screened_source" && !defaultLegalBasis/, "Relaxing NIX screening must require a documented legal basis");
 const customerActions = await readFile(join(root, "src/app/actions/customers.ts"), "utf8");
 assert.match(customerActions, /export async function updateCustomerDetails/, "A customer card must be completable after it was created for a call");
-assert.match(customerActions, /normalizeOrganizationNumber\(identity/, "Identity numbers must be validated, not stored raw");
+assert.match(customerActions, /normalizeOrganizationNumber\(organizationInput/, "Organisation numbers must be validated, not stored raw");
+assert.match(customerActions, /normalizeOrganizationNumber\(personalInput/, "Personal identity numbers must be validated, not stored raw");
+// FAILURE-0127: två fält; det ena får aldrig nollas av att det andra sparas.
+assert.doesNotMatch(customerActions, /value\(fd, "identity_number"\)/, "One shared identity field wiped the other number on every save");
 assert.match(customerActions, /personalIdentityNumber = normalized\.canonical/, "A personal identity number must not be stored in the organisation-number column");
 assert.match(customerActions, /customer\.details_updated/, "Completing a customer card must be audited");
 const customerDetailPage = await readFile(join(root, "src/app/(dashboard)/app/customers/[id]/page.tsx"), "utf8");

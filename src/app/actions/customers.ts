@@ -26,7 +26,10 @@ export async function updateCustomerDetails(fd: FormData) {
   const schema = z.object({
     displayName: z.string().min(2, "Namnet måste vara minst två tecken"),
     customerType: z.enum(["person", "company"]),
-    lifecycle: z.enum(["prospect", "lead", "customer", "former_customer"]),
+    // Hela enumen: ett kort med `lost` eller `blocked` gick annars inte att spara
+    // alls för en säljare (det dolda fältet avvisades), och för en admin blev
+    // `blocked` tyst `prospect` (FAILURE-0127).
+    lifecycle: z.enum(["prospect", "lead", "customer", "former_customer", "lost", "blocked"]),
     email: z.union([z.email("Ogiltig e-postadress"), z.literal("")]),
   });
   const parsed = schema.safeParse({
@@ -46,29 +49,39 @@ export async function updateCustomerDetails(fd: FormData) {
     catch { return fail(`Ogiltigt telefonnummer: ${raw}`); }
   };
 
-  // A personal identity number is never stored in the organisation-number field
-  // and vice versa; the checksum decides which of the two it is.
-  const identity = value(fd, "identity_number");
+  // Två fält, två kolumner. Formuläret hade ett gemensamt fält förifyllt med
+  // organisationsnumret, och sparningen skrev båda kolumnerna -- så en kund med
+  // både organisations- och personnummer tappade det ena vid varje sparning.
   let organizationNumber: string | null = null;
-  let personalIdentityNumber: string | null = null;
-  if (identity) {
-    const normalized = normalizeOrganizationNumber(identity, { allowPerson: details.customerType === "person" });
-    if (!normalized.valid || !normalized.canonical) {
-      fail(details.customerType === "person"
-        ? "Person- eller organisationsnumret är ogiltigt."
-        : "Organisationsnumret är ogiltigt. Sätt kundtypen till privatperson först om det är ett personnummer.");
+  const organizationInput = value(fd, "organization_number");
+  if (organizationInput) {
+    const normalized = normalizeOrganizationNumber(organizationInput, { allowPerson: false });
+    if (!normalized.valid || !normalized.canonical || normalized.kind !== "company") {
+      fail("Organisationsnumret är ogiltigt. Ett personnummer hör hemma i fältet för personnummer.");
     }
-    if (details.customerType === "company" && normalized.kind !== "company") {
-      fail("Ett företag måste ha ett organisationsnummer, inte ett personnummer.");
-    }
-    if (normalized.kind === "person") personalIdentityNumber = normalized.canonical;
-    else organizationNumber = normalized.canonical;
+    organizationNumber = normalized.canonical;
   }
+  let personalIdentityNumber: string | null = null;
+  const personalInput = value(fd, "personal_identity_number");
+  if (personalInput) {
+    if (details.customerType !== "person") fail("Ett företag har inget personnummer. Sätt kundtypen till privatperson först.");
+    const normalized = normalizeOrganizationNumber(personalInput, { allowPerson: true });
+    if (!normalized.valid || !normalized.canonical || normalized.kind !== "person") fail("Personnumret är ogiltigt.");
+    personalIdentityNumber = normalized.canonical;
+  }
+
+  // En spärr hävs genom att ta bort spärren, inte genom att välja en annan
+  // status i formuläret; och en kund spärras med knappen, där orsaken sparas.
+  const supabaseForRead = await createClient();
+  const { data: current } = await supabaseForRead.from("customers").select("lifecycle").eq("id", customerId).maybeSingle();
+  let lifecycle = details.lifecycle;
+  if (current?.lifecycle === "blocked") lifecycle = "blocked";
+  else if (lifecycle === "blocked") fail("Spärra kunden med knappen Spärra, så att orsaken sparas.");
 
   const update = {
     display_name: details.displayName,
     customer_type: details.customerType,
-    lifecycle: details.lifecycle,
+    lifecycle,
     email: details.email || null,
     phone_e164: optionalPhone("phone"),
     alternate_phone_e164: optionalPhone("alternate_phone"),
@@ -100,8 +113,8 @@ export async function updateCustomerDetails(fd: FormData) {
     entity_id: customerId,
     after_data: {
       customer_type: details.customerType,
-      lifecycle: details.lifecycle,
-      has_identity_number: Boolean(identity),
+      lifecycle,
+      has_identity_number: Boolean(organizationNumber || personalIdentityNumber),
       has_legal_basis: Boolean(update.legal_basis),
     },
   });
