@@ -6,6 +6,7 @@ import { addActivity, addNote, archiveNote, blockCustomer, reportCustomerNix, sc
 import { getAppContext } from "@/lib/auth";
 import { manualContractDispositions } from "@/lib/contracts/manual-dispositions";
 import { contractStatusLabel } from "@/lib/contracts/status-labels";
+import { callStatusLabel, dispositionLabel, lifecycleLabel, noteTypeLabel, visibilityLabel } from "@/lib/ui/labels";
 import { can, canCreateContractFromProduct } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/ui/page-header";
@@ -24,6 +25,7 @@ export default async function CustomerDetail({ params, searchParams }: { params:
   // of them and none would have been accepted.
   const mayWrite = can(context.role, "customers.write");
   const mayCall = can(context.role, "calls.create");
+  const isSeller = context.role === "sales";
   const mayScheduleCallback = can(context.role, "callbacks.create");
   // Samma regel som avtalssidan. Knappen stod kvar på den gamla rättigheten och
   // hade visat sig för en säljare som sedan nekats på sidan bakom -- en knapp
@@ -52,7 +54,7 @@ export default async function CustomerDetail({ params, searchParams }: { params:
   const ownerName = owner?.full_name ?? (customer.assigned_user_id ? "Tilldelad användare" : "Ej tilldelad");
   return <>
     <Link href="/app/customers" className="muted back-link"><ArrowLeft size={15} /> Till kunder</Link>
-    <PageHeader title={customer.display_name} description={`${customer.customer_type === "company" ? "Företag" : "Privatperson"} · ${customer.lifecycle}`} action={<div className="toolbar-right">{mayCall && customer.phone_e164 && !customer.do_not_call
+    <PageHeader title={customer.display_name} description={`${customer.customer_type === "company" ? "Företag" : "Privatperson"} · ${lifecycleLabel(customer.lifecycle)}`} action={<div className="toolbar-right">{mayCall && customer.phone_e164 && !customer.do_not_call
       ? <a className="button button-primary" href="#kundkort-dialer"><Phone size={16} /> Ring {customer.phone_e164}</a>
       : mayCall ? <span className="badge badge-warning">{customer.do_not_call ? "Spärrad för samtal" : "Telefonnummer saknas"}</span> : null}{mayCreateContract ? <Link className="button button-secondary" href={`/app/contracts/new?customer_id=${customer.id}`}><FileSignature size={16} /> Skapa avtal</Link> : null}</div>} />
     {query.error ? <p className="form-error">{query.error}</p> : null}
@@ -65,11 +67,9 @@ export default async function CustomerDetail({ params, searchParams }: { params:
         <Card>
           <CardHeader><h2>Kunduppgifter</h2><Badge>{customer.organization_number || customer.personal_identity_number ? "Identifierad" : "Ofullständig"}</Badge></CardHeader>
           <CardContent>
-            <p className="muted" style={{ marginBottom: 14 }}>
-              Namn och telefonnummer räcker för att ringa. Adress, e-post, företagsnamn och organisations- eller
-              personnummer behövs först när kunden ska registreras.
-            </p>
-            {mayWrite ? <form action={updateCustomerDetails} className="form-grid">
+            {/* Formuläret är stängt tills någon vill ändra något. Öppet tog det
+                halva kortet och sköt samtal och anteckningar under skärmkanten. */}
+            {mayWrite ? <details><summary className="button button-secondary button-sm" style={{ display: "inline-flex" }}>Redigera kunduppgifter</summary><form action={updateCustomerDetails} className="form-grid" style={{ marginTop: 12 }}>
               <input type="hidden" name="customer_id" value={customer.id} />
               <Field label="Namn" name="display_name" defaultValue={customer.display_name} required hint="Visas som kundkortets rubrik." />
               <Field label="Företagsnamn" name="company_name" defaultValue={customer.company_name ?? ""} />
@@ -84,12 +84,12 @@ export default async function CustomerDetail({ params, searchParams }: { params:
                 placeholder="556016-0680"
                 hint="Kontrollsiffran avgör om det sparas som organisationsnummer eller personnummer."
               />
-              <SelectField label="Livscykel" name="lifecycle" defaultValue={customer.lifecycle}>
+              {isSeller ? <input type="hidden" name="lifecycle" value={customer.lifecycle} /> : <SelectField label="Kundstatus" name="lifecycle" defaultValue={customer.lifecycle}>
                 <option value="prospect">Prospekt</option>
                 <option value="lead">Lead</option>
                 <option value="customer">Kund</option>
                 <option value="former_customer">Tidigare kund</option>
-              </SelectField>
+              </SelectField>}
               <Field label="Telefon" name="phone" type="tel" defaultValue={customer.phone_e164 ?? ""} />
               <Field label="Alternativt telefonnummer" name="alternate_phone" type="tel" defaultValue={customer.alternate_phone_e164 ?? ""} />
               <Field label="E-post" name="email" type="email" defaultValue={customer.email ?? ""} />
@@ -98,24 +98,23 @@ export default async function CustomerDetail({ params, searchParams }: { params:
               <Field label="Postnummer" name="postal_code" defaultValue={customer.postal_code ?? ""} />
               <Field label="Ort" name="city" defaultValue={customer.city ?? ""} />
               <Field label="Bransch" name="industry" defaultValue={customer.industry ?? ""} />
-              <Field
+              {/* Rättslig grund sätts vid import och av ansvariga, inte i säljarens
+                  vardag. Värdet skickas ändå med: formuläret skriver varje fält,
+                  och ett utelämnat fält hade tömt det. */}
+              {isSeller ? <input type="hidden" name="legal_basis" value={customer.legal_basis ?? ""} /> : <Field
                 label="Rättslig grund för marknadsföring"
                 name="legal_basis"
                 defaultValue={customer.legal_basis ?? ""}
                 placeholder="t.ex. berättigat intresse, samtycke"
                 hint="Krävs för marknadsföringssamtal till privatpersoner. Påverkar inte företagskunder."
-              />
+              />}
               <div className="span-2"><button className="button button-primary">Spara kunduppgifter</button></div>
-            </form> : <p className="muted">Din roll kan läsa kundkortet men inte ändra uppgifterna.</p>}
+            </form></details> : <p className="muted">Din roll kan läsa kundkortet men inte ändra uppgifterna.</p>}
           </CardContent>
         </Card>
         <Card>
           <CardHeader><h2><Users size={17} /> Kontaktpersoner</h2><Badge>{contacts?.length ?? 0}</Badge></CardHeader>
           <CardContent>
-            <p className="muted" style={{ marginBottom: 12 }}>
-              Dialern ringer och avtalet skickas till den kontaktperson du väljer, så numren
-              här är lika ringbara som kortets eget nummer. Importerade kontakter hamnar också här.
-            </p>
             {contacts?.length ? contacts.map((contact) => <div className="activity-line" key={contact.id}>
               <span className="activity-dot"><Users size={14} /></span>
               <div>
@@ -123,13 +122,10 @@ export default async function CustomerDetail({ params, searchParams }: { params:
                 <p>{[contact.title, contact.role].filter(Boolean).join(" · ") || "Roll ej angiven"}</p>
                 <p>{[contact.phone_e164, contact.alternate_phone_e164, contact.email].filter(Boolean).join(" · ") || "Inga kontaktuppgifter"}</p>
               </div>
-              {contact.phone_e164 && !customer.do_not_call
-                ? <Link className="button button-secondary button-sm" href={`/app/dialer?customer=${customer.id}`}><Phone size={14} /> Ring</Link>
-                : null}
             </div>) : <p className="muted">Inga kontaktpersoner är registrerade på kunden.</p>}
           </CardContent>
         </Card>
-        <Card><CardHeader><h2>Historik</h2><Badge>{(activities?.length ?? 0) + (calls?.length ?? 0)} händelser</Badge></CardHeader><CardContent>{calls?.map((call) => <div className="activity-line" key={call.id}><span className="activity-dot"><Phone size={14} /></span><div><strong>{call.direction === "outbound" ? "Utgående samtal" : "Inkommande samtal"}</strong><p>{call.disposition ?? call.status} · {call.duration_seconds ?? 0} sek</p></div><time>{formatDate(call.created_at)}</time></div>)}{activities?.map((activity) => <div className="activity-line" key={activity.id}><span className="activity-dot"><CalendarPlus size={14} /></span><div><strong>{activity.title}</strong><p>{activity.description ?? activity.status}{activity.callback_scope ? ` · ${activity.callback_scope}` : ""}</p></div><time>{formatDate(activity.due_at ?? activity.created_at)}</time></div>)}</CardContent></Card>
+        <Card><CardHeader><h2>Historik</h2><Badge>{(activities?.length ?? 0) + (calls?.length ?? 0)} händelser</Badge></CardHeader><CardContent>{calls?.map((call) => <div className="activity-line" key={call.id}><span className="activity-dot"><Phone size={14} /></span><div><strong>{call.direction === "outbound" ? "Utgående samtal" : "Inkommande samtal"}</strong><p>{call.disposition ? dispositionLabel(call.disposition) : callStatusLabel(call.status)} · {call.duration_seconds ?? 0} sek</p></div><time>{formatDate(call.created_at)}</time></div>)}{activities?.map((activity) => <div className="activity-line" key={activity.id}><span className="activity-dot"><CalendarPlus size={14} /></span><div><strong>{activity.title}</strong><p>{activity.description ?? activity.status}{activity.callback_scope ? ` · ${activity.callback_scope}` : ""}</p></div><time>{formatDate(activity.due_at ?? activity.created_at)}</time></div>)}</CardContent></Card>
         <Card><CardHeader><h2>Order, avtal och affärer</h2></CardHeader><CardContent>{orders?.map((order) => <div className="activity-line" key={order.id}><span className="activity-dot"><ClipboardList size={14} /></span><div><strong>{order.order_number}</strong><p>{order.status} · {formatCurrency(Number(order.total), order.currency)}</p></div><time>{formatDate(order.created_at)}</time></div>)}{contracts?.map((contract) => <div className="activity-line" key={contract.id}><span className="activity-dot"><FileSignature size={14} /></span><div><Link href={`/app/contracts/${contract.id}`}><strong>{contract.contract_number} · {contract.title}</strong></Link><p>{contractStatusLabel(contract.status)}</p></div><time>{formatCurrency(Number(contract.value), contract.currency)}</time></div>)}{deals?.map((deal) => <div className="activity-line" key={deal.id}><span className="activity-dot"><FileSignature size={14} /></span><div><strong>{deal.name}</strong><p>{deal.status} · {deal.probability}%</p></div><time>{formatCurrency(Number(deal.value), deal.currency)}</time></div>)}</CardContent></Card>
       </div>
       <div className="grid">
@@ -158,9 +154,9 @@ export default async function CustomerDetail({ params, searchParams }: { params:
             </div>
           </CardContent>
         </Card> : null}
-        {mayScheduleCallback ? <Card><CardHeader><h3><CalendarPlus size={16} /> Boka återkomst</h3></CardHeader><CardContent><form action={scheduleCallback} className="form-stack"><input type="hidden" name="customer_id" value={customer.id} /><Field label="Rubrik" name="title" defaultValue="Återkomst" /><Field label="Tidpunkt" name="due_at" type="datetime-local" required /><SelectField label="Typ" name="scope" defaultValue="personal"><option value="personal">Personlig – endast jag</option><option value="global">Global – teamets gemensamma kö</option></SelectField><SelectField label="Ringlista (valfritt)" name="list_id" defaultValue=""><option value="">Ingen specifik lista</option>{lists?.map((list) => <option key={list.id} value={list.id}>{list.name} · {list.callback_policy}</option>)}</SelectField><TextareaField label="Vad ska följas upp?" name="description" /><button className="button button-primary">Skapa återkomst</button></form></CardContent></Card> : null}
-        <Card><CardHeader><h3><StickyNote size={16} /> Anteckningar</h3><Badge>{notes?.length ?? 0}</Badge></CardHeader><CardContent>{mayWrite ? <details style={{ marginBottom: 12 }}><summary style={{ cursor: "pointer" }}>Ny anteckning</summary><form action={addNote} className="form-stack"><input type="hidden" name="customer_id" value={customer.id} /><TextareaField label="Anteckning" name="body" required /><div className="form-grid"><SelectField label="Typ" name="note_type" defaultValue="general"><option value="general">Allmän</option><option value="call">Samtal</option><option value="callback">Återkomst</option><option value="order">Order</option><option value="internal">Intern</option></SelectField><SelectField label="Synlighet" name="visibility" defaultValue="team"><option value="private">Privat</option><option value="team">Team</option><option value="tenant">Hela företaget</option></SelectField></div><label className="check-row"><input type="checkbox" name="is_pinned" /> Fäst högst upp på kundkortet</label><button className="button button-primary">Spara</button></form></details> : null}{notes?.map((note) => { const canEdit=mayWrite&&(note.created_by===context.userId||["owner","admin"].includes(context.role)); return <div className="activity-line" key={note.id}><span className="activity-dot"><StickyNote size={14} /></span><div><strong>{note.is_pinned ? "Fäst" : note.note_type} · {note.visibility}</strong><p>{note.body}</p>{canEdit?<details><summary>Redigera eller arkivera</summary><form action={updateNote} className="form-stack note-edit-form"><input type="hidden" name="customer_id" value={customer.id}/><input type="hidden" name="note_id" value={note.id}/><TextareaField label="Text" name="body" defaultValue={note.body} required/><SelectField label="Synlighet" name="visibility" defaultValue={note.visibility}><option value="private">Privat</option><option value="team">Team</option><option value="tenant">Hela företaget</option></SelectField><label className="check-row"><input type="checkbox" name="is_pinned" defaultChecked={note.is_pinned}/> Fäst högst upp</label><button className="button button-secondary button-sm">Spara ny version</button></form><form action={archiveNote}><input type="hidden" name="customer_id" value={customer.id}/><input type="hidden" name="note_id" value={note.id}/><button className="button button-ghost button-sm">Arkivera</button></form></details>:null}</div><time>{formatDate(note.created_at)}</time></div>; })}</CardContent></Card>
-        {mayWrite ? <Card><CardHeader><h3>Aktivitet</h3></CardHeader><CardContent><details><summary style={{ cursor: "pointer" }}>Ny aktivitet</summary><form action={addActivity} className="form-stack"><input type="hidden" name="customer_id" value={customer.id} /><Field label="Aktivitet" name="title" required /><Field label="Förfallotid" name="due_at" type="datetime-local" /><button className="button button-secondary">Skapa aktivitet</button></form></details></CardContent></Card> : null}
+        {mayScheduleCallback ? <Card><CardHeader><h3><CalendarPlus size={16} /> Boka återkomst</h3></CardHeader><CardContent><details><summary className="button button-secondary button-sm" style={{ display: "inline-flex" }}>Välj tid</summary><form action={scheduleCallback} className="form-stack" style={{ marginTop: 12 }}><input type="hidden" name="customer_id" value={customer.id} /><Field label="Rubrik" name="title" defaultValue="Återkomst" /><Field label="Tidpunkt" name="due_at" type="datetime-local" required /><SelectField label="Typ" name="scope" defaultValue="personal"><option value="personal">Personlig – endast jag</option><option value="global">Global – teamets gemensamma kö</option></SelectField><SelectField label="Ringlista (valfritt)" name="list_id" defaultValue=""><option value="">Ingen specifik lista</option>{lists?.map((list) => <option key={list.id} value={list.id}>{list.name} · {list.callback_policy}</option>)}</SelectField><TextareaField label="Vad ska följas upp?" name="description" /><button className="button button-primary">Skapa återkomst</button></form></details></CardContent></Card> : null}
+        <Card><CardHeader><h3><StickyNote size={16} /> Anteckningar</h3><Badge>{notes?.length ?? 0}</Badge></CardHeader><CardContent>{mayWrite ? <details style={{ marginBottom: 12 }}><summary style={{ cursor: "pointer" }}>Ny anteckning</summary><form action={addNote} className="form-stack"><input type="hidden" name="customer_id" value={customer.id} /><TextareaField label="Anteckning" name="body" required /><div className="form-grid"><SelectField label="Typ" name="note_type" defaultValue="general"><option value="general">Allmän</option><option value="call">Samtal</option><option value="callback">Återkomst</option><option value="order">Order</option><option value="internal">Intern</option></SelectField><SelectField label="Synlighet" name="visibility" defaultValue="team"><option value="private">Privat</option><option value="team">Team</option><option value="tenant">Hela företaget</option></SelectField></div><label className="check-row"><input type="checkbox" name="is_pinned" /> Fäst högst upp på kundkortet</label><button className="button button-primary">Spara</button></form></details> : null}{notes?.map((note) => { const canEdit=mayWrite&&(note.created_by===context.userId||["owner","admin"].includes(context.role)); return <div className="activity-line" key={note.id}><span className="activity-dot"><StickyNote size={14} /></span><div><strong>{note.is_pinned ? "Fäst" : noteTypeLabel(note.note_type)} · {visibilityLabel(note.visibility)}</strong><p>{note.body}</p>{canEdit?<details><summary>Redigera eller arkivera</summary><form action={updateNote} className="form-stack note-edit-form"><input type="hidden" name="customer_id" value={customer.id}/><input type="hidden" name="note_id" value={note.id}/><TextareaField label="Text" name="body" defaultValue={note.body} required/><SelectField label="Synlighet" name="visibility" defaultValue={note.visibility}><option value="private">Privat</option><option value="team">Team</option><option value="tenant">Hela företaget</option></SelectField><label className="check-row"><input type="checkbox" name="is_pinned" defaultChecked={note.is_pinned}/> Fäst högst upp</label><button className="button button-secondary button-sm">Spara ny version</button></form><form action={archiveNote}><input type="hidden" name="customer_id" value={customer.id}/><input type="hidden" name="note_id" value={note.id}/><button className="button button-ghost button-sm">Arkivera</button></form></details>:null}</div><time>{formatDate(note.created_at)}</time></div>; })}</CardContent></Card>
+        {mayWrite && !isSeller ? <Card><CardHeader><h3>Aktivitet</h3></CardHeader><CardContent><details><summary style={{ cursor: "pointer" }}>Ny aktivitet</summary><form action={addActivity} className="form-stack"><input type="hidden" name="customer_id" value={customer.id} /><Field label="Aktivitet" name="title" required /><Field label="Förfallotid" name="due_at" type="datetime-local" /><button className="button button-secondary">Skapa aktivitet</button></form></details></CardContent></Card> : null}
         {mayWrite ? <Card><CardHeader><h3><Ban size={16} /> Spärrar</h3></CardHeader><CardContent><details><summary style={{ cursor: "pointer" }}><PhoneOff size={14} /> NIX-spärr</summary><p className="muted">Följer numret och gäller även på ett kundkort som skapas senare.</p><form action={reportCustomerNix} className="form-stack"><input type="hidden" name="customer_id" value={customer.id} /><Field label="Hur framkom det? (valfritt)" name="notes" placeholder="Kunden uppgav NIX i samtalet" /><button className="button button-danger"><PhoneOff size={15} /> Registrera som NIX</button></form></details><details style={{ marginTop: 10 }}><summary style={{ cursor: "pointer" }}><Ban size={14} /> Kontaktspärr</summary><p className="muted">Stoppar samtal, SMS, e-post, kampanjer och automationer.</p><form action={blockCustomer} className="form-stack"><input type="hidden" name="customer_id" value={customer.id} /><Field label="Orsak" name="reason" placeholder="Kundens invändning" /><button className="button button-danger"><Ban size={15} /> Spärra kunden</button></form></details></CardContent></Card> : null}
         <div className="grid grid-2"><Link className="button button-secondary" href={`/app/sms?customer=${customer.id}`}><MessageSquareText size={15} /> SMS</Link><Link className="button button-secondary" href={`/app/email?customer=${customer.id}`}><Mail size={15} /> E-post</Link></div>
       </div>

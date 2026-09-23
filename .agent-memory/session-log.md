@@ -362,3 +362,16 @@ cancelContract skriver inte över ett godkännande (statusvillkor + tydligt fel)
 `src/lib/contracts/status-labels.ts`; avböjt visas som "Kunden avböjde" (röd), svenska händelser,
 startsidan har "Kundsvar senaste veckan", automationer får avböjt/utgånget. Typer regenererade
 (bara apply_sms_delivery_event tillkom).
+
+## 2026-09-23 14:40 — PR C: enklare UI för säljare
+
+Ny `src/lib/ui/labels.ts` (samtalsstatus, utfall, kundstatus, listplats, anteckningstyp) — inga råa
+engelska värden på kundkort, samtal, kunder, listor. Kundkort: uppgiftsformulär och återkomst bakom
+knapp, rättslig grund/kundstatus dolda för säljare (skickas som dolda fält — formuläret skriver varje
+fält), dubbla "Ring" per kontakt borta, "Aktivitet" dold för säljare. Samtal: utfallsformulär bakom
+"Registrera utfall", färre kolumner. Avtalslista: sök + snabbfilter, resten under "Fler filter",
+färre kolumner, ingen "Avbryt" per rad (finns på avtalet). Avtalssida: hashar/IP bara för
+avtalsansvariga, äldre versioner ihopfällda. Nytt avtal: valuta/språk/kanal/ägare dolda för säljare.
+Dialer: "Senaste samtal" och "Typ" borta. Återkomster: statistikkort borta. Listor: säljarvy med
+Ring-knapp. Mallsidan heter "Avtalsmallar". Visuell kontroll med säljarroll: NOT RUN (inga
+app-credentials i miljön).

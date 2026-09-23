@@ -149,3 +149,4 @@
 - 2026-09-23: ICE matchas mot uppringningsförsöket via säljare + nummer (migration 202609230002, prod).
 - 2026-09-23: PR A samtalsutfall/auto-dialer (migration 202609230003, prod).
 - 2026-09-23: PR B avtalssvar till säljaren (migration 202609230004, prod).
+- 2026-09-23: PR C enklare säljar-UI (inga schemaändringar).

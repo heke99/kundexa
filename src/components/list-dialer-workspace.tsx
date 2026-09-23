@@ -339,9 +339,9 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
 
   return <div className="dialer-workspace">
     <div className="dialer-workspace-header">
-      <div><span className="eyebrow">{mode === "automatic" ? "Automatisk sekventiell dialer" : "Manuell lista"}</span><h2>{listName}</h2></div>
+      <div><span className="eyebrow">{mode === "automatic" ? "Automatisk uppringning" : "Manuell lista"}</span><h2>{listName}</h2></div>
       <div className="toolbar-right">
-        <Badge className={voice.registered ? "badge-success" : "badge-warning"}>{voice.status}</Badge>
+        <Badge className={voice.registered ? "badge-success" : "badge-warning"}>{voice.registered ? "Telefonen är redo" : "Telefonen startar…"}</Badge>
         {sessionId && ["ready", "empty"].includes(phase) ? <button className="button button-secondary button-sm" type="button" onClick={() => pause("paused")}><Pause size={14} /> Pausa</button> : null}
         {sessionId && ["loading", "dialing", "calling", "after_call"].includes(phase) ? <button className="button button-secondary button-sm" type="button" onClick={requestPause} disabled={pauseRequested}><Pause size={14} /> {pauseRequested ? "Pausar efter samtalet" : "Pausa efter samtalet"}</button> : null}
         {sessionId && ["ready", "empty", "paused"].includes(phase) ? <button className="button button-ghost button-sm" type="button" onClick={() => pause("end")}>Avsluta session</button> : null}

@@ -27,10 +27,10 @@ export default async function CallbacksPage({ searchParams }: { searchParams: Pr
   const now = Date.now();
   const defaultSnooze = isoToZonedLocalDateTime(new Date(now + 60 * 60 * 1000).toISOString(), context.tenantTimezone);
   return <>
-    <PageHeader title="Återkomster" description="Personliga återkomster och en atomiskt låst global teamkö, sorterad efter utlovad kontakttid." />
+    <PageHeader title="Återkomster" description="Dina återkomster och teamets gemensamma kö, i den ordning kunderna ska ringas." />
     {params.error ? <p className="form-error">{params.error}</p> : null}
     {params.saved ? <div className="notice" style={{ marginBottom: 16 }}>Återkomsten är uppdaterad i alla vyer.</div> : null}
-    <div className="grid grid-3" style={{ marginBottom: 18 }}><Card><CardContent><strong>{data?.length ?? 0}</strong><div className="muted">Öppna</div></CardContent></Card><Card><CardContent><strong>{data?.filter((item) => new Date(item.snoozed_until ?? item.due_at ?? 0).getTime() <= now).length ?? 0}</strong><div className="muted">Förfallna</div></CardContent></Card><Card><CardContent><strong>{data?.filter((item) => item.callback_scope === "global").length ?? 0}</strong><div className="muted">Globala</div></CardContent></Card></div>
+    {/* Tre statistikkort upprepade tabellens egna märkningar; de är borttagna. */}
     <Card><CardHeader><h2><CalendarCheck2 size={17} /> Återkomstkö</h2><Badge>{data?.length ?? 0}</Badge></CardHeader><CardContent style={{ padding: 0 }}><DataTable headers={["Kund", "Typ", "Tid", "Anteckning", "Status", "Åtgärder"]}>{data?.map((item) => {
       const customer = Array.isArray(item.customers) ? item.customers[0] : item.customers;
       const effectiveDue = item.snoozed_until ?? item.due_at;

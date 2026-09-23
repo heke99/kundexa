@@ -28,23 +28,24 @@ export default async function ListsPage({ searchParams }: { searchParams: Promis
   const mayManage = can(context.role, "lists.manage");
 
   return <>
-    <PageHeader title="Prospekterings- och ringlistor" description="En gemensam listmotor för säljtilldelning, manuella flöden, automatisk sekventiell ringning och återkomster." />
+    <PageHeader title="Ringlistor" description={mayManage ? "Skapa listor, tilldela säljare och följ hur långt de kommit." : "Listorna du kan ringa. Tryck Ring för att börja."} />
     {params.error ? <p className="form-error">{params.error}</p> : null}
     <div className={mayManage ? "split-layout" : "grid"}>
       <Card>
         <CardHeader><h2><ListFilter size={17} /> Tillgängliga listor</h2><Badge>{lists?.length ?? 0}</Badge></CardHeader>
         <CardContent style={{ padding: 0 }}>
-          <DataTable headers={["Lista", "Läge", "Team", "Säljare", "Kvar", "Status", "Skapad"]}>
+          <DataTable headers={mayManage ? ["Lista", "Läge", "Team", "Säljare", "Kvar", "Status", "Skapad"] : ["Lista", "Läge", "Kvar", ""]}>
             {lists?.map((list) => {
               const listCounts = counts.get(list.id) ?? { total_members: 0, open_members: 0, active_sellers: 0 };
               return <tr key={list.id}>
-                <td><Link href={`/app/lists/${list.id}`}><strong>{list.name}</strong></Link><br /><span className="muted">{list.description ?? list.list_type}</span></td>
+                <td><Link href={`/app/lists/${list.id}`}><strong>{list.name}</strong></Link>{list.description ? <><br /><span className="muted">{list.description}</span></> : null}</td>
                 <td><Badge className={list.dialing_mode === "automatic" ? "badge-info" : ""}>{list.dialing_mode === "automatic" ? "Automatisk" : "Manuell"}</Badge></td>
-                <td>{list.team_id ? teamNames.get(list.team_id) ?? "Team" : "Organisation"}</td>
-                <td><Users size={14} /> {Number(listCounts.active_sellers)}</td>
+                {mayManage ? <td>{list.team_id ? teamNames.get(list.team_id) ?? "Team" : "Organisation"}</td> : null}
+                {mayManage ? <td><Users size={14} /> {Number(listCounts.active_sellers)}</td> : null}
                 <td>{Number(listCounts.open_members)} / {Number(listCounts.total_members)}</td>
-                <td><Badge className={list.status === "active" ? "badge-success" : list.status === "paused" ? "badge-warning" : ""}>{list.status}</Badge></td>
-                <td>{formatDate(list.created_at)}<br />{list.status === "active" ? <Link className="muted" href={`/app/dialer/lists/${list.id}`}><PhoneCall size={13} /> Ring</Link> : null}</td>
+                {mayManage ? <td><Badge className={list.status === "active" ? "badge-success" : list.status === "paused" ? "badge-warning" : ""}>{list.status === "active" ? "Aktiv" : list.status === "paused" ? "Pausad" : list.status === "draft" ? "Utkast" : list.status === "archived" ? "Arkiverad" : list.status}</Badge></td> : null}
+                {mayManage ? <td>{formatDate(list.created_at)}<br />{list.status === "active" ? <Link className="muted" href={`/app/dialer/lists/${list.id}`}><PhoneCall size={13} /> Ring</Link> : null}</td>
+                  : <td>{list.status === "active" ? <Link className="button button-primary button-sm" href={`/app/dialer/lists/${list.id}`}><PhoneCall size={13} /> Ring</Link> : null}</td>}
               </tr>;
             })}
           </DataTable>
