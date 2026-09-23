@@ -701,6 +701,7 @@ for (const name of (await readdir(workflowDir)).filter((file) => file.endsWith("
 const PROVIDER_NAME_EXEMPT = new Set([
   // Adaptrarna. Här är namnet själva innehållet.
   "src/lib/telephony/sinch/registration-token.ts",
+  "src/lib/telephony/sinch/registration-probe.ts",
   "src/lib/telephony/sinch/callback-signature.ts",
   "src/lib/telephony/webphone/sinch.ts",
   "src/lib/telephony/numbers/sinch.ts",
@@ -874,6 +875,18 @@ assert.match(webphoneHook, /"\/api\/v1\/telephony\/webphone\/heartbeat"/,
   "The webphone must send the heartbeat, or every session is swept as lost while the seller is still on the call");
 assert.match(webphoneHook, /setInterval\(\(\) => \{ void beat\(\); \}/,
   "One heartbeat is not enough: the session must keep reporting for as long as the tab is open");
+// SDK:t sväljer orsaken när registreringen misslyckas ("Unable to create
+// instance!"). Nio sessioner i produktion registrerades aldrig, och ingen rad
+// sa varför. Leverantörens svar ska fångas och sparas på sessionen.
+assert.match(webphoneHook, /\.fetchApi\(observedFetch\)/,
+  "The webphone must observe the provider's own registration responses; the SDK discards the reason");
+assert.match(webphoneHook, /onClientFailed:[\s\S]{0,600}?reportFailure\("webphone_client_failed"/,
+  "A failed registration must be recorded on the session, not only in the browser console");
+assert.match(webphoneHook, /if \(refreshed\.data\?\.sessionId\) sessionRef\.current = /,
+  "A token refresh opens a new session; the heartbeat must follow it or the seller is told to reload");
+const readinessRoute = await readFile(join(root, "src/app/api/ready/route.ts"), "utf8");
+assert.match(readinessRoute, /webphoneRegistration: await webphoneRegistration\(\)/,
+  "Readiness must report whether the webphone can actually register with the provider");
 const reserveIndex = dialerHook.indexOf('fetch("/api/v1/calls"');
 const readinessIndex = dialerHook.indexOf("webphone.state.phase");
 assert.ok(readinessIndex > 0, "The dialer must check whether the webphone is registered");

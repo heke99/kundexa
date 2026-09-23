@@ -159,6 +159,37 @@ export function useSinchWebphone() {
     }
     sessionRef.current = String(opened.data.sessionId ?? "");
 
+    // SDK:t sväljer orsaken när registreringen misslyckas: det fångar felet,
+    // skriver det i konsolen och rapporterar bara "Unable to create instance!".
+    // Nio sessioner registrerades aldrig utan att en enda rad sa varför. Därför
+    // går SDK:ts anrop genom den här, som minns leverantörens senaste nej.
+    let lastProviderRefusal: string | null = null;
+    const observedFetch = async (input: RequestInfo, init?: RequestInit) => {
+      try {
+        const response = await fetch(input, init);
+        if (!response.ok) {
+          const body = await response.clone().text().catch(() => "");
+          const path = (typeof input === "string" ? input : input.url).replace(/^https?:\/\/[^/]+/, "").replace(/applications\/[^/]+/, "applications/…");
+          lastProviderRefusal = `HTTP ${response.status} ${path} ${body.replace(/\s+/g, " ").slice(0, 120)}`.trim();
+        }
+        return response;
+      } catch (error) {
+        lastProviderRefusal = `network ${error instanceof Error ? error.message : "error"}`.slice(0, 160);
+        throw error;
+      }
+    };
+    // Felet sparas på sessionen, där det går att läsa utan att någon behöver
+    // öppna webbläsarens konsol.
+    const reportFailure = (code: string, detail: string) => {
+      const sessionId = sessionRef.current;
+      if (!sessionId) return;
+      void fetch("/api/v1/telephony/webphone/session", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId, reason: `${code}: ${detail}`.slice(0, 200) }),
+      }).catch(() => null);
+    };
+
     try {
       const { Sinch } = await import("sinch-rtc");
       const client = Sinch.getSinchClientBuilder()
@@ -169,6 +200,7 @@ export function useSinchWebphone() {
         // Servern vägrar dela ut uppgifter utan det, så här kan det bara saknas
         // om kontraktet brutits -- men det sätts uttryckligen ändå.
         .callerIdentifier(credentials.callerIdentifier)
+        .fetchApi(observedFetch)
         .build();
 
       client.addListener({
@@ -181,6 +213,10 @@ export function useSinchWebphone() {
           }
           void postJson("/api/v1/telephony/webphone/session", { userAgent: navigator.userAgent.slice(0, 400) })
             .then((refreshed) => {
+              // Förnyelsen öppnar en ny session och stänger den gamla. Utan
+              // det här slog hjärtslaget vidare mot den stängda, fick
+              // `alive: false` och sa åt säljaren att ladda om.
+              if (refreshed.data?.sessionId) sessionRef.current = String(refreshed.data.sessionId);
               const next = refreshed.data?.credentials as SinchCredentials | undefined;
               if (next?.token) registration.register(next.token);
               else registration.registerFailed();
@@ -201,7 +237,10 @@ export function useSinchWebphone() {
           startedRef.current = false;
           registeredRef.current = false;
           if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
-          console.error("webphone_client_failed", { name: error instanceof Error ? error.name : "unknown" });
+          const reason = lastProviderRefusal
+            ?? (error instanceof Error ? error.message : typeof error === "string" ? error : "unknown");
+          console.error("webphone_client_failed", { reason });
+          reportFailure("webphone_client_failed", reason);
           setState({
             phase: "unavailable",
             code: "webphone_registration_failed",
@@ -213,7 +252,9 @@ export function useSinchWebphone() {
       clientRef.current = client;
     } catch (error) {
       startedRef.current = false;
-      console.error("webphone_sdk_load_failed", { name: error instanceof Error ? error.name : "unknown" });
+      const reason = error instanceof Error ? `${error.name}: ${error.message}` : "unknown";
+      console.error("webphone_sdk_load_failed", { reason });
+      reportFailure("webphone_sdk_load_failed", reason);
       setState({
         phase: "unavailable",
         code: "webphone_sdk_unavailable",

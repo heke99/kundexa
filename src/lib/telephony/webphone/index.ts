@@ -1,5 +1,6 @@
 import "server-only";
 import { sinchWebphoneProvider } from "./sinch";
+import { probeSinchRegistration, type SinchRegistrationProbe } from "@/lib/telephony/sinch/registration-probe";
 import type { WebphoneProvider, WebphoneProvisionInput, WebphoneProvisionResult } from "./provider";
 
 export type { WebphoneCredentials, WebphoneProvisionResult } from "./provider";
@@ -65,4 +66,15 @@ export function redactProviderNames(message: string) {
     redacted = redacted.replace(new RegExp(key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), "telefonitjänsten");
   }
   return redacted.replace(/provider/gi, "telefonitjänsten").replace(/leverantör/gi, "telefonitjänst");
+}
+
+export type WebphoneRegistrationProbe = SinchRegistrationProbe;
+
+/**
+ * Prövar att webbtelefonen går att registrera hos telefonitjänsten, från
+ * servern. Se adapterns prov för varför det behövs: webbläsarens SDK sväljer
+ * orsaken när registreringen misslyckas.
+ */
+export function probeWebphoneRegistration(): Promise<WebphoneRegistrationProbe> {
+  return probeSinchRegistration();
 }
