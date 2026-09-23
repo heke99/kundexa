@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { serverEnv } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { verifySinchCallback } from "@/lib/telephony/sinch/callback-signature";
+import { sinchSvamlFor } from "@/lib/telephony/sinch/svaml";
 import type { Json } from "@/lib/supabase/database.types";
 
 export const runtime = "nodejs";
@@ -98,10 +99,16 @@ export async function POST(request: Request) {
     p_payload: payload,
     p_received_at: new Date().toISOString(),
   });
+  // ICE och ACE väntar på ett SVAML-svar; utan det bryts samtalet. Ett
+  // misslyckat register får därför inte fälla samtalet -- det loggas, och
+  // DiCE-händelsen i slutet av samtalet görs om av leverantören.
+  const svaml = sinchSvamlFor(event, payload as Record<string, unknown>);
   if (error || !data) {
     console.error("sinch_webhook_ingest_failed", { event, code: error?.code ?? "NO_RESULT" });
+    if (svaml) return NextResponse.json(svaml, { status: 200 });
     return new NextResponse(null, { status: 503 });
   }
+  if (svaml) return NextResponse.json(svaml, { status: 200 });
 
   const result = data as Record<string, unknown>;
   return NextResponse.json({

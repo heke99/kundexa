@@ -702,6 +702,7 @@ const PROVIDER_NAME_EXEMPT = new Set([
   // Adaptrarna. Här är namnet själva innehållet.
   "src/lib/telephony/sinch/registration-token.ts",
   "src/lib/telephony/sinch/registration-probe.ts",
+  "src/lib/telephony/sinch/svaml.ts",
   "src/lib/telephony/webphone/connect-sources.ts",
   "src/lib/telephony/sinch/callback-signature.ts",
   "src/lib/telephony/webphone/sinch.ts",
@@ -1291,4 +1292,15 @@ console.log(`Verified ${migrations.length} migrations, monotonic call/Resend pro
   }
   const products = await readFile(join(root, "src/app/(dashboard)/app/products/page.tsx"), "utf8");
   assert.match(products, /\/app\/templates\?product_id=\$\{product\.id\}/, "A product without a contract must link to adding one");
+}
+
+// Ett STOPP-svar lagrades som ett vanligt SMS och nästa utskick gick till samma
+// nummer. Avregistreringen ska spärra numret för SMS.
+{
+  const inbound = await readFile(join(root, "src/app/api/webhooks/sms/inbound/route.ts"), "utf8");
+  assert.match(inbound, /if \(isSmsOptOut\(message\)\)[\s\S]{0,900}?from\("compliance_blocks"\)\.insert\(/,
+    "An inbound STOPP reply must block the number for SMS");
+  // Och Sinch ICE/ACE kräver ett SVAML-svar; utan det bryts varje samtal.
+  const voice = await readFile(join(root, "src/app/api/webhooks/sinch/route.ts"), "utf8");
+  assert.match(voice, /sinchSvamlFor\(event,/, "The voice webhook must answer ICE and ACE with SVAML, or Sinch disconnects the call");
 }

@@ -148,3 +148,15 @@ await assert.rejects(
 );
 
 console.log("Contract delivery channel gate passed: disabled channels are refused before queueing, and a read failure is not a refusal.");
+
+// Ett STOPP-svar ska spärra numret; ett ord i en mening ska inte det.
+{
+  const { isSmsOptOut } = await importSource(await readFile(new URL("../src/lib/domain/sms-opt-out.ts", import.meta.url), "utf8"), "sms-opt-out.ts");
+  for (const reply of ["STOPP", "stop", " Stopp. ", "AVSLUTA", "avregistrera!"]) {
+    assert.equal(isSmsOptOut(reply), true, `"${reply}" must opt out`);
+  }
+  for (const reply of ["JA", "stoppa inte avtalet", "nej", "stop the contract", ""]) {
+    assert.equal(isSmsOptOut(reply), false, `"${reply}" must not opt out`);
+  }
+  console.log("SMS opt-out tests passed: a bare STOPP-style reply opts out, a word inside a sentence does not.");
+}

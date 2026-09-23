@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { authenticateSmsNumber, smsWebhookAdapter, verifySmsCallbackNetwork } from "@/lib/messaging/provider";
 import { decideAcceptance, normalizeAcceptanceText } from "@/lib/domain/acceptance";
+import { isSmsOptOut } from "@/lib/domain/sms-opt-out";
 
 export async function POST(request: Request) {
   const adapter = smsWebhookAdapter();
@@ -72,6 +73,32 @@ export async function POST(request: Request) {
       delivered_at: inbound.receivedAt,
     }, { onConflict: "tenant_id,provider_message_id" }).select("id").single();
     if (smsError) throw smsError;
+
+    // STOPP spärrar numret för SMS i det här företaget. Spärren läggs på numret
+    // och inte bara på kundkortet: svaret kan komma från ett nummer utan kort,
+    // och ett nytt kort med samma nummer ska inte kunna kringgå den.
+    if (isSmsOptOut(message)) {
+      const { data: existing, error: existingError } = await admin.from("compliance_blocks")
+        .select("id").eq("tenant_id", number.tenant_id).eq("phone_e164", from).eq("active", true)
+        .contains("channels", ["sms"]).limit(1).maybeSingle();
+      if (existingError) throw existingError;
+      if (!existing) {
+        const { error: blockError } = await admin.from("compliance_blocks").insert({
+          tenant_id: number.tenant_id,
+          customer_id: customer?.id ?? null,
+          phone_e164: from,
+          channels: ["sms"],
+          reason: `Mottagaren svarade "${message.trim().slice(0, 40)}"`,
+          source: "sms_opt_out_reply",
+          active: true,
+        });
+        if (blockError) throw blockError;
+      }
+      if (event) {
+        await admin.from("provider_webhook_events").update({ status: "processed", processed_at: new Date().toISOString() }).eq("id", event.id);
+      }
+      return new NextResponse(null, { status: 204 });
+    }
 
     // PostgREST returns an error rather than throwing, so an unchecked read looks
     // exactly like "no recipients": the customer's "JA" would be stored as an

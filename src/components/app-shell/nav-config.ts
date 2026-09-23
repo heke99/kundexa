@@ -77,3 +77,17 @@ export const navSections: NavSection[] = [
     { href: "/app/webhooks", label: "Webhooks", icon: Webhook },
   ]},
 ];
+
+/**
+ * Säljarens meny.
+ *
+ * En säljare nådde sexton sidor, och menyn visade alla. Jobbet är att ringa,
+ * hålla sina återkomster, hitta kunden och skicka avtalet -- resten är
+ * sidor de sällan eller aldrig behöver. Sidorna går fortfarande att nå när
+ * något länkar dit (kundkortet länkar till exempel till SMS-historiken);
+ * de står bara inte i vägen.
+ */
+export const sellerNavHrefs: ReadonlySet<string> = new Set([
+  "/app/dialer", "/app/callbacks", "/app/calls", "/app/customers", "/app/lists", "/app/contracts",
+]);
+

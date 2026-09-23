@@ -10,9 +10,10 @@ import { Field } from "@/components/ui/form-field";
 import { createClient } from "@/lib/supabase/server";
 import { getAppContext } from "@/lib/auth";
 import { can } from "@/lib/permissions";
+import { DEFAULT_MANUAL_CONTRACT_DISPOSITIONS } from "@/lib/contracts/manual-dispositions";
 import { formatDate } from "@/lib/utils";
 
-const defaultContractEligible = new Set(["interested", "contract", "contract_requested", "sale", "sold", "order"]);
+const defaultContractEligible = new Set<string>(DEFAULT_MANUAL_CONTRACT_DISPOSITIONS);
 
 export default async function CallsPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string }> }) {
   const params = await searchParams;

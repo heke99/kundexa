@@ -13,6 +13,7 @@ import {
   sinchSigningKey,
   SINCH_MIN_TOKEN_TTL_SECONDS,
 } from "../src/lib/telephony/sinch/registration-token.ts";
+import { sinchSvamlFor } from "../src/lib/telephony/sinch/svaml.ts";
 
 // Sinch signerar inte registreringstoken med applikationshemligheten direkt,
 // utan med en nyckel som härleds ur den en gång per dygn. Två fel är lätta att
@@ -224,3 +225,38 @@ Deno.test("a forged or replayed callback is refused", () => {
 });
 
 console.log("Verified the Sinch registration token: UTC key date, the key derived from the base64-decoded secret and not the other way round, documented header and claims, base64url output, and no silent widening of a too-short lifetime.");
+
+// ICE och ACE kräver SVAML med en `action`; utan den bryter Sinch samtalet.
+
+Deno.test("ICE from the webphone to a phone number connects to that number with the client's CLI", () => {
+  const svaml = sinchSvamlFor("ice", {
+    event: "ice", callid: "x", originationType: "mxp", domain: "pstn", cli: "+46701234567",
+    to: { type: "number", endpoint: "+46709876543" },
+  });
+  assert.equal(svaml?.action.name, "connectPstn");
+  assert.equal(svaml?.action.cli, "+46701234567");
+  // Numret utelämnas: Sinch kopplar då det nummer klienten ringde.
+  assert.equal("number" in (svaml?.action ?? {}), false);
+});
+
+Deno.test("ICE for an inbound PSTN call is hung up, never looped back to the called number", () => {
+  const svaml = sinchSvamlFor("ice", {
+    event: "ice", originationType: "pstn", domain: "pstn", cli: "+46701234567",
+    to: { type: "did", endpoint: "+46812345678" },
+  });
+  assert.equal(svaml?.action.name, "hangup");
+});
+
+Deno.test("ICE with an invalid CLI still connects, without overriding the caller ID", () => {
+  const svaml = sinchSvamlFor("ice", {
+    event: "ice", originationType: "mxp", cli: "private", to: { type: "Number", endpoint: "+46709876543" },
+  });
+  assert.equal(svaml?.action.name, "connectPstn");
+  assert.equal("cli" in (svaml?.action ?? {}), false);
+});
+
+Deno.test("ACE continues; DiCE and notify take no SVAML", () => {
+  assert.equal(sinchSvamlFor("ace", {})?.action.name, "continue");
+  assert.equal(sinchSvamlFor("dice", {}), null);
+  assert.equal(sinchSvamlFor("notify", {}), null);
+});
