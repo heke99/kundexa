@@ -349,3 +349,16 @@ Klient: Failure/Denied → `failed` (end-cause.ts); auto-dialern pausar på fail
 utfall; "Pausa efter samtalet" i alla faser; dial-fel pausar sessionen. calls/route.ts felväg använde
 admin-klient mot finalize_dial (authentication_required) → säljarens klient. Avtalsknapp följer
 tenantens manual_call_eligible_dispositions (dialer, kundkort) och listans egna utfall (samtalssidan).
+
+## 2026-09-23 13:10 — PR B: avtalets svar når säljaren
+
+Migration 202609230004 (prod): `apply_sms_delivery_event` (service_role, monoton, når
+contract_deliveries + contracts, händelse sms.delivered/failed); `mark_acceptance_opened` sätter
+contracts=opened (alla kanaler); webhook/automation skickar även `contract.accepted` för
+accepted_via_web/sms; utgångssvepet loggar `contract.expired`; registret har lägena waiting (inkl.
+signing), answered_yes, answered_no. SMS-webhooken går via RPC:n (skrev tidigare bakåt och nollade
+delivered_at). process-outbox skriver inte längre tillbaka "sent" efter en snabbare webhook.
+cancelContract skriver inte över ett godkännande (statusvillkor + tydligt fel). UI: gemensam
+`src/lib/contracts/status-labels.ts`; avböjt visas som "Kunden avböjde" (röd), svenska händelser,
+startsidan har "Kundsvar senaste veckan", automationer får avböjt/utgånget. Typer regenererade
+(bara apply_sms_delivery_event tillkom).

@@ -11916,6 +11916,17 @@ export type Database = {
         }
         Returns: Json
       }
+      apply_sms_delivery_event: {
+        Args: {
+          p_failure_message?: string
+          p_provider_message_id?: string
+          p_provider_status?: string
+          p_sms_message_id: string
+          p_status: string
+          p_tenant_id: string
+        }
+        Returns: Json
+      }
       approve_contract_template_version: {
         Args: { p_version_id: string }
         Returns: undefined

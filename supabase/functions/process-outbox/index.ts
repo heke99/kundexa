@@ -354,14 +354,17 @@ async function processEmail(job: Job) {
   // sending a second copy.
   const { error: sentError } = await supabase.from("email_messages").update({
     provider_message_id: String(result.id ?? ""),
-    status: "sent",
-    provider_status: "email.sent",
     sent_at: sentAt,
     // Vad som faktiskt skickades, inte vad raden gissade.
     from_address: config.address,
   }).eq("id", email.id);
   if (sentError) throw new Error(`email_sent_state_write_failed:${sentError.code ?? "unknown"}`);
-  await supabase.from("contract_deliveries").update({ status: "sent", provider_status: "email.sent", sent_at: sentAt }).eq("email_message_id", email.id);
+  // Statusen "skickat" skrivs bara om leverantörens webhook inte redan hunnit
+  // före. Annars skrev den här raden tillbaka "levererat" till "skickat".
+  await supabase.from("email_messages").update({ status: "sent", provider_status: "email.sent" })
+    .eq("id", email.id).is("provider_status_at", null);
+  await supabase.from("contract_deliveries").update({ status: "sent", provider_status: "email.sent", sent_at: sentAt })
+    .eq("email_message_id", email.id).is("provider_status_at", null);
   await supabase.from("contract_reminders").update({ status: "sent", sent_at: sentAt }).eq("tenant_id", job.tenant_id).eq("email_message_id", email.id).in("status", ["queued", "scheduled"]);
 }
 
