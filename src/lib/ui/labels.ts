@@ -49,6 +49,22 @@ const listStatus: Record<string, string> = {
   draft: "Utkast", active: "Aktiv", paused: "Pausad", completed: "Avslutad", archived: "Arkiverad",
 };
 
+const importStatus: Record<string, string> = {
+  uploaded: "Uppladdad", parsing: "Läses in", validating: "Kontrolleras", mapping_required: "Kolumner behöver väljas",
+  preview_ready: "Redo att granska", validated: "Kontrollerad", queued: "Köad", processing: "Importeras",
+  completed: "Klar", completed_with_warnings: "Klar med varningar", failed: "Misslyckades",
+  rolled_back: "Återställd", cancelled: "Avbruten",
+};
+
+const scanStatus: Record<string, string> = {
+  pending: "Skannas", clean: "Virusfri", waived: "Skanning undantagen", infected: "Stoppad av virusskanning", failed: "Skanning misslyckades",
+};
+
+const importDecision: Record<string, string> = {
+  ready: "Redo", warning: "Varning", error: "Fel", conflict: "Flera träffar", created: "Ny kund",
+  updated: "Uppdaterad", unchanged: "Oförändrad", skipped: "Hoppades över",
+};
+
 const pick = (map: Record<string, string>) => (value: string | null | undefined) => value ? map[value] ?? value : "—";
 
 export const callStatusLabel = pick(callStatus);
@@ -60,6 +76,9 @@ export const visibilityLabel = pick(visibility);
 export const roleLabel = pick(role);
 export const outcomeGroupLabel = pick(outcomeGroup);
 export const listStatusLabel = pick(listStatus);
+export const importStatusLabel = pick(importStatus);
+export const scanStatusLabel = pick(scanStatus);
+export const importDecisionLabel = pick(importDecision);
 
 export function callDirectionLabel(direction: string | null | undefined) {
   return direction === "inbound" ? "Inkommande" : direction === "outbound" ? "Utgående" : "—";

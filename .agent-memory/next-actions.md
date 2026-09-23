@@ -1,5 +1,8 @@
 # Next actions
 
+**2026-09-24, efter PR F-merge:** applicera RLS-delen av `202609240002` i prod (policyer
+`*_ops_select` + revoke insert/update/delete) och verifiera att en uppladdning fungerar.
+
 **2026-09-24:** PR F — importfixar (dubbletter org.nr+telefon, återimport behåller ringläge,
 rollback rör inte befintliga platser, fel sparas, nytt försök efter rollback, direkt skrivrätt bort,
 synliga uppladdningsfel, ParseHub, plattformsimport, stegindikator). Användaren: dela en lista med

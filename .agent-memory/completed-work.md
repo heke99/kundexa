@@ -152,3 +152,4 @@
 - 2026-09-23: PR C enklare säljar-UI (inga schemaändringar).
 - 2026-09-23: PR D UI-regressioner (#45).
 - 2026-09-24: PR E dela listor med team/kampanj och nummer med team (migration 202609240001, prod).
+- 2026-09-24: PR F importfixar (migration 202609240002; funktioner/index i prod, RLS efter merge).

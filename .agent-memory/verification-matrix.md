@@ -218,3 +218,5 @@ för `npm run verify`, som kör mot PGlite. Den kontrollen är manuell.
 | 2026-09-24 | Listdelning till team, gemensam kö, teamnummer, explicit källa, avdelning släpper claim, tvåtenant (PGlite) | PASS |
 | 2026-09-24 | Migration 202609240001 i prod: funktioner patchade, ACL (list_team_access/for_seller ej authenticated) | PASS |
 | 2026-09-24 | Visuell kontroll som teamledare/säljare | NOT RUN |
+| 2026-09-24 | Återimport bevarar ringläge, rollback rör inte gamla platser, samma fil efter rollback, fel sparas, användare kan inte skriva importtabeller (PGlite) | PASS |
+| 2026-09-24 | Import med riktig fil i prod | NOT RUN |

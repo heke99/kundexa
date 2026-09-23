@@ -1,5 +1,15 @@
 # Current state
 
+## 2026-09-24 — Importen landar en gång (PR F)
+
+Migration `202609240002_imports_land_once.sql`. I prod: funktioner och index applicerade
+(`imports_land_once_functions`); **RLS-delen (endast läsrätt på importtabellerna + revoke)
+appliceras efter merge**, när appen som skriver med tjänsteklienten är ute. Återimport rör inte
+ringläget (bara `pending`/`blocked` tar nytt läge), bara nya listplatser loggas (rollback rör inte
+gamla), fel under bearbetning sparas som `failed` med orsak och returnerar `{failed:true}`, samma fil
+kan köras igen efter rollback/fel, ParseHub committar bara felfria körningar. Matchningen oförändrad
+(org.nr prövas bara mot org.nr, ADR-0022). `npm run verify` PASS.
+
 ## 2026-09-24 — Listor och nummer delas med team (PR E)
 
 Migration `202609240001_share_lists_and_numbers_with_teams.sql` applicerad i produktion; typer

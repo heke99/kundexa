@@ -4041,4 +4041,73 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   console.log("Lists shared with a team reach every seller in it, never another tenant's team; the queue is shared, not turn-locked; the team's number is used; unsharing releases claims and access.");
 }
 
+// En återimport får inte väcka en kund som redan bearbetas, och en rollback får
+// inte ta bort platser som fanns före importen. Ett fel under bearbetningen ska
+// synas, och samma fil ska gå att köra igen efter en rollback.
+{
+  const T = "00000000-0000-0000-0000-000000000001";
+  const OWNER = "00000000-0000-0000-0000-000000000002";
+  const EXISTING = "00000000-0000-0000-0000-0000000001b1";
+  const R1 = "00000000-0000-0000-0000-0000000001b2";
+  const R2 = "00000000-0000-0000-0000-0000000001b3";
+  const R3 = "00000000-0000-0000-0000-0000000001b4";
+  const as = (user) => db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${user}',false);`);
+  await as(OWNER);
+  await db.exec(`
+    update public.profiles set active_tenant_id='${T}' where id='${OWNER}';
+    insert into public.customers(id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by)
+      values('${EXISTING}','${T}','company','prospect','Redan I Listan AB','+46705550001',true,'legitimate_interest','${OWNER}') on conflict do nothing;
+  `);
+  const listId = String((await db.query(`select public.create_managed_customer_list('Importlista','Återimport','static',null,'manual',100,'00:00','23:59:59',7,60,0,'both',true,false,null) as id`)).rows[0].id);
+  await db.query(`select public.add_customers_to_list($1,array['${EXISTING}']::uuid[])`, [listId]);
+  await db.query(`update public.customer_list_members set state='callback' where list_id=$1 and customer_id=$2`, [listId, EXISTING]);
+
+  const run = (id, rows) => db.exec(`
+    insert into public.import_runs(id,tenant_id,name,source_type,status,uploaded_by,total_rows,simulation,scan_status,scan_provider,scan_sha256,scan_completed_at,target_list_id,idempotency_key,validation_fingerprint)
+    values('${id}','${T}','Återimport','csv','preview_ready','${OWNER}',${rows.length},false,'clean','verify','sha-land-once',now(),'${listId}','commit:fp-land-once','fp-land-once');
+    insert into public.import_rows(tenant_id,import_run_id,row_number,raw_data,normalized_data,decision,row_status,errors) values
+      ${rows.map((data, index) => `('${T}','${id}',${index + 1},'{}','${JSON.stringify(data)}','ready','valid','[]')`).join(",")};
+  `);
+  await run(R1, [
+    { display_name: "Redan I Listan AB", customer_type: "company", phone_e164: "+46705550001" },
+    { display_name: "Ny Från Filen AB", customer_type: "company", phone_e164: "+46705550002" },
+  ]);
+  const first = (await db.query(`select public.process_import_run($1) as r`, [R1])).rows[0].r;
+  if (first.failed) throw new Error(`The re-import failed: ${JSON.stringify(first)}`);
+  const kept = (await db.query(`select state from public.customer_list_members where list_id=$1 and customer_id=$2`, [listId, EXISTING])).rows[0];
+  if (kept?.state !== "callback") throw new Error(`A re-import reset a prospect that was being worked: ${JSON.stringify(kept)}`);
+  const logged = (await db.query(`select entity_id from public.import_change_sets where import_run_id=$1 and entity_type='list_member'`, [R1])).rows;
+  if (logged.length !== 1 || logged[0].entity_id.endsWith(EXISTING)) throw new Error(`Only the new list place may be logged as created: ${JSON.stringify(logged)}`);
+
+  await db.query(`select public.rollback_import_run($1)`, [R1]);
+  const survived = (await db.query(`select count(*)::int as n from public.customer_list_members where list_id=$1 and customer_id=$2`, [listId, EXISTING])).rows[0].n;
+  if (survived !== 1) throw new Error("A rollback removed a list place that existed before the import.");
+
+  // Samma fil igen, nu när den förra körningen är återställd.
+  await run(R2, [{ display_name: "Ny Från Filen AB", customer_type: "company", phone_e164: "+46705550002" }]);
+  const second = (await db.query(`select public.process_import_run($1) as r`, [R2])).rows[0].r;
+  if (second.failed || Number(second.new) + Number(second.updated) + Number(second.unchanged) !== 1) {
+    throw new Error(`The same file could not be imported again after a rollback: ${JSON.stringify(second)}`);
+  }
+
+  // Ett fel under bearbetningen lämnar körningen som misslyckad, med orsaken kvar.
+  await db.exec(`
+    insert into public.import_runs(id,tenant_id,name,source_type,status,uploaded_by,total_rows,simulation,scan_status,scan_provider,scan_sha256,scan_completed_at)
+    values('${R3}','${T}','Trasig','csv','preview_ready','${OWNER}',1,false,'clean','verify','sha-broken',now());
+    insert into public.import_rows(tenant_id,import_run_id,row_number,raw_data,normalized_data,decision,row_status,errors)
+    values('${T}','${R3}',1,'{}','{"display_name":"Trasigt AB","customer_type":"company","phone_e164":"+46705550003","employee_count":"många"}','ready','valid','[]');
+  `);
+  const broken = (await db.query(`select public.process_import_run($1) as r`, [R3])).rows[0].r;
+  const brokenRun = (await db.query(`select status, validation_report->>'execution_error' as error from public.import_runs where id=$1`, [R3])).rows[0];
+  const leaked = (await db.query(`select count(*)::int as n from public.customers where tenant_id=$1 and phone_e164='+46705550003'`, [T])).rows[0].n;
+  if (!broken.failed || brokenRun.status !== "failed" || !brokenRun.error || leaked !== 0) {
+    throw new Error(`A failed import did not stay failed and clean: ${JSON.stringify({ broken, brokenRun, leaked })}`);
+  }
+
+  // Användare skriver inte själva i importtabellerna längre.
+  const grants = (await db.query(`select has_table_privilege('authenticated','public.import_runs','UPDATE') as u, has_table_privilege('authenticated','public.import_rows','INSERT') as i`)).rows[0];
+  if (grants.u || grants.i) throw new Error(`Users can still write the import tables directly: ${JSON.stringify(grants)}`);
+  console.log("A re-import leaves a prospect being worked alone, logs only new list places, a rollback keeps what was there before, the same file imports again after a rollback, a failure mid-import stays failed with its reason, and users only read the import tables.");
+}
+
 await db.close();

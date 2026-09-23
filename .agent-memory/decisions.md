@@ -205,3 +205,10 @@ listor vid import. Nummer ges till ett företag och delas inom det ut till team 
 direkt till team); inget nummer per säljare. Därför skickar dialern inget explicit nummer som
 standard — resolvern avgör, och ett explicit val loggas med källan `explicit`. Detta ersätter
 den tidigare regeln att dialern alltid skickar det valda numret.
+
+## ADR-0022 — Importens matchning ändras inte; skrivningar går via servern
+En rad med org.nr prövas bara mot org.nr, inte mot telefon. Två bolag kan dela växelnummer och en
+automatisk sammanslagning går inte att se i efterhand; dubblettrapporten (`import_run_duplicate_report`)
+visar kollisionerna före commit och förutsäger exakt vad importen gör. Importtabellerna är
+skrivskyddade för användare (en teamledare kunde annars sätta `scan_status='clean'`); uppladdningen
+och mappningen skriver med tjänsteklienten efter behörighetskontroll, alltid i användarens tenant.

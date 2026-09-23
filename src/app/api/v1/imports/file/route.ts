@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { Json } from "@/lib/supabase/database.types";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getAppContext } from "@/lib/auth";
 import { assertPermission } from "@/lib/permissions";
 import { canonicalImportMimeTypes, parseImportFile } from "@/lib/imports/file-parser";
@@ -17,6 +18,26 @@ function jsonValue(value: unknown): Json {
   return JSON.parse(JSON.stringify(value)) as Json;
 }
 
+/**
+ * Skälet till att en uppladdning stoppades, på svenska. Tidigare fick
+ * användaren bara ett referensnummer och fick fråga en administratör vad som
+ * hänt, även när det var en tom fil.
+ */
+function uploadFailureMessage(code: string): string | null {
+  if (code === "invalid_or_oversized_import_file") return "Filen är tom eller större än 50 MB.";
+  if (code === "invalid_header_row") return "Rubrikraden måste vara mellan 1 och 100.";
+  if (code === "import_file_contains_no_rows") return "Filen innehåller inga rader under rubrikraden.";
+  if (code === "import_file_infected") return "Filen stoppades av virusskanningen och har inte sparats.";
+  if (code === "import_file_scan_failed") return "Filen kunde inte skannas. Försök igen om en stund.";
+  if (code === "target_list_not_found_or_forbidden") return "Du får inte importera till den valda listan.";
+  if (code === "import_profile_not_found" || code === "import_profile_version_not_found") return "Importprofilen finns inte eller är inaktiv.";
+  if (code.startsWith("unsupported_") || code.includes("file_type")) return "Filtypen stöds inte. Använd CSV, Excel eller JSON.";
+  if (code === "xlsx_header_row_empty") return "Rubrikraden i Excelfilen är tom. Välj rätt rubrikrad.";
+  if (code === "xlsx_contains_no_data_rows") return "Excelfilen innehåller inga rader under rubrikraden.";
+  if (code.startsWith("xlsx_")) return "Excelfilen kunde inte läsas säkert. Spara om den som .xlsx eller CSV.";
+  return null;
+}
+
 function redirectWith(request: Request, path: string, key: "message" | "error", value: string) {
   const url = new URL(path, request.url);
   url.searchParams.set(key, value);
@@ -27,8 +48,10 @@ export async function POST(request: Request) {
   let cleanupClient: Awaited<ReturnType<typeof createClient>> | null = null;
   let uploadedPath: string | null = null;
   let createdRunId: string | null = null;
+  let failedTenantId: string | null = null;
   try {
     const ctx = await getAppContext();
+    failedTenantId = ctx.tenantId;
     assertPermission(ctx.role, "imports.manage");
     const form = await request.formData();
     const file = form.get("file");
@@ -45,6 +68,10 @@ export async function POST(request: Request) {
 
     const supabase = await createClient();
     cleanupClient = supabase;
+    // Importtabellerna är skrivskyddade för användare, så att ingen kan markera
+    // en oskannad fil som ren. Servern skriver efter behörighetskontrollen ovan,
+    // alltid i användarens egen tenant.
+    const writer = createAdminClient();
     let profile: {
       id: string;
       source_provider: string;
@@ -69,8 +96,8 @@ export async function POST(request: Request) {
 
     const targetListId = requestedTargetListId ?? profile?.target_list_id ?? null;
     if (targetListId) {
-      const list = await supabase.from("customer_lists").select("id").eq("id", targetListId).maybeSingle();
-      if (list.error || !list.data) throw new Error("target_list_not_found_or_forbidden");
+      const mayManage = await supabase.rpc("can_manage_customer_list", { p_list_id: targetListId });
+      if (mayManage.error || mayManage.data !== true) throw new Error("target_list_not_found_or_forbidden");
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
@@ -111,7 +138,7 @@ export async function POST(request: Request) {
     if (upload.error) throw new Error(upload.error.message);
     uploadedPath = path;
 
-    const { data: run, error } = await supabase.from("import_runs").insert({
+    const { data: run, error } = await writer.from("import_runs").insert({
       tenant_id: ctx.tenantId,
       name,
       source_type: parsed.sourceType,
@@ -184,12 +211,12 @@ export async function POST(request: Request) {
       };
     });
     for (let index = 0; index < rows.length; index += 500) {
-      const inserted = await supabase.from("import_rows").insert(rows.slice(index, index + 500));
+      const inserted = await writer.from("import_rows").insert(rows.slice(index, index + 500));
       if (inserted.error) throw new Error(inserted.error.message);
     }
 
     const finalStatus = errors === rows.length ? "mapping_required" : "preview_ready";
-    const updated = await supabase.from("import_runs").update({
+    const updated = await writer.from("import_runs").update({
       status: finalStatus,
       error_count: errors,
       warning_count: warnings + parsed.parserErrors.length,
@@ -212,12 +239,16 @@ export async function POST(request: Request) {
         truncated: parsed.truncated,
         truncation_reason: parsed.truncationReason,
       }),
-    }).eq("id", run.id);
+    }).eq("tenant_id", ctx.tenantId).eq("id", run.id);
     if (updated.error) throw new Error(updated.error.message);
 
     if (profile?.automatic_commit && !simulate && errors === 0 && ["owner", "admin"].includes(ctx.role)) {
       const committed = await supabase.rpc("process_import_run", { p_import_run_id: run.id });
       if (committed.error) throw new Error(committed.error.message);
+      const outcome = committed.data as { failed?: boolean } | null;
+      if (outcome?.failed) {
+        return redirectWith(request, `/app/imports/${run.id}`, "error", "Importen validerades men kunde inte verkställas automatiskt. Orsaken står på importen.");
+      }
     }
     return redirectWith(request, `/app/imports/${run.id}`, "message", `Importen validerades: ${valid} giltiga, ${warnings} varningar och ${errors} fel.`);
   } catch (error) {
@@ -226,17 +257,18 @@ export async function POST(request: Request) {
       const [, sourceRows, limit] = message.split(":");
       return redirectWith(request, "/app/imports", "error", `Filen innehåller ${sourceRows} poster och gränsen är ${limit}. Importen stoppades utan att någon post kapades.`);
     }
+    const known = uploadFailureMessage(message);
     const referenceId = crypto.randomUUID();
     console.error("Import failed", { referenceId, message, createdRunId });
     if (cleanupClient && createdRunId) {
-      await cleanupClient.from("import_runs").update({
+      await createAdminClient().from("import_runs").update({
         status: "failed",
         completed_at: new Date().toISOString(),
         validation_report: jsonValue({ failure_reference: referenceId }),
-      }).eq("id", createdRunId);
+      }).eq("tenant_id", failedTenantId ?? "").eq("id", createdRunId);
     } else if (cleanupClient && uploadedPath) {
       await cleanupClient.storage.from("imports").remove([uploadedPath]);
     }
-    return redirectWith(request, "/app/imports", "error", `Importen kunde inte behandlas. Referens: ${referenceId}`);
+    return redirectWith(request, "/app/imports", "error", known ?? `Importen kunde inte behandlas. Referens: ${referenceId}`);
   }
 }
