@@ -3761,4 +3761,23 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   console.log("A product carries one contract; it is authored by the right roles, cannot reach another tenant's product, and the database refuses a mismatched product and contract.");
 }
 
+// Ett obesvarat samtal från webbtelefonen (`unanswered`) ska kunna få efterarbete.
+// Normaliseringen i v2 ångras av `calls_projection_monotonic`, så den inre
+// funktionen måste själv godta varje avslutad status.
+{
+  await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);`);
+  const unanswered = await db.query(`
+    insert into public.calls(tenant_id,customer_id,user_id,direction,from_number,to_number,status,provider,started_at,ended_at,callback_token_hash,purpose)
+    values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000021','00000000-0000-0000-0000-000000000002',
+      'outbound','+46401234567','+46702222299','unanswered','sinch',now()-interval '1 minute',now(),'webphone-unanswered','direct_marketing')
+    returning id`);
+  const callId = unanswered.rows[0].id;
+  await db.query(`select public.complete_manual_call_work_v2($1,'not_interested',null,null,null)`, [callId]);
+  const done = (await db.query(`select status, disposition, after_call_completed_at is not null as done from public.calls where id=$1`, [callId])).rows[0];
+  if (done.disposition !== "not_interested" || done.done !== true || done.status !== "unanswered") {
+    throw new Error(`An unanswered webphone call could not be given after-call work: ${JSON.stringify(done)}`);
+  }
+  console.log("An unanswered webphone call accepts after-call work; the finished status is kept.");
+}
+
 await db.close();

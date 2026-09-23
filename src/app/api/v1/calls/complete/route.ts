@@ -15,6 +15,13 @@ const schema = z.object({
   if (value.disposition === "callback" && (!value.callbackScope || !value.callbackDueAt)) context.addIssue({ code: "custom", message: "Återkomsttyp och tid krävs" });
 });
 
+const afterCallFailures: Array<[string, string]> = [
+  ["call_not_finished", "Samtalet är inte avslutat ännu. Vänta tills det har lagts på och försök igen."],
+  ["manual_call_not_found", "Samtalet finns inte, eller hör till någon annan."],
+  ["future_callback_required", "Välj en tidpunkt för återkomsten som ligger framåt i tiden."],
+  ["manual_disposition_invalid", "Välj ett giltigt samtalsutfall."],
+];
+
 export async function POST(request: Request) {
   try {
     const context = await getAppContext();
@@ -29,7 +36,11 @@ export async function POST(request: Request) {
       p_callback_scope: body.callbackScope ?? null,
       p_callback_due_at: callbackDueAt,
     });
-    if (error) return NextResponse.json({ error: error.message }, { status: 409 });
+    if (error) {
+      // Databasens kod är till för oss; säljaren behöver veta vad som gäller.
+      const known = afterCallFailures.find(([code]) => error.message.includes(code));
+      return NextResponse.json({ error: known?.[0] ?? "after_call_failed", message: known?.[1] ?? "Efterarbetet kunde inte sparas. Försök igen." }, { status: 409 });
+    }
     return NextResponse.json(data);
   } catch (error) {
     if (error instanceof z.ZodError) return NextResponse.json({ error: "validation_error", details: error.issues }, { status: 422 });

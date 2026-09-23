@@ -169,9 +169,9 @@ export function DialerPanel({
         callbackDueAt: disposition === "callback" ? callbackDueAt : null,
       }),
     });
-    const result = await response.json() as { error?: string };
+    const result = await response.json() as { error?: string; message?: string };
     if (!response.ok) {
-      setError((result.error ?? "after_call_failed").replaceAll("_", " "));
+      setError(result.message ?? (result.error ?? "after_call_failed").replaceAll("_", " "));
       return;
     }
     if (createContractAfterSave) {

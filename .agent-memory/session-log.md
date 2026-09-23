@@ -274,3 +274,16 @@ Loggen: reservation 08:11:46, `dialing accepted` 08:11:47, sedan inga benhändel
 - Knappen "Lägg på/Avbryt" hängde på dialerns interna läge → nu `callId && !afterCall`.
 - Det fastnade testförsöket släpptes manuellt (`call.released_by_support`, audit).
 - Sinch har fortfarande skickat noll webhook-händelser: callback-URL ej registrerad.
+
+## 2026-09-23 — Andra testsamtalet: orsaken syns, efterarbetet rättat
+
+- Sinch avslutsorsak nu loggad: **"Failure: Unable to connect call (destination user not found)"**
+  till `+12089912106` från `+12085810392`. Sinch dokumentation: ett testkonto (trial) kan bara ringa
+  verifierade nummer. Kontot behöver uppgraderas eller numret verifieras i Sinch Dashboard.
+- Sessionen kopplades till försöket och platsen släpptes direkt när samtalet bröts (#37 fungerar).
+- **Efterarbete gick inte att spara (409 `call_not_finished`).** `complete_manual_call_work_v2`
+  normaliserar `unanswered` → `no_answer`, men `calls_projection_monotonic` återställer tyst ett
+  avslutat samtals status; den inre funktionen godtog inte `unanswered`. Migration
+  `202609230001_after_call_work_accepts_every_finished_call.sql` (produktion + PGlite-test):
+  `is_terminal_call_status` i `complete_manual_call_work` och `emit_call_webhook_event`.
+  Bekräftat i produktion med rollback. Rutten ger nu svenska meddelanden i stället för rå kod.
