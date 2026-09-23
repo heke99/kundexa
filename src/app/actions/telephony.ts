@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { getAppContext, isAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { serverEnv } from "@/lib/env";
+import { placeProviderTestCall } from "@/lib/telephony/webphone";
 
 const value = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
 
@@ -178,3 +179,30 @@ export async function saveCallerIdDefault(form: FormData) {
  * numret är betalt. Det sägs då rakt ut, med numret i klartext, så att en
  * administratör kan lägga in det för hand i stället för att hyra ett till.
  */
+
+/**
+ * Ett testsamtal från telefonitjänsten till ett nummer, utan webbläsaren.
+ *
+ * Skiljer ett konto- eller nummerproblem från ett problem i webbtelefonen: det
+ * går från företagets förvalda nummer och läser upp en mening. Kostar ett
+ * samtal, så bara administratörer.
+ */
+export async function placeTestCall(form: FormData) {
+  const context = await adminContext();
+  const destination = value(form, "destination").replace(/[\s-]/g, "");
+  if (!/^\+[1-9][0-9]{7,14}$/.test(destination)) go("error", "Ange numret med landskod, till exempel +46701234567.");
+  const admin = createAdminClient();
+  const { data: policy } = await admin.from("telephony_policies")
+    .select("phone_numbers!telephony_policies_default_caller_id_phone_number_tenant_fk(number_e164)")
+    .eq("tenant_id", context.tenantId).maybeSingle();
+  const cli = (policy as { phone_numbers?: { number_e164?: string | null } | null } | null)?.phone_numbers?.number_e164 ?? null;
+  if (!cli) go("error", "Företaget har inget förvalt nummer att ringa från.");
+  const result = await placeProviderTestCall({ cli: cli!, destination });
+  await admin.from("audit_logs").insert({
+    tenant_id: context.tenantId, actor_user_id: context.userId, action: "telephony.test_call",
+    entity_type: "telephony", entity_id: context.tenantId,
+    after_data: { destination, cli, ok: result.ok, ...(result.ok ? { call_id: result.callId } : { status: result.status, message: result.message }) },
+  });
+  if (result.ok) go("message", `Testsamtalet är lagt från ${cli} till ${destination}. Det ska ringa inom några sekunder och läsa upp en mening.`);
+  go("error", `Telefonitjänsten avvisade testsamtalet (${result.status || "nätverk"}): ${result.message}`);
+}

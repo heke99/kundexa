@@ -8,7 +8,7 @@ import { DataTable } from "@/components/ui/data-table";
 import { Field, SelectField } from "@/components/ui/form-field";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
-import { saveCallerIdDefault, saveTelephonyPolicy } from "@/app/actions/telephony";
+import { placeTestCall, saveCallerIdDefault, saveTelephonyPolicy } from "@/app/actions/telephony";
 import { getAppContext } from "@/lib/auth";
 import { describeResendSendingDomain } from "@/lib/email/resend-domains";
 
@@ -78,6 +78,15 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
             <button className="button button-secondary">Spara utgående nummer</button>
           </form>}
       </CardContent></Card>
+
+      {/* Skiljer ett konto- eller nummerproblem från ett fel i webbtelefonen. */}
+      {telephonyPolicy?.default_caller_id_phone_number_id ? <Card><CardHeader><h2>Testsamtal</h2></CardHeader><CardContent>
+        <p className="muted">Ringer från företagets förvalda nummer direkt via telefonitjänsten, utan webbläsaren, och läser upp en mening. Ringer det fungerar kontot och numren.</p>
+        <form action={placeTestCall} className="form-stack" style={{ marginTop: 12 }}>
+          <Field label="Ring till" name="destination" placeholder="+46701234567" required />
+          <button className="button button-secondary">Ring testsamtal</button>
+        </form>
+      </CardContent></Card> : null}
 
 
       <Card><CardHeader><h2>Telefonipolicy</h2><Badge>{telephonyPolicy?.recording_enabled ? "Inspelning aktiv" : "Inspelning av"}</Badge></CardHeader><CardContent>
