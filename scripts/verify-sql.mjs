@@ -3759,7 +3759,45 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   const matching = await insertContract("VERIFY-PROD-3", PRODUCT, linkedTemplate.id);
   if (matching !== "allowed") throw new Error(`A product sold with its own contract was refused: ${matching}`);
   await db.query(`delete from public.contracts where contract_number='VERIFY-PROD-3'`);
+
+  // FAILURE-0101: ett avtal skapas från produkten genom den riktiga RPC-kedjan.
+  // v1 föder raden utan mall och v2 sätter mallen strax efter; regeln prövas vid
+  // commit, inte när raden föds. FAILURE-0123: avtalsansvarig får skapa avtalet.
+  const draftVersion = (await db.query(
+    `select id from public.contract_template_versions where template_id=$1 and status='draft' order by created_at desc limit 1`,
+    [linkedTemplate.id])).rows[0].id;
+  await db.query(`select public.approve_contract_template_version($1)`, [draftVersion]);
+  await db.exec(`
+    insert into public.customers(id,tenant_id,customer_type,display_name,email,lifecycle,created_by)
+      values('00000000-0000-0000-0000-0000000000e3','${T}','person','Produktkund','produkt@example.test','prospect',
+        '00000000-0000-0000-0000-000000000002');
+    insert into auth.users(id,email) values('00000000-0000-0000-0000-0000000000e4','avtal@example.test');
+    insert into public.tenant_memberships(tenant_id,user_id,role,status,joined_at)
+      values('${T}','00000000-0000-0000-0000-0000000000e4','contract_manager','active',now());
+    update public.profiles set active_tenant_id='${T}' where id='00000000-0000-0000-0000-0000000000e4';
+  `);
+  const draftFromProduct = (number, productId, templateId) => refusal(() => db.query(
+    `select public.create_contract_draft_v3($1,'00000000-0000-0000-0000-0000000000e3',$2,null,$3,$4,$5,
+       'Elavtal rörligt','Brödtext','Villkor','{"currency":"SEK"}'::jsonb,'product-doc-hash','telephone',
+       '{"legal_name":"Kundexa Verify AB"}'::jsonb,'{"display_name":"Produktkund"}'::jsonb) as id`,
+    [number, productId, templateId, draftVersion, entity]));
+  const fromProduct = await draftFromProduct("VERIFY-PROD-4", PRODUCT, linkedTemplate.id);
+  if (fromProduct !== "allowed") throw new Error(`A contract could not be created from its product: ${fromProduct}`);
+  const stored = (await db.query(`select product_id,template_id from public.contracts where contract_number='VERIFY-PROD-4'`)).rows[0];
+  if (stored.product_id !== PRODUCT || stored.template_id !== linkedTemplate.id) {
+    throw new Error(`The contract did not keep its product and template: ${JSON.stringify(stored)}`);
+  }
+  const otherProduct = await draftFromProduct("VERIFY-PROD-5", "00000000-0000-0000-0000-0000000000e2", linkedTemplate.id);
+  if (!otherProduct.includes("contract_template_belongs_to_other_product")) {
+    throw new Error(`The RPC path let a product's contract be sold with another product: ${otherProduct}`);
+  }
+  await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-0000000000e4',false);`);
+  const byContractManager = await draftFromProduct("VERIFY-PROD-6", PRODUCT, linkedTemplate.id);
+  if (byContractManager !== "allowed") throw new Error(`A contract manager could not create a contract: ${byContractManager}`);
+  await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);`);
+  await db.query(`delete from public.contracts where contract_number in ('VERIFY-PROD-4','VERIFY-PROD-6')`);
   console.log("A product carries one contract; it is authored by the right roles, cannot reach another tenant's product, and the database refuses a mismatched product and contract.");
+  console.log("Executed a contract from a product through create_contract_draft_v3, by an owner and by a contract manager; a mismatched product is refused at commit.");
 }
 
 // Ett obesvarat samtal från webbtelefonen (`unanswered`) ska kunna få efterarbete.
@@ -3809,6 +3847,16 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   if (own.matched !== true || row.external_call_id !== "ice-own" || event.status !== "processed" || event.tenant_id !== "00000000-0000-0000-0000-000000000001") {
     throw new Error(`An ICE that arrived before the client's report did not match its attempt: ${JSON.stringify({ own, row, event })}`);
   }
+  // FAILURE-0102/0103: ICE får klartecken bara för sin reservation, med
+  // reservationens nummer och A-nummer. En omleverans får samma besked.
+  if (foreign.connect === true) throw new Error(`An ICE without a reservation was cleared to connect: ${JSON.stringify(foreign)}`);
+  if (own.connect !== true || own.destination !== "+46702222277" || own.callerId !== "+46401234567") {
+    throw new Error(`A reserved call was not cleared with its own number and caller ID: ${JSON.stringify(own)}`);
+  }
+  const redelivered = (await ice("00000000-0000-0000-0000-000000000002", "ice-own")).rows[0].result;
+  if (redelivered.duplicate !== true || redelivered.connect !== true || redelivered.callerId !== "+46401234567") {
+    throw new Error(`A redelivered ICE lost its clearance and would hang up a cleared call: ${JSON.stringify(redelivered)}`);
+  }
   const dice = (await db.query(`select public.ingest_sinch_voice_event('dice','ice-own','dice:ice-own',$1::jsonb,now()) as result`, [
     JSON.stringify({ event: "dice", callid: "ice-own", reason: "GENERALERROR", result: "FAILED" }),
   ])).rows[0].result;
@@ -3816,7 +3864,13 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   if (dice.matched !== true || reason?.reason !== "GENERALERROR") {
     throw new Error(`The provider's end reason did not reach the call after ICE matched: ${JSON.stringify({ dice, reason })}`);
   }
+  // Ett avslutat försök ger inget nytt klartecken, inte ens för samma samtals-id.
+  const afterEnd = (await db.query(`select public.ingest_sinch_voice_event('ice','ice-own','ice:ice-own:again',$1::jsonb,now()) as result`, [
+    JSON.stringify({ event: "ice", callid: "ice-own", user: "00000000-0000-0000-0000-000000000002", to: { type: "number", endpoint: "+46702222277" }, originationType: "MXP" }),
+  ])).rows[0].result;
+  if (afterEnd.connect === true) throw new Error(`A finished attempt was cleared to connect again: ${JSON.stringify(afterEnd)}`);
   console.log("ICE finds its dial attempt by seller and number before the client reports the call id, never across tenants, and the end reason then lands on the call.");
+  console.log("ICE is cleared to connect only for its own open reservation, with the reserved number and the resolver's caller ID; a redelivery keeps the clearance and a finished attempt gets none.");
 }
 
 // Samtalsutfallen hamnar rätt (202609230003).
@@ -4107,6 +4161,27 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   // Användare skriver inte själva i importtabellerna längre.
   const grants = (await db.query(`select has_table_privilege('authenticated','public.import_runs','UPDATE') as u, has_table_privilege('authenticated','public.import_rows','INSERT') as i`)).rows[0];
   if (grants.u || grants.i) throw new Error(`Users can still write the import tables directly: ${JSON.stringify(grants)}`);
+  const otherGrants = (await db.query(`select
+    has_table_privilege('authenticated','public.parsehub_runs','UPDATE') as runs,
+    has_table_privilege('authenticated','public.import_merge_conflicts','UPDATE') as conflicts,
+    has_table_privilege('authenticated','public.import_run_list_targets','INSERT') as targets,
+    has_table_privilege('authenticated','public.parsehub_projects','UPDATE') as projects`)).rows[0];
+  if (Object.values(otherGrants).some(Boolean)) throw new Error(`Users can still write ParseHub and import side tables: ${JSON.stringify(otherGrants)}`);
+
+  // FAILURE-0105, negativt tvåtenanttest: en ägare i tenant A återställer inte
+  // tenant B:s import, inte ens med rätt id.
+  const FOREIGN_RUN = "00000000-0000-0000-0000-0000000001b5";
+  await db.exec(`
+    insert into public.import_runs(id,tenant_id,name,source_type,status,uploaded_by,total_rows,simulation,scan_status,scan_provider,scan_sha256,scan_completed_at)
+    values('${FOREIGN_RUN}','00000000-0000-0000-0000-000000000051','Tenant B import','csv','completed','00000000-0000-0000-0000-000000000050',0,false,'clean','verify','sha-foreign',now());
+  `);
+  let crossTenant = "allowed";
+  try { await db.query(`select public.rollback_import_run($1)`, [FOREIGN_RUN]); } catch (error) { crossTenant = String(error.message); }
+  const foreignStatus = (await db.query(`select status from public.import_runs where id=$1`, [FOREIGN_RUN])).rows[0].status;
+  if (!crossTenant.includes("import_run_not_found") || foreignStatus !== "completed") {
+    throw new Error(`A rollback reached another tenant's import: ${JSON.stringify({ crossTenant, foreignStatus })}`);
+  }
+  console.log("A rollback never reaches another tenant's import, and users only read ParseHub runs, projects, conflicts and list targets.");
   console.log("A re-import leaves a prospect being worked alone, logs only new list places, a rollback keeps what was there before, the same file imports again after a rollback, a failure mid-import stays failed with its reason, and users only read the import tables.");
 }
 

@@ -51,8 +51,8 @@ export const sinchWebphoneProvider: WebphoneProvider = {
         code: "webphone_caller_id_missing",
         message:
           "Företaget har inget telefonnummer att visa för mottagaren, och ett samtal utan "
-          + "avsändarnummer kopplas aldrig fram. Administratören behöver beställa ett nummer "
-          + "och välja det som företagets förvalda nummer.",
+          + "avsändarnummer kopplas aldrig fram. Administratören behöver ge företaget ett "
+          + "aktivt nummer med röststöd.",
       };
     }
 

@@ -65,9 +65,17 @@ export async function POST(request: Request) {
       .select("phone_numbers!telephony_policies_default_caller_id_phone_number_tenant_fk(number_e164)")
       .eq("tenant_id", context.tenantId)
       .maybeSingle();
-    const callerIdentifier =
+    // Klientens nummer är bara det telefonitjänsten kräver för att bygga klienten. Varje
+    // samtals A-nummer sätts i ICE-svaret ur reservationen (lista, kampanj,
+    // team), så ett företag med bara teamnummer och inget förval ska också
+    // kunna starta webbtelefonen: då används första aktiva röstnumret.
+    let callerIdentifier =
       (callerId as { phone_numbers?: { number_e164?: string | null } | null } | null)
         ?.phone_numbers?.number_e164?.trim() || null;
+    if (!callerIdentifier) {
+      const { data: options } = await supabase.rpc("caller_id_options_for_current_user");
+      callerIdentifier = (options as { number_e164?: string | null }[] | null)?.[0]?.number_e164?.trim() || null;
+    }
 
     const provisioned = await provisionWebphone(TELEPHONY_PROVIDER, {
       tenantId: context.tenantId,

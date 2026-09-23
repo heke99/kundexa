@@ -1,4 +1,4 @@
-import { authenticateRequest, assertApiObjectAccess } from "@/lib/api-auth";
+import { authenticateRequest, assertApiObjectAccess, dataClientForIdentity } from "@/lib/api-auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sha256Bytes } from "@/lib/crypto";
 import { apiJson, getCorrelationId, withCorrelation } from "@/lib/api-correlation";
@@ -10,11 +10,16 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const { id, documentId } = await params;
     await assertApiObjectAccess(identity, "contract", id);
     await assertApiObjectAccess(identity, "contract_document", documentId);
-    const admin = createAdminClient();
-    const { data: document, error } = await admin.from("contract_documents")
+    // Raden läses med samma klient som resten av avtals-API:t: en inloggad
+    // säljare ser bara dokument till avtal som RLS släpper fram, inte vilket
+    // avtal som helst i företaget vars id hen råkar ha. Först därefter hämtar
+    // admin-klienten själva filen, som lagringen inte släpper till användare.
+    const db = await dataClientForIdentity(identity);
+    const { data: document, error } = await db.from("contract_documents")
       .select("file_name,storage_path,mime_type,sha256")
-      .eq("tenant_id", identity.tenantId).eq("contract_id", id).eq("id", documentId).single();
+      .eq("tenant_id", identity.tenantId).eq("contract_id", id).eq("id", documentId).maybeSingle();
     if (error || !document) return apiJson(correlationId, { error: "document_not_found" }, { status: 404 });
+    const admin = createAdminClient();
     const { data, error: downloadError } = await admin.storage.from("contract-documents").download(document.storage_path);
     if (downloadError || !data) return apiJson(correlationId, { error: "document_download_failed" }, { status: 502 });
     const bytes = new Uint8Array(await data.arrayBuffer());

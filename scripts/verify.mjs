@@ -1305,6 +1305,17 @@ console.log(`Verified ${migrations.length} migrations, monotonic call/Resend pro
   // Och Sinch ICE/ACE kräver ett SVAML-svar; utan det bryts varje samtal.
   const voice = await readFile(join(root, "src/app/api/webhooks/sinch/route.ts"), "utf8");
   assert.match(voice, /sinchSvamlFor\(event,/, "The voice webhook must answer ICE and ACE with SVAML, or Sinch disconnects the call");
+  // FAILURE-0102: ICE kopplas bara med databasens besked om reservationen.
+  assert.match(voice, /sinchSvamlFor\(event, payload as Record<string, unknown>, decision\)/,
+    "The voice webhook must pass the reservation decision to the ICE answer, or any webphone call connects");
+  const svamlSource = await readFile(join(root, "src/lib/telephony/sinch/svaml.ts"), "utf8");
+  assert.match(svamlSource, /if \(decision\?\.connect !== true\) return HANGUP;/,
+    "An ICE without a reservation must be hung up");
+  // FAILURE-0104: dokumentraden läses genom RLS innan admin-klienten hämtar filen.
+  const documentRoute = await readFile(join(root, "src/app/api/v1/contracts/[id]/documents/[documentId]/route.ts"), "utf8");
+  assert.ok(documentRoute.indexOf("dataClientForIdentity(identity)") > 0
+    && documentRoute.indexOf("dataClientForIdentity(identity)") < documentRoute.indexOf("createAdminClient()"),
+    "A contract document must be read through the caller's own client before the admin client downloads it");
 }
 
 // Första riktiga samtalet: det ringde inte, gick inte att lägga på, och
