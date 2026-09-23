@@ -221,16 +221,19 @@ export async function testResendIntegration(form: FormData) {
   const providerMessageId = typeof result.id === "string" ? result.id : null;
   const success = Boolean(response?.ok && providerMessageId);
   const nextConfig = toJsonObject({ ...configuration, last_test_status: success ? "success" : "error", last_tested_at: testedAt, last_error: success ? null : safeError, last_test_provider_message_id: success ? providerMessageId : null });
-  // The redirect below announces the outcome. If this write is lost the
-  // integration keeps its old status while the screen says it is now active,
-  // and sending is gated on that status.
-  const { error: integrationStatusError } = await admin.from("tenant_integrations").update({ status: success ? "active" : "error", last_verified_at: success ? testedAt : null, configuration: nextConfig }).eq("tenant_id", context.tenantId).eq("id", integration.id);
+  // Kontot är plattformens (202609220002): statusen betyder "får företaget
+  // skicka", och en avstängning är ett aktivt beslut. Ett misslyckat test säger
+  // något om plattformskontot i stunden, inte om företaget, så det skrivs som
+  // testresultat och stänger inte av avtalsposten (FAILURE-0124).
+  const { error: integrationStatusError } = await admin.from("tenant_integrations").update(success
+    ? { last_verified_at: testedAt, configuration: nextConfig }
+    : { configuration: nextConfig }).eq("tenant_id", context.tenantId).eq("id", integration.id);
   await admin.from("audit_logs").insert({ tenant_id: context.tenantId, actor_user_id: context.userId, action: success ? "integration.resend_test_succeeded" : "integration.resend_test_failed", entity_type: "tenant_integration", entity_id: integration.id, after_data: toJson({ tested_at: testedAt, provider_message_id: success ? providerMessageId : null, error: safeError }) });
   revalidatePath("/app/integrations");
   if (integrationStatusError) {
     redirect(`/app/integrations?error=${encodeURIComponent("Testet kördes men resultatet kunde inte sparas på integrationen. Kör testet igen.")}`);
   }
-  redirect(`/app/integrations?${success ? "message" : "error"}=${encodeURIComponent(success ? "Resend-testet lyckades. Integrationen är nu aktiv." : safeError ?? "Resend-testet misslyckades")}`);
+  redirect(`/app/integrations?${success ? "message" : "error"}=${encodeURIComponent(success ? "Testmejlet skickades." : `Testmejlet gick inte iväg: ${safeError ?? "okänt fel"}. Utskicken är inte avstängda; kontakta Kundexa om felet består.`)}`);
 }
 
 export async function generateResendWebhookAddress(form: FormData) {

@@ -13,7 +13,9 @@ const MAX_CELL_CHARACTERS = 50_000;
 
 type JsonObject = Record<string, unknown>;
 type MappingRule = { source?: string | string[]; default?: unknown; separator?: string; transforms?: string[]; required?: boolean };
+type EntityTypePolicy = { mode?: string; source?: string; companyValues?: string[]; personValues?: string[] };
 type Mapping = {
+  entityType?: EntityTypePolicy;
   company?: Record<string, MappingRule>;
   contacts?: { recordsPath?: string; fields?: Record<string, MappingRule> };
   mergePolicy?: string;
@@ -98,7 +100,12 @@ function recordsFromPayload(payload: unknown, path?: string | null) {
   const flattened = candidates.flatMap((value) => Array.isArray(value) ? value : [value]);
   if (!path && isRecord(payload)) {
     const arrays = Object.values(payload).filter(Array.isArray);
-    if (arrays.length === 1) return (arrays[0] as unknown[]).slice(0, MAX_ROWS).map(normalizeRow);
+    // Samma tak som med angiven sökväg. Tidigare kapades allt över gränsen tyst
+    // när sökvägen hittades automatiskt (FAILURE-0130).
+    if (arrays.length === 1) {
+      if ((arrays[0] as unknown[]).length > MAX_ROWS) throw new Error("parsehub_row_limit_exceeded");
+      return (arrays[0] as unknown[]).map(normalizeRow);
+    }
   }
   if (!flattened.length || flattened.some((value) => !isRecord(value))) throw new Error(path ? "parsehub_records_path_invalid" : "parsehub_records_path_required");
   if (flattened.length > MAX_ROWS) throw new Error("parsehub_row_limit_exceeded");
@@ -180,6 +187,23 @@ function mapFields(row: unknown, rules: Record<string, MappingRule>, scope: stri
   }
   return { data, errors, warnings };
 }
+// Samma regel som filimportens `customerTypeForRow`: profilen avgör om raden är
+// ett företag eller en privatperson. Allt importerades som företag, så privat-
+// personer passerade utan NIX-kontroll och utan krav på rättslig grund (FAILURE-0130).
+function customerTypeFor(row: JsonObject, mapping: Mapping, company: JsonObject): "company" | "person" | null {
+  const policy = mapping.entityType ?? {};
+  const mode = policy.mode ?? "fixed_company";
+  if (mode === "fixed_person") return "person";
+  if (mode === "fixed_company") return "company";
+  if (mode === "infer_organization_number") return company.organization_number ? "company" : "person";
+  const value = String(resolveFirst(row, policy.source ?? "") ?? "").trim().toLocaleLowerCase("sv-SE");
+  const companyValues = (policy.companyValues ?? ["company", "organization", "företag", "bolag", "b2b"]).map((item) => item.toLocaleLowerCase("sv-SE"));
+  const personValues = (policy.personValues ?? ["person", "private", "privatperson", "b2c"]).map((item) => item.toLocaleLowerCase("sv-SE"));
+  if (companyValues.includes(value)) return "company";
+  if (personValues.includes(value)) return "person";
+  return null;
+}
+
 function mapRecord(row: JsonObject, mapping: Mapping) {
   const companyResult = mapFields(row, mapping.company ?? {}, "company");
   const company = companyResult.data;
@@ -198,7 +222,9 @@ function mapRecord(row: JsonObject, mapping: Mapping) {
       errors.push(...result.errors); warnings.push(...result.warnings);
     }
   }
-  const normalized: JsonObject = { ...company, customer_type: "company", contacts, merge_policy: mapping.mergePolicy ?? "safe_upsert" };
+  const customerType = customerTypeFor(row, mapping, company);
+  if (!customerType) errors.push("customer_type_unresolved");
+  const normalized: JsonObject = { ...company, customer_type: customerType, contacts, merge_policy: mapping.mergePolicy ?? "safe_upsert" };
   return { normalized, errors, warnings };
 }
 
@@ -249,6 +275,16 @@ async function processRun(run: ClaimedRun) {
   const existing = await supabase.from("import_runs").select("id,status").eq("tenant_id", run.tenant_id).eq("idempotency_key", importKey).maybeSingle();
   if (existing.error) throw new Error("parsehub_import_lookup_failed");
   let importRunId = existing.data?.id ?? null;
+  // En tidigare körning som föll mitt i radinläsningen står kvar som
+  // `validating` med en del av raderna. Den läses om från början i stället för
+  // att fastna: automatisk commit vägrade den och utan commit märktes
+  // ParseHub-körningen ändå som klar (FAILURE-0130).
+  const resumeIncomplete = Boolean(importRunId && existing.data?.status === "validating");
+  if (resumeIncomplete) {
+    const cleared = await supabase.from("import_rows").delete().eq("tenant_id", run.tenant_id).eq("import_run_id", importRunId!);
+    if (cleared.error) throw new Error("parsehub_rows_reset_failed");
+  }
+  const createdNow = !importRunId;
   if (!importRunId) {
     const created = await supabase.from("import_runs").insert({
       tenant_id: run.tenant_id,
@@ -283,6 +319,8 @@ async function processRun(run: ClaimedRun) {
     }).select("id").single();
     if (created.error || !created.data) throw new Error("parsehub_import_create_failed");
     importRunId = created.data.id;
+  }
+  if (importRunId && (createdNow || resumeIncomplete)) {
 
     let valid = 0; let warningCount = 0; let errorCount = 0;
     const mappedRows = records.map((record, index) => {
@@ -309,6 +347,7 @@ async function processRun(run: ClaimedRun) {
     const finalStatus = errorCount === mappedRows.length ? "mapping_required" : "preview_ready";
     const updated = await supabase.from("import_runs").update({
       status: finalStatus,
+      total_rows: mappedRows.length,
       error_count: errorCount,
       warning_count: warningCount,
       validation_report: { valid_rows: valid, warning_rows: warningCount, error_rows: errorCount, response_sha256: responseHash, parsehub_run_id: run.id },
@@ -324,7 +363,9 @@ async function processRun(run: ClaimedRun) {
   }
   const completed = await supabase.from("parsehub_runs").update({ status: "completed", run_completed_at: new Date().toISOString(), locked_at: null, locked_by: null, last_error_code: null, next_attempt_at: null }).eq("id", run.id);
   if (completed.error) throw new Error("parsehub_run_complete_failed");
-  return { runId: run.id, importRunId, rows: records.length, automaticCommit: profile.automatic_commit };
+  // `status` gör att schemaläggarens hjärtslag räknar körningen; utan det stod
+  // arbetaren som "healthy" även när varje körning felade.
+  return { runId: run.id, importRunId, rows: records.length, automaticCommit: profile.automatic_commit, status: "completed" };
 }
 
 Deno.serve(async (request) => {
@@ -349,7 +390,7 @@ Deno.serve(async (request) => {
         locked_at: null,
         locked_by: null,
       }).eq("id", run.id);
-      results.push({ runId: run.id, error: code, retry: retryable && !exhausted });
+      results.push({ runId: run.id, error: code, retry: retryable && !exhausted, status: retryable && !exhausted ? "requeued" : "failed" });
     }
   }
   return Response.json({ worker, claimed: (claim.data ?? []).length, results });

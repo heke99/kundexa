@@ -397,3 +397,21 @@ cancelled. ParseHub: ingen auto-commit med felrader. RLS: bara SELECT för impor
 merge). Kod: uppladdning/mappning skriver med tjänsteklient, svenska felorsaker, mållistor = listor
 användaren får hantera, "Importera fil till listan" från listsidan, svenska import-/skannings-/
 radstatusar, orsak visas på misslyckad import. Uppdelning vid import utgår (ADR-0021).
+
+## 2026-09-24 — Systemgenomgång: var det bryts
+Användaren bad om en genomgång av alla flöden. Genomgången gjordes read-only mot repot, produktionen,
+Vercel och `/api/ready`, och gav 31 bekräftade brytpunkter. Användarens beslut:
+- åtgärda allt;
+- samtalsgrinden lägger på vid DB-fel;
+- kampanjer får teamval.
+
+Arbetet gjordes i fem commits plus en med tre telefonifel som hittades under arbetet. Varje nytt SQL-test
+bevisades fallera utan sin migration (migrationen flyttades undan, sviten kördes, filen återställdes).
+
+Avstämningen mot produktionen hittade två saker:
+- `202609170010` hade aldrig körts. Den är nu applicerad.
+- 40 repoversioner var oregistrerade. De är nu registrerade.
+
+Funktioner (normaliserad md5), policyer, RLS-flaggor och triggrar är identiska mellan produktion och
+PGlite. Enda undantaget är en oanvänd variabel som skilde redan tidigare. `npm run verify` PASS.
+Ingen PR är skapad. Live-test är NOT RUN.

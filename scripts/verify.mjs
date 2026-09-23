@@ -244,6 +244,15 @@ assert.match(maintenanceWorker, /normalize_due_geographies/, "Maintenance worker
 assert.match(maintenanceWorker, /release_expired_platform_allocations/, "Maintenance worker must release expired platform list allocations");
 assert.match(maintenanceWorker, /telephony\.retention/, "Maintenance worker must schedule telephony retention");
 assert.doesNotMatch(maintenanceWorker, /rinkel/i, "The maintenance worker must not name a removed provider");
+// FAILURE-0117: platsfrigöringen körs först och stoppas inte av ett orelaterat fel.
+assert.ok(maintenanceWorker.indexOf('"release_stale_dial_attempts"') > 0
+  && maintenanceWorker.indexOf('"release_stale_dial_attempts"') < maintenanceWorker.indexOf('"segment_refresh"'),
+  "Seat release must run before the other maintenance steps");
+assert.doesNotMatch(maintenanceWorker, /status: 500 \}\);\s*\n\s*const \{ data: lostSessions/,
+  "One failing maintenance step must not stop the rest");
+const vercelConfig = JSON.parse(await readFile(join(root, "vercel.json"), "utf8"));
+assert.equal(vercelConfig.crons.find((cron) => cron.path.endsWith("/maintenance-worker"))?.schedule, "*/5 * * * *",
+  "The maintenance worker releases lost seats; it must run every five minutes");
 const complianceWorker = await readFile(join(root, "supabase/functions/compliance-worker/index.ts"), "utf8");
 for (const pattern of [/queue_due_nix_checks/, /claim_nix_check_jobs/, /complete_nix_check_job/, /fail_nix_check_job/, /redirect: "manual"/, /nix_private_network_forbidden/, /decryptJson/]) assert.match(complianceWorker, pattern, `Compliance worker invariant missing: ${pattern}`);
 
@@ -354,7 +363,10 @@ assert.match(complianceAdminActions, /saveComplianceScreeningPolicy/, "The scree
 assert.match(complianceAdminActions, /mode === "pre_screened_source" && !defaultLegalBasis/, "Relaxing NIX screening must require a documented legal basis");
 const customerActions = await readFile(join(root, "src/app/actions/customers.ts"), "utf8");
 assert.match(customerActions, /export async function updateCustomerDetails/, "A customer card must be completable after it was created for a call");
-assert.match(customerActions, /normalizeOrganizationNumber\(identity/, "Identity numbers must be validated, not stored raw");
+assert.match(customerActions, /normalizeOrganizationNumber\(organizationInput/, "Organisation numbers must be validated, not stored raw");
+assert.match(customerActions, /normalizeOrganizationNumber\(personalInput/, "Personal identity numbers must be validated, not stored raw");
+// FAILURE-0127: två fält; det ena får aldrig nollas av att det andra sparas.
+assert.doesNotMatch(customerActions, /value\(fd, "identity_number"\)/, "One shared identity field wiped the other number on every save");
 assert.match(customerActions, /personalIdentityNumber = normalized\.canonical/, "A personal identity number must not be stored in the organisation-number column");
 assert.match(customerActions, /customer\.details_updated/, "Completing a customer card must be audited");
 const customerDetailPage = await readFile(join(root, "src/app/(dashboard)/app/customers/[id]/page.tsx"), "utf8");
@@ -485,6 +497,21 @@ assert.match(voiceWebhook, /status: 503/, "An unconfigured webhook must ask for 
 assert.match(voiceWebhook, /status: 403/, "An unverifiable event must be refused");
 assert.doesNotMatch(voiceWebhook, /reason: verification\.reason \}\)[\s\S]{0,120}NextResponse\.json/, "The rejection reason must be logged, not handed to the sender");
 assert.match(voiceWebhook, /ingest_sinch_voice_event/, "Voice lifecycle projection must use the atomic database reducer");
+// PR 3 (2026-09-24): avtalsutskick och kundsvar.
+{
+  const deliveryEmail = await readFile(join(root, "src/lib/email/templates/contract-delivery.ts"), "utf8");
+  assert.match(deliveryEmail, /acceptanceCode/, "A contract email must carry the acceptance code when one is required (FAILURE-0119)");
+  const smsInbound = await readFile(join(root, "src/app/api/webhooks/sms/inbound/route.ts"), "utf8");
+  assert.match(smsInbound, /if \(smsAcceptance && recipients\?\.length\)/, "SMS replies may only decide a contract when sms_acceptance is on (FAILURE-0126)");
+  const acceptPage = await readFile(join(root, "src/app/accept/[token]/page.tsx"), "utf8");
+  assert.match(acceptPage, /\["accepted_via_web", "accepted_via_sms"\]\.includes\(request\.status\)/, "A customer who answered by SMS must not see an active form (FAILURE-0121)");
+  const adminActions = await readFile(join(root, "src/app/actions/admin.ts"), "utf8");
+  assert.doesNotMatch(adminActions, /status: success \? "active" : "error"/, "A failed Resend test must not switch the platform account off for the tenant (FAILURE-0124)");
+  const resendRoute = await readFile(join(root, "src/app/api/webhooks/resend/[token]/route.ts"), "utf8");
+  assert.doesNotMatch(resendRoute, /\.eq\("tenant_id", integration\.tenant_id\)\.eq\("provider_message_id"/, "With one shared account the email row, not the endpoint, decides the tenant");
+  const smsAdapter = await readFile(join(root, "src/lib/messaging/provider.ts"), "utf8");
+  assert.match(smsAdapter, /from: sinchMsisdnToE164\(from\)/, "Inbound SMS numbers must be normalised to E.164");
+}
 const resendWebhookProjection = await readFile(join(root, "src/app/api/webhooks/resend/[token]/route.ts"), "utf8");
 assert.match(resendWebhookProjection, /apply_resend_delivery_event/, "Resend webhook delivery state must use the monotonic reducer");
 const signingProvider = await readFile(join(root, "src/lib/signing/provider.ts"), "utf8");
@@ -719,7 +746,6 @@ const PROVIDER_NAME_EXEMPT = new Set([
   // Rutten är namngiven efter leverantören därför att det är leverantören som
   // bestämmer nyttolastens form och därmed callback-URL:en.
   "src/app/api/webhooks/sinch/route.ts",
-  "src/app/api/v1/telephony/webphone/route.ts",
   "src/lib/env.ts",
   // Migrationen som tar bort leverantören måste få nämna den.
   "supabase/migrations/202609170009_drop_rinkel_schema.sql",
@@ -1305,6 +1331,17 @@ console.log(`Verified ${migrations.length} migrations, monotonic call/Resend pro
   // Och Sinch ICE/ACE kräver ett SVAML-svar; utan det bryts varje samtal.
   const voice = await readFile(join(root, "src/app/api/webhooks/sinch/route.ts"), "utf8");
   assert.match(voice, /sinchSvamlFor\(event,/, "The voice webhook must answer ICE and ACE with SVAML, or Sinch disconnects the call");
+  // FAILURE-0102: ICE kopplas bara med databasens besked om reservationen.
+  assert.match(voice, /sinchSvamlFor\(event, payload as Record<string, unknown>, decision\)/,
+    "The voice webhook must pass the reservation decision to the ICE answer, or any webphone call connects");
+  const svamlSource = await readFile(join(root, "src/lib/telephony/sinch/svaml.ts"), "utf8");
+  assert.match(svamlSource, /if \(decision\?\.connect !== true\) return HANGUP;/,
+    "An ICE without a reservation must be hung up");
+  // FAILURE-0104: dokumentraden läses genom RLS innan admin-klienten hämtar filen.
+  const documentRoute = await readFile(join(root, "src/app/api/v1/contracts/[id]/documents/[documentId]/route.ts"), "utf8");
+  assert.ok(documentRoute.indexOf("dataClientForIdentity(identity)") > 0
+    && documentRoute.indexOf("dataClientForIdentity(identity)") < documentRoute.indexOf("createAdminClient()"),
+    "A contract document must be read through the caller's own client before the admin client downloads it");
 }
 
 // Första riktiga samtalet: det ringde inte, gick inte att lägga på, och

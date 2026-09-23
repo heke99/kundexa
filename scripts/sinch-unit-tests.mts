@@ -229,46 +229,58 @@ console.log("Verified the Sinch registration token: UTC key date, the key derive
 
 // ICE och ACE kräver SVAML med en `action`; utan den bryter Sinch samtalet.
 
-Deno.test("ICE from the webphone to a phone number connects to that number with the client's CLI", () => {
+Deno.test("ICE for a reserved call connects to the reserved number with the resolver's caller ID", () => {
   const svaml = sinchSvamlFor("ice", {
     event: "ice", callid: "x", originationType: "mxp", domain: "pstn", cli: "+46701234567",
     to: { type: "number", endpoint: "+46709876543" },
-  });
+  }, { connect: true, destination: "+46709876543", callerId: "+46812345678" });
   assert.equal(svaml?.action.name, "connectPstn");
-  assert.equal(svaml?.action.cli, "+46701234567");
+  // Resolverns nummer (lista, kampanj, team), inte det klienten byggdes med.
+  assert.equal(svaml?.action.cli, "+46812345678");
   // Numret anges uttryckligen, som i varje exempel i Sinchs referens.
   assert.equal(svaml?.action.number, "+46709876543");
+});
+
+Deno.test("ICE without a reservation is hung up, whatever the client asked for", () => {
+  const payload = {
+    event: "ice", originationType: "mxp", cli: "+46701234567", to: { type: "number", endpoint: "+46709876543" },
+  };
+  // Databasen svarade inte, hittade inget försök, eller försöket gäller någon annan.
+  assert.equal(sinchSvamlFor("ice", payload)?.action.name, "hangup");
+  assert.equal(sinchSvamlFor("ice", payload, null)?.action.name, "hangup");
+  assert.equal(sinchSvamlFor("ice", payload, { connect: false, destination: "+46709876543" })?.action.name, "hangup");
+  assert.equal(sinchSvamlFor("ice", payload, { matched: false } as never)?.action.name, "hangup");
+  // Klartecken för ett annat nummer än det som ringdes.
+  assert.equal(sinchSvamlFor("ice", payload, { connect: true, destination: "+46700000000" })?.action.name, "hangup");
 });
 
 Deno.test("ICE for an inbound PSTN call is hung up, never looped back to the called number", () => {
   const svaml = sinchSvamlFor("ice", {
     event: "ice", originationType: "pstn", domain: "pstn", cli: "+46701234567",
     to: { type: "did", endpoint: "+46812345678" },
-  });
+  }, { connect: true, destination: "+46812345678", callerId: "+46701234567" });
   assert.equal(svaml?.action.name, "hangup");
 });
 
-Deno.test("ICE with an invalid CLI still connects, without overriding the caller ID", () => {
-  const svaml = sinchSvamlFor("ice", {
+Deno.test("ICE falls back to the client's CLI only when the reservation has none, and never invents one", () => {
+  const withClientCli = sinchSvamlFor("ice", {
+    event: "ice", originationType: "MXP", domain: "mxp", cli: "12085810392",
+    to: { type: "number", endpoint: "+12089912106" },
+  }, { connect: true, destination: "+12089912106", callerId: null });
+  assert.equal(withClientCli?.action.name, "connectPstn");
+  // Sinch skickar A-numret utan plus; det normaliseras.
+  assert.equal(withClientCli?.action.cli, "+12085810392");
+  const withoutAny = sinchSvamlFor("ice", {
     event: "ice", originationType: "mxp", cli: "private", to: { type: "Number", endpoint: "+46709876543" },
-  });
-  assert.equal(svaml?.action.name, "connectPstn");
-  assert.equal("cli" in (svaml?.action ?? {}), false);
+  }, { connect: true, destination: "+46709876543", callerId: "private" });
+  assert.equal(withoutAny?.action.name, "connectPstn");
+  assert.equal("cli" in (withoutAny?.action ?? {}), false);
 });
 
 Deno.test("ACE continues; DiCE and notify take no SVAML", () => {
   assert.equal(sinchSvamlFor("ace", {})?.action.name, "continue");
   assert.equal(sinchSvamlFor("dice", {}), null);
   assert.equal(sinchSvamlFor("notify", {}), null);
-});
-
-Deno.test("ICE CLI without a plus sign, as Sinch actually sends it, is normalised and passed on", () => {
-  const svaml = sinchSvamlFor("ice", {
-    event: "ice", originationType: "MXP", domain: "mxp", cli: "12085810392",
-    to: { type: "number", endpoint: "+12089912106" },
-  });
-  assert.equal(svaml?.action.name, "connectPstn");
-  assert.equal(svaml?.action.cli, "+12085810392");
 });
 
 Deno.test("A call the provider broke is reported as failed; a call nobody answered as ended", () => {

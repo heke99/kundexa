@@ -334,6 +334,10 @@ await db.exec(`
   insert into public.campaign_contact_candidates(tenant_id,campaign_id,customer_id,status,policy_reason)
   values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000012','00000000-0000-0000-0000-000000000011','pending_nix','nix_check_required');
 `);
+// FAILURE-0129: en importerad plats som väntar på NIX ligger `blocked`/`pending_nix`.
+const nixListId = String((await db.query(`select public.create_managed_customer_list('NIX-lista','Väntar på NIX','static',null,'manual',100,'00:00','23:59:59',7,60,0,'both',true,false,null) as id`)).rows[0].id);
+await db.query(`insert into public.customer_list_contact_candidates(tenant_id,list_id,customer_id,status,policy_reason) values('00000000-0000-0000-0000-000000000001',$1,'00000000-0000-0000-0000-000000000011','pending_nix','nix_check_required')`, [nixListId]);
+await db.query(`insert into public.customer_list_members(tenant_id,list_id,customer_id,added_by,state,compliance_status,compliance_reason) values('00000000-0000-0000-0000-000000000001',$1,'00000000-0000-0000-0000-000000000011','00000000-0000-0000-0000-000000000002','blocked','pending_nix','nix_check_required')`, [nixListId]);
 const queuedNix = await db.query(`select public.queue_nix_check_for_customer('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000011','00000000-0000-0000-0000-000000000002',false) as id`);
 if (!queuedNix.rows[0].id) throw new Error("NIX queue did not return a job");
 const claimedNix = await db.query(`select id,status,attempts from public.claim_nix_check_jobs('verify-nix-worker',10)`);
@@ -341,6 +345,10 @@ if (claimedNix.rows.length !== 1 || claimedNix.rows[0].status !== 'running') thr
 await db.query(`select public.complete_nix_check_job($1,'not_listed','verify-v1','{"responseHash":"verify"}'::jsonb)`, [String(claimedNix.rows[0].id)]);
 const nixResume = await db.query(`select c.status,c.policy_reason,exists(select 1 from public.campaign_members cm where cm.campaign_id=c.campaign_id and cm.customer_id=c.customer_id) as campaign_member from public.campaign_contact_candidates c where c.campaign_id='00000000-0000-0000-0000-000000000012' and c.customer_id='00000000-0000-0000-0000-000000000011'`);
 if (nixResume.rows.length !== 1 || nixResume.rows[0].status !== 'approved' || !nixResume.rows[0].campaign_member) throw new Error(`NIX campaign resume failed: ${JSON.stringify(nixResume.rows)}`);
+const nixListPlace = (await db.query(`select state,compliance_status from public.customer_list_members where list_id=$1 and customer_id='00000000-0000-0000-0000-000000000011'`, [nixListId])).rows[0];
+if (nixListPlace?.state !== "pending" || nixListPlace?.compliance_status !== "eligible") {
+  throw new Error(`A list place stayed blocked after its NIX check passed: ${JSON.stringify(nixListPlace)}`);
+}
 await db.exec(`insert into public.data_subject_requests(id,tenant_id,request_type,subject_reference,customer_id,status,identity_verified_at,created_by) values('00000000-0000-0000-0000-000000000013','00000000-0000-0000-0000-000000000001','erasure','runtime-person','00000000-0000-0000-0000-000000000011','processing',now(),'00000000-0000-0000-0000-000000000002')`);
 const dsarExport = await db.query(`select public.data_subject_export_for_request('00000000-0000-0000-0000-000000000013') as result`);
 if (dsarExport.rows[0].result.customer.display_name !== 'NIX Runtime Person') throw new Error(`DSAR export failed: ${JSON.stringify(dsarExport.rows[0])}`);
@@ -551,6 +559,11 @@ await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-000
 await db.query(`select public.set_managed_team_member($1,'00000000-0000-0000-0000-000000000041','member',true,1,false)`, [distributedTeamId]);
 await db.query(`update public.customer_list_members set claimed_by='00000000-0000-0000-0000-000000000041',claim_expires_at=now()+interval '10 minutes',state='claimed' where id=(select id from public.customer_list_members where list_id=$1 order by created_at limit 1)`, [childListId]);
 await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000041',false)`);
+// FAILURE-0107: prospektet säljaren håller räknas inte mot nästa, annars nekas
+// reservationen av just det prospekt gränsen tillät.
+const holdingSeller = await db.query(`select public.can_work_customer_list($1) as allowed`, [childListId]);
+if (holdingSeller.rows[0].allowed !== true) throw new Error(`A seller could not dial the lead the daily limit allowed: ${JSON.stringify(holdingSeller.rows)}`);
+await db.query(`update public.customer_list_members set claimed_by=null,claim_expires_at=null,state='completed' where list_id=$1 and last_claimed_by='00000000-0000-0000-0000-000000000041'`, [childListId]);
 const cappedSeller = await db.query(`select public.can_work_customer_list($1) as allowed`, [childListId]);
 if (cappedSeller.rows[0].allowed !== false) throw new Error(`Team daily lead limit was not enforced: ${JSON.stringify(cappedSeller.rows)}`);
 
@@ -2487,6 +2500,17 @@ if (smsRequest.rows[0].require_code !== true || smsRequest.rows[0].method !== 's
 const smsRequestId = String(smsRequest.rows[0].id);
 
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+// FAILURE-0120: ett oklart svar ("Vad kostar det?") är en händelse för säljaren,
+// inte kundens besked. Begäran står kvar öppen, så att ett riktigt "JA <kod>"
+// efteråt fortfarande avgör avtalet.
+const unclear = (await db.query(`select public.record_contract_acceptance_v3($1,'sms','manual_review_required','Vad kostar det?','VAD KOSTAR DET',null,null,null,null,'provider-0','SMS-svar','{}'::jsonb) as id`, [smsRequestId])).rows[0].id;
+const afterUnclear = (await db.query(`select r.status,
+    (select count(*)::int from public.contract_acceptances a where a.request_id=r.id) acceptances,
+    (select count(*)::int from public.contract_events e where e.contract_id=r.contract_id and e.event_type='contract.reply_needs_review') events
+  from public.contract_acceptance_requests r where r.id=$1`, [smsRequestId])).rows[0];
+if (unclear !== null || afterUnclear.status !== "pending" || afterUnclear.acceptances !== 0 || afterUnclear.events !== 1) {
+  throw new Error(`An unclear SMS reply locked the contract instead of leaving it open: ${JSON.stringify({ unclear, afterUnclear })}`);
+}
 let wrongCodeRefused = false;
 try {
   await db.query(`select public.record_contract_acceptance_v3($1,'sms','accepted_via_sms','JA X999','JA X999','JA','X999',null,null,'provider-1','SMS-acceptans','{}'::jsonb)`, [smsRequestId]);
@@ -2518,6 +2542,7 @@ if (smsState.stored_code !== '[verified]') {
   throw new Error(`The acceptance code was stored verbatim instead of as a verification marker: ${JSON.stringify(smsState)}`);
 }
 console.log("Executed SMS signing: the code from the message is required, a wrong or missing code is refused, a lower-case reply of the right code signs, and the code itself is never stored.");
+console.log("An unclear SMS reply becomes an event for the seller and leaves the request open; the real answer afterwards still decides the contract.");
 
 // Och uppringningen själv, hela vägen: reservera, rapportera att leverantören
 // tog emot anropet, avsluta samtalet med efterarbete. Reservationen bär hela
@@ -2897,13 +2922,22 @@ console.log("Executed the dynamic list refresh: the result names which list fail
 {
   const owner = "00000000-0000-0000-0000-000000000002";
   const seller = "00000000-0000-0000-0000-000000000020";
+  // En egen lista, så att vad tidigare block lämnat i runtime-listan inte räknas.
+  await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${owner}',false)`);
+  const requeueListId = String((await db.query(
+    `select public.create_managed_customer_list('Läggomlista','Återköning','static',null,'manual',100,'00:00','23:59:59',7,60,0,'both',true,false,null) as id`,
+  )).rows[0].id);
+  const requeueCustomers = (await db.query(
+    `select id from public.customers where tenant_id='00000000-0000-0000-0000-000000000001' and deleted_at is null order by id limit 4`,
+  )).rows.map((row) => row.id);
+  await db.query(`select public.add_customers_to_list($1,$2::uuid[])`, [requeueListId, requeueCustomers]);
   await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
 
   // Three worked-through entries with different endings, plus one that asked not
   // to be called. Attempts are maxed so the reset is exercised too.
   const members = (await db.query(
     `select id, customer_id from public.customer_list_members where list_id=$1 order by id limit 4`,
-    [runtimeListId],
+    [requeueListId],
   )).rows;
   if (members.length < 4) throw new Error(`The re-queue fixture needs four list members, found ${members.length}`);
   const endings = ["not_interested", "not_interested", "wrong_number", "do_not_call"];
@@ -2911,9 +2945,14 @@ console.log("Executed the dynamic list refresh: the result names which list fail
     await db.query(
       `update public.customer_list_members
          set state=$2, outcome=$3, attempts=99, completed_at=now() - interval '1 day',
-             compliance_status='allowed', claimed_by=null, claim_expires_at=null
+             compliance_status=$4, claimed_by=null, claim_expires_at=null
        where id=$1`,
-      [member.id, endings[index] === "do_not_call" ? "blocked" : "completed", endings[index]],
+      // FAILURE-0110: de värden som faktiskt skrivs -- importen skriver
+      // `eligible`, en manuellt tillagd plats står kvar som `pending_compliance`.
+      // Testet satte tidigare `allowed`, som ingenting skriver, och dolde att
+      // "Lägg om" aldrig köade något.
+      [member.id, endings[index] === "do_not_call" ? "blocked" : "completed", endings[index],
+        ["eligible", "pending_compliance", "eligible", "blocked"][index]],
     );
   }
 
@@ -2922,7 +2961,7 @@ console.log("Executed the dynamic list refresh: the result names which list fail
   // What a re-queue would bring back, before pressing anything. The blocked one
   // must not be offered.
   await db.exec(`select set_config('request.jwt.claim.sub','${owner}',false)`);
-  const candidates = (await db.query(`select * from public.customer_list_requeue_candidates($1)`, [runtimeListId])).rows;
+  const candidates = (await db.query(`select * from public.customer_list_requeue_candidates($1)`, [requeueListId])).rows;
   const byOutcome = Object.fromEntries(candidates.map((row) => [row.outcome, Number(row.members)]));
   if (byOutcome.not_interested !== 2 || byOutcome.wrong_number !== 1) {
     throw new Error(`The re-queue preview miscounted: ${JSON.stringify(candidates)}`);
@@ -2932,7 +2971,7 @@ console.log("Executed the dynamic list refresh: the result names which list fail
   // A seller may not re-open a list the team leader closed.
   await db.exec(`select set_config('request.jwt.claim.sub','${seller}',false)`);
   try {
-    await db.query(`select public.requeue_customer_list_members($1,null,0,null)`, [runtimeListId]);
+    await db.query(`select public.requeue_customer_list_members($1,null,0,null)`, [requeueListId]);
     throw new Error("A seller was allowed to re-queue a list");
   } catch (error) {
     if (!String(error.message).includes("list_manage_permission_denied")) throw error;
@@ -2940,7 +2979,7 @@ console.log("Executed the dynamic list refresh: the result names which list fail
 
   await db.exec(`select set_config('request.jwt.claim.sub','${owner}',false)`);
   const requeued = Number((await db.query(
-    `select public.requeue_customer_list_members($1,array['not_interested'],180,null) as n`, [runtimeListId],
+    `select public.requeue_customer_list_members($1,array['not_interested'],180,null) as n`, [requeueListId],
   )).rows[0].n);
   if (requeued !== 2) throw new Error(`Re-queueing "inte intresserad" moved ${requeued} entries, expected 2`);
 
@@ -2978,7 +3017,7 @@ console.log("Executed the dynamic list refresh: the result names which list fail
     `select state from public.customer_list_members where id=$1`, [id],
   )).rows[0].state;
   if (await stateOf(wrongNumberId) !== "completed") throw new Error("The wrong_number fixture was disturbed before the blanket re-queue");
-  await db.query(`select public.requeue_customer_list_members($1,null,0,null)`, [runtimeListId]);
+  await db.query(`select public.requeue_customer_list_members($1,null,0,null)`, [requeueListId]);
   if (await stateOf(wrongNumberId) !== "pending") throw new Error("A blanket re-queue left a completed entry behind");
   if (await stateOf(blockedId) !== "blocked") throw new Error("A blanket re-queue released a do-not-call entry");
 
@@ -3759,7 +3798,45 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   const matching = await insertContract("VERIFY-PROD-3", PRODUCT, linkedTemplate.id);
   if (matching !== "allowed") throw new Error(`A product sold with its own contract was refused: ${matching}`);
   await db.query(`delete from public.contracts where contract_number='VERIFY-PROD-3'`);
+
+  // FAILURE-0101: ett avtal skapas från produkten genom den riktiga RPC-kedjan.
+  // v1 föder raden utan mall och v2 sätter mallen strax efter; regeln prövas vid
+  // commit, inte när raden föds. FAILURE-0123: avtalsansvarig får skapa avtalet.
+  const draftVersion = (await db.query(
+    `select id from public.contract_template_versions where template_id=$1 and status='draft' order by created_at desc limit 1`,
+    [linkedTemplate.id])).rows[0].id;
+  await db.query(`select public.approve_contract_template_version($1)`, [draftVersion]);
+  await db.exec(`
+    insert into public.customers(id,tenant_id,customer_type,display_name,email,lifecycle,created_by)
+      values('00000000-0000-0000-0000-0000000000e3','${T}','person','Produktkund','produkt@example.test','prospect',
+        '00000000-0000-0000-0000-000000000002');
+    insert into auth.users(id,email) values('00000000-0000-0000-0000-0000000000e4','avtal@example.test');
+    insert into public.tenant_memberships(tenant_id,user_id,role,status,joined_at)
+      values('${T}','00000000-0000-0000-0000-0000000000e4','contract_manager','active',now());
+    update public.profiles set active_tenant_id='${T}' where id='00000000-0000-0000-0000-0000000000e4';
+  `);
+  const draftFromProduct = (number, productId, templateId) => refusal(() => db.query(
+    `select public.create_contract_draft_v3($1,'00000000-0000-0000-0000-0000000000e3',$2,null,$3,$4,$5,
+       'Elavtal rörligt','Brödtext','Villkor','{"currency":"SEK"}'::jsonb,'product-doc-hash','telephone',
+       '{"legal_name":"Kundexa Verify AB"}'::jsonb,'{"display_name":"Produktkund"}'::jsonb) as id`,
+    [number, productId, templateId, draftVersion, entity]));
+  const fromProduct = await draftFromProduct("VERIFY-PROD-4", PRODUCT, linkedTemplate.id);
+  if (fromProduct !== "allowed") throw new Error(`A contract could not be created from its product: ${fromProduct}`);
+  const stored = (await db.query(`select product_id,template_id from public.contracts where contract_number='VERIFY-PROD-4'`)).rows[0];
+  if (stored.product_id !== PRODUCT || stored.template_id !== linkedTemplate.id) {
+    throw new Error(`The contract did not keep its product and template: ${JSON.stringify(stored)}`);
+  }
+  const otherProduct = await draftFromProduct("VERIFY-PROD-5", "00000000-0000-0000-0000-0000000000e2", linkedTemplate.id);
+  if (!otherProduct.includes("contract_template_belongs_to_other_product")) {
+    throw new Error(`The RPC path let a product's contract be sold with another product: ${otherProduct}`);
+  }
+  await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-0000000000e4',false);`);
+  const byContractManager = await draftFromProduct("VERIFY-PROD-6", PRODUCT, linkedTemplate.id);
+  if (byContractManager !== "allowed") throw new Error(`A contract manager could not create a contract: ${byContractManager}`);
+  await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);`);
+  await db.query(`delete from public.contracts where contract_number in ('VERIFY-PROD-4','VERIFY-PROD-6')`);
   console.log("A product carries one contract; it is authored by the right roles, cannot reach another tenant's product, and the database refuses a mismatched product and contract.");
+  console.log("Executed a contract from a product through create_contract_draft_v3, by an owner and by a contract manager; a mismatched product is refused at commit.");
 }
 
 // Ett obesvarat samtal från webbtelefonen (`unanswered`) ska kunna få efterarbete.
@@ -3809,6 +3886,16 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   if (own.matched !== true || row.external_call_id !== "ice-own" || event.status !== "processed" || event.tenant_id !== "00000000-0000-0000-0000-000000000001") {
     throw new Error(`An ICE that arrived before the client's report did not match its attempt: ${JSON.stringify({ own, row, event })}`);
   }
+  // FAILURE-0102/0103: ICE får klartecken bara för sin reservation, med
+  // reservationens nummer och A-nummer. En omleverans får samma besked.
+  if (foreign.connect === true) throw new Error(`An ICE without a reservation was cleared to connect: ${JSON.stringify(foreign)}`);
+  if (own.connect !== true || own.destination !== "+46702222277" || own.callerId !== "+46401234567") {
+    throw new Error(`A reserved call was not cleared with its own number and caller ID: ${JSON.stringify(own)}`);
+  }
+  const redelivered = (await ice("00000000-0000-0000-0000-000000000002", "ice-own")).rows[0].result;
+  if (redelivered.duplicate !== true || redelivered.connect !== true || redelivered.callerId !== "+46401234567") {
+    throw new Error(`A redelivered ICE lost its clearance and would hang up a cleared call: ${JSON.stringify(redelivered)}`);
+  }
   const dice = (await db.query(`select public.ingest_sinch_voice_event('dice','ice-own','dice:ice-own',$1::jsonb,now()) as result`, [
     JSON.stringify({ event: "dice", callid: "ice-own", reason: "GENERALERROR", result: "FAILED" }),
   ])).rows[0].result;
@@ -3816,7 +3903,13 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   if (dice.matched !== true || reason?.reason !== "GENERALERROR") {
     throw new Error(`The provider's end reason did not reach the call after ICE matched: ${JSON.stringify({ dice, reason })}`);
   }
+  // Ett avslutat försök ger inget nytt klartecken, inte ens för samma samtals-id.
+  const afterEnd = (await db.query(`select public.ingest_sinch_voice_event('ice','ice-own','ice:ice-own:again',$1::jsonb,now()) as result`, [
+    JSON.stringify({ event: "ice", callid: "ice-own", user: "00000000-0000-0000-0000-000000000002", to: { type: "number", endpoint: "+46702222277" }, originationType: "MXP" }),
+  ])).rows[0].result;
+  if (afterEnd.connect === true) throw new Error(`A finished attempt was cleared to connect again: ${JSON.stringify(afterEnd)}`);
   console.log("ICE finds its dial attempt by seller and number before the client reports the call id, never across tenants, and the end reason then lands on the call.");
+  console.log("ICE is cleared to connect only for its own open reservation, with the reserved number and the resolver's caller ID; a redelivery keeps the clearance and a finished attempt gets none.");
 }
 
 // Samtalsutfallen hamnar rätt (202609230003).
@@ -4041,6 +4134,95 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   console.log("Lists shared with a team reach every seller in it, never another tenant's team; the queue is shared, not turn-locked; the team's number is used; unsharing releases claims and access.");
 }
 
+// Delade listor efter 202609240006: kampanjens team, paus, samtalets team och
+// återkomstens team (FAILURE-0108, 0109, 0111, 0112, 0116).
+{
+  const T = "00000000-0000-0000-0000-000000000001";
+  const OWNER = "00000000-0000-0000-0000-000000000002";
+  const LEAD = "00000000-0000-0000-0000-000000000093";
+  const LEAD_TEAM = "00000000-0000-0000-0000-000000000026";
+  const TEAM2 = "00000000-0000-0000-0000-0000000001a1";
+  const SELLER = "00000000-0000-0000-0000-0000000001a2";
+  const CUST2 = "00000000-0000-0000-0000-0000000001c1";
+  const CAMPAIGN = "00000000-0000-0000-0000-0000000001c2";
+  const as = (user) => db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${user}',false);`);
+  const refusal = async (fn) => { try { await fn(); return "allowed"; } catch (error) { return String(error.message); } };
+  await db.exec(`
+    insert into public.customers(id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by)
+      values('${CUST2}','${T}','company','prospect','Kampanjkund','+46707770199',true,'legitimate_interest','${OWNER}') on conflict do nothing;
+    insert into public.nix_checks(tenant_id,customer_id,phone_e164,source,source_version,result,checked_at,valid_until,evidence)
+      values('${T}','${CUST2}','+46707770199','runtime','1','not_listed',now(),now()+interval '30 days','{}');
+    insert into public.campaigns(id,tenant_id,name,status) values('${CAMPAIGN}','${T}','Höstkampanj','active') on conflict do nothing;
+  `);
+  await as(OWNER);
+  const listId = String((await db.query(`select public.create_managed_customer_list('Kampanjlista','Delas via kampanj','static',null,'manual',100,'00:00','23:59:59',7,60,0,'both',true,false,null) as id`)).rows[0].id);
+  await db.query(`update public.customer_lists set status='active',allowed_days='{1,2,3,4,5,6,7}',allowed_start_time='00:00',allowed_end_time='23:59:59',team_id=$2 where id=$1`, [listId, LEAD_TEAM]);
+  await db.query(`select public.add_customers_to_list($1,array['${CUST2}']::uuid[])`, [listId]);
+  await db.query(`select public.set_customer_list_sharing($1,'{}'::uuid[],$2)`, [listId, CAMPAIGN]);
+  const canWork = async (user) => { await as(user); return (await db.query(`select public.can_work_customer_list($1) as ok`, [listId])).rows[0].ok; };
+  if (await canWork(SELLER)) throw new Error("A campaign without teams gave a seller the list.");
+
+  // Kampanjens team: aldrig ett annat bolags team, inte av en säljare, och en
+  // teamledare bara med team hen leder.
+  await as(OWNER);
+  const foreignTeam = await refusal(() => db.query(`select public.set_campaign_teams($1,array['00000000-0000-0000-0000-000000000076']::uuid[])`, [CAMPAIGN]));
+  if (!foreignTeam.includes("team_not_found")) throw new Error(`A campaign took another tenant's team: ${foreignTeam}`);
+  await as(SELLER);
+  const bySeller = await refusal(() => db.query(`select public.set_campaign_teams($1,array['${TEAM2}']::uuid[])`, [CAMPAIGN]));
+  if (!bySeller.includes("campaign_team_permission_required")) throw new Error(`A seller set a campaign's teams: ${bySeller}`);
+  await as(LEAD);
+  const byOtherLead = await refusal(() => db.query(`select public.set_campaign_teams($1,array['${TEAM2}']::uuid[])`, [CAMPAIGN]));
+  if (!byOtherLead.includes("campaign_team_permission_required")) throw new Error(`A team leader added a team they do not lead: ${byOtherLead}`);
+  await as(OWNER);
+  await db.query(`select public.set_campaign_teams($1,array['${TEAM2}']::uuid[])`, [CAMPAIGN]);
+  if (!(await canWork(SELLER))) throw new Error("A list shared through a campaign did not reach the campaign's team.");
+
+  // FAILURE-0116: teamledaren för listans eget team kopplar inte bort en
+  // kampanj vars team hen inte leder.
+  await as(LEAD);
+  const unlink = await refusal(() => db.query(`select public.set_customer_list_sharing($1,'{}'::uuid[],null)`, [listId]));
+  const stillLinked = (await db.query(`select campaign_id from public.customer_lists where id=$1`, [listId])).rows[0].campaign_id;
+  if (!unlink.includes("campaign_share_permission_required") || stillLinked !== CAMPAIGN) {
+    throw new Error(`A team leader unlinked a campaign they do not lead: ${JSON.stringify({ unlink, stillLinked })}`);
+  }
+
+  // FAILURE-0108: en säljare som får listan genom kampanjens team kan tilldelas
+  // en och en, och en pausad tilldelning väger tyngre än teamet.
+  await as(OWNER);
+  const assigned = await refusal(() => db.query(`select public.set_customer_list_sellers($1,array['${SELLER}']::uuid[])`, [listId]));
+  if (assigned !== "allowed") throw new Error(`A seller reaching the list through a campaign team could not be assigned: ${assigned}`);
+  await db.query(`update public.customer_list_seller_assignments set status='paused' where list_id=$1 and user_id=$2`, [listId, SELLER]);
+  if (await canWork(SELLER)) throw new Error("A paused seller kept working the list through their team.");
+  await db.query(`update public.customer_list_seller_assignments set status='active' where list_id=$1 and user_id=$2`, [listId, SELLER]);
+  if (!(await canWork(SELLER))) throw new Error("Resuming a paused seller did not give the list back.");
+
+  // FAILURE-0112: samtalet räknas till teamet som gav åtkomsten.
+  await as(SELLER);
+  const session = String((await db.query(`select public.start_dialer_session($1) as id`, [listId])).rows[0].id);
+  const claim = (await db.query(`select public.claim_next_list_member($1,$2) as c`, [listId, session])).rows[0].c;
+  if (claim.empty || claim.customer?.id !== CUST2) throw new Error(`The campaign seller could not take the prospect: ${JSON.stringify(claim)}`);
+  const reservation = (await db.query(`select public.reserve_outbound_call($1,null,'+46707770199',$2,$3,null,gen_random_uuid(),'campaign-team-call','direct_marketing',null,null) as r`,
+    [CUST2, session, claim.memberId])).rows[0].r;
+  const callTeam = (await db.query(`select team_id from public.calls where id=$1`, [reservation.callId])).rows[0].team_id;
+  if (callTeam !== TEAM2) throw new Error(`The call was counted to ${callTeam}, not the team that gave access (${TEAM2}).`);
+
+  // FAILURE-0111: den globala återkomsten går till samma team, och säljarens
+  // egen återkomst tagen på Återkomster-sidan kommer först i kön.
+  await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+  await db.query(`update public.dial_attempts set status='completed' where call_id=$1`, [reservation.callId]);
+  await db.query(`update public.calls set status='completed',answered_at=now()-interval '1 minute',ended_at=now() where id=$1`, [reservation.callId]);
+  await as(SELLER);
+  await db.query(`select public.complete_dialer_work_v2($1::uuid,'callback','Ring efter lunch','global',now()+interval '1 day',false,null,null,null,'campaign-callback')`, [reservation.callId]);
+  const callback = (await db.query(`select id,assigned_team_id from public.activities where call_id=$1 and type='callback'`, [reservation.callId])).rows[0];
+  if (callback?.assigned_team_id !== TEAM2) throw new Error(`The global callback went to ${callback?.assigned_team_id}, not the seller's team (${TEAM2}).`);
+  await db.query(`update public.activities set due_at=now()-interval '1 minute' where id=$1`, [callback.id]);
+  await db.query(`select public.claim_customer_callback($1)`, [callback.id]);
+  const next = (await db.query(`select public.claim_next_list_member($1,$2) as c`, [listId, session])).rows[0].c;
+  if (next.callbackActivityId !== callback.id) throw new Error(`A callback taken on the callbacks page was not offered in the list: ${JSON.stringify(next)}`);
+  await as(OWNER);
+  console.log("A campaign's teams reach its lists, never another tenant's team, set only by admins or the teams' own leaders; a paused seller stays paused through a team; the call and the global callback count to the team that gave access, and a claimed callback comes first in the queue.");
+}
+
 // En återimport får inte väcka en kund som redan bearbetas, och en rollback får
 // inte ta bort platser som fanns före importen. Ett fel under bearbetningen ska
 // synas, och samma fil ska gå att köra igen efter en rollback.
@@ -4107,7 +4289,104 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   // Användare skriver inte själva i importtabellerna längre.
   const grants = (await db.query(`select has_table_privilege('authenticated','public.import_runs','UPDATE') as u, has_table_privilege('authenticated','public.import_rows','INSERT') as i`)).rows[0];
   if (grants.u || grants.i) throw new Error(`Users can still write the import tables directly: ${JSON.stringify(grants)}`);
+  const otherGrants = (await db.query(`select
+    has_table_privilege('authenticated','public.parsehub_runs','UPDATE') as runs,
+    has_table_privilege('authenticated','public.import_merge_conflicts','UPDATE') as conflicts,
+    has_table_privilege('authenticated','public.import_run_list_targets','INSERT') as targets,
+    has_table_privilege('authenticated','public.parsehub_projects','UPDATE') as projects`)).rows[0];
+  if (Object.values(otherGrants).some(Boolean)) throw new Error(`Users can still write ParseHub and import side tables: ${JSON.stringify(otherGrants)}`);
+
+  // FAILURE-0105, negativt tvåtenanttest: en ägare i tenant A återställer inte
+  // tenant B:s import, inte ens med rätt id.
+  const FOREIGN_RUN = "00000000-0000-0000-0000-0000000001b5";
+  await db.exec(`
+    insert into public.import_runs(id,tenant_id,name,source_type,status,uploaded_by,total_rows,simulation,scan_status,scan_provider,scan_sha256,scan_completed_at)
+    values('${FOREIGN_RUN}','00000000-0000-0000-0000-000000000051','Tenant B import','csv','completed','00000000-0000-0000-0000-000000000050',0,false,'clean','verify','sha-foreign',now());
+  `);
+  let crossTenant = "allowed";
+  try { await db.query(`select public.rollback_import_run($1)`, [FOREIGN_RUN]); } catch (error) { crossTenant = String(error.message); }
+  const foreignStatus = (await db.query(`select status from public.import_runs where id=$1`, [FOREIGN_RUN])).rows[0].status;
+  if (!crossTenant.includes("import_run_not_found") || foreignStatus !== "completed") {
+    throw new Error(`A rollback reached another tenant's import: ${JSON.stringify({ crossTenant, foreignStatus })}`);
+  }
+  console.log("A rollback never reaches another tenant's import, and users only read ParseHub runs, projects, conflicts and list targets.");
+  // FAILURE-0129: profilens sammanslagningsregel följs för en befintlig kund.
+  const R6 = "00000000-0000-0000-0000-0000000001b6";
+  const R7 = "00000000-0000-0000-0000-0000000001b7";
+  const policyRun = (id, policy) => db.exec(`
+    insert into public.import_runs(id,tenant_id,name,source_type,status,uploaded_by,total_rows,simulation,scan_status,scan_provider,scan_sha256,scan_completed_at)
+    values('${id}','${T}','Policy ${policy}','csv','preview_ready','${OWNER}',1,false,'clean','verify','sha-${policy}',now());
+    insert into public.import_rows(tenant_id,import_run_id,row_number,raw_data,normalized_data,decision,row_status,errors)
+    values('${T}','${id}',1,'{}','{"display_name":"Nytt Namn Från Fil AB","customer_type":"company","phone_e164":"+46705550001","merge_policy":"${policy}"}','ready','valid','[]');
+  `);
+  await policyRun(R6, "create_only");
+  await db.query(`select public.process_import_run($1)`, [R6]);
+  const afterCreateOnly = (await db.query(`select display_name from public.customers where id=$1`, [EXISTING])).rows[0].display_name;
+  if (afterCreateOnly !== "Redan I Listan AB") throw new Error(`"Skapa endast nya" changed an existing customer: ${afterCreateOnly}`);
+  await policyRun(R7, "review_conflicts");
+  await db.query(`select public.process_import_run($1)`, [R7]);
+  const afterReview = (await db.query(`select c.display_name,
+      (select decision from public.import_rows where import_run_id=$2) decision,
+      (select count(*)::int from public.import_merge_conflicts where import_run_id=$2) conflicts
+    from public.customers c where c.id=$1`, [EXISTING, R7])).rows[0];
+  if (afterReview.display_name !== "Redan I Listan AB" || afterReview.decision !== "conflict" || afterReview.conflicts !== 1) {
+    throw new Error(`"Granska konflikter" did not hold the change for review: ${JSON.stringify(afterReview)}`);
+  }
+  console.log("An import profile's merge policy is honoured: create-only leaves an existing customer alone, review-conflicts puts it in the conflict list.");
   console.log("A re-import leaves a prospect being worked alone, logs only new list places, a rollback keeps what was there before, the same file imports again after a rollback, a failure mid-import stays failed with its reason, and users only read the import tables.");
+}
+
+// Upptaget blir upptaget, även när webbläsaren hunnit säga "inget svar" först.
+{
+  const T = "00000000-0000-0000-0000-000000000001";
+  await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+  const busyCall = (await db.query(`
+    insert into public.calls(tenant_id,customer_id,user_id,direction,from_number,to_number,status,provider,callback_token_hash,purpose)
+    values($1,'00000000-0000-0000-0000-000000000021','00000000-0000-0000-0000-000000000002','outbound','+46401234567','+46702222266','dial_requested','sinch','busy-call','direct_marketing')
+    returning id`, [T])).rows[0].id;
+  await db.query(`
+    insert into public.dial_attempts(tenant_id,call_id,seller_user_id,provider,source_number_e164,destination_number_e164,client_request_id,idempotency_key,status,expires_at,external_call_id)
+    values($1,$2,'00000000-0000-0000-0000-000000000002','sinch','+46401234567','+46702222266',gen_random_uuid(),'busy-call','dial_requested',now()+interval '5 minutes','busy-ext')`, [T, busyCall]);
+  await db.query(`update public.calls set status='unanswered',ended_at=now(),end_cause='webphone_leg_ended' where id=$1`, [busyCall]);
+  await db.query(`select public.ingest_sinch_voice_event('dice','busy-ext','dice:busy-ext',$1::jsonb,now())`,
+    [JSON.stringify({ event: "dice", callid: "busy-ext", reason: "CALLEEHANGUP", result: "BUSY" })]);
+  const busy = (await db.query(`select status from public.calls where id=$1`, [busyCall])).rows[0].status;
+  if (busy !== "busy") throw new Error(`A busy call was recorded as ${busy}.`);
+  await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
+  console.log("A busy line is recorded as busy, even after the browser reported no answer first.");
+}
+
+// Webbläsarens "accepterat" efter ACE flyttar inte ett besvarat samtal tillbaka.
+{
+  const T = "00000000-0000-0000-0000-000000000001";
+  await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+  const liveCall = (await db.query(`
+    insert into public.calls(tenant_id,customer_id,user_id,direction,from_number,to_number,status,provider,callback_token_hash,purpose,answered_at)
+    values($1,'00000000-0000-0000-0000-000000000021','00000000-0000-0000-0000-000000000002','outbound','+46401234567','+46702222255','answered','sinch','late-accept','direct_marketing',now())
+    returning id`, [T])).rows[0].id;
+  const liveAttempt = (await db.query(`
+    insert into public.dial_attempts(tenant_id,call_id,seller_user_id,provider,source_number_e164,destination_number_e164,client_request_id,idempotency_key,status,expires_at)
+    values($1,$2,'00000000-0000-0000-0000-000000000002','sinch','+46401234567','+46702222255',gen_random_uuid(),'late-accept','matched',now()+interval '5 minutes')
+    returning id`, [T, liveCall])).rows[0].id;
+  await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
+  const late = (await db.query(`select public.finalize_dial($1,$2,'accepted','late-ext',null,null) as r`, [liveCall, liveAttempt])).rows[0].r;
+  const state = (await db.query(`select a.status attempt, c.status call, a.external_call_id ext from public.dial_attempts a join public.calls c on c.id=a.call_id where a.id=$1`, [liveAttempt])).rows[0];
+  if (state.attempt !== "matched" || state.call !== "answered" || state.ext !== "late-ext" || late.alreadySettled !== true) {
+    throw new Error(`A late browser report moved an answered call back: ${JSON.stringify({ late, state })}`);
+  }
+  console.log("A browser report that arrives after the answer keeps the call answered and still records its id.");
+}
+
+// Ingen funktion får anropa Rinkel efter att schemat togs bort (202609170009).
+// Borttagningens egen kontroll såg bara namn; en funktion vars kropp anropade en
+// borttagen Rinkel-funktion låg kvar och hade fallerat vid första anrop.
+{
+  const rinkelBodies = (await db.query(`
+    select p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+    where n.nspname='public' and p.prolang in (select oid from pg_language where lanname in ('plpgsql','sql'))
+      and p.prosrc ~* 'rinkel_[a-z_]+\\('`)).rows.map((row) => row.proname);
+  if (rinkelBodies.length) throw new Error(`Functions still call removed Rinkel functions: ${rinkelBodies.join(", ")}`);
+  console.log("No database function calls a removed Rinkel function.");
 }
 
 await db.close();

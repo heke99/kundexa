@@ -266,8 +266,12 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
   async function handleCallEnded(status: string) {
     const stopReason = sessionStoppingCallStatuses[status];
     if (stopReason) {
+      // Pausen går via servern, inte bara skärmen: prospektet släpps tillbaka
+      // till kön och sessionen pausas. Annars stod platsen kvar som "ringer"
+      // och "Fortsätt" gav samma prospekt igen.
+      quickOutcomesRef.current = 0;
+      await pause("paused");
       setError(stopReason);
-      setPhase("paused");
       return;
     }
     const automaticStop = mode === "automatic" ? automaticStopStatuses[status] : undefined;

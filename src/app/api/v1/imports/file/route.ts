@@ -264,10 +264,14 @@ export async function POST(request: Request) {
       await createAdminClient().from("import_runs").update({
         status: "failed",
         completed_at: new Date().toISOString(),
-        validation_report: jsonValue({ failure_reference: referenceId }),
+        // Orsaken sparas på körningen, inte bara i serverloggen.
+        validation_report: jsonValue({ failure_reference: referenceId, failure_reason: known ?? message }),
       }).eq("tenant_id", failedTenantId ?? "").eq("id", createdRunId);
     } else if (cleanupClient && uploadedPath) {
-      await cleanupClient.storage.from("imports").remove([uploadedPath]);
+      // Användare har ingen raderingsrätt i importhinken, så användarens klient
+      // tog tyst bort ingenting och filen blev liggande (FAILURE-0129).
+      const removed = await createAdminClient().storage.from("imports").remove([uploadedPath]);
+      if (removed.error) console.error("Import upload cleanup failed", { referenceId, uploadedPath, error: removed.error.message });
     }
     return redirectWith(request, "/app/imports", "error", known ?? `Importen kunde inte behandlas. Referens: ${referenceId}`);
   }

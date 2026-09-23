@@ -15,7 +15,7 @@ import { buildTemplateRenderContext } from "@/lib/contracts/template-context";
 import { zonedLocalDateTimeToIso } from "@/lib/domain/time";
 import { assertContractCallEligibility } from "@/lib/contracts/call-eligibility";
 import { ensureCanonicalContractDocument } from "@/lib/contracts/canonical-document";
-import { contractDeliveryBlocker } from "@/lib/contracts/delivery-readiness";
+import { contractAcceptanceModes, contractDeliveryBlocker, NO_ANSWER_PATH_MESSAGE } from "@/lib/contracts/delivery-readiness";
 import { renderContractDeliveryEmail } from "@/lib/email/templates/contract-delivery";
 import { normalizeVariableFees } from "@/lib/contracts/price-terms";
 
@@ -30,6 +30,25 @@ const contractNumber = () => `KX-${new Date().getFullYear()}-${crypto.randomUUID
  * Tidigare valde säljaren mall, bolag och produkt i tre separata listor, och
  * ingenting hindrade att elavtalets text skickades med bredbandets pris.
  */
+// Databasens koder på svenska. Säljaren såg tidigare t.ex.
+// "contract_product_requires_its_contract" rakt av.
+function contractCreateError(code: string | null | undefined) {
+  const value = code ?? "";
+  if (value.includes("contract_product_requires_its_contract")) return "Produkten har ett eget avtal. Välj produkten igen så används rätt avtal.";
+  if (value.includes("contract_template_belongs_to_other_product")) return "Avtalet hör till en annan produkt.";
+  if (value.includes("approved_contract_template_required")) return "Avtalet saknar en godkänd version, eller passar inte kundtypen.";
+  if (value.includes("active_legal_entity_required")) return "Det utställande bolaget är inte aktivt.";
+  if (value.includes("customer_write_permission_required")) return "Din roll får inte skapa avtal för den här kunden.";
+  if (value.includes("contract_owner_not_in_team")) return "Avtalsägaren är inte aktiv i det valda teamet.";
+  if (value.includes("contract_owner_assignment_forbidden") || value.includes("contract_team_assignment_forbidden")) return "Du får inte lägga avtalet på den ägaren eller det teamet.";
+  if (value.includes("contract_team_not_active")) return "Teamet är inte aktivt.";
+  if (value.includes("contract_owner_not_active_member")) return "Avtalsägaren är inte längre aktiv i företaget.";
+  if (value.includes("product_not_found")) return "Produkten finns inte eller är inte aktiv.";
+  if (value.includes("price_version_not_found")) return "Produktens pris kunde inte hittas.";
+  if (value.includes("acceptance_expiry_must_be_future")) return "Sista svarsdatum måste vara i framtiden.";
+  return "Avtalet kunde inte skapas.";
+}
+
 export async function createContract(form: FormData) {
   const ctx = await getAppContext();
   assertContractFromProduct(ctx.role, ctx.platformRole);
@@ -255,6 +274,15 @@ export async function createContract(form: FormData) {
     }
   }
 
+  // Källsamtalet prövas innan något skapas. Tidigare skapades avtalet först och
+  // skulle tas bort om samtalet inte dög -- men borttagningen letade efter
+  // `status='draft'` medan utkastet redan var `ready`, och en säljare får inte
+  // ta bort avtal alls. Avtalet blev kvar tyst (FAILURE-0122).
+  if (input.sourceCallId) {
+    try { await assertContractCallEligibility(supabase, input.customerId, input.sourceCallId); }
+    catch (sourceError) { back(sourceError instanceof Error ? sourceError.message : "Det valda samtalet är inte avtalsgrundande."); }
+  }
+
   const { data: contractId, error } = await supabase.rpc("create_contract_draft_v3", {
     p_contract_number: contractNumber(),
     p_customer_id: input.customerId,
@@ -281,25 +309,19 @@ export async function createContract(form: FormData) {
     p_currency: input.currency,
     p_expires_at: expiresAt,
   });
-  if (error || !contractId) back(error?.message ?? "Avtalet kunde inte skapas.");
+  if (error || !contractId) back(contractCreateError(error?.message));
 
   if (input.sourceCallId) {
     try {
-      await assertContractCallEligibility(supabase, input.customerId, input.sourceCallId);
       const { data: sourceCall } = await supabase.from("calls").select("dialer_session_id,metadata").eq("id", input.sourceCallId).single();
       const metadata = (sourceCall?.metadata ?? {}) as Record<string, unknown>;
       const sourceType = metadata.registered_manually === true ? "external_manual_call" : sourceCall?.dialer_session_id ? "dialer_call" : "manual_call";
       const { error: sourceError } = await supabase.from("contracts").update({ source_call_id: input.sourceCallId, source_type: sourceType, prepared_at: new Date().toISOString() }).eq("id", contractId);
       if (sourceError) throw sourceError;
-    } catch (sourceError) {
-      // Compensating delete. If it fails the draft survives with no source call,
-      // so say so instead of reporting only the original problem — an invisible
-      // orphan draft is worse than a longer message.
-      const { error: rollbackError } = await supabase.from("contracts").delete().eq("id", contractId).eq("status", "draft");
-      if (rollbackError) {
-        redirect(`/app/contracts?error=${encodeURIComponent("Det valda samtalet är inte avtalsgrundande, och utkastet kunde inte tas bort. Radera det manuellt i avtalslistan.")}`);
-      }
-      redirect(`/app/contracts?error=${encodeURIComponent(sourceError instanceof Error ? sourceError.message : "Det valda samtalet är inte avtalsgrundande")}`);
+    } catch {
+      // Samtalet var giltigt en stund sedan; bara kopplingen misslyckades.
+      // Avtalet finns och samtalet kan länkas på avtalssidan.
+      redirect(`/app/contracts/${contractId}?error=${encodeURIComponent("Avtalet är skapat, men samtalet kunde inte kopplas. Välj samtalet under Källsamtal.")}`);
     }
   }
 
@@ -554,6 +576,12 @@ export async function sendContract(form: FormData) {
   try { deliveryBlocker = await contractDeliveryBlocker(admin, ctx.tenantId, channel); }
   catch { redirect(`/app/contracts/${contractId}?error=Kunde inte läsa företagets leveransinställningar. Försök igen om en stund.`); }
   if (deliveryBlocker) redirect(`/app/contracts/${contractId}?error=${encodeURIComponent(deliveryBlocker.message)}`);
+  // Hur kunden får svara. SMS-svar kräver att SMS:et faktiskt skickas.
+  let acceptanceModes;
+  try { acceptanceModes = await contractAcceptanceModes(admin, ctx.tenantId); }
+  catch { redirect(`/app/contracts/${contractId}?error=Kunde inte läsa företagets leveransinställningar. Försök igen om en stund.`); }
+  const smsAnswers = acceptanceModes.sms && channel !== "email";
+  if (!acceptanceModes.web && !smsAnswers) redirect(`/app/contracts/${contractId}?error=${encodeURIComponent(NO_ANSWER_PATH_MESSAGE)}`);
 
   const env = serverEnv();
   let emailFrom = "pending@kundexa.local";
@@ -599,6 +627,18 @@ export async function sendContract(form: FormData) {
   const code = acceptanceCode();
   const publicUrl = `${canonicalAppBaseUrl()}/accept/${token}`;
   const expiresLabel = new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeStyle: "short", timeZone: ctx.tenantTimezone }).format(expiresAt!);
+  // Samma regel som `prepare_contract_delivery_v2` använder för `require_code`:
+  // SMS i kanalen eller en signeringsmetod med engångskod. Krävs koden ska den
+  // stå i e-posten också, annars kan den som bara läser mejlet inte svara.
+  const { data: activeVersion } = await supabase.from("contract_versions")
+    .select("signature_policy_snapshot,template_version_id").eq("id", contract.active_version_id).maybeSingle();
+  let signatureMethod = (activeVersion?.signature_policy_snapshot as { method?: string } | null)?.method ?? null;
+  if (!signatureMethod && activeVersion?.template_version_id) {
+    const { data: templateVersion } = await supabase.from("contract_template_versions")
+      .select("signature_policy").eq("id", activeVersion.template_version_id).maybeSingle();
+    signatureMethod = (templateVersion?.signature_policy as { method?: string } | null)?.method ?? null;
+  }
+  const codeRequired = channel !== "email" || signatureMethod === "sms_otp" || signatureMethod === "email_otp";
   const sellerSnapshot = (contract.seller_snapshot ?? {}) as Record<string, unknown>;
   const branding = (sellerSnapshot.branding ?? {}) as Record<string, unknown>;
   const snapshotLogoUrl = typeof branding.logo_url === "string" && /^https:\/\//i.test(branding.logo_url) ? branding.logo_url : null;
@@ -608,8 +648,12 @@ export async function sendContract(form: FormData) {
     legalName: sellerLegalName,
     customerName: recipientName, contractNumber: contract.contract_number, contractTitle: contract.title,
     acceptUrl: publicUrl, expiresAt: expiresLabel, introduction, contact: snapshotContact, logoUrl: snapshotLogoUrl,
+    acceptanceCode: codeRequired ? code : null,
   });
-  const smsBody = `Avtal ${contract.contract_number} från ${sellerLegalName}. Granska: ${publicUrl}. Svara JA ${code} eller NEJ ${code}. Giltigt till ${expiresLabel}.`;
+  // "Svara JA" bara när företaget tar emot SMS-svar. Annars är det länken som gäller.
+  const smsBody = acceptanceModes.sms
+    ? `Avtal ${contract.contract_number} från ${sellerLegalName}. Granska: ${publicUrl}. Svara JA ${code} eller NEJ ${code}. Giltigt till ${expiresLabel}.`
+    : `Avtal ${contract.contract_number} från ${sellerLegalName}. Granska och svara: ${publicUrl}. ${codeRequired ? `Kod: ${code}. ` : ""}Giltigt till ${expiresLabel}.`;
   const attachments = [{ document_id: canonicalDocument.id, filename: canonicalDocument.file_name, mime_type: "application/pdf" }];
   const { error } = await supabase.rpc("prepare_contract_delivery_v2", {
     p_contract_id: contractId,

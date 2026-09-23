@@ -78,17 +78,26 @@ export default async function CustomerDetail({ params, searchParams }: { params:
                 <option value="person">Privatperson</option>
               </SelectField>
               <Field
-                label="Organisationsnummer / personnummer"
-                name="identity_number"
-                defaultValue={customer.organization_number ?? customer.personal_identity_number ?? ""}
+                label="Organisationsnummer"
+                name="organization_number"
+                defaultValue={customer.organization_number ?? ""}
                 placeholder="556016-0680"
-                hint="Kontrollsiffran avgör om det sparas som organisationsnummer eller personnummer."
               />
-              {isSeller ? <input type="hidden" name="lifecycle" value={customer.lifecycle} /> : <SelectField label="Kundstatus" name="lifecycle" defaultValue={customer.lifecycle}>
+              <Field
+                label="Personnummer"
+                name="personal_identity_number"
+                defaultValue={customer.personal_identity_number ?? ""}
+                placeholder="ÅÅÅÅMMDD-XXXX"
+                hint="Bara för privatpersoner."
+              />
+              {isSeller || customer.lifecycle === "blocked"
+                ? <><input type="hidden" name="lifecycle" value={customer.lifecycle} />{customer.lifecycle === "blocked" ? <p className="muted">Kunden är spärrad. Spärren hävs under Spärrar, inte här.</p> : null}</>
+                : <SelectField label="Kundstatus" name="lifecycle" defaultValue={customer.lifecycle}>
                 <option value="prospect">Prospekt</option>
                 <option value="lead">Lead</option>
                 <option value="customer">Kund</option>
                 <option value="former_customer">Tidigare kund</option>
+                <option value="lost">Förlorad</option>
               </SelectField>}
               <Field label="Telefon" name="phone" type="tel" defaultValue={customer.phone_e164 ?? ""} />
               <Field label="Alternativt telefonnummer" name="alternate_phone" type="tel" defaultValue={customer.alternate_phone_e164 ?? ""} />

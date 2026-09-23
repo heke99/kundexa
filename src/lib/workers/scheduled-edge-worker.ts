@@ -62,7 +62,7 @@ function summarizeWorkerResult(value: unknown) {
   const record = value as Record<string, unknown>;
   const rows = Array.isArray(record.results) ? record.results : Array.isArray(record.jobs) ? record.jobs : [];
   const statuses = rows.flatMap((row) => row && typeof row === "object" ? [String((row as Record<string, unknown>).status ?? "")] : []);
-  const failed = statuses.filter((status) => ["failed", "dead_letter", "error"].includes(status)).length;
+  const failed = statuses.filter((status) => ["failed", "dead_letter", "dead", "error"].includes(status)).length;
   const requeued = statuses.filter((status) => ["queued", "requeued", "retrying"].includes(status)).length;
   return {
     fetched: Number(record.fetched ?? record.claimed ?? rows.length ?? 0) || 0,

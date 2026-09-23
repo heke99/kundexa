@@ -7,6 +7,7 @@ import { parsePublicContractResponse } from "@/lib/contracts/public-response";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { serverEnv } from "@/lib/env";
 import { sha256 } from "@/lib/crypto";
+import { contractAcceptanceModes } from "@/lib/contracts/delivery-readiness";
 
 const ACCEPTANCE_TEXT = "Jag har läst avtalet och accepterar den visade, hashade avtalsversionen samt förstår att mitt besked dokumenteras.";
 const DECLINE_TEXT = "Jag avstår från avtalet och förstår att mitt besked dokumenteras.";
@@ -26,6 +27,8 @@ export async function respondPublicContract(formData: FormData) {
     .single();
   if (!request) redirect(`/accept/${token}?error=Länken är ogiltig`);
   if (request.status !== "pending") redirect(`/accept/${token}?error=Begäran är inte längre aktiv`);
+  const { web: webAcceptance } = await contractAcceptanceModes(admin, request.tenant_id);
+  if (!webAcceptance) redirect(`/accept/${token}?error=Svara via SMS enligt instruktionen i meddelandet.`);
   if (new Date(request.expires_at) <= new Date()) {
     // Best effort, and deliberately not fatal: the customer is told the link has
     // expired either way, and the nightly sweep expires it again. Log rather

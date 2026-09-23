@@ -277,10 +277,11 @@ export async function requeueListMembers(form: FormData) {
     p_completed_before: null,
   });
   if (error) {
-    const swedish = error.message.includes("list_manage_permission_denied")
-      ? "Du saknar behörighet att lägga om den här listan."
+    // `message()` kodar redan; att koda en gång till gav "%20" i felrutan.
+    const encoded = error.message.includes("list_manage_permission_denied")
+      ? encodeURIComponent("Du saknar behörighet att lägga om den här listan.")
       : message(error);
-    redirect(`/app/lists/${listId}?error=${encodeURIComponent(swedish)}`);
+    redirect(`/app/lists/${listId}?error=${encoded}`);
   }
   void context;
   revalidatePath(`/app/lists/${listId}`);

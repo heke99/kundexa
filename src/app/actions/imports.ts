@@ -81,6 +81,16 @@ export async function updateImportMapping(form: FormData) {
   const runResult = await supabase.from("import_runs").select("id,status,total_rows").eq("id", importRunId).single();
   if (runResult.error || !runResult.data) redirect(`/app/imports/${importRunId}?error=${encodeURIComponent(runResult.error?.message ?? "Importen hittades inte")}`);
   if (!["mapping_required", "preview_ready", "validated", "failed"].includes(runResult.data.status)) redirect(`/app/imports/${importRunId}?error=${encodeURIComponent("Importen kan inte mappas i nuvarande status")}`);
+  // En misslyckad körning kan ha alla rader (verkställandet föll, och en ny
+  // mappning är rätt väg) eller bara en del (uppladdningen bröts). Den senare
+  // får inte mappas om och verkställas som om filen vore hel (FAILURE-0129).
+  if (runResult.data.status === "failed") {
+    const { count, error: countError } = await supabase.from("import_rows").select("id", { count: "exact", head: true }).eq("import_run_id", importRunId);
+    if (countError) redirect(`/app/imports/${importRunId}?error=${encodeURIComponent("Importens rader kunde inte räknas. Försök igen.")}`);
+    if ((count ?? 0) !== runResult.data.total_rows) {
+      redirect(`/app/imports/${importRunId}?error=${encodeURIComponent("Filen lästes bara delvis in innan importen misslyckades. Ladda upp den igen.")}`);
+    }
+  }
 
   let valid = 0;
   let warnings = 0;

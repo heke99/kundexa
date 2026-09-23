@@ -220,3 +220,23 @@ för `npm run verify`, som kör mot PGlite. Den kontrollen är manuell.
 | 2026-09-24 | Visuell kontroll som teamledare/säljare | NOT RUN |
 | 2026-09-24 | Återimport bevarar ringläge, rollback rör inte gamla platser, samma fil efter rollback, fel sparas, användare kan inte skriva importtabeller (PGlite) | PASS |
 | 2026-09-24 | Import med riktig fil i prod | NOT RUN |
+
+## 2026-09-24 — systemgenomgången (FAILURE-0101…0136)
+
+| Kontroll | Resultat | Evidens |
+| --- | --- | --- |
+| `npm run verify` (Node 22) | PASS | exit 0; 128 migrationer, 164 tabeller, 340 funktioner, 296 policyer i PGlite |
+| Nya PGlite-test fallerar utan sin migration | PASS | varje migration 0003–0010 flyttad undan → testet föll, återställd → grönt |
+| Sinch-enhetstest (ICE-beslut, fail-closed) | PASS | `scripts/sinch-unit-tests.mts` |
+| Tvåtenant: rollback, kampanjteam, dokumentrutt | PASS (PGlite/statisk vakt) | `verify-sql.mjs`, `verify.mjs` |
+| Migrationer 0003–0010 + saknade 202609170010 i prod | PASS | MCP `apply_migration`, workers 7/7 `healthy` efteråt |
+| Migrationsregister i prod | PASS | 128/128 repoversioner registrerade |
+| Funktioner prod mot PGlite | PASS | normaliserad md5 identisk; enda diff en oanvänd variabel (fanns redan tidigare) |
+| Policyer/RLS-flaggor/triggrar prod mot PGlite | PASS | 288/164/181, identiska hashar |
+| Typer mot prod | PASS | regenererade efter 0006; senare migrationer ändrar inga signaturer; `types:verify` PASS |
+| Säkerhetsrådgivare | PASS (kända poster) | PostGIS i public, avsiktliga RPC:er, leaked password protection av |
+| Riktigt samtal: spärr läggs på, reserverat kopplas, team-A-nummer syns | NOT RUN | kräver merge och ett samtal av användaren |
+| Avtalsutskick till egen e-post, kod i mejlet | NOT RUN | ingen produkt finns |
+| SMS-svar ("JA 1234", oklart svar) | NOT RUN | svenskt SMS-nummer saknas |
+| Säljare med delad lista, dagsgräns, paus, kampanjteam | NOT RUN | inga aktiva säljare |
+| Import med riktig fil, create_only/review_conflicts, ParseHub | NOT RUN | ingen import körd i prod |

@@ -13939,6 +13939,10 @@ export type Database = {
         Args: { p_list: string; p_tenant: string }
         Returns: undefined
       }
+      set_campaign_teams: {
+        Args: { p_campaign_id: string; p_team_ids: string[] }
+        Returns: Json
+      }
       set_customer_list_sellers: {
         Args: { p_list_id: string; p_user_ids: string[] }
         Returns: number

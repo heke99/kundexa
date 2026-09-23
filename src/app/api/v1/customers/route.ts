@@ -3,6 +3,7 @@ import { z } from "zod";
 import { authenticateRequest, dataClientForIdentity } from "@/lib/api-auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { normalizePhone } from "@/lib/domain/phone";
+import { normalizeOrganizationNumber } from "@/lib/imports/organization-number";
 import { buildIlikeOrFilter } from "@/lib/postgrest-filter";
 import { sha256 } from "@/lib/crypto";
 
@@ -46,6 +47,17 @@ export async function POST(request: Request) {
     const identity = await authenticateRequest(request, "customers:write");
     const parsed = createCustomerSchema.parse(await request.json());
     const phone = parsed.phone ? normalizePhone(parsed.phone) : null;
+    // Samma kanoniska form som kundkortet och importen (tio siffror). API:t
+    // sparade värdet som det skickades, så "556677-8899" matchade aldrig samma
+    // bolag från en import och blev en dubblett.
+    let organizationNumber: string | null = null;
+    if (parsed.organization_number) {
+      const normalized = normalizeOrganizationNumber(parsed.organization_number, { allowPerson: false });
+      if (!normalized.valid || !normalized.canonical) {
+        return NextResponse.json({ error: "invalid_organization_number", reason: normalized.errorCode ?? "invalid" }, { status: 422 });
+      }
+      organizationNumber = normalized.canonical;
+    }
     const db = await dataClientForIdentity(identity);
     const admin = createAdminClient();
     const customerInput = {
@@ -54,7 +66,7 @@ export async function POST(request: Request) {
       lifecycle: parsed.lifecycle,
       email: parsed.email?.toLowerCase() ?? null,
       phone_e164: phone,
-      organization_number: parsed.organization_number ?? null,
+      organization_number: organizationNumber,
       city: parsed.city ?? null,
     };
 

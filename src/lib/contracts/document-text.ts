@@ -1,5 +1,7 @@
 import { inflateRawSync } from "node:zlib";
 
+const MAX_DOCUMENT_XML_BYTES = 20 * 1024 * 1024;
+
 // Turning an uploaded agreement into a reusable template means getting its text
 // out of the file the lawyer wrote it in. Only the text is wanted: the body is
 // re-rendered into Kundexa's own PDF with the customer's data merged in, so the
@@ -56,7 +58,13 @@ function readZipEntry(archive: Buffer, wanted: string): Buffer | null {
       const dataStart = localOffset + 30 + localNameLength + localExtraLength;
       const data = archive.subarray(dataStart, dataStart + compressedSize);
       if (method === 0) return Buffer.from(data);
-      if (method === 8) return inflateRawSync(data);
+      // En avtalstext är några hundra kilobyte. Utan tak kunde en liten fil som
+      // packas upp till gigabyte ta serverns minne; 20 MB är långt över varje
+      // verklig mall.
+      if (method === 8) {
+        try { return inflateRawSync(data, { maxOutputLength: MAX_DOCUMENT_XML_BYTES }); }
+        catch { throw new DocumentTextError("Dokumentet är för stort eller skadat för att läsas."); }
+      }
       throw new DocumentTextError("Dokumentet använder en komprimering som inte stöds.");
     }
     cursor += 46 + nameLength + extraLength + commentLength;

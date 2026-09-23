@@ -258,11 +258,15 @@ export function useSinchWebphone() {
             registration.register(credentials.token);
             return;
           }
-          void postJson("/api/v1/telephony/webphone/session", { userAgent: navigator.userAgent.slice(0, 400) })
+          // Förnyelsen behåller sessionen när den lever. En ny session stängde
+          // den gamla och fällde samtalet som pågick på den.
+          void postJson("/api/v1/telephony/webphone/session", {
+            userAgent: navigator.userAgent.slice(0, 400),
+            ...(sessionRef.current ? { renewSessionId: sessionRef.current } : {}),
+          })
             .then((refreshed) => {
-              // Förnyelsen öppnar en ny session och stänger den gamla. Utan
-              // det här slog hjärtslaget vidare mot den stängda, fick
-              // `alive: false` och sa åt säljaren att ladda om.
+              // Servern svarar med samma session, eller en ny om den gamla
+              // redan var borta; hjärtslaget ska slå mot den som gäller.
               if (refreshed.data?.sessionId) sessionRef.current = String(refreshed.data.sessionId);
               const next = refreshed.data?.credentials as SinchCredentials | undefined;
               if (next?.token) registration.register(next.token);

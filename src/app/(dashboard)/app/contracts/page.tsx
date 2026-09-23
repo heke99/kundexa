@@ -40,7 +40,9 @@ type ContractRegistryRow = {
 // `accepted`, inte `signed`, och syntes inte under "Signerade".
 const quickViews: Array<{ label: string; status?: string; attention?: string }> = [
   { label: "Alla" },
-  { label: "Utkast", status: "draft" },
+  // Ett nytt avtal är `ready` direkt; `draft` förekommer inte längre, så
+  // snabbvalet visade aldrig något.
+  { label: "Ej skickade", status: "ready" },
   { label: "Väntar på svar", attention: "waiting" },
   { label: "Godkända", attention: "answered_yes" },
   { label: "Avböjda och utgångna", attention: "answered_no" },
