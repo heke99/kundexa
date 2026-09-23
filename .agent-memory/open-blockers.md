@@ -161,3 +161,6 @@ hela vägen. **Det är inte bevisat.**
 Det avgör om avtal kan skapas från samtal: `is_contract_call_eligible` kräver
 `answered_at is not null`. Testet som avgör saken är ett enda riktigt besvarat
 samtal — ring, svara, lägg på, och se om `answered_at` fylls i.
+
+- 2026-09-24: RLS-delen av migration 202609240002 är inte applicerad i prod förrän PR F är mergad och
+  deployad (annars slutar dagens uppladdning att fungera). Stängs direkt efter merge.

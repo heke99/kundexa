@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { getAppContext } from "@/lib/auth";
 import { assertPermission } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { importFieldMappingSchema } from "@/lib/imports/import-profile";
 import { normalizeImportedRow } from "@/lib/imports/normalize-row";
 import type { Json } from "@/lib/supabase/database.types";
@@ -21,7 +22,7 @@ export async function processImport(form: FormData) {
   if (!importRunId) return;
   const supabase = await createClient();
   const runResult = await supabase.from("import_runs")
-    .select("id,truncated,validation_fingerprint,execution_idempotency_key")
+    .select("id,truncated")
     .eq("id", importRunId)
     .single();
   if (runResult.error || !runResult.data) {
@@ -30,28 +31,29 @@ export async function processImport(form: FormData) {
   if (runResult.data.truncated) {
     redirect(`/app/imports/${importRunId}?error=${encodeURIComponent("Importen är trunkerad och får inte verkställas. Ladda upp filen i mindre batcher.")}`);
   }
-  const executionKey = runResult.data.execution_idempotency_key
-    ?? `commit:${runResult.data.validation_fingerprint ?? `run:${importRunId}`}`;
-  if (!runResult.data.execution_idempotency_key) {
-    const executionUpdate = await supabase.from("import_runs")
-      .update({ execution_idempotency_key: executionKey })
-      .eq("id", importRunId)
-      .is("execution_idempotency_key", null);
-    if (executionUpdate.error) {
-      const existing = await supabase.from("import_runs").select("id")
-        .eq("execution_idempotency_key", executionKey)
-        .neq("id", importRunId)
-        .maybeSingle();
-      if (existing.data) redirect(`/app/imports/${existing.data.id}?message=${encodeURIComponent("Den här importen har redan verkställts.")}`);
-      redirect(`/app/imports/${importRunId}?error=${encodeURIComponent(executionUpdate.error.message)}`);
-    }
-  }
+  // RPC:n sätter körningens idempotensnyckel. Samma fil som redan är verkställd
+  // (och inte återställd) stoppas av det unika indexet innan något skrivs.
   const { data, error } = await supabase.rpc("process_import_run", { p_import_run_id: importRunId });
-  if (error) redirect(`/app/imports/${importRunId}?error=${encodeURIComponent(error.message)}`);
+  if (error) {
+    const already = error.code === "23505" || error.message.includes("execution_idempotency");
+    redirect(`/app/imports/${importRunId}?error=${encodeURIComponent(already ? "Samma fil till samma lista är redan importerad. Återställ den förra importen först om du vill köra om den." : importErrorMessage(error.message))}`);
+  }
   const result = data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, Json | undefined> : {};
+  if (result.failed) {
+    revalidatePath(`/app/imports/${importRunId}`);
+    redirect(`/app/imports/${importRunId}?error=${encodeURIComponent("Importen stoppades och inget sparades. Orsaken står under Validering.")}`);
+  }
   revalidatePath("/app/imports");
   revalidatePath(`/app/imports/${importRunId}`);
   redirect(`/app/imports/${importRunId}?message=${encodeURIComponent(`Import klar: ${result.new ?? 0} nya, ${result.updated ?? 0} uppdaterade, ${result.newContacts ?? 0} nya kontakter och ${result.blocked ?? 0} blockerade.`)}`);
+}
+
+function importErrorMessage(code: string) {
+  if (code.includes("import_run_not_ready")) return "Importen är inte redo att verkställas.";
+  if (code.includes("import_file_not_security_cleared")) return "Filen är inte godkänd av virusskanningen.";
+  if (code.includes("target_list_permission_denied")) return "Du får inte importera till den valda listan.";
+  if (code.includes("permission_denied")) return "Du har inte behörighet att verkställa importer.";
+  return "Importen kunde inte verkställas.";
 }
 
 export async function rollbackImport(form: FormData) {
@@ -114,7 +116,8 @@ export async function updateImportMapping(form: FormData) {
       }
     }
   }
-  const updated = await supabase.from("import_runs").update({
+  // Körningen är skrivskyddad för användare; servern skriver, i användarens tenant.
+  const updated = await createAdminClient().from("import_runs").update({
     field_mapping: jsonValue(mapping),
     status: errors === runResult.data.total_rows ? "mapping_required" : "preview_ready",
     error_count: errors,
@@ -122,7 +125,7 @@ export async function updateImportMapping(form: FormData) {
     accepted_row_count: valid + warnings,
     rejected_row_count: errors,
     validation_report: jsonValue({ valid_rows: valid, warning_rows: warnings, error_rows: errors, accepted_row_count: valid + warnings, rejected_row_count: errors, mapping_updated_at: new Date().toISOString() }),
-  }).eq("id", importRunId);
+  }).eq("tenant_id", context.tenantId).eq("id", importRunId);
   if (updated.error) redirect(`/app/imports/${importRunId}?error=${encodeURIComponent(updated.error.message)}`);
   revalidatePath(`/app/imports/${importRunId}`);
   revalidatePath(`/app/imports/${importRunId}/mapping`);

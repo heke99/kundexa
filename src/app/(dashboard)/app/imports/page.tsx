@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
+import { importStatusLabel, scanStatusLabel } from "@/lib/ui/labels";
 
 function statusClass(status: string) {
   if (["completed", "completed_with_warnings"].includes(status)) return "badge-success";
@@ -34,7 +35,7 @@ export default async function ImportsPage({ searchParams }: { searchParams: Prom
           {data?.map((run) => <tr key={run.id}>
             <td><Link href={`/app/imports/${run.id}`}><strong>{run.name}</strong></Link></td>
             <td>{run.source_provider}{run.source_website ? ` · ${run.source_website}` : ""}<br /><small>{run.source_type}</small></td>
-            <td><Badge className={statusClass(run.status)}>{run.status}</Badge><br /><small>scan: {run.scan_status}</small></td>
+            <td><Badge className={statusClass(run.status)}>{importStatusLabel(run.status)}</Badge><br /><small>{scanStatusLabel(run.scan_status)}</small></td>
             <td>{run.total_rows}</td>
             <td>{run.new_count}</td>
             <td>{run.updated_count}<br /><small>{run.unchanged_count} oförändrade</small></td>

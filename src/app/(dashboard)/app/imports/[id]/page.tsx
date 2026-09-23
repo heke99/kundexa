@@ -10,6 +10,7 @@ import { createClient } from "@/lib/supabase/server";
 import { formatDate } from "@/lib/utils";
 import { processImport, rollbackImport } from "@/app/actions/imports";
 import type { Json } from "@/lib/supabase/database.types";
+import { importDecisionLabel, importStatusLabel, scanStatusLabel } from "@/lib/ui/labels";
 
 const matchKeyLabels: Record<string, string> = {
   phone_e164: "Telefonnummer",
@@ -37,21 +38,26 @@ export default async function ImportDetailPage({ params, searchParams }: { param
     supabase.rpc("import_run_duplicate_report", { p_import_run_id: id }),
   ]);
   if (!run) notFound();
+  const report = run.validation_report && typeof run.validation_report === "object" && !Array.isArray(run.validation_report) ? run.validation_report as Record<string, Json | undefined> : {};
+  const executionError = typeof report.execution_error === "string" ? report.execution_error : null;
   const canCommit = ["preview_ready", "validated", "queued"].includes(run.status);
   const canRollback = ["completed", "completed_with_warnings"].includes(run.status);
   return <>
     <PageHeader title={run.name} description={`${run.source_provider}${run.source_website ? ` · ${run.source_website}` : ""} · ${run.source_type}`} action={<div style={{ display: "flex", gap: 8 }}><Link className="button button-secondary" href="/app/imports">Översikt</Link><Link className="button button-secondary" href={`/app/imports/${id}/mapping`}>Fältmappning</Link></div>} />
     {query.error ? <p className="form-error">{query.error}</p> : null}
     {query.message ? <p className="notice">{query.message}</p> : null}
+    {run.status === "failed" && executionError ? <div className="notice warning" style={{ marginBottom: 16 }}>
+      <strong>Importen stoppades och inget sparades.</strong> Orsak: <code>{executionError}</code>. Rätta raden eller mappningen och verkställ igen.
+    </div> : null}
     <div className="metric-grid">
       {[
-        ["Status", run.status], ["Rader", run.total_rows], ["Nya företag", run.new_count], ["Uppdaterade", run.updated_count],
+        ["Status", importStatusLabel(run.status)], ["Rader", run.total_rows], ["Nya företag", run.new_count], ["Uppdaterade", run.updated_count],
         ["Oförändrade", run.unchanged_count], ["Nya kontakter", run.new_contact_count], ["Uppdaterade kontakter", run.updated_contact_count],
         ["Konflikter", run.conflict_count], ["Blockerade", run.blocked_count], ["Varningar", run.warning_count], ["Fel", run.error_count],
       ].map(([label, value]) => <Card key={String(label)}><CardContent><small>{label}</small><strong style={{ display: "block", fontSize: 22, marginTop: 4 }}>{value}</strong></CardContent></Card>)}
     </div>
     <Card>
-      <CardHeader><h2><Import size={17} /> Körningsinformation</h2><Badge>{run.scan_status}</Badge></CardHeader>
+      <CardHeader><h2><Import size={17} /> Körningsinformation</h2><Badge>{scanStatusLabel(run.scan_status)}</Badge></CardHeader>
       <CardContent>
         <div className="key-value"><span>Filhash</span><code>{run.file_sha256 ?? run.scan_sha256 ?? "—"}</code><span>Profilversion</span><span>{run.profile_version ?? "Engångsmappning"}</span><span>Arbetsblad</span><span>{run.worksheet_name ?? "—"}</span><span>JSON-path</span><span>{run.records_path ?? "—"}</span><span>Skapad</span><span>{formatDate(run.created_at)}</span><span>Slutförd</span><span>{run.completed_at ? formatDate(run.completed_at) : "—"}</span></div>
         <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
@@ -103,7 +109,7 @@ export default async function ImportDetailPage({ params, searchParams }: { param
       <CardHeader><h2>Förhandsgranskning och radresultat</h2><Badge>{rows?.length ?? 0} visade</Badge></CardHeader>
       <CardContent style={{ padding: 0 }}>
         <DataTable headers={["Rad", "Status", "Normaliserad data", "Rådata", "Matchning", "Tid"]}>
-          {rows?.map((row) => <tr key={row.id}><td>{row.row_number}</td><td><Badge className={row.row_status === "invalid" || row.decision === "conflict" ? "badge-danger" : row.row_status === "warning" ? "badge-warning" : "badge-success"}>{row.decision ?? row.row_status}</Badge>{row.error_code ? <><br /><small>{row.error_code}</small></> : null}</td><td><code>{preview(row.normalized_data)}</code></td><td><code>{preview(row.raw_data)}</code></td><td>{row.matched_customer_id ? "Kund" : "—"}{row.matched_contact_person_id ? " + kontakt" : ""}</td><td>{row.processing_ms == null ? "—" : `${row.processing_ms} ms`}</td></tr>)}
+          {rows?.map((row) => <tr key={row.id}><td>{row.row_number}</td><td><Badge className={row.row_status === "invalid" || row.decision === "conflict" ? "badge-danger" : row.row_status === "warning" ? "badge-warning" : "badge-success"}>{importDecisionLabel(row.decision ?? row.row_status)}</Badge>{row.error_code ? <><br /><small>{row.error_code}</small></> : null}</td><td><code>{preview(row.normalized_data)}</code></td><td><code>{preview(row.raw_data)}</code></td><td>{row.matched_customer_id ? "Kund" : "—"}{row.matched_contact_person_id ? " + kontakt" : ""}</td><td>{row.processing_ms == null ? "—" : `${row.processing_ms} ms`}</td></tr>)}
         </DataTable>
       </CardContent>
     </Card>

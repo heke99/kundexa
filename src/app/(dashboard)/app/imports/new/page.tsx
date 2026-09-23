@@ -6,12 +6,20 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/server";
 
-export default async function NewImportPage() {
+export default async function NewImportPage({ searchParams }: { searchParams: Promise<{ list?: string }> }) {
+  const { list: presetList } = await searchParams;
   const supabase = await createClient();
   const [{ data: profiles }, { data: lists }] = await Promise.all([
     ok(supabase.from("import_profiles").select("id,name,source_provider,source_website,current_version,records_path,worksheet_name").eq("active", true).order("name")),
     ok(supabase.from("customer_lists").select("id,name,status,dialing_mode").in("status", ["draft", "active", "paused"]).order("name")),
   ]);
+  // Bara listor användaren får fylla. Annars stoppades importen först efter
+  // uppladdning och validering, med ett fel som inte sa varför.
+  const manageable = (await Promise.all((lists ?? []).map(async (list) => {
+    const { data } = await ok(supabase.rpc("can_manage_customer_list", { p_list_id: list.id }));
+    return data === true ? list : null;
+  }))).filter((list): list is NonNullable<typeof list> => list !== null);
+  const preset = manageable.some((list) => list.id === presetList) ? presetList : "";
   return <>
     <PageHeader title="Ny import" description="Ladda upp resultat från ParseHub eller annan godkänd källa. Importen genomförs först efter förhandsgranskning." action={<div style={{ display: "flex", gap: 8 }}><Link className="button button-secondary" href="/app/imports/profiles">Skapa profil</Link><Link className="button button-secondary" href="/app/imports">Till översikten</Link></div>} />
     <div className="split-layout">
@@ -26,7 +34,7 @@ export default async function NewImportPage() {
               <label className="field"><span>Excel-arbetsblad (valfritt)</span><input name="worksheet_name" placeholder="Företag" /></label>
               <label className="field"><span>Rubrikrad</span><input type="number" name="header_row" min="1" max="100" defaultValue="1" /></label>
             </div>
-            <label className="field"><span>Mållista</span><select name="target_list_id" defaultValue=""><option value="">Endast CRM/katalog</option>{lists?.map((list) => <option key={list.id} value={list.id}>{list.name} · {list.dialing_mode}</option>)}</select></label>
+            <label className="field"><span>Mållista</span><select name="target_list_id" defaultValue={preset}><option value="">Ingen lista, bara kundregistret</option>{manageable.map((list) => <option key={list.id} value={list.id}>{list.name} · {list.dialing_mode === "automatic" ? "automatisk uppringning" : "manuell ringning"}</option>)}</select></label>
             <label className="field"><span>JSON, CSV eller XLSX</span><input type="file" name="file" accept=".csv,.json,.jsonl,.ndjson,.xlsx,text/csv,application/json,application/x-ndjson,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required /></label>
             <label style={{ display: "flex", gap: 9, fontSize: 13 }}><input type="checkbox" name="simulate" defaultChecked /> Kräv manuell granskning före commit</label>
             <button className="button button-primary"><Upload size={16} /> Ladda upp och validera</button>

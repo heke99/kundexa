@@ -389,3 +389,11 @@ split-kortet; "Enskilda säljare" valfritt; "Vikt" borta; svenska roll/status/gr
 Teamsidan: dubblerat nummerkort borttaget; teamledare sparar teamnummer via RPC. DialerPanel:
 "Automatiskt" förval. Plattform: "Ge ett nummer till ett team". Dialersidan förklarar saknade listor.
 verify-guardar för explicit nummer ersatta enligt ADR-0021. Live-test som säljare: NOT RUN.
+
+## 2026-09-24 — PR F: importfixar
+process_import_run: ringläge bevaras vid återimport, listplats loggas bara vid insert (xmax=0), fel
+sparas (flagga v_processing, returnerar failed). Partiella unika index undantar failed/rolled_back/
+cancelled. ParseHub: ingen auto-commit med felrader. RLS: bara SELECT för importtabellerna (prod efter
+merge). Kod: uppladdning/mappning skriver med tjänsteklient, svenska felorsaker, mållistor = listor
+användaren får hantera, "Importera fil till listan" från listsidan, svenska import-/skannings-/
+radstatusar, orsak visas på misslyckad import. Uppdelning vid import utgår (ADR-0021).
