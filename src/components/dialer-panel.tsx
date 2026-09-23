@@ -193,6 +193,11 @@ export function DialerPanel({
       </span>
     </div>
     <div className="phone-display">{visibleCustomers.find((customer) => customer.id === selected)?.phone_e164 ?? (lockedToCustomer ? "Telefonnummer saknas" : "Välj kund")}</div>
+    {/* Säljaren ska se vem hon ringer: historik, anteckningar och spärrar ligger
+        på kundkortet, och därifrån skapas också avtalet. */}
+    {!lockedToCustomer && selected ? <p style={{ marginBottom: 12 }}>
+      <a href={`/app/customers/${selected}`} className="button button-ghost button-sm">Öppna kundkortet</a>
+    </p> : null}
     {lockedToCustomer
       ? <p className="muted" style={{ marginBottom: 12 }}>
           Ringer {visibleCustomers.find((customer) => customer.id === selected)?.display_name ?? "kunden"} från det här kundkortet.

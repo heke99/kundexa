@@ -242,3 +242,20 @@ nyckel, hemlighet och JWT godkänns av Sinch. Men sajtens CSP hade
 `ocra.api.sinch.com` (och PubNub-signaleringen). Registreringen kunde aldrig lyckas i en webbläsare.
 Rättat: `webphoneConnectSources` (`*.sinch.com`, `*.pubnub.com`, `*.pndsn.com`, https+wss) i
 `connect-src`, med verify-vakt. Provet rapporterar nu även värdnamnen i Sinch svar.
+
+## 2026-09-23 — Genomgång av hela flödet (säljare, samtal, avtal, SMS)
+
+Fel som rättades:
+- **ICE/ACE utan SVAML.** Sinch-webhooken svarade `{accepted:true}` på allt. ICE kräver en `action`
+  ("If there is no response … the call is disconnected"). Nu `connectPstn` (med klientens CLI) för
+  samtal från webbtelefonen till ett nummer, `hangup` för inkommande/övrigt, `continue` på ACE.
+  Svaret ges även om registreringen i databasen misslyckas. Sinch har hittills skickat **noll**
+  händelser (`provider_webhook_events` tom) — callback-adressen behöver registreras i Sinch.
+- **"Registrera tidigare samtal" hade inga val.** Formulären läste ringlistornas `list_dispositions`
+  (tom i produktion, ingen lista finns), medan `register_external_manual_call` godtar
+  `manual_contract_disposition_allowed`. Nu `manualContractDispositions()` = samma regel.
+- **STOPP-svar spärrade inget.** Nu spärras numret för SMS i `compliance_blocks`
+  (`source = sms_opt_out_reply`), vilket `evaluate_contact_policy_for_tenant` redan läser.
+- Teamledare nådde inte Produkter (krävde `products.manage`), där avtalen nu ligger.
+- Säljarens meny: 16 → 6 val (Dialer, Återkomster, Mina samtal, Kunder, Ringlistor, Avtal).
+- Dialern: "Öppna kundkortet" för vald kund; kortet "Säkerhetskontroller" och långa texter bort.

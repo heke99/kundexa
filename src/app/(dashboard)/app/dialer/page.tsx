@@ -1,7 +1,7 @@
 import { can } from "@/lib/permissions";
 import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
-import { Clock3, ListFilter, PhoneCall, Plus, ShieldCheck } from "@/components/icons";
+import { Clock3, ListFilter, PhoneCall, Plus } from "@/components/icons";
 import { createManualProspect } from "@/app/actions/customers";
 import { createClient } from "@/lib/supabase/server";
 import { getAppContext } from "@/lib/auth";
@@ -26,7 +26,7 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
     ok(supabase.from("phone_numbers").select("id,number_e164").eq("status","active").eq("supports_voice",true).order("number_e164")),
   ]);
   return <>
-    <PageHeader title="Dialer" description="Välj en tilldelad ringlista eller ring ett enskilt nummer från det kanoniska kundkortet." />
+    <PageHeader title="Dialer" description="Välj en ringlista eller ring ett enskilt nummer." />
     {params.error ? <p className="form-error">{params.error}</p> : null}
     <div className="grid grid-3" style={{ marginBottom: 18 }}>
       {lists?.map((list) => <Link key={list.id} href={`/app/dialer/lists/${list.id}`} className="list-launch-card"><span className="stat-icon"><ListFilter size={18} /></span><div><strong>{list.name}</strong><p>{list.dialing_mode === "automatic" ? "Automatisk sekventiell ringning" : "Manuell ringning"}</p></div><Badge className="badge-success">Starta</Badge></Link>)}
@@ -36,7 +36,7 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
       <div className="phone-panel"><DialerPanel customers={selectedCustomer ? [selectedCustomer] : []} initialCustomer={selectedCustomer?.id} callbackActivityId={params.callback} callerIdOptions={(callerIdData ?? []) as Array<{ id: string; number_e164: string }>} mayManageIntegrations={can(context.role, "integrations.manage")} /></div>
       <div className="grid">
         <Card><CardHeader><h2><Plus size={17} /> Ring ett nytt nummer</h2></CardHeader><CardContent>
-          <p className="muted">Numret matchas först mot befintliga kundkort. Finns en träff öppnas det kundkortet, annars skapas ett enda nytt prospekt och dess kundkort öppnas. Därifrån ringer du direkt.</p>
+          <p className="muted">Kundkortet öppnas, eller skapas om numret är nytt. Du ringer därifrån.</p>
           <form action={createManualProspect} className="form-grid">
             <Field label="Namn eller nummer" name="display_name" placeholder="Nytt prospekt" />
             <Field label="Telefonnummer" name="phone" type="tel" required placeholder="070 123 45 67" />
@@ -49,11 +49,6 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
               <option value="company">Företag</option>
             </SelectField>
             <button className="button button-secondary" style={{ alignSelf: "end" }}>Matcha och öppna</button>
-            <p className="muted span-2">
-              Bara namn och nummer behövs för att ringa. Organisationsnummer, personnummer, e-post och adress fylls i på
-              kundkortet efteråt, inför registrering. Är numret nixat trycker du &quot;Nixat nummer&quot; efter samtalet, så
-              spärras det permanent.
-            </p>
           </form>
         </CardContent></Card>
         <Card><CardHeader><h2><Clock3 size={17} /> Förfallna återkomster</h2><Badge className={callbacks?.length ? "badge-warning" : ""}>{callbacks?.length ?? 0}</Badge></CardHeader><CardContent>{callbacks?.map((callback) => {
@@ -61,7 +56,6 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
           const href = callback.list_id ? `/app/dialer/lists/${callback.list_id}` : `/app/dialer?customer=${callback.customer_id}`;
           return <Link className="activity-line" href={href} key={callback.id}><span className="activity-dot"><PhoneCall size={14} /></span><div><strong>{customer?.display_name ?? callback.title}</strong><p>{callback.callback_scope === "global" ? "Global återkomst" : "Personlig återkomst"} · {customer?.phone_e164 ?? "telefon saknas"}</p></div><time>{formatDate(callback.due_at)}</time></Link>;
         })}{!callbacks?.length ? <p className="muted">Inga förfallna återkomster.</p> : null}</CardContent></Card>
-        <Card><CardHeader><h2><ShieldCheck size={17} /> Säkerhetskontroller</h2></CardHeader><CardContent><div className="grid grid-3"><div className="notice">Aktivt tenantmedlemskap och listbehörighet.</div><div className="notice">Intern spärr, samtycke och NIX-policy.</div><div className="notice">Ett tidsbegränsat kölås per prospekt.</div></div></CardContent></Card>
         <Card><CardHeader><h2><Clock3 size={17} /> Senaste samtal</h2></CardHeader><CardContent>{recent?.map((call) => { const customer = Array.isArray(call.customers) ? call.customers[0] : call.customers; return <div className="activity-line" key={call.id}><span className="activity-dot"><PhoneCall size={14} /></span><div><strong>{customer?.display_name ?? call.to_number}</strong><p>{call.disposition ?? call.status}</p></div><time>{formatDate(call.created_at)}</time></div>; })}</CardContent></Card>
       </div>
     </div>

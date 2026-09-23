@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { Logo } from "@/components/logo";
 import { ChevronDown, Gauge, Menu, Phone, ShieldCheck, X } from "@/components/icons";
-import { navSections, type NavSection } from "./nav-config";
+import { navSections, sellerNavHrefs, type NavSection } from "./nav-config";
 import { cn } from "@/lib/utils";
 import { canAccessRoute } from "@/lib/permissions";
 
@@ -81,7 +81,7 @@ export function Sidebar({
 
   const visibleSections: Array<NavSection & { hasActive: boolean }> = platformMode || !role ? [] : navSections
     .map((section) => {
-      const items = section.items.filter((item) => canAccessRoute(role, item.href));
+      const items = section.items.filter((item) => canAccessRoute(role, item.href) && (role !== "sales" || sellerNavHrefs.has(item.href)));
       return { ...section, items, hasActive: items.some((item) => isActive(pathname, item.href)) };
     })
     .filter((section) => section.items.length > 0);

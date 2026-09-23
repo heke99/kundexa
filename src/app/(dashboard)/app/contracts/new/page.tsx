@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
 import { formatDate } from "@/lib/utils";
 import { getAppContext } from "@/lib/auth";
+import { manualContractDispositions } from "@/lib/contracts/manual-dispositions";
 import { can, canCreateContractFromProduct } from "@/lib/permissions";
 import { isoToZonedDateOnly, isoToZonedLocalDateTime } from "@/lib/domain/time";
 import { CustomerSearchSelect, type CustomerSearchOption } from "@/components/customer-search-select";
@@ -49,7 +50,7 @@ export default async function NewContractPage({ searchParams }: { searchParams: 
     // Avtalet ligger i produkten. Säljaren väljer produkten, och det här är hur
     // sidan vet vilka produkter som faktiskt har ett avtal att skicka.
     ok(supabase.from("contract_templates").select("product_id,audience,current_version_id").eq("active", true).not("product_id", "is", null)),
-    ok(supabase.from("list_dispositions").select("key,label").eq("contract_eligible", true).order("sort_order")),
+    manualContractDispositions(supabase, ctx.tenantId).then((data) => ({ data })),
     ok(supabase.from("tenant_memberships").select("user_id,role,profiles:user_id(full_name)").eq("status", "active").in("role", ["owner", "admin", "team_lead", "sales", "contract_manager"])),
     ok(supabase.from("teams").select("id,name").eq("status", "active").order("name")),
   ]);

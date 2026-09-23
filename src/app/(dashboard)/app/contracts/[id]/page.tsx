@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { getAppContext } from "@/lib/auth";
+import { manualContractDispositions } from "@/lib/contracts/manual-dispositions";
 import { can, canAuthorContracts } from "@/lib/permissions";
 import { isoToZonedLocalDateTime } from "@/lib/domain/time";
 
@@ -64,7 +65,8 @@ export default async function ContractDetail({ params, searchParams }: { params:
   const { data: sourceCall } = contract.source_call_id ? await supabase.from("calls").select("id,started_at,answered_at,ended_at,duration_seconds,direction,disposition,notes,user_id,metadata").eq("id", contract.source_call_id).maybeSingle() : { data: null };
   const { data: eligibleRaw } = await ok(supabase.rpc("resolve_contract_eligible_calls", { p_customer_id: contract.customer_id }));
   const eligibleCalls = (eligibleRaw ?? []) as Array<{ id: string; ended_at: string; disposition: string; duration_seconds: number; registered_manually: boolean }>;
-  const { data: dispositions } = await ok(supabase.from("list_dispositions").select("key,label").eq("contract_eligible", true).order("sort_order"));
+  // Samma regel som registreringen i databasen, inte ringlistornas utfall.
+  const dispositions = await manualContractDispositions(supabase, ctx.tenantId);
   const latestDelivery = deliveries?.[0] ?? null;
   const canonicalDocument = documents?.find((document) => ["generated_pdf", "source_pdf"].includes(document.document_type) && (document.metadata as Record<string, unknown> | null)?.canonical === true) ?? null;
   const accepted = acceptances?.[0] ?? null;

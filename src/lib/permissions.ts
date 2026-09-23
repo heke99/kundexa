@@ -134,7 +134,9 @@ export const routeAccessMap: Record<string, RouteAccessRule> = {
   "/app/contracts": { anyPermission: ["contracts.read"] },
   "/app/documents": { anyPermission: ["contracts.read"] },
   "/app/templates": { anyPermission: ["contracts.manage_templates"] },
-  "/app/products": { anyPermission: ["products.manage"] },
+  // Avtalet ligger i produkten. Den som skriver avtal måste se produkterna för
+  // att kunna lägga in det; att skapa en produkt kräver fortfarande products.manage.
+  "/app/products": { anyPermission: ["products.manage", "contracts.manage_templates"] },
   "/app/sms": { anyPermission: ["messages.read", "messages.send"] },
   "/app/email": { anyPermission: ["messages.read", "messages.send"] },
   "/app/automations": { anyPermission: ["automations.manage"] },
