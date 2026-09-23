@@ -309,9 +309,12 @@ export async function POST(request: Request) {
       : "Samtalet kunde inte reserveras.";
     if (reserved) {
       // Reservationen gick igenom men något efter den föll. Platsen måste
-      // släppas, annars kan säljaren inte ringa nästa nummer.
-      const admin = createAdminClient();
-      const { error: finalizeFailure } = await admin.rpc("finalize_dial", {
+      // släppas, annars kan säljaren inte ringa nästa nummer. Säljarens egen
+      // klient: `finalize_dial` härleder tenant och ägare ur inloggningen, och
+      // med tjänstenyckeln fanns ingen av dem -- funktionen svarade
+      // `authentication_required` och platsen blev kvar låst.
+      const own = await createClient();
+      const { error: finalizeFailure } = await own.rpc("finalize_dial", {
         p_call_id: reserved.callId,
         p_attempt_id: reserved.attemptId,
         p_outcome: "failed",

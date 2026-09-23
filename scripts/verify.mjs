@@ -703,6 +703,7 @@ const PROVIDER_NAME_EXEMPT = new Set([
   "src/lib/telephony/sinch/registration-token.ts",
   "src/lib/telephony/sinch/registration-probe.ts",
   "src/lib/telephony/sinch/svaml.ts",
+  "src/lib/telephony/sinch/end-cause.ts",
   "src/lib/telephony/sinch/test-callout.ts",
   "src/lib/telephony/webphone/connect-sources.ts",
   "src/lib/telephony/sinch/callback-signature.ts",
@@ -1314,8 +1315,8 @@ console.log(`Verified ${migrations.length} migrations, monotonic call/Resend pro
   const acceptedAt = hook.indexOf('outcome: "accepted", externalCallId: call.id');
   assert.ok(listenerAt > 0 && acceptedAt > 0 && listenerAt < acceptedAt,
     "The call listener must be attached before anything is awaited, or ringing and ended events are lost");
-  assert.match(hook, /reportLeg\(input\.callId, "ended", describeEnd\(ended\)\)/,
-    "The provider's end cause must be reported, or a call that never rang leaves no explanation");
+  assert.match(hook, /reportLeg\(input\.callId, legEventForSinchEnd\(ended\?\.details\?\.endCause\), describeEnd\(ended\)\)/,
+    "The provider's end cause must be reported, and a broken call as failed rather than unanswered");
   const dialerHook = await readFile(join(root, "src/hooks/use-dialer.ts"), "utf8");
   assert.match(dialerHook, /webphoneSessionId: payload\.webphoneSessionId \?\? webphone\.currentSessionId\(\)/,
     "The reservation must carry the webphone session, or a closed tab leaves the seller locked for fifteen minutes");
@@ -1332,4 +1333,19 @@ console.log(`Verified ${migrations.length} migrations, monotonic call/Resend pro
     "The webphone must reuse one microphone stream across calls");
   assert.match(hook, /return master!\.clone\(\);/, "Each call must get a clone, so ending a call does not close the shared microphone");
   assert.match(hook, /microphoneRef\.current\?\.release\(\);/, "The shared microphone must be released when the dialer is left");
+}
+
+// Den automatiska dialern får inte rusa genom listan när samtalen inte går ut,
+// och säljaren ska kunna pausa i varje läge.
+{
+  const workspace = await readFile(join(root, "src/components/list-dialer-workspace.tsx"), "utf8");
+  assert.match(workspace, /const automaticStopStatuses: Record<string, string> = \{\s*failed:/,
+    "A failed call must stop the automatic dialer instead of being booked as no answer");
+  assert.match(workspace, /quickOutcomesRef\.current >= QUICK_OUTCOME_LIMIT/,
+    "A run of instant automatic outcomes must pause the session");
+  assert.match(workspace, /\["loading", "dialing", "calling", "after_call"\]\.includes\(phase\) \? <button[^>]*onClick=\{requestPause\}/,
+    "Pause must be available while a call is being placed or is in progress");
+  const callsRoute = await readFile(join(root, "src/app/api/v1/calls/route.ts"), "utf8");
+  assert.doesNotMatch(callsRoute, /admin\.rpc\("finalize_dial"/,
+    "finalize_dial derives tenant and seller from the login; the service key has neither and the seat is never released");
 }

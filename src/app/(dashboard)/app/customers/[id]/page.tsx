@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, Ban, CalendarPlus, ClipboardList, FileSignature, Mail, MessageSquareText, Phone, PhoneOff, StickyNote, Users } from "@/components/icons";
 import { addActivity, addNote, archiveNote, blockCustomer, reportCustomerNix, scheduleCallback, updateCustomerDetails, updateNote } from "@/app/actions/customers";
 import { getAppContext } from "@/lib/auth";
+import { manualContractDispositions } from "@/lib/contracts/manual-dispositions";
 import { can, canCreateContractFromProduct } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/ui/page-header";
@@ -28,6 +29,7 @@ export default async function CustomerDetail({ params, searchParams }: { params:
   // som leder till ett nej är ett sämre besked än ingen knapp.
   const mayCreateContract = canCreateContractFromProduct(context.role, context.platformRole);
   const supabase = await createClient();
+  const contractDispositionKeys = (await manualContractDispositions(supabase, context.tenantId)).map((item) => item.key);
   const [{ data: customer }, { data: contacts }, { data: notes }, { data: activities }, { data: calls }, { data: contracts }, { data: deals }, { data: orders }, { data: lists }, { data: callerIdData }] = await Promise.all([
     ok(supabase.from("customers").select("*").eq("id", id).single()),
     ok(supabase.from("contact_people").select("id,full_name,title,role,email,phone_e164,alternate_phone_e164,is_primary,is_signatory,source_external_id").eq("customer_id", id).order("is_primary", { ascending: false }).order("full_name")),
@@ -146,7 +148,7 @@ export default async function CustomerDetail({ params, searchParams }: { params:
                   phone_e164: customer.phone_e164,
                   do_not_call: customer.do_not_call,
                 }]}
-                mayManageIntegrations={can(context.role, "integrations.manage")}
+                mayManageIntegrations={can(context.role, "integrations.manage")} contractDispositions={contractDispositionKeys}
                 initialCustomer={customer.id}
                 callbackActivityId={query.callback}
                 lockedToCustomer

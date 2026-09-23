@@ -1118,17 +1118,18 @@ if (legEvents.rows[0].total !== 2 || legEvents.rows[0].labelled !== 2) {
   throw new Error(`Client-reported leg events are not all labelled: ${JSON.stringify(legEvents.rows[0])}`);
 }
 
-// Ending an answered call frees the seat but must not write an outcome.
+// Ending an answered call frees the seat and closes the call. Leaving it
+// `answered` until DiCE arrived stranded the seller whenever DiCE never came:
+// no after-call form, no outcome. The provider's duration still lands after.
 const endedAnsweredLeg = (await db.query(`select public.record_webphone_leg_event($1,$2,'ended',now()) as result`, [legCall.callId, legSession.sessionId])).rows[0].result;
-if (endedAnsweredLeg.attemptReleased !== true || endedAnsweredLeg.advancedTo !== null) {
-  throw new Error(`Ending an answered leg wrote an outcome the provider owns: ${JSON.stringify(endedAnsweredLeg)}`);
+if (endedAnsweredLeg.attemptReleased !== true || endedAnsweredLeg.advancedTo !== 'completed') {
+  throw new Error(`Ending an answered leg did not close the call: ${JSON.stringify(endedAnsweredLeg)}`);
 }
-const answeredAfterEnd = await db.query(`select status,ended_at from public.calls where id=$1`, [legCall.callId]);
-if (answeredAfterEnd.rows[0].status !== 'answered' || answeredAfterEnd.rows[0].ended_at !== null) {
-  throw new Error(`A client ended an answered call instead of leaving it to the provider: ${JSON.stringify(answeredAfterEnd.rows[0])}`);
+const answeredAfterEnd = await db.query(`select status,ended_at,duration_seconds from public.calls where id=$1`, [legCall.callId]);
+if (answeredAfterEnd.rows[0].status !== 'completed' || answeredAfterEnd.rows[0].ended_at === null || answeredAfterEnd.rows[0].duration_seconds === null) {
+  throw new Error(`A client-ended answered call was not closed with a duration: ${JSON.stringify(answeredAfterEnd.rows[0])}`);
 }
-// And the provider's own outcome still lands afterwards, which is why the row
-// was left open.
+// And the provider's own duration still replaces the client's estimate.
 await db.exec(`update public.calls set status='completed',ended_at=now(),duration_seconds=94 where id='${legCall.callId}'`);
 const providerAfterLeg = await db.query(`select status,duration_seconds from public.calls where id=$1`, [legCall.callId]);
 if (providerAfterLeg.rows[0].status !== 'completed' || providerAfterLeg.rows[0].duration_seconds !== 94) {
@@ -3816,6 +3817,104 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
     throw new Error(`The provider's end reason did not reach the call after ICE matched: ${JSON.stringify({ dice, reason })}`);
   }
   console.log("ICE finds its dial attempt by seller and number before the client reports the call id, never across tenants, and the end reason then lands on the call.");
+}
+
+// Samtalsutfallen hamnar rätt (202609230003).
+{
+  const T = "00000000-0000-0000-0000-000000000001";
+  await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);`);
+  const newCall = async (status, extra = "") => (await db.query(`
+    insert into public.calls(tenant_id,customer_id,user_id,direction,from_number,to_number,status,provider,callback_token_hash,purpose${extra ? "," + extra.split("=")[0] : ""})
+    values($1,'00000000-0000-0000-0000-000000000021','00000000-0000-0000-0000-000000000002','outbound','+46401234567','+46702222288',$2,'sinch',gen_random_uuid()::text,'direct_marketing'${extra ? "," + extra.split("=")[1] : ""})
+    returning id`, [T, status])).rows[0].id;
+  const newAttempt = async (callId, status, externalId) => (await db.query(`
+    insert into public.dial_attempts(tenant_id,call_id,seller_user_id,provider,source_number_e164,destination_number_e164,client_request_id,idempotency_key,status,expires_at,external_call_id)
+    values($1,$2,'00000000-0000-0000-0000-000000000002','sinch','+46401234567','+46702222288',gen_random_uuid(),gen_random_uuid()::text,$3,now()+interval '5 minutes',$4)
+    returning id`, [T, callId, status, externalId])).rows[0].id;
+  const dice = (callid, reason, duration) => db.query(`select public.ingest_sinch_voice_event('dice',$1,$2,$3::jsonb,now()) as result`,
+    [callid, `dice:${callid}:${reason}`, JSON.stringify({ event: "dice", callid, reason, result: reason === "GENERALERROR" ? "FAILED" : "ANSWERED", duration })]);
+
+  // 1. Webbläsaren sa "inget svar", leverantören säger att samtalet bröts.
+  const brokeCall = await newCall("dial_requested");
+  await newAttempt(brokeCall, "failed", "outcome-broke");
+  await db.query(`update public.calls set status='unanswered',ended_at=now(),end_cause='webphone_leg_ended' where id=$1`, [brokeCall]);
+  // Utan leverantörens markering går det inte att ändra ett avslutat samtal.
+  await db.query(`update public.calls set status='failed' where id=$1`, [brokeCall]);
+  if ((await db.query(`select status from public.calls where id=$1`, [brokeCall])).rows[0].status !== "unanswered") {
+    throw new Error("A finished call changed status without the provider's authority.");
+  }
+  await dice("outcome-broke", "GENERALERROR", 0);
+  const broke = (await db.query(`select status,end_cause from public.calls where id=$1`, [brokeCall])).rows[0];
+  if (broke.status !== "failed" || broke.end_cause !== "generalerror") {
+    throw new Error(`The provider's failure did not replace the browser's "no answer": ${JSON.stringify(broke)}`);
+  }
+
+  // 2. Besvarat och avslutat i webbläsaren: leverantörens längd ersätter uppskattningen.
+  const talkCall = await newCall("dial_requested");
+  await newAttempt(talkCall, "failed", "outcome-talk");
+  await db.query(`update public.calls set status='answered',answered_at=now()-interval '12 seconds' where id=$1`, [talkCall]);
+  await db.query(`update public.calls set status='completed',ended_at=now(),duration_seconds=11,end_cause='webphone_leg_ended' where id=$1`, [talkCall]);
+  await dice("outcome-talk", "CALLEEHANGUP", 10);
+  const talk = (await db.query(`select status,duration_seconds,end_cause from public.calls where id=$1`, [talkCall])).rows[0];
+  if (talk.status !== "completed" || talk.duration_seconds !== 10 || talk.end_cause !== "calleehangup") {
+    throw new Error(`The provider's duration and cause did not replace the browser's: ${JSON.stringify(talk)}`);
+  }
+
+  // 3. En sen "accepterat" öppnar inte ett avslutat försök igen, och ett annat bolag kan inte röra det.
+  const lateCall = await newCall("unanswered");
+  const lateAttempt = await newAttempt(lateCall, "failed", null);
+  const late = (await db.query(`select public.finalize_dial($1,$2,'accepted','outcome-late') as result`, [lateCall, lateAttempt])).rows[0].result;
+  const lateRow = (await db.query(`select a.status,a.external_call_id,c.status as call_status from public.dial_attempts a join public.calls c on c.id=a.call_id where a.id=$1`, [lateAttempt])).rows[0];
+  if (late.alreadySettled !== true || lateRow.status !== "failed" || lateRow.call_status !== "unanswered" || lateRow.external_call_id !== "outcome-late") {
+    throw new Error(`A late "accepted" reopened a settled attempt: ${JSON.stringify({ late, lateRow })}`);
+  }
+  await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000050',false)`);
+  let foreignRefused = false;
+  try { await db.query(`select public.finalize_dial($1,$2,'failed')`, [lateCall, lateAttempt]); } catch (error) { foreignRefused = String(error).includes("dial_attempt_not_found"); }
+  await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
+  if (!foreignRefused) throw new Error("A seller in another tenant finalized this tenant's dial attempt.");
+
+  // 4. Nya listor har NIX-utfallet och avtalsbara utfall.
+  const seeded = (await db.query(`select key,contract_eligible from public.list_dispositions where list_id=$1 and key in ('nix_listed','interested','order','no_answer') order by key`, [runtimeListId])).rows;
+  const byKey = Object.fromEntries(seeded.map((row) => [row.key, row.contract_eligible]));
+  if (!("nix_listed" in byKey) || byKey.interested !== true || byKey.order !== true || byKey.no_answer !== false) {
+    throw new Error(`List outcomes lack NIX or contract eligibility: ${JSON.stringify(seeded)}`);
+  }
+
+  // 5. "Inte intresserad" från kundkortet stänger kundens öppna listplatser.
+  await db.query(`insert into public.customers(id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by)
+    values('00000000-0000-0000-0000-0000000000e1',$1,'company','prospect','Manuell Stänger','+46707770011',true,'legitimate_interest','00000000-0000-0000-0000-000000000002') on conflict(id) do nothing`, [T]);
+  await db.query(`select public.add_customers_to_list($1,array['00000000-0000-0000-0000-0000000000e1']::uuid[])`, [runtimeListId]);
+  const manualCall = (await db.query(`
+    insert into public.calls(tenant_id,customer_id,user_id,direction,from_number,to_number,status,provider,started_at,ended_at,callback_token_hash,purpose)
+    values($1,'00000000-0000-0000-0000-0000000000e1','00000000-0000-0000-0000-000000000002','outbound','+46401234567','+46707770011','completed','sinch',now()-interval '1 minute',now(),'manual-closes','direct_marketing')
+    returning id`, [T])).rows[0].id;
+  await db.query(`select public.complete_manual_call_work_v2($1,'not_interested',null,null,null)`, [manualCall]);
+  const member = (await db.query(`select state,outcome from public.customer_list_members where list_id=$1 and customer_id='00000000-0000-0000-0000-0000000000e1'`, [runtimeListId])).rows[0];
+  if (member.state !== "completed" || member.outcome !== "not_interested") {
+    throw new Error(`A manual "not interested" left the customer queued on a list: ${JSON.stringify(member)}`);
+  }
+
+  // 6. "Hoppa över" skjuter prospektet framåt så att nästa kommer.
+  await db.query(`update public.customer_lists set allow_skip=true where id=$1`, [runtimeListId]);
+  await db.query(`update public.activities set status='completed',claimed_by=null,claim_expires_at=null where tenant_id=$1 and type='callback' and status in ('open','in_progress')`, [T]);
+  await db.query(`insert into public.customers(id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by)
+    values('00000000-0000-0000-0000-0000000000e2',$1,'company','prospect','Hoppa Ett','+46707770021',true,'legitimate_interest','00000000-0000-0000-0000-000000000002'),
+          ('00000000-0000-0000-0000-0000000000e3',$1,'company','prospect','Hoppa Två','+46707770022',true,'legitimate_interest','00000000-0000-0000-0000-000000000002') on conflict(id) do nothing`, [T]);
+  await db.query(`select public.add_customers_to_list($1,array['00000000-0000-0000-0000-0000000000e2','00000000-0000-0000-0000-0000000000e3']::uuid[])`, [runtimeListId]);
+  await db.query(`update public.customer_list_members set state='completed' where list_id=$1 and customer_id not in ('00000000-0000-0000-0000-0000000000e2','00000000-0000-0000-0000-0000000000e3')`, [runtimeListId]);
+  await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000020',false)`);
+  const skipSession = String((await db.query(`select public.start_dialer_session($1) as id`, [runtimeListId])).rows[0].id);
+  const firstSkip = (await db.query(`select public.claim_next_list_member($1,$2) as claim`, [runtimeListId, skipSession])).rows[0].claim;
+  await db.query(`select public.release_list_member_claim($1,'skip')`, [skipSession]);
+  await db.query(`update public.dialer_sessions set state='active' where id=$1`, [skipSession]);
+  const secondSkip = (await db.query(`select public.claim_next_list_member($1,$2) as claim`, [runtimeListId, skipSession])).rows[0].claim;
+  await db.query(`select public.release_list_member_claim($1,'end')`, [skipSession]);
+  await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false)`);
+  if (!firstSkip.memberId || secondSkip.memberId === firstSkip.memberId) {
+    throw new Error(`Skipping returned the same prospect: ${JSON.stringify({ first: firstSkip.memberId, second: secondSkip.memberId })}`);
+  }
+  console.log("Call outcomes land correctly: the provider's failure replaces a browser 'no answer', its duration replaces the estimate, a late report cannot reopen a seat or cross tenants, new lists carry NIX and contract outcomes, a manual 'not interested' closes list places, and skip moves on.");
 }
 
 await db.close();
