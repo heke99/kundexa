@@ -67,3 +67,25 @@ export async function contractDeliveryBlocker(
   }
   return null;
 }
+
+/**
+ * Hur kunden får svara: via länken (`web_acceptance`) och/eller med "JA <kod>"
+ * i ett SMS (`sms_acceptance`).
+ *
+ * Flaggorna fanns men lästes aldrig (FAILURE-0126): SMS-svar godtogs för ett
+ * företag som stängt av dem, och webbformuläret visades för ett som stängt av
+ * webben. Ett läsfel kastas vidare av samma skäl som ovan.
+ */
+export type ContractAcceptanceModes = { web: boolean; sms: boolean };
+
+export async function contractAcceptanceModes(admin: SupabaseClient, tenantId: string): Promise<ContractAcceptanceModes> {
+  const { data, error } = await admin.from("tenant_features")
+    .select("feature_key,enabled")
+    .eq("tenant_id", tenantId)
+    .in("feature_key", ["web_acceptance", "sms_acceptance"]);
+  if (error) throw new Error(`contract_acceptance_feature_read_failed:${error.code ?? "unknown"}`);
+  const enabled = new Map((data ?? []).map((row) => [String(row.feature_key), row.enabled === true]));
+  return { web: enabled.get("web_acceptance") === true, sms: enabled.get("sms_acceptance") === true };
+}
+
+export const NO_ANSWER_PATH_MESSAGE = "Kunden skulle inte kunna svara: varken godkännande via länken eller via SMS är påslaget för företaget på den här kanalen. En administratör slår på det under Integrationer.";

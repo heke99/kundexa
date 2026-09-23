@@ -57,8 +57,22 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   const eventType = String(payload.type ?? "unknown");
   const providerEmailId = String(payload.data?.email_id ?? payload.data?.id ?? "");
   const safeHeaders = { "svix-id": svixId, "svix-timestamp": svixTimestamp, "svix-signature-present": true };
+
+  // Alla företag skickar genom Kundexas konto (202609220002). Resend levererar
+  // då varje händelse till varje registrerad ändpunkt, med samma `svix-id`.
+  // Att binda händelsen till ändpunktens företag gjorde att den första
+  // ändpunkten märkte ett annat företags mejl "unmatched", och den andra fick 500
+  // på sin replay-sökning i all oändlighet. Mejlets egen rad avgör företaget;
+  // signaturen ovan har redan visat att händelsen kommer från kontot.
+  const { data: email, error: emailError } = providerEmailId
+    ? await admin.from("email_messages")
+      .select("id,tenant_id,contract_id,customer_id,status")
+      .eq("provider_message_id", providerEmailId).maybeSingle()
+    : { data: null, error: null };
+  const tenantId = email?.tenant_id ?? integration.tenant_id;
+
   const { data: insertedEvent, error: eventError } = await admin.from("provider_webhook_events").upsert({
-    tenant_id: integration.tenant_id, provider: "resend", event_type: eventType, provider_event_id: svixId,
+    tenant_id: tenantId, provider: "resend", event_type: eventType, provider_event_id: svixId,
     route_key: tokenHash, headers: toJson(safeHeaders), payload: toJson(payload), status: "received",
   }, { onConflict: "provider,provider_event_id", ignoreDuplicates: true }).select("id,status").maybeSingle();
   if (eventError) return Response.json({ error: "webhook_event_store_failed" }, { status: 500 });
@@ -67,7 +81,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   if (!event) {
     const { data: existingEvent, error: existingEventError } = await admin.from("provider_webhook_events")
       .select("id,status")
-      .eq("tenant_id", integration.tenant_id)
       .eq("provider", "resend")
       .eq("provider_event_id", svixId)
       .maybeSingle();
@@ -85,9 +98,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
     return Response.json({ ok: true, ignored: true });
   }
 
-  const { data: email, error: emailError } = await admin.from("email_messages")
-    .select("id,tenant_id,contract_id,customer_id,status")
-    .eq("tenant_id", integration.tenant_id).eq("provider_message_id", providerEmailId).maybeSingle();
   // "unmatched" is a verdict, and a failed read cannot reach one. Marking the
   // event unmatched on a database error closed it permanently against a message
   // that does exist.
@@ -103,7 +113,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   const occurredAt = payload.created_at && Number.isFinite(new Date(payload.created_at).getTime()) ? payload.created_at : new Date().toISOString();
   const failureMessage = String(payload.data?.bounce?.message ?? payload.data?.reason ?? eventType).slice(0, 500);
   const projection = await admin.rpc("apply_resend_delivery_event", {
-    p_tenant_id: integration.tenant_id,
+    p_tenant_id: tenantId,
     p_email_message_id: email.id,
     p_provider_event_id: svixId,
     p_provider_event_type: eventType,

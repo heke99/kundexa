@@ -494,6 +494,21 @@ assert.match(voiceWebhook, /status: 503/, "An unconfigured webhook must ask for 
 assert.match(voiceWebhook, /status: 403/, "An unverifiable event must be refused");
 assert.doesNotMatch(voiceWebhook, /reason: verification\.reason \}\)[\s\S]{0,120}NextResponse\.json/, "The rejection reason must be logged, not handed to the sender");
 assert.match(voiceWebhook, /ingest_sinch_voice_event/, "Voice lifecycle projection must use the atomic database reducer");
+// PR 3 (2026-09-24): avtalsutskick och kundsvar.
+{
+  const deliveryEmail = await readFile(join(root, "src/lib/email/templates/contract-delivery.ts"), "utf8");
+  assert.match(deliveryEmail, /acceptanceCode/, "A contract email must carry the acceptance code when one is required (FAILURE-0119)");
+  const smsInbound = await readFile(join(root, "src/app/api/webhooks/sms/inbound/route.ts"), "utf8");
+  assert.match(smsInbound, /if \(smsAcceptance && recipients\?\.length\)/, "SMS replies may only decide a contract when sms_acceptance is on (FAILURE-0126)");
+  const acceptPage = await readFile(join(root, "src/app/accept/[token]/page.tsx"), "utf8");
+  assert.match(acceptPage, /\["accepted_via_web", "accepted_via_sms"\]\.includes\(request\.status\)/, "A customer who answered by SMS must not see an active form (FAILURE-0121)");
+  const adminActions = await readFile(join(root, "src/app/actions/admin.ts"), "utf8");
+  assert.doesNotMatch(adminActions, /status: success \? "active" : "error"/, "A failed Resend test must not switch the platform account off for the tenant (FAILURE-0124)");
+  const resendRoute = await readFile(join(root, "src/app/api/webhooks/resend/[token]/route.ts"), "utf8");
+  assert.doesNotMatch(resendRoute, /\.eq\("tenant_id", integration\.tenant_id\)\.eq\("provider_message_id"/, "With one shared account the email row, not the endpoint, decides the tenant");
+  const smsAdapter = await readFile(join(root, "src/lib/messaging/provider.ts"), "utf8");
+  assert.match(smsAdapter, /from: sinchMsisdnToE164\(from\)/, "Inbound SMS numbers must be normalised to E.164");
+}
 const resendWebhookProjection = await readFile(join(root, "src/app/api/webhooks/resend/[token]/route.ts"), "utf8");
 assert.match(resendWebhookProjection, /apply_resend_delivery_event/, "Resend webhook delivery state must use the monotonic reducer");
 const signingProvider = await readFile(join(root, "src/lib/signing/provider.ts"), "utf8");

@@ -244,12 +244,17 @@ async function processSms(job: Job) {
   const sentAt = submission.sentAt;
   await supabase.from("sms_messages").update({
     provider_message_id: submission.providerMessageId,
-    status: submission.status,
     sent_at: sentAt,
     parts: submission.parts,
     cost: submission.cost,
   }).eq("id", sms.id);
-  await supabase.from("contract_deliveries").update({ status: "sent", provider_status: "submitted", sent_at: sentAt }).eq("sms_message_id", sms.id);
+  // Statusen skrivs bara om leveransrapporten inte redan hunnit före. Annars
+  // skrev den här raden tillbaka "levererat" eller "misslyckat" till "skickat",
+  // samma fel som e-postens väg rättades för.
+  await supabase.from("sms_messages").update({ status: submission.status })
+    .eq("id", sms.id).in("status", ["queued", "submitting", "created"]);
+  await supabase.from("contract_deliveries").update({ status: "sent", provider_status: "submitted", sent_at: sentAt })
+    .eq("sms_message_id", sms.id).in("status", ["draft", "queued", "submitting", "created"]);
   await supabase.from("contract_reminders").update({ status: "sent", sent_at: sentAt }).eq("tenant_id", job.tenant_id).eq("sms_message_id", sms.id).in("status", ["queued", "scheduled"]);
 }
 
@@ -379,7 +384,7 @@ async function processContractReminder(job: Job) {
   if (error || !reminder) throw new Error("reminder_not_found");
   if (["sent", "cancelled", "failed", "skipped"].includes(reminder.status)) return;
   const [{ data: request }, { data: contract }, { data: recipient }, { data: policy }] = await Promise.all([
-    supabase.from("contract_acceptance_requests").select("id,status,expires_at,public_token_ciphertext,canonical_document_id,canonical_document_sha256,contract_version_id").eq("tenant_id", job.tenant_id).eq("id", reminder.acceptance_request_id).single(),
+    supabase.from("contract_acceptance_requests").select("id,status,expires_at,public_token_ciphertext,canonical_document_id,canonical_document_sha256,contract_version_id,require_code,acceptance_code").eq("tenant_id", job.tenant_id).eq("id", reminder.acceptance_request_id).single(),
     supabase.from("contracts").select("id,contract_number,title,customer_id,first_sent_at").eq("tenant_id", job.tenant_id).eq("id", reminder.contract_id).single(),
     supabase.from("contract_recipients").select("id,full_name,email,phone_e164").eq("tenant_id", job.tenant_id).eq("id", reminder.recipient_id).single(),
     supabase.from("contract_reminder_policies").select("timezone,quiet_hours_start,quiet_hours_end").eq("tenant_id", job.tenant_id).maybeSingle(),
@@ -400,6 +405,12 @@ async function processContractReminder(job: Job) {
   const expiresLabel = new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeStyle: "short", timeZone: timezone }).format(new Date(request.expires_at));
   const firstSentLabel = contract.first_sent_at ? new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeStyle: "short", timeZone: timezone }).format(new Date(contract.first_sent_at)) : "tidigare";
   const tenant = await getTenant(job.tenant_id);
+  // Kunden ska se bolaget som ställde ut avtalet, i e-post och SMS lika. Tidigare
+  // fick bara e-postens rubrik det namnet; SMS:et och brödtexten tog koncernens.
+  const issuerLegalName = await contractIssuerName(job.tenant_id, contract.id, tenant.legal_name);
+  // Kräver begäran en kod ska påminnelsen bära den, annars kan kunden inte svara
+  // via länken i påminnelsen (FAILURE-0119).
+  const acceptanceCode = request.require_code && request.acceptance_code ? String(request.acceptance_code) : null;
   const deliveryKind = reminder.kind === "automatic" ? "automatic_reminder" : "manual_reminder";
   const baseKey = reminder.kind === "automatic" ? `contract-reminder/${request.id}/${reminder.sequence_number}` : `contract-manual-reminder/${reminder.id}`;
   const channel = String(reminder.channel);
@@ -421,10 +432,9 @@ async function processContractReminder(job: Job) {
       // The header must name the legal entity that issued this contract, not the
       // tenant it belongs to. A tenant with several companies otherwise reminds
       // the customer in the wrong company's name.
-      const issuerLegalName = await contractIssuerName(job.tenant_id, contract.id, tenant.legal_name);
       const personal = reminder.personal_message ? `<p style="font-size:15px;line-height:1.65">${escapeHtml(String(reminder.personal_message))}</p>` : "";
-      const html = `<!doctype html><html><body style="margin:0;background:#f3f6f5;font-family:Arial,sans-serif;color:#17202a"><table role="presentation" width="100%"><tr><td align="center" style="padding:28px 12px"><table role="presentation" width="100%" style="max-width:640px;background:#fff;border:1px solid #dfe7e5"><tr><td style="padding:26px 30px;background:#102b26;color:#fff"><strong>${escapeHtml(issuerLegalName)}</strong></td></tr><tr><td style="padding:32px 30px"><h1>Påminnelse om avtal</h1><p>Hej ${escapeHtml(recipient.full_name)},</p><p>Avtal <strong>${escapeHtml(contract.contract_number)}</strong> väntar på ditt besked.</p>${personal}<p style="margin:28px 0"><a href="${escapeHtml(acceptUrl)}" style="background:#0d7d65;color:#fff;text-decoration:none;padding:13px 20px;border-radius:9px;font-weight:bold">Öppna avtalet</a></p><p>Ursprungligt utskick: ${escapeHtml(firstSentLabel)}<br>Sista svarsdatum: ${escapeHtml(expiresLabel)}</p><p style="word-break:break-all">${escapeHtml(acceptUrl)}</p></td></tr></table></td></tr></table></body></html>`;
-      const text = `Hej ${recipient.full_name},\n\nPåminnelse om avtal ${contract.contract_number} – ${contract.title}.\n${acceptUrl}\nSista svarsdatum: ${expiresLabel}.`;
+      const html = `<!doctype html><html><body style="margin:0;background:#f3f6f5;font-family:Arial,sans-serif;color:#17202a"><table role="presentation" width="100%"><tr><td align="center" style="padding:28px 12px"><table role="presentation" width="100%" style="max-width:640px;background:#fff;border:1px solid #dfe7e5"><tr><td style="padding:26px 30px;background:#102b26;color:#fff"><strong>${escapeHtml(issuerLegalName)}</strong></td></tr><tr><td style="padding:32px 30px"><h1>Påminnelse om avtal</h1><p>Hej ${escapeHtml(recipient.full_name)},</p><p>Avtal <strong>${escapeHtml(contract.contract_number)}</strong> väntar på ditt besked.</p>${personal}<p style="margin:28px 0"><a href="${escapeHtml(acceptUrl)}" style="background:#0d7d65;color:#fff;text-decoration:none;padding:13px 20px;border-radius:9px;font-weight:bold">Öppna avtalet</a></p>${acceptanceCode ? `<p>Din acceptanskod: <strong style="font-size:18px;letter-spacing:.12em">${escapeHtml(acceptanceCode)}</strong></p>` : ""}<p>Ursprungligt utskick: ${escapeHtml(firstSentLabel)}<br>Sista svarsdatum: ${escapeHtml(expiresLabel)}</p><p style="word-break:break-all">${escapeHtml(acceptUrl)}</p></td></tr></table></td></tr></table></body></html>`;
+      const text = `Hej ${recipient.full_name},\n\nPåminnelse om avtal ${contract.contract_number} – ${contract.title}.\n${acceptUrl}\n${acceptanceCode ? `Din acceptanskod: ${acceptanceCode}\n` : ""}Sista svarsdatum: ${expiresLabel}.\n\n${issuerLegalName}`;
       const idempotencyKey = `${baseKey}/email`;
       const { data: email, error: emailError } = await supabase.from("email_messages").upsert({
         tenant_id: job.tenant_id, customer_id: contract.customer_id, contract_id: contract.id, direction: "outbound",
@@ -456,7 +466,7 @@ async function processContractReminder(job: Job) {
       if (numberError) throw new Error(`reminder_sms_number_lookup_failed:${numberError.code ?? "unknown"}`);
       if (number) {
         const idempotencyKey = `${baseKey}/sms`;
-        const body = `Påminnelse om avtal ${contract.contract_number} från ${tenant.legal_name}. Granska: ${acceptUrl}. Giltigt till ${expiresLabel}.`;
+        const body = `Påminnelse om avtal ${contract.contract_number} från ${issuerLegalName}. Granska: ${acceptUrl}. Giltigt till ${expiresLabel}.`;
         const { data: sms, error: smsError } = await supabase.from("sms_messages").upsert({ tenant_id: job.tenant_id, customer_id: contract.customer_id, contract_id: contract.id, direction: "outbound", from_number: number.number_e164, to_number: recipient.phone_e164, body, status: "queued", idempotency_key: idempotencyKey, purpose: "contract_reminder" }, { onConflict: "tenant_id,idempotency_key" }).select("id").single();
         if (smsError || !sms) throw new Error(smsError?.message ?? "reminder_sms_create_failed");
         smsMessageId = sms.id;
@@ -678,7 +688,7 @@ async function processContractConfirmation(job: Job) {
   if (!acceptedDocument) throw new Error("confirmation_waiting_for_signed_document");
   const acceptedAt = acceptance?.accepted_at ?? request.accepted_at ?? new Date().toISOString();
   const acceptedLabel = new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeStyle: "short", timeZone: "Europe/Stockholm" }).format(new Date(acceptedAt));
-  const text = `Hej ${recipient.full_name},\n\nDitt besked för avtal ${contract.contract_number} (${contract.title}) hos ${tenant.legal_name} registrerades ${acceptedLabel}. Den accepterade avtalskopian finns bifogad. Detta är en dokumenterad acceptans.\n\n${tenant.legal_name}`;
+  const text = `Hej ${recipient.full_name},\n\nDitt besked för avtal ${contract.contract_number} (${contract.title}) hos ${issuerLegalName} registrerades ${acceptedLabel}. Den accepterade avtalskopian finns bifogad. Detta är en dokumenterad acceptans.\n\n${issuerLegalName}`;
   const html = `<!doctype html><html><body style="margin:0;background:#f3f6f5;font-family:Arial,sans-serif;color:#17202a"><table role="presentation" width="100%"><tr><td align="center" style="padding:28px 12px"><table role="presentation" width="100%" style="max-width:640px;background:#fff;border:1px solid #dfe7e5"><tr><td style="padding:26px 30px;background:#102b26;color:#fff"><strong>${escapeHtml(issuerLegalName)}</strong></td></tr><tr><td style="padding:32px 30px"><h1>Din acceptans är registrerad</h1><p>Hej ${escapeHtml(recipient.full_name)},</p><p>Ditt besked för avtal <strong>${escapeHtml(contract.contract_number)}</strong> registrerades ${escapeHtml(acceptedLabel)}.</p><p>Den accepterade avtalskopian finns bifogad. Detta är en dokumenterad acceptans.</p></td></tr></table></td></tr></table></body></html>`;
 
   if (recipient.email) {
@@ -707,7 +717,7 @@ async function processContractConfirmation(job: Job) {
     if (numberError) throw new Error(`confirmation_sms_number_lookup_failed:${numberError.code ?? "unknown"}`);
     if (number) {
       const idempotencyKey = `contract-confirmation/${acceptanceId || request.id}/sms`;
-      const smsBody = `Bekräftelse: ditt besked för avtal ${contract.contract_number} hos ${tenant.legal_name} registrerades ${acceptedLabel}.`;
+      const smsBody = `Bekräftelse: ditt besked för avtal ${contract.contract_number} hos ${issuerLegalName} registrerades ${acceptedLabel}.`;
       const { data: sms, error: smsError } = await supabase.from("sms_messages").upsert({ tenant_id: job.tenant_id, customer_id: contract.customer_id, contract_id: request.contract_id, direction: "outbound", from_number: number.number_e164, to_number: recipient.phone_e164, body: smsBody, status: "queued", idempotency_key: idempotencyKey, purpose: "contract_confirmation" }, { onConflict: "tenant_id,idempotency_key" }).select("id").single();
       if (smsError || !sms) throw smsError ?? new Error("confirmation_sms_create_failed");
       await supabase.from("contract_deliveries").upsert({ tenant_id: job.tenant_id, contract_id: request.contract_id, contract_version_id: request.contract_version_id, recipient_id: recipient.id, acceptance_request_id: request.id, channel: "sms", status: "queued", sms_message_id: sms.id, delivery_kind: "acceptance_confirmation", attempt_number: 1, canonical_document_id: acceptedDocument.id, canonical_document_sha256: acceptedDocument.sha256, idempotency_key: idempotencyKey, scheduled_at: new Date().toISOString() }, { onConflict: "tenant_id,idempotency_key" });
@@ -750,7 +760,7 @@ async function processSignedContractConfirmation(job: Job) {
 
 Avtal ${contract.contract_number} (${contract.title}) hos ${issuerLegalName} är fullständigt signerat sedan ${signedLabel}. Det slutligt signerade dokumentet finns bifogat.
 
-${tenant.legal_name}`;
+${issuerLegalName}`;
     const html = `<!doctype html><html><body style="margin:0;background:#f3f6f5;font-family:Arial,sans-serif;color:#17202a"><table role="presentation" width="100%"><tr><td align="center" style="padding:28px 12px"><table role="presentation" width="100%" style="max-width:640px;background:#fff;border:1px solid #dfe7e5"><tr><td style="padding:26px 30px;background:#102b26;color:#fff"><strong>${escapeHtml(issuerLegalName)}</strong></td></tr><tr><td style="padding:32px 30px"><h1>Avtalet är fullständigt signerat</h1><p>Hej ${escapeHtml(recipient.full_name)},</p><p>Avtal <strong>${escapeHtml(contract.contract_number)}</strong> är fullständigt signerat sedan ${escapeHtml(signedLabel)}.</p><p>Det slutligt signerade dokumentet finns bifogat.</p></td></tr></table></td></tr></table></body></html>`;
     const { data: email, error: emailError } = await supabase.from("email_messages").upsert({
       tenant_id: job.tenant_id,

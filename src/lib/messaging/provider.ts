@@ -59,6 +59,15 @@ function text(payload: JsonObject, ...keys: string[]) {
   return null;
 }
 
+// XMS skickar nummer som siffror utan plus ("46701234567"), precis som röstens
+// ICE. Kundexa lagrar och matchar E.164 med plus, så ett obearbetat nummer hittade
+// aldrig kunden, avtalsmottagaren eller vårt eget nummer. Siffror i E.164-längd
+// får sitt plus; allt annat (kortnummer, alfanumeriskt) lämnas som det är.
+export function sinchMsisdnToE164(value: string): string {
+  const trimmed = value.trim();
+  return /^[1-9][0-9]{7,14}$/.test(trimmed) ? `+${trimmed}` : trimmed;
+}
+
 /** Sinch XMS. Hela leverantörens vokabulär slutar här. */
 const sinchAdapter: SmsWebhookAdapter = {
   id: "sinch",
@@ -75,8 +84,8 @@ const sinchAdapter: SmsWebhookAdapter = {
     if (!providerMessageId || !from || !to) return null;
     return {
       providerMessageId,
-      from,
-      to,
+      from: sinchMsisdnToE164(from),
+      to: sinchMsisdnToE164(to),
       body: typeof payload.body === "string" ? payload.body : "",
       receivedAt: text(payload, "received_at") ?? new Date().toISOString(),
       payload,

@@ -29,6 +29,7 @@ const deliveryLabels: Record<string, string> = {
   failed: "Misslyckades", bounced: "Studsade", complained: "Markerat som skräp", suppressed: "Spärrad adress",
   cancelled: "Avbrutet", dead_letter: "Kräver åtgärd", pending: "Väntar",
   accepted_via_web: "Godkänt via länk", accepted_via_sms: "Godkänt via SMS",
+  manual_review_required: "Oklart svar", expired: "Utgånget", superseded: "Ersatt",
 };
 
 const eventLabels: Record<string, string> = {
@@ -49,6 +50,28 @@ const eventLabels: Record<string, string> = {
   "email.delivery_delayed": "E-posten försenad",
   "sms.delivered": "SMS levererat",
   "sms.failed": "SMS kunde inte levereras",
+  "contract.reply_needs_review": "Kunden svarade något oklart – kontakta kunden",
+  "contract.acceptance_manual_review": "Svaret behöver granskas",
+  "contract.acceptance_recorded": "Kundens besked registrerades",
+  "contract.accepted": "Kunden godkände",
+  "contract.signed": "Avtalet är fullständigt signerat",
+  "contract.activated": "Avtalet aktiverades",
+  "contract.commercial_terms_bound": "Villkor och ägare sparades",
+  "contract.template_bound": "Avtalstexten valdes",
+  "contract.source_call_linked": "Källsamtalet kopplades",
+  "source_call.linked": "Källsamtalet kopplades",
+  "contract.expiry_extended": "Sista svarsdag förlängdes",
+  "contract.api_expiry_extended": "Sista svarsdag förlängdes via API",
+  "contract.api_created": "Avtalet skapades via API",
+  "contract.api_sent": "Avtalet skickades via API",
+  "contract.reminder_scheduled": "Påminnelse schemalades",
+  "contract.api_reminder_scheduled": "Påminnelse schemalades via API",
+  "contract.reminder_queued": "Påminnelse köades",
+  "contract.reminders_cancelled": "Påminnelser stoppades",
+  "contract.confirmation_queued": "Bekräftelse till kunden köades",
+  "document.canonical_generated": "Avtalets PDF skapades",
+  "document.uploaded": "Dokument laddades upp",
+  "evidence.completed": "Bevispaketet är klart",
 };
 
 export function contractStatusLabel(status: string | null | undefined) {

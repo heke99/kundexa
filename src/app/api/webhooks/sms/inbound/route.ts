@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { authenticateSmsNumber, smsWebhookAdapter, verifySmsCallbackNetwork } from "@/lib/messaging/provider";
 import { decideAcceptance, normalizeAcceptanceText } from "@/lib/domain/acceptance";
 import { isSmsOptOut } from "@/lib/domain/sms-opt-out";
+import { contractAcceptanceModes } from "@/lib/contracts/delivery-readiness";
 
 export async function POST(request: Request) {
   const adapter = smsWebhookAdapter();
@@ -111,7 +112,10 @@ export async function POST(request: Request) {
       .eq("phone_e164", from);
     if (recipientsError) throw recipientsError;
 
-    if (recipients?.length) {
+    // SMS-svar räknas bara när företaget tar emot dem (FAILURE-0126). Annars
+    // sparas svaret som ett vanligt inkommande SMS och kunden svarar via länken.
+    const { sms: smsAcceptance } = await contractAcceptanceModes(admin, number.tenant_id);
+    if (smsAcceptance && recipients?.length) {
       const { data: acceptanceRequests, error: acceptanceRequestsError } = await admin.from("contract_acceptance_requests")
         .select("id,tenant_id,contract_id,contract_version_id,recipient_id,acceptance_code,allowed_phrases,decline_phrases,require_code,call_ended_at,contracts(audience)")
         .eq("tenant_id", number.tenant_id)

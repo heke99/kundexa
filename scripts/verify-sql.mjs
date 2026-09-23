@@ -2492,6 +2492,17 @@ if (smsRequest.rows[0].require_code !== true || smsRequest.rows[0].method !== 's
 const smsRequestId = String(smsRequest.rows[0].id);
 
 await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+// FAILURE-0120: ett oklart svar ("Vad kostar det?") är en händelse för säljaren,
+// inte kundens besked. Begäran står kvar öppen, så att ett riktigt "JA <kod>"
+// efteråt fortfarande avgör avtalet.
+const unclear = (await db.query(`select public.record_contract_acceptance_v3($1,'sms','manual_review_required','Vad kostar det?','VAD KOSTAR DET',null,null,null,null,'provider-0','SMS-svar','{}'::jsonb) as id`, [smsRequestId])).rows[0].id;
+const afterUnclear = (await db.query(`select r.status,
+    (select count(*)::int from public.contract_acceptances a where a.request_id=r.id) acceptances,
+    (select count(*)::int from public.contract_events e where e.contract_id=r.contract_id and e.event_type='contract.reply_needs_review') events
+  from public.contract_acceptance_requests r where r.id=$1`, [smsRequestId])).rows[0];
+if (unclear !== null || afterUnclear.status !== "pending" || afterUnclear.acceptances !== 0 || afterUnclear.events !== 1) {
+  throw new Error(`An unclear SMS reply locked the contract instead of leaving it open: ${JSON.stringify({ unclear, afterUnclear })}`);
+}
 let wrongCodeRefused = false;
 try {
   await db.query(`select public.record_contract_acceptance_v3($1,'sms','accepted_via_sms','JA X999','JA X999','JA','X999',null,null,'provider-1','SMS-acceptans','{}'::jsonb)`, [smsRequestId]);
@@ -2523,6 +2534,7 @@ if (smsState.stored_code !== '[verified]') {
   throw new Error(`The acceptance code was stored verbatim instead of as a verification marker: ${JSON.stringify(smsState)}`);
 }
 console.log("Executed SMS signing: the code from the message is required, a wrong or missing code is refused, a lower-case reply of the right code signs, and the code itself is never stored.");
+console.log("An unclear SMS reply becomes an event for the seller and leaves the request open; the real answer afterwards still decides the contract.");
 
 // Och uppringningen själv, hela vägen: reservera, rapportera att leverantören
 // tog emot anropet, avsluta samtalet med efterarbete. Reservationen bär hela
