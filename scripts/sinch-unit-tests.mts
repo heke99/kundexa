@@ -235,8 +235,8 @@ Deno.test("ICE from the webphone to a phone number connects to that number with 
   });
   assert.equal(svaml?.action.name, "connectPstn");
   assert.equal(svaml?.action.cli, "+46701234567");
-  // Numret utelämnas: Sinch kopplar då det nummer klienten ringde.
-  assert.equal("number" in (svaml?.action ?? {}), false);
+  // Numret anges uttryckligen, som i varje exempel i Sinchs referens.
+  assert.equal(svaml?.action.number, "+46709876543");
 });
 
 Deno.test("ICE for an inbound PSTN call is hung up, never looped back to the called number", () => {

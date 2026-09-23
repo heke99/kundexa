@@ -7,9 +7,11 @@
  * message is played, and the call is disconnected." Så fort callback-adressen
  * var registrerad hade varje utgående samtal brutits innan det ringde.
  *
- * - ICE från webbtelefonen till ett telefonnummer: `connectPstn`. Numret utelämnas
- *   med flit ("If not specified, the extension the client called is used"), och
- *   A-numret är det klienten redan satt, om det är giltigt.
+ * - ICE från webbtelefonen till ett telefonnummer: `connectPstn` till numret ICE
+ *   själv anger, och A-numret klienten satt, om det är giltigt. Numret utelämnades
+ *   först ("If not specified, the extension the client called is used"), men
+ *   samtalen bröts med GENERALERROR direkt efter svaret, och varje exempel i
+ *   Sinchs referens anger `number`. Nu anges det.
  * - ICE för allt annat (inkommande samtal till våra nummer, app-till-app): `hangup`.
  *   Inkommande samtal stöds inte, och att koppla ett inkommande samtal till det
  *   nummer som ringdes hade skickat det i en slinga.
@@ -43,6 +45,7 @@ export function sinchSvamlFor(event: string, payload: Payload): SinchSvaml | nul
         instructions: [],
         action: {
           name: "connectPstn",
+          number: endpoint,
           ...(cli ? { cli } : {}),
           // Ett säljsamtal på två timmar är ett samtal någon glömt att lägga på.
           // Inget mer: varje valfritt fält är ett fält Sinch kan avvisa, och

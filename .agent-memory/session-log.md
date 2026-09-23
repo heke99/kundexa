@@ -326,3 +326,10 @@ Migration 202609230002 (tillämpad i prod): ICE utan träff på `external_call_i
 försök med samma säljare (`user`) och nummer (`to.endpoint`) från senaste 2 min och får sitt id.
 PGlite-test inkl. negativt tvåtenanttest och DiCE-orsak som når samtalet. ACL oförändrad
 (service_role). Ingen DiCE har kommit för något webbläsarsamtal hittills.
+
+## 2026-09-23 12:00 — Webbläsarsamtal efter PR #40: fortfarande GENERALERROR
+
+Sinch-logg: Incoming MXP call → Callback sent → Received partner callback response → App Call ended
+GENERALERROR (≈1 s). ICE matchades nu (`processed`, 202609230002 fungerar). Ingen DiCE.
+Åtgärd: `connectPstn` anger nu `number` uttryckligen (= ICE `to.endpoint`), som varje exempel i
+Sinchs referens. Om det inte hjälper: supportärende hos Sinch med call-id bad86a0a-2025-448e-9f3c-bf90e92305b8.
