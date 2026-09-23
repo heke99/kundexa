@@ -3,6 +3,7 @@ import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { Clock3, ListFilter, PhoneCall, Plus } from "@/components/icons";
 import { createManualProspect } from "@/app/actions/customers";
+import { claimCallback } from "@/app/actions/callbacks";
 import { createClient } from "@/lib/supabase/server";
 import { getAppContext } from "@/lib/auth";
 import { manualContractDispositions } from "@/lib/contracts/manual-dispositions";
@@ -23,7 +24,7 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
       ? supabase.from("customers").select("id,display_name,phone_e164,do_not_call").eq("id", params.customer).not("phone_e164", "is", null).is("deleted_at", null).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
     ok(supabase.from("customer_lists").select("id,name,dialing_mode,priority,status").eq("status", "active").order("priority", { ascending: false })),
-    ok(supabase.from("activities").select("id,customer_id,list_id,callback_scope,due_at,title,customers(display_name,phone_e164)").eq("type", "callback").eq("status", "open").lte("due_at", now).order("due_at").limit(20)),
+    ok(supabase.from("activities").select("id,customer_id,list_id,callback_scope,assigned_user_id,due_at,title,customers(display_name,phone_e164)").eq("type", "callback").eq("status", "open").lte("due_at", now).order("due_at").limit(20)),
     ok(supabase.from("phone_numbers").select("id,number_e164").eq("status","active").eq("supports_voice",true).order("number_e164")),
   ]);
   return <>
@@ -52,8 +53,14 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
         </CardContent></Card>
         <Card><CardHeader><h2><Clock3 size={17} /> Förfallna återkomster</h2><Badge className={callbacks?.length ? "badge-warning" : ""}>{callbacks?.length ?? 0}</Badge></CardHeader><CardContent>{callbacks?.map((callback) => {
           const customer = Array.isArray(callback.customers) ? callback.customers[0] : callback.customers;
-          const href = callback.list_id ? `/app/dialer/lists/${callback.list_id}` : `/app/dialer?customer=${callback.customer_id}`;
-          return <Link className="activity-line" href={href} key={callback.id}><span className="activity-dot"><PhoneCall size={14} /></span><div><strong>{customer?.display_name ?? callback.title}</strong><p>{callback.callback_scope === "global" ? "Global återkomst" : "Personlig återkomst"} · {customer?.phone_e164 ?? "telefon saknas"}</p></div><time>{formatDate(callback.due_at)}</time></Link>;
+          const line = <><span className="activity-dot"><PhoneCall size={14} /></span><div><strong>{customer?.display_name ?? callback.title}</strong><p>{callback.callback_scope === "global" ? "Global återkomst" : "Personlig återkomst"} · {customer?.phone_e164 ?? "telefon saknas"}</p></div><time>{formatDate(callback.due_at)}</time></>;
+          // En global återkomst tas först, så att två säljare inte ringer samma kund.
+          // Samtalet kopplas sedan till återkomsten, som annars stod kvar som förfallen.
+          if (!callback.list_id && callback.assigned_user_id !== context.userId) {
+            return <form action={claimCallback} key={callback.id}><input type="hidden" name="callback_id" value={callback.id} /><button className="activity-line activity-line-button">{line}</button></form>;
+          }
+          const href = callback.list_id ? `/app/dialer/lists/${callback.list_id}` : `/app/dialer?customer=${callback.customer_id}&callback=${callback.id}`;
+          return <Link className="activity-line" href={href} key={callback.id}>{line}</Link>;
         })}{!callbacks?.length ? <p className="muted">Inga förfallna återkomster.</p> : null}</CardContent></Card>
         {/* "Senaste samtal" låg här och upprepade Mina samtal i menyn. */}
       </div>

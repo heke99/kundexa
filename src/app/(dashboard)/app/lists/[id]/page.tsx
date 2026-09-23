@@ -28,7 +28,7 @@ export default async function ListDetailPage({ params, searchParams }: {
   const memberPageSize = 100;
   const memberOffset = (memberPage - 1) * memberPageSize;
   // Kandidatstatus och medlemsantal aggregeras i databasen i stället för att hämta alla rader.
-  const [{ data: list }, { data: mayManage }, { data: members }, { data: assignments }, { data: memberships }, { data: teamMembers }, { data: dispositions }, { data: segments }, { data: candidateCounts }, { data: listOverview }, { data: sellerWorkloadData }, { data: phoneNumbers }, { data: telephonyPolicy }, { data: teams }, { data: requeueCandidates }, { data: shares }, { data: campaigns }] = await Promise.all([
+  const [{ data: list }, { data: mayManage }, { data: members }, { data: assignments }, { data: memberships }, { data: teamMembers }, { data: dispositions }, { data: segments }, { data: candidateCounts }, { data: listOverview }, { data: sellerWorkloadData }, { data: phoneNumbers }, { data: telephonyPolicy }, { data: teams }, { data: requeueCandidates }, { data: shares }, { data: campaigns }, { data: campaignTeams }] = await Promise.all([
     ok(supabase.from("customer_lists").select("*").eq("id", id).single()),
     ok(supabase.rpc("can_manage_customer_list", { p_list_id: id })),
     ok(supabase.from("customer_list_members").select("id,customer_id,assigned_user_id,state,attempts,outcome,next_attempt_at,customers(display_name,phone_e164,city,do_not_call)").eq("list_id", id).order("priority", { ascending: false }).order("id").range(memberOffset, memberOffset + memberPageSize)),
@@ -42,18 +42,26 @@ export default async function ListDetailPage({ params, searchParams }: {
     ok(supabase.rpc("customer_list_seller_workload", { p_list_id: id })),
     ok(supabase.from("phone_numbers").select("id,number_e164").eq("status", "active").eq("supports_voice", true).order("number_e164")),
     ok(supabase.from("telephony_policies").select("default_caller_id_phone_number_id").maybeSingle()),
-    ok(supabase.from("teams").select("id,name,status,caller_id_phone_number_id").eq("status", "active").order("name")),
+    // Alla team, inte bara aktiva: ett pausat team som listan redan delats med
+    // måste synas, annars försvann delningen tyst nästa gång formuläret sparades.
+    ok(supabase.from("teams").select("id,name,status,caller_id_phone_number_id").neq("status", "archived").order("name")),
     // Vad en omläggning skulle hämta tillbaka, innan någon trycker på något.
     // Spärrade poster räknas aldrig med — det avgörs i RPC:n, inte här.
     supabase.rpc("customer_list_requeue_candidates", { p_list_id: id }),
     ok(supabase.from("customer_list_team_shares").select("team_id").eq("list_id", id)),
     ok(supabase.from("campaigns").select("id,name,status").in("status", ["draft", "active", "paused"]).order("name")),
+    ok(supabase.from("campaign_teams").select("campaign_id,team_id")),
   ]);
   if (!list) notFound();
   const memberStats = (listOverview?.[0] ?? { total_members: members?.length ?? 0, open_members: 0, active_sellers: 0 }) as { total_members: number; open_members: number; active_sellers: number };
   const policyCounts = (candidateCounts ?? { approved: 0, pendingNix: 0, blocked: 0, pending: 0 }) as { approved: number; pendingNix: number; blocked: number; pending: number };
   const selectedSellers = new Set((assignments ?? []).filter((item) => item.status === "active").map((item) => item.user_id));
-  const teamUserIds = list.team_id ? new Set((teamMembers ?? []).filter((item) => item.team_id === list.team_id).map((item) => item.user_id)) : null;
+  // Säljare som får listan genom något av dess team: listans eget, de delade och
+  // kampanjens. Bara de kan tilldelas och pausas en och en. Utan team alls kan
+  // alla aktiva säljare tilldelas.
+  const listCampaignTeamIds = new Set((campaignTeams ?? []).filter((row) => row.campaign_id === list.campaign_id).map((row) => row.team_id));
+  const accessTeamIds = new Set([...(list.team_id ? [list.team_id] : []), ...(shares ?? []).map((share) => share.team_id), ...listCampaignTeamIds]);
+  const teamUserIds = accessTeamIds.size ? new Set((teamMembers ?? []).filter((item) => accessTeamIds.has(item.team_id)).map((item) => item.user_id)) : null;
   const availableSellers = (memberships ?? []).filter((member) => !teamUserIds || teamUserIds.has(member.user_id));
   const sellerNames = new Map(availableSellers.map((member) => { const profile=Array.isArray(member.profiles)?member.profiles[0]:member.profiles; return [member.user_id,profile?.full_name??member.user_id]; }));
   const sellerWorkload = new Map<string, number>(((sellerWorkloadData ?? []) as Array<{ user_id: string; remaining: number }>).map((row) => [row.user_id, Number(row.remaining)]));
@@ -66,7 +74,10 @@ export default async function ListDetailPage({ params, searchParams }: {
   const isAdmin = ["owner", "admin"].includes(context.role);
   const ledTeamIds = new Set((teamMembers ?? []).filter((item) => item.user_id === context.userId && item.role === "manager").map((item) => item.team_id));
   const sharedTeamIds = new Set((shares ?? []).map((share) => share.team_id));
-  const shareableTeams = (teams ?? []).filter((team) => isAdmin || ledTeamIds.has(team.id) || sharedTeamIds.has(team.id));
+  const shareableTeams = (teams ?? []).filter((team) => sharedTeamIds.has(team.id) || (team.status === "active" && (isAdmin || ledTeamIds.has(team.id))));
+  const teamNames = new Map((teams ?? []).map((team) => [team.id, team.name]));
+  const campaignTeamNames = new Map((campaigns ?? []).map((campaign) => [campaign.id,
+    (campaignTeams ?? []).filter((row) => row.campaign_id === campaign.id).map((row) => teamNames.get(row.team_id) ?? "okänt team")]));
   const listTeamName = (teams ?? []).find((team) => team.id === list.team_id)?.name ?? null;
   const listTeamNumberId = (teams ?? []).find((team) => team.id === list.team_id)?.caller_id_phone_number_id ?? null;
   const listTeamNumber = (phoneNumbers ?? []).find((number) => number.id === listTeamNumberId)?.number_e164 ?? null;
@@ -179,26 +190,29 @@ export default async function ListDetailPage({ params, searchParams }: {
               const locked = !isAdmin && !ledTeamIds.has(team.id);
               return <label className="check-row" key={team.id}>
                 <input type="checkbox" name="team_ids" value={team.id} defaultChecked={sharedTeamIds.has(team.id)} disabled={locked} />
-                <span><strong>{team.name}</strong>{locked ? <small>Delad av någon annan</small> : null}</span>
+                <span><strong>{team.name}</strong>{team.status !== "active" ? <small>Teamet är pausat. Delningen ligger kvar tills du tar bort den.</small> : locked ? <small>Delad av någon annan</small> : null}</span>
               </label>;
             })}</div> : <p className="muted">Det finns inga team att dela med.</p>}
             <SelectField label="Kampanj (valfritt)" name="campaign_id" defaultValue={list.campaign_id ?? ""}>
               <option value="">Ingen kampanj</option>
-              {campaigns?.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}
+              {campaigns?.map((campaign) => {
+                const names = campaignTeamNames.get(campaign.id) ?? [];
+                return <option key={campaign.id} value={campaign.id}>{campaign.name} — {names.length ? names.join(", ") : "inga team än"}</option>;
+              })}
             </SelectField>
-            <p className="muted">Med en kampanj får kampanjens alla team listan, och kampanjens utgående nummer används.</p>
+            <p className="muted">Med en kampanj får kampanjens team listan, och kampanjens utgående nummer används. Kampanjens team väljs under <Link href="/app/campaigns">Kampanjer</Link>.</p>
             <button className="button button-primary">Spara delning</button>
           </form></CardContent>
         </Card>
         <Card>
           <CardHeader><h3><Users size={16} /> Enskilda säljare</h3></CardHeader>
-          <CardContent><p className="muted" style={{ marginTop: 0 }}>Behövs bara för säljare som inte är med i ett delat team.</p><form action={setCustomerListSellers} className="form-stack"><input type="hidden" name="list_id" value={id} />
+          <CardContent><p className="muted" style={{ marginTop: 0 }}>Välj en säljare här för att kunna pausa eller begränsa hen på just den här listan. En pausad säljare ringer inte listan, inte heller genom sitt team.</p><form action={setCustomerListSellers} className="form-stack"><input type="hidden" name="list_id" value={id} />
             <div className="selection-list">{availableSellers.map((member) => {
               const profile = Array.isArray(member.profiles) ? member.profiles[0] : member.profiles;
               return <label className="check-row" key={member.user_id}><input type="checkbox" name="seller_ids" value={member.user_id} defaultChecked={selectedSellers.has(member.user_id)} /><span><strong>{profile?.full_name ?? "Användare"}</strong><small>{roleLabel(member.role)} · {sellerWorkload.get(member.user_id) ?? 0} låsta/återstående prospekt</small></span></label>;
             })}</div>
             <button className="button button-secondary">Synkronisera säljare</button>
-          </form>{assignments?.length ? <details className="assignment-settings"><summary>Pausa eller begränsa en säljare</summary><div className="grid">{assignments.map((assignment) => <form action={updateCustomerListSellerAssignment} className="form-section form-stack" key={assignment.user_id}><strong>{sellerNames.get(assignment.user_id) ?? assignment.user_id}</strong><input type="hidden" name="list_id" value={id}/><input type="hidden" name="user_id" value={assignment.user_id}/><input type="hidden" name="timezone" value={list.timezone}/><div className="form-grid"><SelectField label="Status" name="status" defaultValue={assignment.status}><option value="active">Aktiv</option><option value="paused">Pausad</option><option value="ended">Avslutad</option></SelectField><input type="hidden" name="weight" value={assignment.weight}/><Field label="Daglig kapacitet" name="daily_capacity" type="number" min="1" defaultValue={assignment.daily_capacity??""}/><Field label="Start" name="starts_at" type="datetime-local" defaultValue={isoToZonedLocalDateTime(assignment.starts_at,list.timezone)}/><Field label="Slut" name="ends_at" type="datetime-local" defaultValue={isoToZonedLocalDateTime(assignment.ends_at,list.timezone)}/></div><button className="button button-secondary button-sm">Spara tilldelning</button></form>)}</div></details> : null}</CardContent>
+          </form>{assignments?.length ? <details className="assignment-settings"><summary>Pausa eller begränsa en säljare</summary><div className="grid">{assignments.map((assignment) => <form action={updateCustomerListSellerAssignment} className="form-section form-stack" key={assignment.user_id}><strong>{sellerNames.get(assignment.user_id) ?? assignment.user_id}</strong><input type="hidden" name="list_id" value={id}/><input type="hidden" name="user_id" value={assignment.user_id}/><input type="hidden" name="timezone" value={list.timezone}/><div className="form-grid"><SelectField label="Status" name="status" defaultValue={assignment.status}><option value="active">Aktiv</option><option value="paused">Pausad – ringer inte listan</option><option value="ended">Avslutad – teamets åtkomst gäller</option></SelectField><input type="hidden" name="weight" value={assignment.weight}/><Field label="Daglig kapacitet" name="daily_capacity" type="number" min="1" defaultValue={assignment.daily_capacity??""}/><Field label="Start" name="starts_at" type="datetime-local" defaultValue={isoToZonedLocalDateTime(assignment.starts_at,list.timezone)}/><Field label="Slut" name="ends_at" type="datetime-local" defaultValue={isoToZonedLocalDateTime(assignment.ends_at,list.timezone)}/></div><button className="button button-secondary button-sm">Spara tilldelning</button></form>)}</div></details> : null}</CardContent>
         </Card>
         <Card>
           <CardHeader><h3>Lägg till prospekt</h3><Link className="button button-ghost button-sm" href={`/app/imports/new?list=${id}`}>Importera fil till listan</Link></CardHeader>

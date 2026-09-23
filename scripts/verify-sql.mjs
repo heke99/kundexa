@@ -551,6 +551,11 @@ await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-000
 await db.query(`select public.set_managed_team_member($1,'00000000-0000-0000-0000-000000000041','member',true,1,false)`, [distributedTeamId]);
 await db.query(`update public.customer_list_members set claimed_by='00000000-0000-0000-0000-000000000041',claim_expires_at=now()+interval '10 minutes',state='claimed' where id=(select id from public.customer_list_members where list_id=$1 order by created_at limit 1)`, [childListId]);
 await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000041',false)`);
+// FAILURE-0107: prospektet säljaren håller räknas inte mot nästa, annars nekas
+// reservationen av just det prospekt gränsen tillät.
+const holdingSeller = await db.query(`select public.can_work_customer_list($1) as allowed`, [childListId]);
+if (holdingSeller.rows[0].allowed !== true) throw new Error(`A seller could not dial the lead the daily limit allowed: ${JSON.stringify(holdingSeller.rows)}`);
+await db.query(`update public.customer_list_members set claimed_by=null,claim_expires_at=null,state='completed' where list_id=$1 and last_claimed_by='00000000-0000-0000-0000-000000000041'`, [childListId]);
 const cappedSeller = await db.query(`select public.can_work_customer_list($1) as allowed`, [childListId]);
 if (cappedSeller.rows[0].allowed !== false) throw new Error(`Team daily lead limit was not enforced: ${JSON.stringify(cappedSeller.rows)}`);
 
@@ -2897,13 +2902,22 @@ console.log("Executed the dynamic list refresh: the result names which list fail
 {
   const owner = "00000000-0000-0000-0000-000000000002";
   const seller = "00000000-0000-0000-0000-000000000020";
+  // En egen lista, så att vad tidigare block lämnat i runtime-listan inte räknas.
+  await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${owner}',false)`);
+  const requeueListId = String((await db.query(
+    `select public.create_managed_customer_list('Läggomlista','Återköning','static',null,'manual',100,'00:00','23:59:59',7,60,0,'both',true,false,null) as id`,
+  )).rows[0].id);
+  const requeueCustomers = (await db.query(
+    `select id from public.customers where tenant_id='00000000-0000-0000-0000-000000000001' and deleted_at is null order by id limit 4`,
+  )).rows.map((row) => row.id);
+  await db.query(`select public.add_customers_to_list($1,$2::uuid[])`, [requeueListId, requeueCustomers]);
   await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
 
   // Three worked-through entries with different endings, plus one that asked not
   // to be called. Attempts are maxed so the reset is exercised too.
   const members = (await db.query(
     `select id, customer_id from public.customer_list_members where list_id=$1 order by id limit 4`,
-    [runtimeListId],
+    [requeueListId],
   )).rows;
   if (members.length < 4) throw new Error(`The re-queue fixture needs four list members, found ${members.length}`);
   const endings = ["not_interested", "not_interested", "wrong_number", "do_not_call"];
@@ -2911,9 +2925,14 @@ console.log("Executed the dynamic list refresh: the result names which list fail
     await db.query(
       `update public.customer_list_members
          set state=$2, outcome=$3, attempts=99, completed_at=now() - interval '1 day',
-             compliance_status='allowed', claimed_by=null, claim_expires_at=null
+             compliance_status=$4, claimed_by=null, claim_expires_at=null
        where id=$1`,
-      [member.id, endings[index] === "do_not_call" ? "blocked" : "completed", endings[index]],
+      // FAILURE-0110: de värden som faktiskt skrivs -- importen skriver
+      // `eligible`, en manuellt tillagd plats står kvar som `pending_compliance`.
+      // Testet satte tidigare `allowed`, som ingenting skriver, och dolde att
+      // "Lägg om" aldrig köade något.
+      [member.id, endings[index] === "do_not_call" ? "blocked" : "completed", endings[index],
+        ["eligible", "pending_compliance", "eligible", "blocked"][index]],
     );
   }
 
@@ -2922,7 +2941,7 @@ console.log("Executed the dynamic list refresh: the result names which list fail
   // What a re-queue would bring back, before pressing anything. The blocked one
   // must not be offered.
   await db.exec(`select set_config('request.jwt.claim.sub','${owner}',false)`);
-  const candidates = (await db.query(`select * from public.customer_list_requeue_candidates($1)`, [runtimeListId])).rows;
+  const candidates = (await db.query(`select * from public.customer_list_requeue_candidates($1)`, [requeueListId])).rows;
   const byOutcome = Object.fromEntries(candidates.map((row) => [row.outcome, Number(row.members)]));
   if (byOutcome.not_interested !== 2 || byOutcome.wrong_number !== 1) {
     throw new Error(`The re-queue preview miscounted: ${JSON.stringify(candidates)}`);
@@ -2932,7 +2951,7 @@ console.log("Executed the dynamic list refresh: the result names which list fail
   // A seller may not re-open a list the team leader closed.
   await db.exec(`select set_config('request.jwt.claim.sub','${seller}',false)`);
   try {
-    await db.query(`select public.requeue_customer_list_members($1,null,0,null)`, [runtimeListId]);
+    await db.query(`select public.requeue_customer_list_members($1,null,0,null)`, [requeueListId]);
     throw new Error("A seller was allowed to re-queue a list");
   } catch (error) {
     if (!String(error.message).includes("list_manage_permission_denied")) throw error;
@@ -2940,7 +2959,7 @@ console.log("Executed the dynamic list refresh: the result names which list fail
 
   await db.exec(`select set_config('request.jwt.claim.sub','${owner}',false)`);
   const requeued = Number((await db.query(
-    `select public.requeue_customer_list_members($1,array['not_interested'],180,null) as n`, [runtimeListId],
+    `select public.requeue_customer_list_members($1,array['not_interested'],180,null) as n`, [requeueListId],
   )).rows[0].n);
   if (requeued !== 2) throw new Error(`Re-queueing "inte intresserad" moved ${requeued} entries, expected 2`);
 
@@ -2978,7 +2997,7 @@ console.log("Executed the dynamic list refresh: the result names which list fail
     `select state from public.customer_list_members where id=$1`, [id],
   )).rows[0].state;
   if (await stateOf(wrongNumberId) !== "completed") throw new Error("The wrong_number fixture was disturbed before the blanket re-queue");
-  await db.query(`select public.requeue_customer_list_members($1,null,0,null)`, [runtimeListId]);
+  await db.query(`select public.requeue_customer_list_members($1,null,0,null)`, [requeueListId]);
   if (await stateOf(wrongNumberId) !== "pending") throw new Error("A blanket re-queue left a completed entry behind");
   if (await stateOf(blockedId) !== "blocked") throw new Error("A blanket re-queue released a do-not-call entry");
 
@@ -4093,6 +4112,95 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   if (await canWork(SELLER)) throw new Error("A seller kept access after the list was unshared.");
   await as("00000000-0000-0000-0000-000000000002");
   console.log("Lists shared with a team reach every seller in it, never another tenant's team; the queue is shared, not turn-locked; the team's number is used; unsharing releases claims and access.");
+}
+
+// Delade listor efter 202609240006: kampanjens team, paus, samtalets team och
+// återkomstens team (FAILURE-0108, 0109, 0111, 0112, 0116).
+{
+  const T = "00000000-0000-0000-0000-000000000001";
+  const OWNER = "00000000-0000-0000-0000-000000000002";
+  const LEAD = "00000000-0000-0000-0000-000000000093";
+  const LEAD_TEAM = "00000000-0000-0000-0000-000000000026";
+  const TEAM2 = "00000000-0000-0000-0000-0000000001a1";
+  const SELLER = "00000000-0000-0000-0000-0000000001a2";
+  const CUST2 = "00000000-0000-0000-0000-0000000001c1";
+  const CAMPAIGN = "00000000-0000-0000-0000-0000000001c2";
+  const as = (user) => db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${user}',false);`);
+  const refusal = async (fn) => { try { await fn(); return "allowed"; } catch (error) { return String(error.message); } };
+  await db.exec(`
+    insert into public.customers(id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by)
+      values('${CUST2}','${T}','company','prospect','Kampanjkund','+46707770199',true,'legitimate_interest','${OWNER}') on conflict do nothing;
+    insert into public.nix_checks(tenant_id,customer_id,phone_e164,source,source_version,result,checked_at,valid_until,evidence)
+      values('${T}','${CUST2}','+46707770199','runtime','1','not_listed',now(),now()+interval '30 days','{}');
+    insert into public.campaigns(id,tenant_id,name,status) values('${CAMPAIGN}','${T}','Höstkampanj','active') on conflict do nothing;
+  `);
+  await as(OWNER);
+  const listId = String((await db.query(`select public.create_managed_customer_list('Kampanjlista','Delas via kampanj','static',null,'manual',100,'00:00','23:59:59',7,60,0,'both',true,false,null) as id`)).rows[0].id);
+  await db.query(`update public.customer_lists set status='active',allowed_days='{1,2,3,4,5,6,7}',allowed_start_time='00:00',allowed_end_time='23:59:59',team_id=$2 where id=$1`, [listId, LEAD_TEAM]);
+  await db.query(`select public.add_customers_to_list($1,array['${CUST2}']::uuid[])`, [listId]);
+  await db.query(`select public.set_customer_list_sharing($1,'{}'::uuid[],$2)`, [listId, CAMPAIGN]);
+  const canWork = async (user) => { await as(user); return (await db.query(`select public.can_work_customer_list($1) as ok`, [listId])).rows[0].ok; };
+  if (await canWork(SELLER)) throw new Error("A campaign without teams gave a seller the list.");
+
+  // Kampanjens team: aldrig ett annat bolags team, inte av en säljare, och en
+  // teamledare bara med team hen leder.
+  await as(OWNER);
+  const foreignTeam = await refusal(() => db.query(`select public.set_campaign_teams($1,array['00000000-0000-0000-0000-000000000076']::uuid[])`, [CAMPAIGN]));
+  if (!foreignTeam.includes("team_not_found")) throw new Error(`A campaign took another tenant's team: ${foreignTeam}`);
+  await as(SELLER);
+  const bySeller = await refusal(() => db.query(`select public.set_campaign_teams($1,array['${TEAM2}']::uuid[])`, [CAMPAIGN]));
+  if (!bySeller.includes("campaign_team_permission_required")) throw new Error(`A seller set a campaign's teams: ${bySeller}`);
+  await as(LEAD);
+  const byOtherLead = await refusal(() => db.query(`select public.set_campaign_teams($1,array['${TEAM2}']::uuid[])`, [CAMPAIGN]));
+  if (!byOtherLead.includes("campaign_team_permission_required")) throw new Error(`A team leader added a team they do not lead: ${byOtherLead}`);
+  await as(OWNER);
+  await db.query(`select public.set_campaign_teams($1,array['${TEAM2}']::uuid[])`, [CAMPAIGN]);
+  if (!(await canWork(SELLER))) throw new Error("A list shared through a campaign did not reach the campaign's team.");
+
+  // FAILURE-0116: teamledaren för listans eget team kopplar inte bort en
+  // kampanj vars team hen inte leder.
+  await as(LEAD);
+  const unlink = await refusal(() => db.query(`select public.set_customer_list_sharing($1,'{}'::uuid[],null)`, [listId]));
+  const stillLinked = (await db.query(`select campaign_id from public.customer_lists where id=$1`, [listId])).rows[0].campaign_id;
+  if (!unlink.includes("campaign_share_permission_required") || stillLinked !== CAMPAIGN) {
+    throw new Error(`A team leader unlinked a campaign they do not lead: ${JSON.stringify({ unlink, stillLinked })}`);
+  }
+
+  // FAILURE-0108: en säljare som får listan genom kampanjens team kan tilldelas
+  // en och en, och en pausad tilldelning väger tyngre än teamet.
+  await as(OWNER);
+  const assigned = await refusal(() => db.query(`select public.set_customer_list_sellers($1,array['${SELLER}']::uuid[])`, [listId]));
+  if (assigned !== "allowed") throw new Error(`A seller reaching the list through a campaign team could not be assigned: ${assigned}`);
+  await db.query(`update public.customer_list_seller_assignments set status='paused' where list_id=$1 and user_id=$2`, [listId, SELLER]);
+  if (await canWork(SELLER)) throw new Error("A paused seller kept working the list through their team.");
+  await db.query(`update public.customer_list_seller_assignments set status='active' where list_id=$1 and user_id=$2`, [listId, SELLER]);
+  if (!(await canWork(SELLER))) throw new Error("Resuming a paused seller did not give the list back.");
+
+  // FAILURE-0112: samtalet räknas till teamet som gav åtkomsten.
+  await as(SELLER);
+  const session = String((await db.query(`select public.start_dialer_session($1) as id`, [listId])).rows[0].id);
+  const claim = (await db.query(`select public.claim_next_list_member($1,$2) as c`, [listId, session])).rows[0].c;
+  if (claim.empty || claim.customer?.id !== CUST2) throw new Error(`The campaign seller could not take the prospect: ${JSON.stringify(claim)}`);
+  const reservation = (await db.query(`select public.reserve_outbound_call($1,null,'+46707770199',$2,$3,null,gen_random_uuid(),'campaign-team-call','direct_marketing',null,null) as r`,
+    [CUST2, session, claim.memberId])).rows[0].r;
+  const callTeam = (await db.query(`select team_id from public.calls where id=$1`, [reservation.callId])).rows[0].team_id;
+  if (callTeam !== TEAM2) throw new Error(`The call was counted to ${callTeam}, not the team that gave access (${TEAM2}).`);
+
+  // FAILURE-0111: den globala återkomsten går till samma team, och säljarens
+  // egen återkomst tagen på Återkomster-sidan kommer först i kön.
+  await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+  await db.query(`update public.dial_attempts set status='completed' where call_id=$1`, [reservation.callId]);
+  await db.query(`update public.calls set status='completed',answered_at=now()-interval '1 minute',ended_at=now() where id=$1`, [reservation.callId]);
+  await as(SELLER);
+  await db.query(`select public.complete_dialer_work_v2($1::uuid,'callback','Ring efter lunch','global',now()+interval '1 day',false,null,null,null,'campaign-callback')`, [reservation.callId]);
+  const callback = (await db.query(`select id,assigned_team_id from public.activities where call_id=$1 and type='callback'`, [reservation.callId])).rows[0];
+  if (callback?.assigned_team_id !== TEAM2) throw new Error(`The global callback went to ${callback?.assigned_team_id}, not the seller's team (${TEAM2}).`);
+  await db.query(`update public.activities set due_at=now()-interval '1 minute' where id=$1`, [callback.id]);
+  await db.query(`select public.claim_customer_callback($1)`, [callback.id]);
+  const next = (await db.query(`select public.claim_next_list_member($1,$2) as c`, [listId, session])).rows[0].c;
+  if (next.callbackActivityId !== callback.id) throw new Error(`A callback taken on the callbacks page was not offered in the list: ${JSON.stringify(next)}`);
+  await as(OWNER);
+  console.log("A campaign's teams reach its lists, never another tenant's team, set only by admins or the teams' own leaders; a paused seller stays paused through a team; the call and the global callback count to the team that gave access, and a claimed callback comes first in the queue.");
 }
 
 // En återimport får inte väcka en kund som redan bearbetas, och en rollback får

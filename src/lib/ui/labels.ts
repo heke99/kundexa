@@ -23,6 +23,7 @@ const disposition: Record<string, string> = {
 
 const lifecycle: Record<string, string> = {
   prospect: "Prospekt", lead: "Lead", customer: "Kund", former_customer: "Tidigare kund",
+  lost: "Förlorad", blocked: "Spärrad",
 };
 
 const memberState: Record<string, string> = {
@@ -38,7 +39,7 @@ const visibility: Record<string, string> = { private: "Privat", team: "Team", te
 
 const role: Record<string, string> = {
   owner: "Ägare", admin: "Administratör", team_lead: "Teamledare", sales: "Säljare", backoffice: "Backoffice",
-  viewer: "Läsbehörighet",
+  contract_manager: "Avtalsansvarig", quality: "Kvalitet", finance: "Ekonomi", viewer: "Läsbehörighet",
 };
 
 const outcomeGroup: Record<string, string> = {
@@ -47,6 +48,10 @@ const outcomeGroup: Record<string, string> = {
 
 const listStatus: Record<string, string> = {
   draft: "Utkast", active: "Aktiv", paused: "Pausad", completed: "Avslutad", archived: "Arkiverad",
+};
+
+const campaignStatus: Record<string, string> = {
+  draft: "Utkast", scheduled: "Schemalagd", active: "Aktiv", paused: "Pausad", completed: "Avslutad", archived: "Arkiverad",
 };
 
 const importStatus: Record<string, string> = {
@@ -76,6 +81,7 @@ export const visibilityLabel = pick(visibility);
 export const roleLabel = pick(role);
 export const outcomeGroupLabel = pick(outcomeGroup);
 export const listStatusLabel = pick(listStatus);
+export const campaignStatusLabel = pick(campaignStatus);
 export const importStatusLabel = pick(importStatus);
 export const scanStatusLabel = pick(scanStatus);
 export const importDecisionLabel = pick(importDecision);

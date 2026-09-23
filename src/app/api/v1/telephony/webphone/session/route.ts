@@ -86,7 +86,7 @@ export async function POST(request: Request) {
 
     // Uppgifterna kunde inte skapas. Sessionen stängs direkt i stället för att
     // lämnas öppen: en session utan samtalsben slår inga hjärtslag, och hade
-    // legat kvar tills sopningen tog den halvannan minut senare.
+    // legat kvar tills sopningen tog den, fem till tio minuter senare.
     if (!provisioned.available) {
       await supabase.rpc("close_webphone_session", {
         p_session_id: sessionId,

@@ -200,7 +200,9 @@ export function DialerPanel({
     <div className="phone-display">{visibleCustomers.find((customer) => customer.id === selected)?.phone_e164 ?? (lockedToCustomer ? "Telefonnummer saknas" : "Välj kund")}</div>
     {/* Säljaren ska se vem hon ringer: historik, anteckningar och spärrar ligger
         på kundkortet, och därifrån skapas också avtalet. */}
-    {!lockedToCustomer && selected ? <p style={{ marginBottom: 12 }}>
+    {/* Inte under ett samtal eller efterarbete: sidbytet lägger på samtalet och
+        tappar utfallsformuläret. Kundkortet finns kvar när samtalet är avslutat. */}
+    {!lockedToCustomer && selected && !callId ? <p style={{ marginBottom: 12 }}>
       <a href={`/app/customers/${selected}`} className="button button-ghost button-sm">Öppna kundkortet</a>
     </p> : null}
     {lockedToCustomer

@@ -114,6 +114,21 @@ function reservationFailure(rawMessage: string, databaseCode?: string | null) {
   if (normalized.includes("SELF_DIAL_NOT_ALLOWED")) {
     return { code: "SELF_DIAL_NOT_ALLOWED", message: selfDialMessage, status: 422 };
   }
+  // Åtkomst som tagits bort eller aldrig funnits. Tidigare föll de igenom till det
+  // generiska "kunde inte reserveras säkert", som inte säger säljaren något.
+  if (normalized.includes("LIST_WORK_PERMISSION_REQUIRED")) {
+    return { code: "LIST_ACCESS_ENDED", message: "Du har inte längre tillgång till listan, eller så har du nått dagens gräns för nya prospekt. Be teamledaren kontrollera delningen.", status: 403 };
+  }
+  if (normalized.includes("DIAL_TEAM_PERMISSION_REQUIRED")) {
+    return { code: "DIAL_TEAM_PERMISSION_REQUIRED", message: "Du får inte ringa för det team kunden tillhör.", status: 403 };
+  }
+  if (normalized.includes("CALL_CREATE_PERMISSION_REQUIRED")) {
+    return { code: "CALL_CREATE_PERMISSION_REQUIRED", message: "Din roll får inte ringa samtal.", status: 403 };
+  }
+  if (normalized.includes("TENANT_NOT_ACTIVE")) return { code: "TENANT_NOT_ACTIVE", message: "Företagets konto är inte aktivt.", status: 403 };
+  if (normalized.includes("OUTBOUND_CALLS_FEATURE_DISABLED")) {
+    return { code: "OUTBOUND_CALLS_DISABLED", message: "Utgående samtal är inte aktiverade för företaget.", status: 409 };
+  }
   if (normalized.includes("CALLER_ID_MISSING")) {
     return { code: "CALLER_ID_MISSING", message: "Företaget har inget nummer att visa för mottagaren. En administratör behöver välja företagets utgående nummer innan samtal kan ringas.", status: 409 };
   }
@@ -169,11 +184,6 @@ function internalDialFailure(error: unknown) {
         code: "DATABASE_CALL_ATTEMPT_UPDATE_FAILED",
         message: "Samtalsförsöket kunde inte förberedas i databasen.",
         status: 503,
-      };
-      return {
-        code: "DIAL_FINALIZATION_FAILED",
-        message: "Samtalet skickades men den lokala statusen kunde inte bekräftas.",
-        status: 202,
       };
     default:
       return null;

@@ -244,6 +244,15 @@ assert.match(maintenanceWorker, /normalize_due_geographies/, "Maintenance worker
 assert.match(maintenanceWorker, /release_expired_platform_allocations/, "Maintenance worker must release expired platform list allocations");
 assert.match(maintenanceWorker, /telephony\.retention/, "Maintenance worker must schedule telephony retention");
 assert.doesNotMatch(maintenanceWorker, /rinkel/i, "The maintenance worker must not name a removed provider");
+// FAILURE-0117: platsfrigöringen körs först och stoppas inte av ett orelaterat fel.
+assert.ok(maintenanceWorker.indexOf('"release_stale_dial_attempts"') > 0
+  && maintenanceWorker.indexOf('"release_stale_dial_attempts"') < maintenanceWorker.indexOf('"segment_refresh"'),
+  "Seat release must run before the other maintenance steps");
+assert.doesNotMatch(maintenanceWorker, /status: 500 \}\);\s*\n\s*const \{ data: lostSessions/,
+  "One failing maintenance step must not stop the rest");
+const vercelConfig = JSON.parse(await readFile(join(root, "vercel.json"), "utf8"));
+assert.equal(vercelConfig.crons.find((cron) => cron.path.endsWith("/maintenance-worker"))?.schedule, "*/5 * * * *",
+  "The maintenance worker releases lost seats; it must run every five minutes");
 const complianceWorker = await readFile(join(root, "supabase/functions/compliance-worker/index.ts"), "utf8");
 for (const pattern of [/queue_due_nix_checks/, /claim_nix_check_jobs/, /complete_nix_check_job/, /fail_nix_check_job/, /redirect: "manual"/, /nix_private_network_forbidden/, /decryptJson/]) assert.match(complianceWorker, pattern, `Compliance worker invariant missing: ${pattern}`);
 

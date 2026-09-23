@@ -29,7 +29,7 @@
     },
     {
       "path": "/api/cron/edge-workers/maintenance-worker",
-      "schedule": "*/15 * * * *"
+      "schedule": "*/5 * * * *"
     }
   ]
 }
