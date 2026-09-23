@@ -70,3 +70,6 @@ Det som återstår kräver leverantörskonto, ett nummer eller ett riktigt samta
     `recording_not_fetched_from_provider` i stället för att dela ut en trasig länk, och
     gallringens leverantörshalva vägrar med `permanent_provider_recording_delete_unsupported`
     hellre än att märka en inspelning som gallrad medan kopian lever kvar.
+- Prova ett webbläsarsamtal mot deploy med minimal SVAML (PR #40) och migration 202609230002; läs
+  `sinch.call_ended`-orsaken på samtalet om DiCE kommer. Kommer ingen DiCE: kontrollera i Sinch-
+  appen att "Calling → callback" även skickar DiCE, och öppna ärende hos Sinch med call-id.

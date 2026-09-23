@@ -313,3 +313,23 @@ tilldelat A-nummer bekräftade av användaren. Ingen CALLBACKERROR, så ICE-svar
 uppstår på PSTN-benet. Lade till "Testsamtal" under Integrationer (admin): `ttsCallout` direkt
 via Voice API från företagets förvalda nummer — skiljer konto/nummer från webbläsarvägen och
 ger Sinch felmeddelande i klartext. Loggas i audit_logs (`telephony.test_call`).
+
+## 2026-09-23 09:50 — Testsamtal ringde; ICE kopplas nu till försöket
+
+Testsamtalet (ttsCallout, call_id fa3959bc…) ringde +12089912106 och lade på efter uppläst mening
+(väntat). Konto, A-nummer, verifierad mottagare och PSTN fungerar alltså; felet sitter i
+webbläsarvägen (app → PSTN). SVAML-versionen utan locale/indications (PR #40, 09:28) har ännu inte
+provats från webbläsaren.
+
+Avstämningen visade 3 `unmatched` ICE: ICE kommer ~0,5 s före klientens rapport av samtals-id.
+Migration 202609230002 (tillämpad i prod): ICE utan träff på `external_call_id` matchas mot öppet
+försök med samma säljare (`user`) och nummer (`to.endpoint`) från senaste 2 min och får sitt id.
+PGlite-test inkl. negativt tvåtenanttest och DiCE-orsak som når samtalet. ACL oförändrad
+(service_role). Ingen DiCE har kommit för något webbläsarsamtal hittills.
+
+## 2026-09-23 12:00 — Webbläsarsamtal efter PR #40: fortfarande GENERALERROR
+
+Sinch-logg: Incoming MXP call → Callback sent → Received partner callback response → App Call ended
+GENERALERROR (≈1 s). ICE matchades nu (`processed`, 202609230002 fungerar). Ingen DiCE.
+Åtgärd: `connectPstn` anger nu `number` uttryckligen (= ICE `to.endpoint`), som varje exempel i
+Sinchs referens. Om det inte hjälper: supportärende hos Sinch med call-id bad86a0a-2025-448e-9f3c-bf90e92305b8.

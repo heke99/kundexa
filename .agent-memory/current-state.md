@@ -577,3 +577,7 @@ håller är att hämta hem den körande koden och jämföra den. Det gjordes fö
 `process-outbox` (bekräftat ur fas). De fem övriga vilar på tidsstämplar plus att deras
 källa inte ändrats sedan långt före deployen — svagare, men utan känd motsägelse.
 `deploy-edge-functions.yml` gör frågan överflödig framåt.
+
+**2026-09-23 09:50:** Sinch-kontot kan ringa PSTN (testsamtal OK). Webbläsarsamtal till PSTN bryts
+fortfarande med GENERALERROR ~1 s efter ICE-svaret; senaste SVAML-förenkling ej provad. ICE kopplas
+nu till försöket (202609230002).

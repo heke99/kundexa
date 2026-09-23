@@ -146,3 +146,4 @@
 - UI: produktval i "Nytt avtal", produktkolumn/"Lägg till avtal" på Produkter, produktval och
   fältknappar (`TemplateFieldButtons`) i mallformulären.
 - Behörighetsglapp stängda: säljare → nytt avtal, PDF-uppladdning, ny produkt, nytt avtal på mallsidan.
+- 2026-09-23: ICE matchas mot uppringningsförsöket via säljare + nummer (migration 202609230002, prod).
