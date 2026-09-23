@@ -235,3 +235,10 @@ Orsaken har varit osynlig eftersom SDK:t ersätter felet med "Unable to create i
   som SDK:t och rapporterar status och leverantörens meddelande (10 min cache, ingen hemlighet ut).
 - Tokenförnyelsen stängde sin egen session (ny session öppnades, hjärtslaget fortsatte mot den gamla).
 - Cron-anropet till Edge-arbetarna fick 50 av 60 s; nu 40 så att "failed"-hjärtslaget hinner skrivas.
+
+**Orsaken hittad (2026-09-23):** serverprovet i `/api/ready` gav `webphoneRegistration: ok, 200` —
+nyckel, hemlighet och JWT godkänns av Sinch. Men sajtens CSP hade
+`connect-src 'self' <supabase>` och blockerade därför varje anrop från webbläsaren till
+`ocra.api.sinch.com` (och PubNub-signaleringen). Registreringen kunde aldrig lyckas i en webbläsare.
+Rättat: `webphoneConnectSources` (`*.sinch.com`, `*.pubnub.com`, `*.pndsn.com`, https+wss) i
+`connect-src`, med verify-vakt. Provet rapporterar nu även värdnamnen i Sinch svar.
