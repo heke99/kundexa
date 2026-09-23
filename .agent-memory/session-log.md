@@ -216,3 +216,22 @@ Andra flöden som var trasiga och rättades i samma pass:
 
 Produktionsdata: Gridex har **inga produkter**; mallen "Gridex hemsida · Mina sidor" är godkänd
 men saknar produkt och är därför inte valbar förrän den kopplas. Noll avtal i databasen.
+
+## 2026-09-23 — Webbtelefonen har aldrig registrerat sig
+
+Produktionsgenomgång efter PR #33: alla sju arbetare friska, inga fastnade jobb, säkerhetsråden
+oförändrade (PostGIS + avsiktliga definer-RPC:er). Men **ingen webbtelefonsession har någonsin
+registrerats**: nio sessioner, ingen `registration_id`, inget hjärtslag efter öppnandet. Det är
+därför ingen kan ringa ut.
+
+Uteslutet: JWT:n är byte för byte lika med Sinch dokumenterade testvektor; `setSupportManagedPush`
+krävs inte för app-till-telefon; SDK:ts 48h-TTL-krav gäller ett anspråk vi inte sätter.
+
+Orsaken har varit osynlig eftersom SDK:t ersätter felet med "Unable to create instance!" och vår
+`onClientFailed` loggade bara felets namn. Nu:
+- SDK:t får en egen `fetchApi` som minns leverantörens senaste nej; det sparas som `close_reason`
+  på sessionen.
+- `/api/ready` → `checks.webphoneRegistration`: servern gör samma `POST /ocra/v2/applications/{key}/instances`
+  som SDK:t och rapporterar status och leverantörens meddelande (10 min cache, ingen hemlighet ut).
+- Tokenförnyelsen stängde sin egen session (ny session öppnades, hjärtslaget fortsatte mot den gamla).
+- Cron-anropet till Edge-arbetarna fick 50 av 60 s; nu 40 så att "failed"-hjärtslaget hinner skrivas.

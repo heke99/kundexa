@@ -116,7 +116,11 @@ export async function invokeScheduledEdgeWorker(worker: ScheduledEdgeWorker) {
       headers: { "x-cron-secret": env.CRON_SECRET, "content-type": "application/json" },
       body: JSON.stringify(payloads[worker]),
       cache: "no-store",
-      signal: AbortSignal.timeout(50_000),
+      // Vercel avbryter hela funktionen efter 60 sekunder (`maxDuration`). Med
+      // 50 här fanns tio sekunder kvar för två hjärtslagsskrivningar, och två
+      // gånger räckte de inte: funktionen dödades mitt i, och raden blev stående
+      // på "running" i stället för att säga "failed". 40 lämnar tjugo.
+      signal: AbortSignal.timeout(40_000),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "worker_network_failure";

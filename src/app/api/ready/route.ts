@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { expectedWebhookUrl, isUsablePublicAppUrl, publicEnv, serverEnv } from "@/lib/env";
+import { probeWebphoneRegistration, type WebphoneRegistrationProbe } from "@/lib/telephony/webphone";
 import { telephonyConfigured } from "@/lib/telephony/webphone";
 
 export const dynamic = "force-dynamic";
@@ -84,6 +85,19 @@ function readDelivery(metadata: unknown, appBaseUrl: string | null): DeliveryChe
   };
 }
 
+// Webbtelefonens registrering hos telefonitjänsten, provad av servern själv. Sparad i tio
+// minuter per instans: /api/ready anropas av övervakning, och varje prov skapar
+// en instans hos leverantören.
+let webphoneProbe: { at: number; result: WebphoneRegistrationProbe } | null = null;
+async function webphoneRegistration() {
+  if (webphoneProbe && Date.now() - webphoneProbe.at < 10 * 60_000) return webphoneProbe.result;
+  const result = await probeWebphoneRegistration().catch((): WebphoneRegistrationProbe => ({
+    state: "unreachable", message: "probe_failed", checkedAt: new Date().toISOString(),
+  }));
+  webphoneProbe = { at: Date.now(), result };
+  return result;
+}
+
 export async function GET() {
   const startedAt = Date.now();
   // The configured public base URL is what customers receive in acceptance and
@@ -153,7 +167,7 @@ export async function GET() {
     return NextResponse.json({
       status: "ready",
       service: "kundexa-web",
-      checks: { database: true, telephonyConfigured: configured, appBaseUrl, appBaseUrlUsable, webhookUrl, delivery },
+      checks: { database: true, telephonyConfigured: configured, appBaseUrl, appBaseUrlUsable, webhookUrl, delivery, webphoneRegistration: await webphoneRegistration() },
       durationMs: Date.now() - startedAt,
     }, { headers: { "cache-control": "no-store" } });
   } catch {
