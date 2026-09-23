@@ -1772,3 +1772,11 @@ steg ser likadana ut utifrån.
 
 Åtgärd: kräver att ägaren sätter de två repo-hemligheterna; kan inte göras från
 en session utan administratörsrättigheter på repot.
+
+## FAILURE — CSP blockerade webbtelefonens registrering (2026-09-23)
+
+Symptom: ingen `webphone_sessions`-rad fick någonsin `registration_id`; sessioner tystnade och
+sopades som `lost`. Samtalsförsök föll med `webphone_dial_rejected: Invalid operation`.
+Orsak: `connect-src` i `src/lib/supabase/proxy.ts` saknade telefonitjänstens värdar. Servern fick
+200 på identisk registrering. Maskerades av att SDK:t ersätter felet med "Unable to create
+instance!" och att klienten bara loggade felnamnet. Rättat + vakt i `verify.mjs`.

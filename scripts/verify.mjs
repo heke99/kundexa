@@ -702,6 +702,7 @@ const PROVIDER_NAME_EXEMPT = new Set([
   // Adaptrarna. Här är namnet själva innehållet.
   "src/lib/telephony/sinch/registration-token.ts",
   "src/lib/telephony/sinch/registration-probe.ts",
+  "src/lib/telephony/webphone/connect-sources.ts",
   "src/lib/telephony/sinch/callback-signature.ts",
   "src/lib/telephony/webphone/sinch.ts",
   "src/lib/telephony/numbers/sinch.ts",
@@ -884,6 +885,12 @@ assert.match(webphoneHook, /onClientFailed:[\s\S]{0,600}?reportFailure\("webphon
   "A failed registration must be recorded on the session, not only in the browser console");
 assert.match(webphoneHook, /if \(refreshed\.data\?\.sessionId\) sessionRef\.current = /,
   "A token refresh opens a new session; the heartbeat must follow it or the seller is told to reload");
+// Webbläsarens CSP blockerade varje registrering hos telefonitjänsten, medan
+// servern fick 200 på samma begäran. Policyn måste släppa igenom adapterns
+// adresser, annars kan ingen säljare någonsin ringa.
+const cspSource = await readFile(join(root, "src/lib/supabase/proxy.ts"), "utf8");
+assert.match(cspSource, /connect-src[^`]*\$\{webphoneConnectSources\.join\(" "\)\}/,
+  "The CSP connect-src must admit the webphone provider, or the browser blocks every registration");
 const readinessRoute = await readFile(join(root, "src/app/api/ready/route.ts"), "utf8");
 assert.match(readinessRoute, /webphoneRegistration: await webphoneRegistration\(\)/,
   "Readiness must report whether the webphone can actually register with the provider");

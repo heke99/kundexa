@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { webphoneConnectSources } from "@/lib/telephony/webphone/connect-sources";
 import type { RuntimeDatabase } from "@/lib/supabase/runtime-database.types";
 
 // Surfaces that serve tenant-scoped personal data. Everything under them must be
@@ -36,7 +37,7 @@ export async function updateSession(request: NextRequest) {
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data:",
-    `connect-src 'self' ${supabaseOrigin} ${supabaseSocket}`.trim(),
+    `connect-src 'self' ${supabaseOrigin} ${supabaseSocket} ${webphoneConnectSources.join(" ")}`.trim(),
     "worker-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'self'",

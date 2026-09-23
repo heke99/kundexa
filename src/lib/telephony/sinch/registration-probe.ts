@@ -21,7 +21,7 @@ import { mintSinchRegistrationToken, SINCH_MIN_TOKEN_TTL_SECONDS } from "./regis
  */
 export type SinchRegistrationProbe =
   | { state: "not_configured" }
-  | { state: "ok"; status: number; checkedAt: string }
+  | { state: "ok"; status: number; hosts: string[]; checkedAt: string }
   | { state: "rejected"; status: number; message: string; checkedAt: string }
   | { state: "unreachable"; message: string; checkedAt: string };
 
@@ -59,7 +59,15 @@ export async function probeSinchRegistration(): Promise<SinchRegistrationProbe> 
       signal: AbortSignal.timeout(8000),
       cache: "no-store",
     });
-    if (response.ok) return { state: "ok", status: response.status, checkedAt };
+    if (response.ok) {
+      // Värdnamnen i svaret är de adresser webbläsaren sedan måste nå:
+      // signalering, konfiguration och rapportering. Sajtens CSP måste släppa
+      // igenom dem, och den här listan är mätt i stället för gissad.
+      const body = await response.text().catch(() => "");
+      const hosts = [...new Set(body.match(/[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|io|se)\b/gi) ?? [])]
+        .map((host) => host.toLowerCase()).sort().slice(0, 30);
+      return { state: "ok", status: response.status, hosts, checkedAt };
+    }
     const text = (await response.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 300);
     return { state: "rejected", status: response.status, message: text || response.statusText, checkedAt };
   } catch (error) {
