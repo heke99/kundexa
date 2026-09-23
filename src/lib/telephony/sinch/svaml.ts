@@ -45,9 +45,9 @@ export function sinchSvamlFor(event: string, payload: Payload): SinchSvaml | nul
           name: "connectPstn",
           ...(cli ? { cli } : {}),
           // Ett säljsamtal på två timmar är ett samtal någon glömt att lägga på.
+          // Inget mer: varje valfritt fält är ett fält Sinch kan avvisa, och
+          // svaret ska bara säga vart samtalet går och från vilket nummer.
           maxDuration: 7200,
-          indications: "se",
-          locale: "sv-SE",
         },
       };
     }

@@ -299,3 +299,11 @@ verifierade nummer.
 Mikrofonen: SDK:t öppnade en ny `getUserMedia` per samtal (behörighetsfråga per samtal i
 Safari/Firefox). Nu en återanvänd ström per session via `mediaStreamFactory`, varje samtal får
 `clone()`, släpps när dialern lämnas.
+
+## 2026-09-23 09:18 — Test efter CLI-fixen
+
+Två samtal 09:18:22 och 09:18:42: ICE mottagen, webhook 200 från ny driftsättning (cli skickas nu),
+men Sinch avslutade efter ~1 s: "Failure: Unable to connect call". Ingen DiCE/ACE mottagen.
+Kundexas sida fungerar (reservation, session, avslut, efterarbete "no_answer" sparat). Kvar hos Sinch:
+testkonto → mottagaren måste vara verifierad; CLI måste vara tilldelat appen. SVAML skalat till
+`connectPstn` + `cli` + `maxDuration` för att utesluta vårt svar.
