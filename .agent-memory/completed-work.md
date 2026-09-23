@@ -150,3 +150,5 @@
 - 2026-09-23: PR A samtalsutfall/auto-dialer (migration 202609230003, prod).
 - 2026-09-23: PR B avtalssvar till säljaren (migration 202609230004, prod).
 - 2026-09-23: PR C enklare säljar-UI (inga schemaändringar).
+- 2026-09-23: PR D UI-regressioner (#45).
+- 2026-09-24: PR E dela listor med team/kampanj och nummer med team (migration 202609240001, prod).

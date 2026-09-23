@@ -382,3 +382,10 @@ create_contract_draft_v3); fler aktiva team → val. Kunder: kundstatus bara dol
 Dialer: kundtyp tillbaka som val (standard Företag). Avtalslista: "Saknar samtal"-märke,
 attention öppnar "Fler filter". Samtal/kundkort: formulär öppna efter fel (calls?call=<id>).
 Avtalssida: äldre versioner i kort med villkor. CSS för summary-knappar; död CSS bort.
+
+## 2026-09-24 — PR E: dela listor och nummer med team
+Migration 202609240001 (prod), typer regenererade. Listsidan: "Dela med team och kampanj" ersätter
+split-kortet; "Enskilda säljare" valfritt; "Vikt" borta; svenska roll/status/grupp-etiketter.
+Teamsidan: dubblerat nummerkort borttaget; teamledare sparar teamnummer via RPC. DialerPanel:
+"Automatiskt" förval. Plattform: "Ge ett nummer till ett team". Dialersidan förklarar saknade listor.
+verify-guardar för explicit nummer ersatta enligt ADR-0021. Live-test som säljare: NOT RUN.

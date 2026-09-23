@@ -36,6 +36,19 @@ const noteType: Record<string, string> = {
 
 const visibility: Record<string, string> = { private: "Privat", team: "Team", tenant: "Hela företaget" };
 
+const role: Record<string, string> = {
+  owner: "Ägare", admin: "Administratör", team_lead: "Teamledare", sales: "Säljare", backoffice: "Backoffice",
+  viewer: "Läsbehörighet",
+};
+
+const outcomeGroup: Record<string, string> = {
+  positive: "Positivt", neutral: "Neutralt", negative: "Negativt", unreachable: "Nåddes inte", blocked: "Spärrat",
+};
+
+const listStatus: Record<string, string> = {
+  draft: "Utkast", active: "Aktiv", paused: "Pausad", completed: "Avslutad", archived: "Arkiverad",
+};
+
 const pick = (map: Record<string, string>) => (value: string | null | undefined) => value ? map[value] ?? value : "—";
 
 export const callStatusLabel = pick(callStatus);
@@ -44,6 +57,9 @@ export const lifecycleLabel = pick(lifecycle);
 export const memberStateLabel = pick(memberState);
 export const noteTypeLabel = pick(noteType);
 export const visibilityLabel = pick(visibility);
+export const roleLabel = pick(role);
+export const outcomeGroupLabel = pick(outcomeGroup);
+export const listStatusLabel = pick(listStatus);
 
 export function callDirectionLabel(direction: string | null | undefined) {
   return direction === "inbound" ? "Inkommande" : direction === "outbound" ? "Utgående" : "—";

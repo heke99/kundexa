@@ -85,21 +85,6 @@ export default async function TeamsPage({ searchParams }: { searchParams: Promis
                 <label className="check-row"><input type="checkbox" name="assignment_paused" /> Pausa automatisk leadtilldelning</label>
                 <button className="button button-secondary">Spara teammedlem</button>
               </form></details> : null}
-              {mayManage ? <details className="assignment-settings"><summary>Utgående nummer</summary>
-                <p className="muted" style={{ marginBottom: 10 }}>
-                  Numret mottagaren ser när någon i teamet ringer. En lista eller kampanj med eget
-                  nummer vinner över teamets.
-                </p>
-                <CallerIdPicker
-                  scope="team"
-                  scopeId={team.id}
-                  label={`Utgående nummer för ${team.name}`}
-                  current={team.caller_id_phone_number_id}
-                  numbers={callerIds.numbers}
-                  inherits={callerIds.tenantDefaultNumber ? { number: callerIds.tenantDefaultNumber, source: "företagets förval" } : null}
-                  returnTo="/app/teams"
-                />
-              </details> : null}
             </CardContent>
           </Card>;
         })}

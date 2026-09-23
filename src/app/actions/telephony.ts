@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getAppContext, isAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { serverEnv } from "@/lib/env";
 import { placeProviderTestCall } from "@/lib/telephony/webphone";
 
@@ -110,11 +111,28 @@ export async function saveTelephonyPolicy(form: FormData) {
  * förval.
  */
 export async function saveCallerIdDefault(form: FormData) {
-  const context = await adminContext();
   const back = safeReturnPath(value(form, "return_to"));
   const scope = value(form, "scope");
   const scopeId = value(form, "scope_id") || null;
   const phoneNumberId = value(form, "phone_number_id") || null;
+
+  // En teamledare väljer nummer för sina egna team. Databasen avgör vilka team
+  // det är; allt annat kräver ägare eller administratör.
+  const appContext = await getAppContext();
+  if (scope === "team" && scopeId && appContext.role === "team_lead") {
+    const supabase = await createClient();
+    const { error } = await supabase.rpc("set_team_caller_id", { p_team_id: scopeId, p_phone_number_id: phoneNumberId as string });
+    if (error) {
+      go("error", error.message.includes("team_manage_permission_required")
+        ? "Du kan bara välja nummer för team du leder."
+        : error.message.includes("phone_number_not_available")
+          ? "Numret är inte aktivt för utgående samtal."
+          : "Det utgående numret kunde inte sparas.", back);
+    }
+    revalidatePath(back);
+    go("message", phoneNumberId ? "Det utgående numret är sparat." : "Valet av utgående nummer är rensat.", back);
+  }
+  const context = await adminContext();
 
   if (!["tenant", "team", "list", "campaign"].includes(scope)) go("error", "Okänd nivå för utgående nummer.", back);
   if (scope !== "tenant" && !scopeId) go("error", "Valet saknar vilket team, lista eller kampanj det gäller.", back);

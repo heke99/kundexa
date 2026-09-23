@@ -31,7 +31,7 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
     {params.error ? <p className="form-error">{params.error}</p> : null}
     <div className="grid grid-3" style={{ marginBottom: 18 }}>
       {lists?.map((list) => <Link key={list.id} href={`/app/dialer/lists/${list.id}`} className="list-launch-card"><span className="stat-icon"><ListFilter size={18} /></span><div><strong>{list.name}</strong><p>{list.dialing_mode === "automatic" ? "Automatisk sekventiell ringning" : "Manuell ringning"}</p></div><Badge className="badge-success">Starta</Badge></Link>)}
-      {!lists?.length ? <div className="notice">Du har inga aktiva och tilldelade ringlistor.</div> : null}
+      {!lists?.length ? <div className="notice">Inga listor att ringa just nu. En lista syns här när den är aktiv, inom ringtiden och delad med ditt team eller dig. Fråga din teamledare om du saknar en.</div> : null}
     </div>
     <div className="dialer-grid">
       <div className="phone-panel"><DialerPanel customers={selectedCustomer ? [selectedCustomer] : []} initialCustomer={selectedCustomer?.id} callbackActivityId={params.callback} callerIdOptions={(callerIdData ?? []) as Array<{ id: string; number_e164: string }>} mayManageIntegrations={can(context.role, "integrations.manage")} contractDispositions={contractDispositionKeys} /></div>

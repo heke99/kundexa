@@ -366,9 +366,9 @@ assert.doesNotMatch(rlsMigration, /create policy customers_scoped_select[\s\S]{0
 const globalCss = await readFile(join(root, "src/app/globals.css"), "utf8");
 assert.match(globalCss, /\.span-2/, "Multi-column form spans must be defined, not assumed");
 const dialerComponent = await readFile(join(root, "src/components/dialer-panel.tsx"), "utf8");
-assert.match(dialerComponent, /initialCallerId/, "The manual dialer must select the only accessible caller ID automatically");
-assert.match(dialerComponent, /callerIdPhoneNumberId,/, "The manual dialer must always send the selected number explicitly");
-assert.match(dialerComponent, /!callerIdPhoneNumberId/, "The dial button must not submit without a caller ID");
+assert.match(dialerComponent, /useState\(""\)/, "The manual dialer must default to automatic caller ID so team and tenant numbers apply");
+assert.match(dialerComponent, /callerIdPhoneNumberId: callerIdPhoneNumberId \|\| null,/, "The manual dialer must send an explicit number only when the seller picks one");
+assert.match(dialerComponent, /callerIdOptions\.length === 0/, "The dial button must not submit when the tenant has no caller ID at all");
 assert.doesNotMatch(dialerComponent, /dialPath/, "The dial path belonged to a provider that rang a desk phone first; the browser is the phone now");
 assert.match(dialRoute, /internalDialFailure/, "Local database and finalization errors must not be mislabeled as provider failures");
 assert.match(dialRoute, /getCorrelationId\(request\)/, "Dial failures must use a stable correlation id for support tracing");

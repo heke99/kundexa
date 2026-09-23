@@ -1,5 +1,10 @@
 # Next actions
 
+**2026-09-24:** PR F — importfixar (dubbletter org.nr+telefon, återimport behåller ringläge,
+rollback rör inte befintliga platser, fel sparas, nytt försök efter rollback, direkt skrivrätt bort,
+synliga uppladdningsfel, ParseHub, plattformsimport, stegindikator). Användaren: dela en lista med
+ett team och ring som säljare i teamet (NOT RUN).
+
 **2026-09-22, först:** Skapa produkten (t.ex. "Elavtal rörligt") under Produkter, öppna mallen
 "Gridex hemsida · Mina sidor", välj produkten under Redigera och spara. Den godkända
 versionen gäller direkt. Skapa sedan ett avtal från en kund och skicka det till egen e-post.

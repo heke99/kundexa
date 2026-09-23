@@ -1,5 +1,15 @@
 # Current state
 
+## 2026-09-24 — Listor och nummer delas med team (PR E)
+
+Migration `202609240001_share_lists_and_numbers_with_teams.sql` applicerad i produktion; typer
+regenererade. En lista delas med team (`customer_list_team_shares`) och/eller en kampanj
+(`customer_lists.campaign_id` → kampanjens team). Alla aktiva, ej pausade säljare i de teamen ringer
+ur samma kö; round robin spärrar aldrig. Teamledare delar bara till team de leder. Nummer: resolvern
+följer lista → kampanj → teamet som gav åtkomst → företagets förval; DialerPanel skickar inget
+explicit nummer som standard ("Automatiskt"). Teamledare väljer nummer för sina team
+(`set_team_caller_id`); plattformsadmin kan ge ett nummer direkt till ett team. `npm run verify` PASS.
+
 ## 2026-09-22 — Avtalet hör till produkten
 
 Mall ↔ produkt är kopplade (ADR-0019), migration applicerad i produktion. Säljaren väljer
