@@ -211,3 +211,6 @@ för `npm run verify`, som kör mot PGlite. Den kontrollen är manuell.
 | Typer mot produktion | PASS | regenererade; diff = `product_id` + ny RPC |
 | Nya verify-kontroller | PASS | återinförda fel fäller: mallval i formuläret, PDF-kort för säljare, borttagen trigger |
 | Skarpt avtal end-to-end | NOT RUN | Gridex saknar produkt; noll avtal i databasen |
+- 2026-09-23 PR A/B/C: npm run verify PASS; PGlite nya tester PASS; migrationer 0003/0004 applicerade i prod,
+  funktionsdefinitioner och ACL kontrollerade. Live-samtal efter PR A och live-avtalsutskick efter PR B: NOT RUN
+  (kräver användarens test). Visuell kontroll PR C som säljare: NOT RUN.

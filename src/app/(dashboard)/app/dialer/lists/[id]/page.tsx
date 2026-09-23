@@ -1,7 +1,7 @@
 import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, ShieldCheck } from "@/components/icons";
+import { ArrowLeft } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
 import { ListDialerWorkspace } from "@/components/list-dialer-workspace";
 import { Card, CardContent } from "@/components/ui/card";
@@ -25,6 +25,5 @@ export default async function ListDialerPage({ params, searchParams }: { params:
     <Link href="/app/dialer" className="muted back-link"><ArrowLeft size={15} /> Till dialer</Link>
     {query.error ? <p className="form-error">{query.error}</p> : null}
     <ListDialerWorkspace listId={list.id} listName={list.name} mode={list.dialing_mode as "manual" | "automatic"} dispositions={dispositions ?? []} products={products ?? []} />
-    <div className="notice dialer-policy-note"><ShieldCheck size={16} /> Varje post låses till den aktiva sessionen. Kontaktspärr, NIX-policy, tenantbehörighet och tillåten ringtid kontrolleras på serversidan före samtalet.</div>
   </>;
 }

@@ -1,7 +1,7 @@
 import { ok } from "@/lib/supabase/read";
 import { getAppContext } from "@/lib/auth";
 import { can, canCreateContractFromProduct } from "@/lib/permissions";
-import { cancelContract, deleteContract } from "@/app/actions/contracts";
+import { deleteContract } from "@/app/actions/contracts";
 import Link from "next/link";
 import { FileSignature, Plus } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
@@ -46,8 +46,6 @@ const quickViews: Array<{ label: string; status?: string; attention?: string }> 
   { label: "Avböjda och utgångna", attention: "answered_no" },
 ];
 
-// Concluded: the customer has agreed, so there is nothing left to withdraw.
-const concludedStatuses = new Set(["accepted", "signed", "active", "terminated", "superseded"]);
 // The same window `sendContract` accepts — anything else has either not been
 // built yet or has already been answered.
 const resendableStatuses = new Set(["ready", "sent", "delivered", "opened", "expired"]);
@@ -61,6 +59,7 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
   // nej är ett sämre besked än ingen knapp.
   const mayCreate = canCreateContractFromProduct(ctx.role, ctx.platformRole);
   const mayWrite = can(ctx.role, "contracts.write");
+  const isSeller = ctx.role === "sales";
   const maySend = can(ctx.role, "contracts.send");
   // Deletion is a tenant-admin act and the database enforces it too
   // (`contracts_admin_delete`). Showing the button to anyone else would offer
@@ -121,19 +120,25 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
     </div>
     <Card style={{ marginBottom: 16 }}><CardContent><form method="get" className="form-stack">
       <div className="grid grid-2"><Field label="Sök avtal eller kund" name="q" defaultValue={params.q ?? ""} placeholder="Avtalsnummer, titel eller kund" />
-        <SelectField label="Status" name="status" defaultValue={params.status ?? ""}><option value="">Alla statusar</option>{Object.entries(statusLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</SelectField></div>
-      <div className="grid grid-2">
-        <SelectField label="Säljare" name="owner_user_id" defaultValue={params.owner_user_id ?? ""}><option value="">Alla säljare</option>{Array.from(ownerNames.entries()).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</SelectField>
-        <SelectField label="Team" name="team_id" defaultValue={params.team_id ?? ""}><option value="">Alla team</option>{teams?.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</SelectField>
+        <div style={{ alignSelf: "end" }}><button className="button button-secondary">Sök</button> <Link href="/app/contracts" className="button button-ghost">Rensa</Link></div></div>
+      {/* Snabbfiltren ovan täcker det man oftast letar efter. Resten ligger
+          bakom en rad i stället för nio fält som alltid syns. */}
+      <details open={Boolean(params.status || params.owner_user_id || params.team_id || params.product_id || params.call || params.date_from || params.date_to)}>
+      <summary className="muted" style={{ cursor: "pointer" }}>Fler filter</summary>
+      <div className="grid grid-2" style={{ marginTop: 12 }}>
+        <SelectField label="Status" name="status" defaultValue={params.status ?? ""}><option value="">Alla statusar</option>{Object.entries(statusLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</SelectField>
+        {isSeller ? null : <SelectField label="Säljare" name="owner_user_id" defaultValue={params.owner_user_id ?? ""}><option value="">Alla säljare</option>{Array.from(ownerNames.entries()).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</SelectField>}
+        {isSeller ? null : <SelectField label="Team" name="team_id" defaultValue={params.team_id ?? ""}><option value="">Alla team</option>{teams?.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</SelectField>}
         <SelectField label="Produkt" name="product_id" defaultValue={params.product_id ?? ""}><option value="">Alla produkter</option>{products?.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</SelectField>
         <SelectField label="Källsamtal" name="call" defaultValue={params.call ?? ""}><option value="">Alla</option><option value="missing">Saknar giltigt samtal</option></SelectField>
         <SelectField label="Behöver uppmärksamhet" name="attention" defaultValue={params.attention ?? ""}><option value="">Alla</option><option value="waiting">Väntar på kund</option><option value="answered_yes">Godkända</option><option value="answered_no">Avböjda eller utgångna</option><option value="delivery_error">Leveransfel</option><option value="reminder_overdue">Påminnelse förfallen</option></SelectField>
       </div>
       <div className="grid grid-2"><Field label="Skapad från" name="date_from" type="date" defaultValue={params.date_from ?? ""} /><Field label="Skapad till" name="date_to" type="date" defaultValue={params.date_to ?? ""} /></div>
-      <div><button className="button button-secondary">Filtrera</button> <Link href="/app/contracts" className="button button-ghost">Rensa</Link></div>
+      <div><button className="button button-secondary">Filtrera</button></div>
+      </details>
     </form></CardContent></Card>
     <Card><CardHeader><h2><FileSignature size={17} /> Avtalsregister</h2><Badge>{filteredContracts.length}</Badge></CardHeader><CardContent style={{ padding: 0 }}>
-      <DataTable headers={["Avtal", "Kund", "Produkt", "Säljare / team", "Källsamtal", "Status", "Senaste leverans", "Påminnelser", "Sista svar", "Senaste aktivitet", "Åtgärd"]}>
+      <DataTable headers={isSeller ? ["Avtal", "Kund", "Produkt", "Status", "Utskick", "Sista svar", ""] : ["Avtal", "Kund", "Produkt", "Säljare / team", "Status", "Utskick", "Sista svar", ""]}>
         {filteredContracts.map((contract) => {
           const stats = { sent: Number(contract.reminders_sent ?? 0), overdue: Number(contract.reminders_overdue ?? 0) };
           return <tr key={contract.id}>
@@ -149,12 +154,10 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
                 : null}
             </td>
             <td>{contract.product_name ?? "—"}</td>
-            <td>{contract.owner_user_id ? ownerNames.get(contract.owner_user_id) ?? contract.owner_user_id : "—"}<br /><span className="muted">{contract.team_id ? teamNames.get(contract.team_id) ?? "Team" : "Inget team"}</span></td>
-            <td>{contract.source_call_id ? <Badge className="badge-success">Kopplat</Badge> : <Badge className="badge-warning">Saknas</Badge>}</td>
+            {isSeller ? null : <td>{contract.owner_user_id ? ownerNames.get(contract.owner_user_id) ?? contract.owner_user_id : "—"}<br /><span className="muted">{contract.team_id ? teamNames.get(contract.team_id) ?? "Team" : "Inget team"}</span></td>}
             <td><Badge className={contractStatusTone(contract.status)}>{statusLabel[contract.status] ?? contract.status}</Badge></td>
-            <td>{contract.latest_delivery_status ? <><span>{contract.latest_delivery_channel ?? "—"}</span><br /><Badge className={["failed", "bounced", "complained", "suppressed", "dead_letter"].includes(contract.latest_delivery_status) ? "badge-warning" : ""}>{deliveryStatusLabel(contract.latest_delivery_status)}</Badge>{contract.latest_delivery_failure ? <div className="form-error">{contract.latest_delivery_failure}</div> : null}</> : "—"}</td>
-            <td>{stats.sent}{stats.overdue ? <><br /><Badge className="badge-warning">{stats.overdue} förfallen</Badge></> : null}</td>
-            <td>{formatDate(contract.expires_at)}</td><td>{formatDate(contract.updated_at)}</td>
+            <td>{contract.latest_delivery_status ? <><span className="muted">{contract.latest_delivery_channel === "sms" ? "SMS" : contract.latest_delivery_channel === "email" ? "E-post" : contract.latest_delivery_channel ?? "—"}</span><br /><Badge className={["failed", "bounced", "complained", "suppressed", "dead_letter"].includes(contract.latest_delivery_status) ? "badge-warning" : ""}>{deliveryStatusLabel(contract.latest_delivery_status)}</Badge>{contract.latest_delivery_failure ? <div className="form-error">{contract.latest_delivery_failure}</div> : null}</> : "—"}</td>
+            <td>{formatDate(contract.expires_at)}{stats.overdue ? <><br /><Badge className="badge-warning">{stats.overdue} påminnelse förfallen</Badge></> : null}</td>
             <td><div className="toolbar-left">
               {/* Sending again goes through the contract's own send form rather
                   than a one-click resend: mottagare, kanal and svarsdatum are
@@ -162,13 +165,7 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
               {maySend && resendableStatuses.has(contract.status)
                 ? <Link className="button button-secondary button-sm" href={`/app/contracts/${contract.id}`}>Skicka igen</Link>
                 : null}
-              {mayWrite && !concludedStatuses.has(contract.status) && contract.status !== "cancelled"
-                ? <form action={cancelContract}>
-                    <input type="hidden" name="contract_id" value={contract.id} />
-                    <button className="button button-ghost button-sm">Avbryt</button>
-                  </form>
-                : null}
-              {mayDelete && contract.deletable
+              {mayWrite && mayDelete && contract.deletable
                 ? <form action={deleteContract}>
                     <input type="hidden" name="contract_id" value={contract.id} />
                     <button className="button button-ghost button-sm" style={{ color: "#a72d37" }}>Radera</button>

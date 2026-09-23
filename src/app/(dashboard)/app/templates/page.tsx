@@ -34,7 +34,7 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Pr
   const preselected = params.product_id && productName.has(params.product_id) && !taken.has(params.product_id) ? params.product_id : "";
 
   return <>
-    <PageHeader title="Avtal" description="Varje avtal hör till en produkt. Säljaren väljer produkten och får avtalet med kundens uppgifter ifyllda." />
+    <PageHeader title="Avtalsmallar" description="Varje avtal hör till en produkt. Säljaren väljer produkten och får avtalet med kundens uppgifter ifyllda." />
     {params.error ? <p className="form-error">{params.error}</p> : null}
     {params.message ? <div className="notice">{params.message}</div> : null}
     <div className="split-layout">

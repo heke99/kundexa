@@ -12,6 +12,7 @@ import { DataTable } from "@/components/ui/data-table";
 import { Field, SelectField, TextareaField } from "@/components/ui/form-field";
 import { Badge } from "@/components/ui/badge";
 import { CustomerMultiSearchSelect } from "@/components/customer-multi-search-select";
+import { dispositionLabel, memberStateLabel } from "@/lib/ui/labels";
 import { formatDate } from "@/lib/utils";
 import { CallerIdPicker } from "@/components/caller-id-picker";
 import { isoToZonedLocalDateTime } from "@/lib/domain/time";
@@ -65,7 +66,7 @@ export default async function ListDetailPage({ params, searchParams }: {
 
   return <>
     <Link href="/app/lists" className="muted back-link"><ArrowLeft size={15} /> Till listor</Link>
-    <PageHeader title={list.name} description={`${list.list_type} · ${list.dialing_mode === "automatic" ? "automatisk sekventiell dialer" : "manuell ringning"}`} action={list.status === "active" ? <Link className="button button-primary" href={`/app/dialer/lists/${id}`}><PhoneCall size={16} /> Öppna ringsession</Link> : <Badge>{list.status}</Badge>} />
+    <PageHeader title={list.name} description={list.dialing_mode === "automatic" ? "Automatisk uppringning" : "Manuell ringning"} action={list.status === "active" ? <Link className="button button-primary" href={`/app/dialer/lists/${id}`}><PhoneCall size={16} /> Öppna ringsession</Link> : <Badge>{list.status}</Badge>} />
     {query.error ? <p className="form-error">{query.error}</p> : null}
     {query.saved ? <div className="notice" style={{ marginBottom: 16 }}>Listan är uppdaterad och synkroniserad med säljarvyn.</div> : null}
     {query.message ? <div className="notice success" style={{ marginBottom: 16 }}>{query.message}</div> : null}
@@ -83,7 +84,7 @@ export default async function ListDetailPage({ params, searchParams }: {
           <CardContent style={{ padding: 0 }}><DataTable headers={["Prospekt", "Telefon", "Ort", "Status", "Försök", "Nästa", "Utfall"]}>
             {memberRows.map((member) => {
               const customer = Array.isArray(member.customers) ? member.customers[0] : member.customers;
-              return <tr key={member.id}><td><Link href={`/app/customers/${member.customer_id}`}><strong>{customer?.display_name ?? "Okänt prospekt"}</strong></Link></td><td>{customer?.phone_e164 ?? "—"}</td><td>{customer?.city ?? "—"}</td><td><Badge className={member.state === "completed" ? "badge-success" : member.state === "blocked" ? "badge-danger" : ""}>{member.state}</Badge></td><td>{member.attempts}</td><td>{formatDate(member.next_attempt_at)}</td><td>{member.outcome ?? "—"}</td></tr>;
+              return <tr key={member.id}><td><Link href={`/app/customers/${member.customer_id}`}><strong>{customer?.display_name ?? "Okänt prospekt"}</strong></Link></td><td>{customer?.phone_e164 ?? "—"}</td><td>{customer?.city ?? "—"}</td><td><Badge className={member.state === "completed" ? "badge-success" : member.state === "blocked" ? "badge-danger" : ""}>{memberStateLabel(member.state)}</Badge></td><td>{member.attempts}</td><td>{formatDate(member.next_attempt_at)}</td><td>{member.outcome ? dispositionLabel(member.outcome) : "—"}</td></tr>;
             })}
           </DataTable>
           <div className="toolbar-left" style={{ padding: 14 }}>
@@ -95,7 +96,7 @@ export default async function ListDetailPage({ params, searchParams }: {
         <Card>
           <CardHeader><h2>Samtalsutfall</h2><Badge>{dispositions?.length ?? 0}</Badge></CardHeader>
           <CardContent style={{ padding: 0 }}><DataTable headers={["Utfall", "Grupp", "Nästa steg"]}>
-            {dispositions?.map((item) => <tr key={item.key}><td><strong>{item.label}</strong><br /><code>{item.key}</code></td><td>{item.outcome_group}</td><td>{item.requires_order ? "Skapa order" : item.requires_callback ? "Boka återkomst" : item.retry_after_minutes ? `Försök igen efter ${item.retry_after_minutes} min` : item.terminal ? "Avsluta listpost" : "Fortsätt"}</td></tr>)}
+            {dispositions?.map((item) => <tr key={item.key}><td><strong>{item.label}</strong></td><td>{item.outcome_group}</td><td>{item.requires_order ? "Skapa order" : item.requires_callback ? "Boka återkomst" : item.retry_after_minutes ? `Försök igen efter ${item.retry_after_minutes} min` : item.terminal ? "Avsluta listpost" : "Fortsätt"}</td></tr>)}
           </DataTable></CardContent>
         </Card>
       </div>

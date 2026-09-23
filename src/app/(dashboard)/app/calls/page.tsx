@@ -12,6 +12,7 @@ import { getAppContext } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { manualContractDispositions } from "@/lib/contracts/manual-dispositions";
 import { formatDate } from "@/lib/utils";
+import { callStatusLabel, dispositionLabel } from "@/lib/ui/labels";
 
 
 export default async function CallsPage({ searchParams }: { searchParams: Promise<{ error?: string; message?: string }> }) {
@@ -34,23 +35,22 @@ export default async function CallsPage({ searchParams }: { searchParams: Promis
     call.list_id ? listEligible.has(`${call.list_id}:${call.disposition}`) : manualEligible.has(String(call.disposition)));
 
   return <>
-    <PageHeader title="Mina samtal" description="Samtalshistorik, resultat, anteckningar, återuppringningar och avtalsgrundande samtal." />
+    <PageHeader title="Mina samtal" description="Dina samtal och deras utfall." />
     {/* The action used to fail silently in both directions: a refusal had nowhere
         to be shown, and a success looked the same as a no-op. */}
     {params.error ? <p className="form-error">{params.error}</p> : null}
     {params.message ? <p className="notice">{params.message}</p> : null}
     <Card><CardHeader><h2><Headphones size={17} /> Samtal</h2><Badge>{data?.length ?? 0}</Badge></CardHeader><CardContent style={{ padding: 0 }}>
-      <DataTable headers={["Kund / nummer", "Riktning", "Status", "Resultat", "Tid", "Efterarbete"]}>
+      <DataTable headers={["Kund", "Samtal", "Utfall", "Tid", ""]}>
         {data?.map((call) => {
           const customer = Array.isArray(call.customers) ? call.customers[0] : call.customers;
           const contractEligible = call.status === "completed" && call.answered_at && call.ended_at && isEligible(call);
           return <tr key={call.id}>
-            <td><Link href={`/app/calls/${call.id}`}><strong>{customer?.display_name ?? call.to_number}</strong></Link><br /><span className="muted">{call.from_number} → {call.to_number}</span></td>
-            <td>{call.direction}</td>
-            <td><Badge className={call.status === "completed" ? "badge-success" : "badge-info"}>{call.status}</Badge></td>
-            <td>{call.disposition ?? "—"}{call.metadata && typeof call.metadata === "object" && (call.metadata as Record<string, unknown>).registered_manually === true ? <><br /><span className="muted">Manuellt registrerat</span></> : null}</td>
+            <td><Link href={`/app/calls/${call.id}`}><strong>{customer?.display_name ?? call.to_number}</strong></Link></td>
+            <td><Badge className={call.status === "completed" ? "badge-success" : "badge-info"}>{callStatusLabel(call.status)}</Badge>{call.direction === "inbound" ? <><br /><span className="muted">Inkommande</span></> : null}</td>
+            <td>{dispositionLabel(call.disposition)}{call.metadata && typeof call.metadata === "object" && (call.metadata as Record<string, unknown>).registered_manually === true ? <><br /><span className="muted">Manuellt registrerat</span></> : null}</td>
             <td>{formatDate(call.created_at)}</td>
-            <td>{call.disposition ? <div className="toolbar-left"><span>Klart</span>{contractEligible && call.customer_id ? <Link className="button button-secondary button-sm" href={`/app/contracts/new?customer_id=${call.customer_id}&source_call_id=${call.id}`}>Skapa avtal</Link> : null}</div> : mayLog ? <form action={setCallDisposition} className="after-call-inline">
+            <td>{call.disposition ? <div className="toolbar-left"><span>Klart</span>{contractEligible && call.customer_id ? <Link className="button button-secondary button-sm" href={`/app/contracts/new?customer_id=${call.customer_id}&source_call_id=${call.id}`}>Skapa avtal</Link> : null}</div> : mayLog ? <details><summary className="button button-secondary button-sm">Registrera utfall</summary><form action={setCallDisposition} className="form-stack" style={{ marginTop: 8, minWidth: 220 }}>
               <input type="hidden" name="call_id" value={call.id} />
               {/* Exactly the set complete_manual_call_work accepts. "Avtal ska
                   skickas" is gone because the database refuses it — the contract
@@ -76,7 +76,7 @@ export default async function CallsPage({ searchParams }: { searchParams: Promis
                 <option value="global">Global teamkö</option>
               </select>
               <button className="button button-primary button-sm">Spara</button>
-            </form> : <span className="muted">Väntar på efterarbete</span>}</td>
+            </form></details> : <span className="muted">Väntar på efterarbete</span>}</td>
           </tr>;
         })}
       </DataTable>

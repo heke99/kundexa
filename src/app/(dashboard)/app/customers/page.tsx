@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Field, SelectField } from "@/components/ui/form-field";
 import { EmptyState } from "@/components/ui/empty-state";
 import { formatDate } from "@/lib/utils";
+import { lifecycleLabel } from "@/lib/ui/labels";
 
 const PAGE_SIZE = 50;
 
@@ -34,7 +35,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const pageHref = (target: number) => `/app/customers?${new URLSearchParams({ ...(params.q ? { q: params.q } : {}), page: String(target) })}`;
   return <>
-    <PageHeader title="Kunder" description="Gemensam kärna för kontaktuppgifter, samtal, avtal, aktiviteter och historik." />
+    <PageHeader title="Kunder" description="Sök en kund eller lägg till en ny." />
     <div className="split-layout">
       <Card>
         <CardHeader>
@@ -42,10 +43,10 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
           <Badge>{total} poster</Badge>
         </CardHeader>
         <CardContent style={{ padding: 0 }}>
-          {data?.length ? <DataTable headers={["Kund", "Typ", "Status", "Kontakt", "Ort", "Försök", "Senast kontakt"]}>
+          {data?.length ? <DataTable headers={["Kund", "Status", "Telefon", "Ort", "Senast kontakt"]}>
             {data.map((c) => {
               const status = Array.isArray(c.customer_statuses) ? c.customer_statuses[0] : c.customer_statuses;
-              return <tr key={c.id}><td><Link href={`/app/customers/${c.id}`}><strong>{c.display_name}</strong></Link></td><td>{c.customer_type === "company" ? "Företag" : "Privatperson"}</td><td><Badge>{status?.label ?? c.lifecycle}</Badge></td><td>{c.phone_e164 ?? c.email ?? "—"}</td><td>{c.city ?? "—"}</td><td>{c.call_attempts}</td><td>{formatDate(c.last_contact_at)}</td></tr>;
+              return <tr key={c.id}><td><Link href={`/app/customers/${c.id}`}><strong>{c.display_name}</strong></Link></td><td><Badge>{status?.label ?? lifecycleLabel(c.lifecycle)}</Badge></td><td>{c.phone_e164 ?? c.email ?? "—"}</td><td>{c.city ?? "—"}</td><td>{formatDate(c.last_contact_at)}</td></tr>;
             })}
           </DataTable> : <EmptyState icon={Users} title="Inga kunder ännu" description="Skapa den första kunden eller importera en lista." />}
         </CardContent>
@@ -59,15 +60,15 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
         <CardHeader><h2><Plus size={16} /> Ny kund</h2></CardHeader>
         <CardContent>
           {params.error ? <p className="form-error">{params.error}</p> : null}
-          {mayCreate ? <form action={createCustomer} className="form-stack">
+          {mayCreate ? <details open={Boolean(params.error)}><summary className="button button-secondary" style={{ display: "inline-flex" }}><Plus size={16} /> Lägg till kund</summary><form action={createCustomer} className="form-stack" style={{ marginTop: 12 }}>
             <SelectField label="Kundtyp" name="customer_type" defaultValue="company"><option value="company">Företag</option><option value="person">Privatperson</option></SelectField>
             <Field label="Namn / företagsnamn" name="display_name" required />
             <Field label="Telefon" name="phone" placeholder="070-123 45 67" />
             <Field label="E-post" name="email" type="email" />
             <Field label="Ort" name="city" />
-            <SelectField label="Livscykel" name="lifecycle" defaultValue="prospect"><option value="prospect">Prospekt</option><option value="lead">Lead</option><option value="customer">Kund</option></SelectField>
+            <input type="hidden" name="lifecycle" value="prospect" />
             <button className="button button-primary"><Plus size={16} /> Skapa kund</button>
-          </form> : <p className="muted">Din roll kan läsa kunder men inte skapa nya. Be en teamledare eller administratör att lägga upp kunden.</p>}
+          </form></details> : <p className="muted">Din roll kan läsa kunder men inte skapa nya. Be en teamledare eller administratör att lägga upp kunden.</p>}
         </CardContent>
       </Card>
     </div>
