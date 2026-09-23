@@ -3917,4 +3917,65 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   console.log("Call outcomes land correctly: the provider's failure replaces a browser 'no answer', its duration replaces the estimate, a late report cannot reopen a seat or cross tenants, new lists carry NIX and contract outcomes, a manual 'not interested' closes list places, and skip moves on.");
 }
 
+// Avtalets svar når säljaren (202609230004).
+{
+  const T = "00000000-0000-0000-0000-000000000001";
+  const C = "00000000-0000-0000-0000-0000000000f1";
+  await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+  await db.exec(`
+    insert into public.contracts(id,tenant_id,contract_number,customer_id,owner_user_id,audience,status,title)
+    values('${C}','${T}','VERIFY-ANSWER-1','10000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000002','B2C','sent','Svarsprov');
+    insert into public.contract_versions(id,tenant_id,contract_id,version,title,rendered_body,document_hash,created_by)
+    values('00000000-0000-0000-0000-0000000000f2','${T}','${C}',1,'Svarsprov','Text','answer-sha','00000000-0000-0000-0000-000000000002');
+    insert into public.contract_recipients(id,tenant_id,contract_id,full_name,phone_e164)
+    values('00000000-0000-0000-0000-0000000000f3','${T}','${C}','Kund Svar','+46709990001');
+    insert into public.sms_messages(id,tenant_id,contract_id,customer_id,direction,from_number,to_number,body,status)
+    values('00000000-0000-0000-0000-0000000000f4','${T}','${C}','10000000-0000-0000-0000-000000000001','outbound','+46401234567','+46709990001','Länk','sent');
+    insert into public.contract_deliveries(id,tenant_id,contract_id,contract_version_id,recipient_id,channel,status,sms_message_id)
+    values('00000000-0000-0000-0000-0000000000f5','${T}','${C}','00000000-0000-0000-0000-0000000000f2','00000000-0000-0000-0000-0000000000f3','sms','sent','00000000-0000-0000-0000-0000000000f4');
+    insert into public.contract_acceptance_requests(id,tenant_id,contract_id,contract_version_id,recipient_id,public_token_hash,method,expires_at)
+    values('00000000-0000-0000-0000-0000000000f6','${T}','${C}','00000000-0000-0000-0000-0000000000f2','00000000-0000-0000-0000-0000000000f3','answer-token','web',now()+interval '7 days');
+  `);
+  const sms = (status) => db.query(`select public.apply_sms_delivery_event($1,'00000000-0000-0000-0000-0000000000f4',$2,'prov-1',$3,null) as result`, [T, status, status]);
+
+  // Ett annat bolag kan inte skriva leveransstatus på det här meddelandet.
+  let foreignRefused = false;
+  try { await db.query(`select public.apply_sms_delivery_event('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-0000000000f4','delivered')`); }
+  catch (error) { foreignRefused = String(error).includes("sms_message_not_found"); }
+  if (!foreignRefused) throw new Error("Another tenant projected SMS delivery onto this tenant's message.");
+
+  await sms("delivered");
+  await sms("sent"); // sen rapport får inte ta tillbaka "levererat"
+  const delivered = (await db.query(`select s.status::text as sms,s.delivered_at is not null as has_at,d.status::text as delivery,c.status::text as contract
+    from public.sms_messages s join public.contract_deliveries d on d.sms_message_id=s.id join public.contracts c on c.id=d.contract_id where s.id='00000000-0000-0000-0000-0000000000f4'`)).rows[0];
+  if (delivered.sms !== "delivered" || !delivered.has_at || delivered.delivery !== "delivered" || delivered.contract !== "delivered") {
+    throw new Error(`SMS delivery did not reach the contract, or a late report regressed it: ${JSON.stringify(delivered)}`);
+  }
+
+  // Kunden öppnar länken → avtalet är öppnat, oavsett kanal.
+  await db.query(`select public.mark_acceptance_opened('00000000-0000-0000-0000-0000000000f6')`);
+  if ((await db.query(`select status::text as s from public.contracts where id=$1`, [C])).rows[0].s !== "opened") {
+    throw new Error("Opening the acceptance link did not mark the contract as opened.");
+  }
+
+  // Ett godkännande skickas också under namnet som webhooks och automationer erbjuder.
+  await db.query(`insert into public.webhook_endpoints(id,tenant_id,name,url,secret_ciphertext,subscribed_events)
+    values('00000000-0000-0000-0000-0000000000f7',$1,'Svar','https://example.test/hook','x',array['contract.accepted'])`, [T]);
+  await db.query(`insert into public.contract_events(tenant_id,contract_id,event_type,payload) values($1,$2,'contract.accepted_via_web','{}')`, [T, C]);
+  const aliases = (await db.query(`select count(*)::int as n from public.webhook_deliveries
+    where tenant_id=$1 and endpoint_id='00000000-0000-0000-0000-0000000000f7' and event_type='contract.accepted' and payload->>'contract_id'=$2`, [T, C])).rows[0];
+  if (aliases.n !== 1) throw new Error(`An acceptance was not emitted as contract.accepted: ${JSON.stringify(aliases)}`);
+
+  // Utgång ger en händelse.
+  await db.query(`update public.contract_acceptance_requests set status='expired',expires_at=now()-interval '1 minute' where id='00000000-0000-0000-0000-0000000000f6'`);
+  await db.query(`update public.contracts set acceptance_generation=0 where id=$1`, [C]);
+  await db.exec(`select set_config('request.jwt.claims','{"role":"service_role"}',false)`);
+  await db.query(`select public.expire_contracts_without_pending_acceptance()`);
+  const expired = (await db.query(`select c.status::text as s,(select count(*)::int from public.contract_events e where e.contract_id=c.id and e.event_type='contract.expired') as events from public.contracts c where c.id=$1`, [C])).rows[0];
+  if (expired.s !== "expired" || expired.events !== 1) {
+    throw new Error(`An expired contract left no contract.expired event: ${JSON.stringify(expired)}`);
+  }
+  console.log("Contract answers reach the seller: SMS delivery is monotonic and reaches the contract (never across tenants), opening the link marks it opened, acceptance is emitted as contract.accepted, and expiry leaves an event.");
+}
+
 await db.close();

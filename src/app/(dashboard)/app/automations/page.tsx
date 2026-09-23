@@ -54,7 +54,9 @@ export default async function AutomationsPage() {
               <option value="call.no_answer">Inget svar</option>
               <option value="call.busy">Upptaget</option>
               <option value="contract.sent">Avtal skickat</option>
-              <option value="contract.accepted">Avtal accepterat</option>
+              <option value="contract.accepted">Avtal godkänt</option>
+              <option value="contract.declined">Avtal avböjt</option>
+              <option value="contract.expired">Avtalets svarstid gick ut</option>
               <option value="contract.signed">Avtal signerat</option>
               <option value="customer.blocked">Kund spärrad</option>
             </SelectField>

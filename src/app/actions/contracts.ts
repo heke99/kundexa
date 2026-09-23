@@ -759,9 +759,17 @@ export async function cancelContract(form: FormData) {
     if (closeError) redirect(`${back}?error=${encodeURIComponent("Acceptlänken kunde inte stängas. Avtalet är inte avbrutet.")}`);
   }
 
-  const { error: cancelError } = await admin.from("contracts")
-    .update({ status: "cancelled" }).eq("tenant_id", ctx.tenantId).eq("id", contractId);
+  // Villkoret på status är skyddet mot att kunden hinner godkänna mellan
+  // läsningen ovan och den här skrivningen. Utan det skrev "avbryt" över ett
+  // godkännande som redan var registrerat.
+  const { data: cancelled, error: cancelError } = await admin.from("contracts")
+    .update({ status: "cancelled" }).eq("tenant_id", ctx.tenantId).eq("id", contractId)
+    .not("status", "in", `(${CONCLUDED_CONTRACT_STATUSES.join(",")})`)
+    .select("id");
   if (cancelError) redirect(`${back}?error=${encodeURIComponent(cancelError.message)}`);
+  if (!cancelled?.length) {
+    redirect(`${back}?error=${encodeURIComponent(`Kunden hann svara på ${contract.contract_number} innan det avbröts. Öppna avtalet för att se svaret.`)}`);
+  }
 
   const now = new Date().toISOString();
   await admin.from("audit_logs").insert({ tenant_id: ctx.tenantId, actor_user_id: ctx.userId, action: "contract.cancelled", entity_type: "contract", entity_id: contractId, before_data: { status: contract.status }, after_data: { status: "cancelled", cancelled_at: now } });

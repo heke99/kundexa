@@ -19,19 +19,27 @@ export async function POST(request: Request) {
   if (!report) return new NextResponse(null, { status: 204 });
 
   const admin = createAdminClient();
-  let update = admin.from("sms_messages").update({
-    provider_message_id: report.providerMessageId,
-    status: report.status,
-    delivered_at: report.status === "delivered" ? new Date().toISOString() : null,
-    error_message: report.errorMessage,
-  }).eq("tenant_id", number.tenant_id);
   // Vår egen id är den säkra nyckeln. Leverantörens id används bara när vi
   // varken fick tillbaka vår referens eller har den i URL:en.
   const localId = messageId ?? report.clientReference;
-  update = localId ? update.eq("id", localId) : update.eq("provider_message_id", report.providerMessageId);
-  const { data: sms, error } = await update.select("id").maybeSingle();
+  let lookup = admin.from("sms_messages").select("id").eq("tenant_id", number.tenant_id);
+  lookup = localId ? lookup.eq("id", localId) : lookup.eq("provider_message_id", report.providerMessageId);
+  const { data: sms, error } = await lookup.maybeSingle();
   if (error) return NextResponse.json({ error: "sms_delivery_projection_failed" }, { status: 500 });
   if (sms) {
+    // Statusen skrivs i databasen, inte här: den får aldrig gå bakåt, och
+    // avtalsutskicket och avtalet ska följa med i samma transaktion. Rutten
+    // skrev tidigare bara SMS-raden och nollade `delivered_at` vid varje
+    // rapport som inte var "levererat".
+    const { error: projectionError } = await admin.rpc("apply_sms_delivery_event", {
+      p_tenant_id: number.tenant_id,
+      p_sms_message_id: sms.id,
+      p_status: report.status,
+      p_provider_message_id: report.providerMessageId,
+      p_provider_status: report.providerStatus,
+      p_failure_message: report.errorMessage ?? undefined,
+    });
+    if (projectionError) return NextResponse.json({ error: "sms_delivery_projection_failed" }, { status: 500 });
     await admin.from("sms_delivery_events").upsert({
       tenant_id: number.tenant_id,
       sms_message_id: sms.id,

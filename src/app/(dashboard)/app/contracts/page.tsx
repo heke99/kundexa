@@ -11,15 +11,12 @@ import { DataTable } from "@/components/ui/data-table";
 import { Field, SelectField } from "@/components/ui/form-field";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
+import { contractStatusLabels, contractStatusTone, deliveryStatusLabel } from "@/lib/contracts/status-labels";
 import type { RuntimeDatabase } from "@/lib/supabase/runtime-database.types";
 
 type ContractStatus = RuntimeDatabase["public"]["Enums"]["contract_status"];
 
-const statusLabel: Record<ContractStatus, string> = {
-  draft: "Utkast", ready: "Redo", sent: "Skickat", delivered: "Levererat", opened: "Öppnat",
-  signing: "Signering pågår", accepted: "Accepterat", declined: "Avstått", expired: "Utgånget", signed: "Dokumenterat", active: "Aktivt",
-  cancelled: "Avbrutet", terminated: "Avslutat", superseded: "Ersatt",
-};
+const statusLabel = contractStatusLabels as Record<ContractStatus, string>;
 
 function isContractStatus(value: string): value is ContractStatus {
   return Object.prototype.hasOwnProperty.call(statusLabel, value);
@@ -39,12 +36,14 @@ type ContractRegistryRow = {
   latest_delivery_failure: string | null; reminders_sent: number; reminders_overdue: number;
 };
 
-const quickViews: Array<{ label: string; status: string }> = [
-  { label: "Alla", status: "" },
+// Lägen, inte enskilda statusar: ett avtal kunden godkänt via länken är
+// `accepted`, inte `signed`, och syntes inte under "Signerade".
+const quickViews: Array<{ label: string; status?: string; attention?: string }> = [
+  { label: "Alla" },
   { label: "Utkast", status: "draft" },
-  { label: "Väntar på svar", status: "sent" },
-  { label: "Signerade", status: "signed" },
-  { label: "Aktiva", status: "active" },
+  { label: "Väntar på svar", attention: "waiting" },
+  { label: "Godkända", attention: "answered_yes" },
+  { label: "Avböjda och utgångna", attention: "answered_no" },
 ];
 
 // Concluded: the customer has agreed, so there is nothing left to withdraw.
@@ -114,8 +113,9 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
         questions people actually arrive with, so they get one click. */}
     <div className="tabs" role="navigation" aria-label="Snabbfilter för status">
       {quickViews.map((view) => {
-        const active = (params.status ?? "") === view.status;
-        return <Link key={view.label} href={view.status ? `/app/contracts?status=${view.status}` : "/app/contracts"}
+        const active = (params.status ?? "") === (view.status ?? "") && (params.attention ?? "") === (view.attention ?? "");
+        const href = view.status ? `/app/contracts?status=${view.status}` : view.attention ? `/app/contracts?attention=${view.attention}` : "/app/contracts";
+        return <Link key={view.label} href={href}
           className={active ? "tab active" : "tab"} aria-current={active ? "page" : undefined}>{view.label}</Link>;
       })}
     </div>
@@ -127,7 +127,7 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
         <SelectField label="Team" name="team_id" defaultValue={params.team_id ?? ""}><option value="">Alla team</option>{teams?.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</SelectField>
         <SelectField label="Produkt" name="product_id" defaultValue={params.product_id ?? ""}><option value="">Alla produkter</option>{products?.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</SelectField>
         <SelectField label="Källsamtal" name="call" defaultValue={params.call ?? ""}><option value="">Alla</option><option value="missing">Saknar giltigt samtal</option></SelectField>
-        <SelectField label="Behöver uppmärksamhet" name="attention" defaultValue={params.attention ?? ""}><option value="">Alla</option><option value="waiting">Väntar på kund</option><option value="delivery_error">Leveransfel</option><option value="reminder_overdue">Påminnelse förfallen</option></SelectField>
+        <SelectField label="Behöver uppmärksamhet" name="attention" defaultValue={params.attention ?? ""}><option value="">Alla</option><option value="waiting">Väntar på kund</option><option value="answered_yes">Godkända</option><option value="answered_no">Avböjda eller utgångna</option><option value="delivery_error">Leveransfel</option><option value="reminder_overdue">Påminnelse förfallen</option></SelectField>
       </div>
       <div className="grid grid-2"><Field label="Skapad från" name="date_from" type="date" defaultValue={params.date_from ?? ""} /><Field label="Skapad till" name="date_to" type="date" defaultValue={params.date_to ?? ""} /></div>
       <div><button className="button button-secondary">Filtrera</button> <Link href="/app/contracts" className="button button-ghost">Rensa</Link></div>
@@ -151,8 +151,8 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
             <td>{contract.product_name ?? "—"}</td>
             <td>{contract.owner_user_id ? ownerNames.get(contract.owner_user_id) ?? contract.owner_user_id : "—"}<br /><span className="muted">{contract.team_id ? teamNames.get(contract.team_id) ?? "Team" : "Inget team"}</span></td>
             <td>{contract.source_call_id ? <Badge className="badge-success">Kopplat</Badge> : <Badge className="badge-warning">Saknas</Badge>}</td>
-            <td><Badge className={["accepted", "signed", "active"].includes(contract.status) ? "badge-success" : ["declined", "expired", "cancelled"].includes(contract.status) ? "badge-warning" : "badge-info"}>{statusLabel[contract.status] ?? contract.status}</Badge></td>
-            <td>{contract.latest_delivery_status ? <><span>{contract.latest_delivery_channel ?? "—"}</span><br /><Badge className={["failed", "bounced", "complained", "suppressed", "dead_letter"].includes(contract.latest_delivery_status) ? "badge-warning" : ""}>{contract.latest_delivery_status}</Badge>{contract.latest_delivery_failure ? <div className="form-error">{contract.latest_delivery_failure}</div> : null}</> : "—"}</td>
+            <td><Badge className={contractStatusTone(contract.status)}>{statusLabel[contract.status] ?? contract.status}</Badge></td>
+            <td>{contract.latest_delivery_status ? <><span>{contract.latest_delivery_channel ?? "—"}</span><br /><Badge className={["failed", "bounced", "complained", "suppressed", "dead_letter"].includes(contract.latest_delivery_status) ? "badge-warning" : ""}>{deliveryStatusLabel(contract.latest_delivery_status)}</Badge>{contract.latest_delivery_failure ? <div className="form-error">{contract.latest_delivery_failure}</div> : null}</> : "—"}</td>
             <td>{stats.sent}{stats.overdue ? <><br /><Badge className="badge-warning">{stats.overdue} förfallen</Badge></> : null}</td>
             <td>{formatDate(contract.expires_at)}</td><td>{formatDate(contract.updated_at)}</td>
             <td><div className="toolbar-left">
