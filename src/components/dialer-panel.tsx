@@ -138,7 +138,8 @@ export function DialerPanel({
     try {
       // Lägg på först, släpp platsen sedan. Omvänd ordning lämnar ett halvt
       // sekunds fönster där platsen är fri medan ljudet fortfarande går.
-      dialer.hangupWebphone();
+      // Ett fel i webbläsarens avslut får inte hindra att platsen släpps.
+      try { dialer.hangupWebphone(); } catch (hangupError) { console.error("webphone_hangup_failed", hangupError); }
       const result = await dialer.endCall(callId);
       setEndMessage(result.message);
       // An unanswered call is closed here and now, so the after-call form must
@@ -249,7 +250,10 @@ export function DialerPanel({
       onToggleMute={dialer.toggleMute}
       onSendDtmf={dialer.sendDtmf}
     />
-    {callId && (dialer.calling || callState.recovering) ? <div className="dialer-end">
+    {/* Knappen syns så länge det finns ett samtal utan efterarbete. Den hängde
+        på dialerns interna läge, och ett samtal vars händelser uteblev gick då
+        inte att avsluta alls. */}
+    {callId && !afterCall ? <div className="dialer-end">
       {/* Knappen lägger på på riktigt nu: samtalet ligger i den här fliken, och
           `hangupWebphone` river ned det innan platsen släpps. Texten under är
           omskriven därför att den beskrev en telefon som inte längre finns i

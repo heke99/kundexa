@@ -218,7 +218,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
     setError(null);
     try {
       // Lägg på i webbläsaren först, släpp platsen sedan.
-      voice.hangupWebphone();
+      try { voice.hangupWebphone(); } catch (hangupError) { console.error("webphone_hangup_failed", hangupError); }
       const result = await voice.endCall(callId);
       if (result.callClosed) await handleCallEnded(result.callStatus);
     } catch (caught) {
