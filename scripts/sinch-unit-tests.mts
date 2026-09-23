@@ -260,3 +260,12 @@ Deno.test("ACE continues; DiCE and notify take no SVAML", () => {
   assert.equal(sinchSvamlFor("dice", {}), null);
   assert.equal(sinchSvamlFor("notify", {}), null);
 });
+
+Deno.test("ICE CLI without a plus sign, as Sinch actually sends it, is normalised and passed on", () => {
+  const svaml = sinchSvamlFor("ice", {
+    event: "ice", originationType: "MXP", domain: "mxp", cli: "12085810392",
+    to: { type: "number", endpoint: "+12089912106" },
+  });
+  assert.equal(svaml?.action.name, "connectPstn");
+  assert.equal(svaml?.action.cli, "+12085810392");
+});

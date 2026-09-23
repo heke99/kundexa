@@ -287,3 +287,15 @@ Loggen: reservation 08:11:46, `dialing accepted` 08:11:47, sedan inga benhändel
   `202609230001_after_call_work_accepts_every_finished_call.sql` (produktion + PGlite-test):
   `is_terminal_call_status` i `complete_manual_call_work` och `emit_call_webhook_event`.
   Bekräftat i produktion med rollback. Rutten ger nu svenska meddelanden i stället för rå kod.
+
+## 2026-09-23 — Callback registrerad; första ICE; CLI utan plus
+
+Användaren registrerade callback-URL:en. Första ICE kom 09:08:54 med `"cli": "12085810392"` (utan +),
+`originationType: "MXP"`, `to: {type: number}`. Vårt svar gick utan `cli` eftersom E.164-kontrollen
+krävde plus → Sinch: "Unable to connect call". Nu normaliseras siffror-utan-plus till E.164.
+Sinch getting-started bekräftar: CLI ska vara testnumret tilldelat appen; testkonto når bara
+verifierade nummer.
+
+Mikrofonen: SDK:t öppnade en ny `getUserMedia` per samtal (behörighetsfråga per samtal i
+Safari/Firefox). Nu en återanvänd ström per session via `mediaStreamFactory`, varje samtal får
+`clone()`, släpps när dialern lämnas.

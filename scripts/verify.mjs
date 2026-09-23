@@ -1322,3 +1322,13 @@ console.log(`Verified ${migrations.length} migrations, monotonic call/Resend pro
   assert.match(panel, /\{callId && !afterCall \? <div className="dialer-end">/,
     "The end-call button must stay available for as long as there is a call, whatever the dialer thinks its state is");
 }
+
+// Mikrofonen öppnades på nytt vid varje samtal: en behörighetsfråga per samtal
+// i Safari och Firefox. Den ska öppnas en gång och kopieras per samtal.
+{
+  const hook = await readFile(join(root, "src/hooks/use-sinch-webphone.ts"), "utf8");
+  assert.match(hook, /\.mediaStreamFactory\(\(microphoneRef\.current \?\?= createReusableMicrophone\(\)\)\)/,
+    "The webphone must reuse one microphone stream across calls");
+  assert.match(hook, /return master!\.clone\(\);/, "Each call must get a clone, so ending a call does not close the shared microphone");
+  assert.match(hook, /microphoneRef\.current\?\.release\(\);/, "The shared microphone must be released when the dialer is left");
+}

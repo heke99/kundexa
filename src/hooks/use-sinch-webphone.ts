@@ -56,6 +56,40 @@ type ProviderCall = {
 // Leverantörens avslutsorsak, i den ordning SDK:t numrerar dem (`CallEndCause`).
 const END_CAUSES = ["None", "Timeout", "Denied", "NoAnswer", "Failure", "HungUp", "Canceled", "OtherDeviceAnswered", "Inactive"];
 
+/**
+ * Mikrofonen öppnas en gång och återanvänds.
+ *
+ * SDK:t bad om en ny ström vid varje samtal och stängde den efteråt. I Safari
+ * och Firefox betydde det en behörighetsfråga per samtal, och i alla
+ * webbläsare en halv sekund innan säljaren hördes. Här hålls en ström öppen för
+ * sessionen och varje samtal får en kopia: SDK:t stänger kopian när samtalet
+ * slutar, originalet lever vidare. Byts mikrofon (andra villkor) hämtas en ny.
+ */
+function createReusableMicrophone() {
+  let master: MediaStream | null = null;
+  let masterKey = "";
+  const alive = (stream: MediaStream | null) => Boolean(stream?.getAudioTracks().some((track) => track.readyState === "live"));
+  return {
+    async getMediaStream(options: { audio?: boolean | MediaTrackConstraints; video?: boolean | MediaTrackConstraints }) {
+      if (options.video) {
+        return navigator.mediaDevices.getUserMedia({ audio: options.audio ?? true, video: options.video });
+      }
+      const audio = options.audio ?? true;
+      const key = JSON.stringify(audio);
+      if (!alive(master) || key !== masterKey) {
+        master?.getTracks().forEach((track) => track.stop());
+        master = await navigator.mediaDevices.getUserMedia({ audio, video: false });
+        masterKey = key;
+      }
+      return master!.clone();
+    },
+    release() {
+      master?.getTracks().forEach((track) => track.stop());
+      master = null;
+    },
+  };
+}
+
 function describeEnd(call: ProviderCall | undefined) {
   const cause = call?.details?.endCause;
   const name = typeof cause === "number" ? END_CAUSES[cause] ?? `cause_${cause}` : "unknown";
@@ -96,6 +130,7 @@ export function useSinchWebphone() {
    */
   const registeredRef = useRef(false);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const microphoneRef = useRef<ReturnType<typeof createReusableMicrophone> | null>(null);
 
   /**
    * Hjärtslaget som håller sessionen vid liv.
@@ -212,6 +247,7 @@ export function useSinchWebphone() {
         // om kontraktet brutits -- men det sätts uttryckligen ändå.
         .callerIdentifier(credentials.callerIdentifier)
         .fetchApi(observedFetch)
+        .mediaStreamFactory((microphoneRef.current ??= createReusableMicrophone()))
         .build();
 
       client.addListener({
@@ -386,6 +422,8 @@ export function useSinchWebphone() {
     // säljaren tills sopningen tar den en och en halv minut senare.
     if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
     callRef.current?.hangup();
+    // Mikrofonen stängs när dialern lämnas, så att lampan inte lyser kvar.
+    microphoneRef.current?.release();
     const sessionId = sessionRef.current;
     if (sessionId) {
       void fetch("/api/v1/telephony/webphone/session", {
