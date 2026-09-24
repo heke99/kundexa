@@ -1,8 +1,8 @@
 # Next actions
 
 **2026-09-24, systemgenomgången:**
-1. Merga grenen `claude/charming-mendel-tsfomg` (PR skapas när användaren ber om det). Kontrollera
-   därefter:
+1. ~~Merga grenen~~. Klart: PR #48, `f6fca59`. Vercel READY, Edge Functions deployade och
+   `*/5` observerat. Kontrollerat vid mergen:
    - att Vercel är READY på merge-SHA:n;
    - att `list_edge_functions.updated_at` är nyare än mergen för `maintenance-worker`,
      `process-outbox` och `parsehub-worker`;

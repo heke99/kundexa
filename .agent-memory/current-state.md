@@ -3,9 +3,15 @@
 ## 2026-09-24 — Systemgenomgång: 31 brytpunkter åtgärdade (FAILURE-0101…0131)
 
 Gren `claude/charming-mendel-tsfomg` (från `bf83bb9`, PR #47). Fem kodcommits (PR 1–5 i planen) och en
-minnescommit. `npm run verify` PASS. **Inte mergat:** webbkoden går live när grenen mergas till main
-(Vercel), och Edge Functions `maintenance-worker`, `process-outbox` och `parsehub-worker` deployas av
-Actions vid merge. Databasen är redan uppdaterad och fungerar med den kod som körs nu.
+minnescommit. `npm run verify` PASS. **Mergat och live:**
+- PR #48 är mergad till main som `f6fca59` (2026-09-23 22:45 UTC). CI `verify` är grön på PR:en och på
+  main.
+- Vercel produktion är READY på `f6fca59`.
+- `deploy-edge-functions` deployade `maintenance-worker` (v21), `parsehub-worker` (v18) och
+  `process-outbox` (v25) 22:46 UTC.
+- `maintenance-worker` kör på det nya schemat `*/5`: senaste lyckade körning 2026-09-24 06:50 UTC,
+  nästa pågick 06:55.
+- De övriga sex workers är `healthy`.
 
 **Produktionen (`lhvifuxcqghtbiulzkrf`), mätt 2026-09-23 22:40 UTC:**
 - Migrationerna `202609240003`–`202609240010` är applicerade via MCP. Samma sak gäller `202609170010`,
