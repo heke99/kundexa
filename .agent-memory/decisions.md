@@ -254,3 +254,8 @@ till `failed`.
 ## ADR-0028 — Sidor utanför menyn måste länkas från en menysida
 - Sällan använda eller tomma sidor tas ur menyn men finns kvar. Varje sådan sida står i `secondaryPages`
   med sin föräldersida, och regressionstestet kräver att föräldern står i menyn och innehåller länken.
+
+## ADR-0029 — Utfallet flyttar kundens status framåt
+- En trigger på `calls.disposition` sätter kundens status, så att båda efterarbetsvägarna (lista och kundkort) och
+  framtida vägar följer samma regel. Den flyttar bara framåt och rör aldrig kund, tidigare kund eller spärrad kund
+  med ett nej.

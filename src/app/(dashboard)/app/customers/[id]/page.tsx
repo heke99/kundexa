@@ -5,6 +5,7 @@ import { ArrowLeft, Ban, CalendarPlus, ClipboardList, FileSignature, Mail, Messa
 import { addActivity, addNote, archiveNote, blockCustomer, reportCustomerNix, scheduleCallback, updateCustomerDetails, updateNote } from "@/app/actions/customers";
 import { getAppContext } from "@/lib/auth";
 import { manualContractDispositions } from "@/lib/contracts/manual-dispositions";
+import { countSellableProducts } from "@/lib/contracts/sellable-products";
 import { contractStatusLabel } from "@/lib/contracts/status-labels";
 import { callStatusLabel, dispositionLabel, lifecycleLabel, noteTypeLabel, visibilityLabel } from "@/lib/ui/labels";
 import { can, canCreateContractFromProduct } from "@/lib/permissions";
@@ -33,6 +34,7 @@ export default async function CustomerDetail({ params, searchParams }: { params:
   const mayCreateContract = canCreateContractFromProduct(context.role, context.platformRole);
   const supabase = await createClient();
   const contractDispositionKeys = (await manualContractDispositions(supabase, context.tenantId)).map((item) => item.key);
+  const sellableProducts = mayCall ? await countSellableProducts(supabase) : null;
   const [{ data: customer }, { data: contacts }, { data: notes }, { data: activities }, { data: calls }, { data: contracts }, { data: deals }, { data: orders }, { data: lists }, { data: callerIdData }] = await Promise.all([
     ok(supabase.from("customers").select("*").eq("id", id).single()),
     ok(supabase.from("contact_people").select("id,full_name,title,role,email,phone_e164,alternate_phone_e164,is_primary,is_signatory,source_external_id").eq("customer_id", id).order("is_primary", { ascending: false }).order("full_name")),
@@ -165,6 +167,7 @@ export default async function CustomerDetail({ params, searchParams }: { params:
                   do_not_call: customer.do_not_call,
                 }]}
                 mayManageIntegrations={can(context.role, "integrations.manage")} contractDispositions={contractDispositionKeys}
+                sellableProducts={sellableProducts} mayManageProducts={can(context.role, "products.manage")}
                 initialCustomer={customer.id}
                 callbackActivityId={query.callback}
                 lockedToCustomer

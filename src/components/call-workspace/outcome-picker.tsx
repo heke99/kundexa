@@ -8,11 +8,13 @@ import { callbackPresets, groupOutcomes, type OutcomeOption } from "@/lib/dialer
  * utfall när fokus inte ligger i ett textfält, så en van säljare klarar
  * efterarbetet utan mus.
  */
-export function OutcomePicker({ options, value, onChange, disabled }: {
+export function OutcomePicker({ options, value, onChange, disabled, onConfirm }: {
   options: OutcomeOption[];
   value: string;
   onChange: (key: string) => void;
   disabled?: boolean;
+  /** Enter sparar när ett utfall är valt och fokus inte ligger i ett fält. */
+  onConfirm?: () => void;
 }) {
   const groups = useMemo(() => groupOutcomes(options), [options]);
 
@@ -24,6 +26,11 @@ export function OutcomePicker({ options, value, onChange, disabled }: {
       if (event.altKey || event.ctrlKey || event.metaKey) return;
       const target = event.target as HTMLElement | null;
       if (target && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
+      if (event.key === "Enter" && onConfirm && value && target?.tagName !== "BUTTON" && target?.tagName !== "A") {
+        event.preventDefault();
+        onConfirm();
+        return;
+      }
       const key = byShortcut.get(event.key);
       if (!key) return;
       event.preventDefault();
@@ -31,7 +38,7 @@ export function OutcomePicker({ options, value, onChange, disabled }: {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [groups, onChange, disabled]);
+  }, [groups, onChange, disabled, onConfirm, value]);
 
   return <div className="outcome-picker" role="radiogroup" aria-label="Samtalsutfall">
     {groups.map((group) => <div className="outcome-group" key={group.key}>

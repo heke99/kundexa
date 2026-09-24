@@ -6,9 +6,11 @@ import { CheckCircle2, FileSignature } from "@/components/icons";
 import { loadCallCustomer, saveCallCustomer, type CallCustomer, type CallCustomerPatch } from "@/app/actions/call-workspace";
 
 type Draft = Required<CallCustomerPatch>;
+type CustomerType = CallCustomer["customerType"];
 
 function toDraft(customer: CallCustomer): Draft {
   return {
+    customerType: customer.customerType,
     displayName: customer.displayName,
     firstName: customer.firstName ?? "",
     lastName: customer.lastName ?? "",
@@ -95,15 +97,29 @@ export function LiveCustomerCard({ customerId, heading = "Kunduppgifter", contra
     });
   }
 
-  const readiness = contractReadiness(draft, customer.customerType);
+  const type = draft.customerType as CustomerType;
+  // Byter säljaren till företag töms personnumret: ett företag har inget, och
+  // servern vägrar spara ett. Organisationsnumret får stå kvar hos en privatperson
+  // (enskild firma) men visas inte.
+  const setType = (next: CustomerType) => {
+    setDraft((current) => current ? { ...current, customerType: next, personalIdentityNumber: next === "company" ? "" : current.personalIdentityNumber } : current);
+    setSavedAt(null);
+  };
+  const readiness = contractReadiness(draft, type);
   return <form className="live-card" onSubmit={save}>
     <div className="live-card-header">
       <div><span className="eyebrow">{heading}</span><h3>{customer.displayName}</h3></div>
-      <span className="muted">{customer.customerType === "person" ? "Privatperson" : "Företag"} · {customer.phone ?? "inget nummer"}{fullCardLink ? <> · <Link href={`/app/customers/${customer.id}`} target="_blank" rel="noopener">Hela kundkortet</Link></> : null}</span>
+      <span className="muted">{customer.phone ?? "inget nummer"}{fullCardLink ? <> · <Link href={`/app/customers/${customer.id}`} target="_blank" rel="noopener">Hela kundkortet</Link></> : null}</span>
+    </div>
+    <div className="segmented" role="radiogroup" aria-label="Kundtyp">
+      {(["company", "person"] as const).map((option) => <button key={option} type="button" role="radio" aria-checked={type === option}
+        className={type === option ? "selected" : ""} disabled={readOnly} onClick={() => setType(option)}>
+        {option === "company" ? "Företag" : "Privatperson"}
+      </button>)}
     </div>
     <div className="live-card-grid">
       {input("displayName", "Namn på kortet", { required: true, minLength: 2 })}
-      {customer.customerType === "person" ? <>
+      {type === "person" ? <>
         {input("firstName", "Förnamn", { autoComplete: "off" })}
         {input("lastName", "Efternamn", { autoComplete: "off" })}
         {input("personalIdentityNumber", "Personnummer", { placeholder: "ÅÅÅÅMMDD-XXXX", autoComplete: "off" })}

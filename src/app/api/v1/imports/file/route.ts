@@ -3,7 +3,7 @@ import type { Json } from "@/lib/supabase/database.types";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAppContext } from "@/lib/auth";
-import { assertPermission } from "@/lib/permissions";
+import { assertPermission, can } from "@/lib/permissions";
 import { canonicalImportMimeTypes, parseImportFile } from "@/lib/imports/file-parser";
 import { normalizeImportedRow } from "@/lib/imports/normalize-row";
 import { scanImportFile } from "@/lib/imports/malware-scan";
@@ -30,6 +30,7 @@ function uploadFailureMessage(code: string): string | null {
   if (code === "import_file_infected") return "Filen stoppades av virusskanningen och har inte sparats.";
   if (code === "import_file_scan_failed") return "Filen kunde inte skannas. Försök igen om en stund.";
   if (code === "target_list_not_found_or_forbidden") return "Du får inte importera till den valda listan.";
+  if (code === "import_list_create_failed") return "Den nya ringlistan kunde inte skapas. Försök igen eller välj en befintlig lista.";
   if (code === "import_profile_not_found" || code === "import_profile_version_not_found") return "Importprofilen finns inte eller är inaktiv.";
   if (code.startsWith("unsupported_") || code.includes("file_type")) return "Filtypen stöds inte. Använd CSV, Excel eller JSON.";
   if (code === "xlsx_header_row_empty") return "Rubrikraden i Excelfilen är tom. Välj rätt rubrikrad.";
@@ -61,6 +62,10 @@ export async function POST(request: Request) {
     const worksheetName = String(form.get("worksheet_name") ?? "").trim() || null;
     const headerRow = Number(form.get("header_row") ?? 1);
     const requestedTargetListId = String(form.get("target_list_id") ?? "").trim() || null;
+    // Ny ringlista direkt i importen. Tidigare måste listan skapas i förväg på en
+    // annan sida, och en import utan lista hamnade bara i kundregistret.
+    const newListName = String(form.get("new_list_name") ?? "").trim().slice(0, 120) || null;
+    if (newListName && !requestedTargetListId && !can(ctx.role, "lists.manage")) throw new Error("target_list_not_found_or_forbidden");
     const simulate = form.get("simulate") === "on";
 
     if (!(file instanceof File) || file.size <= 0 || file.size > MAX_BYTES) throw new Error("invalid_or_oversized_import_file");
@@ -94,7 +99,8 @@ export async function POST(request: Request) {
       profileVersion = versionResult.data;
     }
 
-    const targetListId = requestedTargetListId ?? profile?.target_list_id ?? null;
+    let targetListId = requestedTargetListId ?? profile?.target_list_id ?? null;
+    const createListForImport = Boolean(newListName && !targetListId);
     if (targetListId) {
       const mayManage = await supabase.rpc("can_manage_customer_list", { p_list_id: targetListId });
       if (mayManage.error || mayManage.data !== true) throw new Error("target_list_not_found_or_forbidden");
@@ -110,12 +116,15 @@ export async function POST(request: Request) {
       worksheetName ?? profile?.worksheet_name ?? "first_sheet",
       profile?.header_row ?? headerRow,
     ].map((value) => encodeURIComponent(String(value))).join(":");
-    const validationFingerprint = `file:${scan.sha256}:${parserConfiguration}:${targetListId ?? "crm"}`;
-    const executionIdempotencyKey = simulate ? null : `commit:${validationFingerprint}`;
-    const idempotencyKey = `${simulate ? "preview" : "commit"}:${validationFingerprint}`;
-    const existing = await supabase.from("import_runs").select("id,status").eq("idempotency_key", idempotencyKey).not("status", "in", "(failed,rolled_back,cancelled)").maybeSingle();
-    if (existing.error) throw new Error(existing.error.message);
-    if (existing.data) return redirectWith(request, `/app/imports/${existing.data.id}`, "message", "Samma fil, profil och mål har redan behandlats. Befintlig import visas.");
+    let validationFingerprint = `file:${scan.sha256}:${parserConfiguration}:${targetListId ?? "crm"}`;
+    let executionIdempotencyKey = simulate ? null : `commit:${validationFingerprint}`;
+    let idempotencyKey = `${simulate ? "preview" : "commit"}:${validationFingerprint}`;
+    // En ny lista är alltid ett nytt mål, så dubblettkontrollen gäller bara befintliga mål.
+    if (!createListForImport) {
+      const existing = await supabase.from("import_runs").select("id,status").eq("idempotency_key", idempotencyKey).not("status", "in", "(failed,rolled_back,cancelled)").maybeSingle();
+      if (existing.error) throw new Error(existing.error.message);
+      if (existing.data) return redirectWith(request, `/app/imports/${existing.data.id}`, "message", "Samma fil, profil och mål har redan behandlats. Befintlig import visas.");
+    }
 
     const parsed = await parseImportFile(buffer, file.name, file.type, {
       recordsPath: recordsPath ?? profile?.records_path,
@@ -126,6 +135,23 @@ export async function POST(request: Request) {
     if (!parsed.rows.length) throw new Error("import_file_contains_no_rows");
     if (parsed.truncated) {
       throw new Error(`import_row_limit_exceeded:${parsed.sourceRowCount}:${MAX_ROWS}`);
+    }
+
+    // Listan skapas först när filen är godkänd, så en trasig fil inte lämnar en
+    // tom lista efter sig. Den skapas som utkast med listans vanliga standardvärden
+    // och standardutfall; den aktiveras och delas med team på listsidan.
+    if (createListForImport && newListName) {
+      const created = await supabase.rpc("create_managed_customer_list", {
+        p_name: newListName, p_description: `Skapad vid import: ${name}`, p_list_type: "import", p_team_id: null,
+        p_dialing_mode: "manual", p_priority: 100, p_start_time: "09:00", p_end_time: "18:00", p_max_attempts: 7,
+        p_retry_delay_minutes: 1440, p_auto_next_delay_seconds: 4, p_callback_policy: "both", p_allow_skip: true,
+        p_allow_browse: false, p_script: "",
+      });
+      if (created.error || !created.data) throw new Error(created.error?.message.includes("permission") ? "target_list_not_found_or_forbidden" : "import_list_create_failed");
+      targetListId = String(created.data);
+      validationFingerprint = `file:${scan.sha256}:${parserConfiguration}:${targetListId}`;
+      executionIdempotencyKey = simulate ? null : `commit:${validationFingerprint}`;
+      idempotencyKey = `${simulate ? "preview" : "commit"}:${validationFingerprint}`;
     }
 
     const mapping = profileVersion
