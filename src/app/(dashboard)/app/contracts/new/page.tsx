@@ -100,14 +100,7 @@ export default async function NewContractPage({ searchParams }: { searchParams: 
   const dateInput = (date: Date) => isoToZonedDateOnly(date.toISOString(), ctx.tenantTimezone);
   const defaultExpiry = new Date(now.getTime() + 7 * 86400000);
 
-  return <>
-    <Link href="/app/contracts" className="muted" style={{ display: "inline-flex", gap: 6, alignItems: "center", marginBottom: 16 }}><ArrowLeft size={15} /> Till avtal</Link>
-    <PageHeader title="Nytt avtal" description="Välj kund och produkt. Avtalet hämtas från produkten och fylls i med kundens uppgifter." />
-    {params.error ? <p className="form-error">{params.error}</p> : null}
-    {params.message ? <p className="notice">{params.message}</p> : null}
-    {params.warning ? <p className="notice warning">{params.warning}</p> : null}
-
-    <div className="grid" style={{ gap: 18 }}>
+  const customerAndCallSteps = <>
       <Card>
         <CardHeader><h2><Badge>1</Badge> Kund</h2>{selectedCustomer ? <Badge className="badge-success">Vald</Badge> : null}</CardHeader>
         <CardContent>
@@ -161,6 +154,30 @@ export default async function NewContractPage({ searchParams }: { searchParams: 
           </>}
         </CardContent>
       </Card>
+
+  </>;
+
+  return <>
+    <Link href="/app/contracts" className="muted" style={{ display: "inline-flex", gap: 6, alignItems: "center", marginBottom: 16 }}><ArrowLeft size={15} /> Till avtal</Link>
+    <PageHeader title="Nytt avtal" description="Välj kund och produkt. Avtalet hämtas från produkten och fylls i med kundens uppgifter." />
+    {params.error ? <p className="form-error">{params.error}</p> : null}
+    {params.message ? <p className="notice">{params.message}</p> : null}
+    {params.warning ? <p className="notice warning">{params.warning}</p> : null}
+
+    <div className="grid" style={{ gap: 18 }}>
+      {/* Från dialern är kund och samtal redan valda. Då visas de som en rad och
+          säljaren går direkt till produkten; stegen finns kvar bakom "Ändra". */}
+      {selectedCustomer && selectedCall ? <Card>
+        <CardContent>
+          <div className="toolbar" style={{ marginBottom: 0 }}>
+            <div><strong>{selectedCustomer.display_name}</strong><p className="muted" style={{ margin: "4px 0 0" }}>Samtal {formatDate(selectedCall.ended_at)} · {selectedCall.duration_seconds}s · <Badge className="badge-success">Avtalsgrundande</Badge></p></div>
+          </div>
+          <details style={{ marginTop: 12 }}>
+            <summary className="button button-ghost button-sm">Ändra kund eller samtal</summary>
+            <div className="grid" style={{ gap: 18, marginTop: 12 }}>{customerAndCallSteps}</div>
+          </details>
+        </CardContent>
+      </Card> : customerAndCallSteps}
 
       <Card>
         <CardHeader><h2><Badge>3</Badge> Produkt</h2><FileSignature size={18} /></CardHeader>

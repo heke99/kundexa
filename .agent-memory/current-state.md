@@ -1,5 +1,17 @@
 # Current state
 
+## 2026-09-24 — UI-städning (samma gren, andra passet)
+
+- Kundkortet: historiken är en tidslinje (samtal + aktiviteter, nyast först, samtalsanteckning visas).
+  "Boka återkomst" och "Aktivitet" är ett kort ("Följ upp"); NIX- och kontaktspärr ligger bakom ett "Spärra kunden…".
+- Dialern: ett sökfält med klickbara träffar i stället för sökfält + rullista; utgående nummer bakom en utfällbar rad.
+- Nytt avtal: med kund och giltigt samtal från dialern visas steg 1–2 som en rad ("Ändra kund eller samtal").
+- Menyn: Pipeline, PDF-arkiv, Aktiviteter, Säkerhet och Fakturering är borttagna ur menyn men länkade från
+  Avtal, Kalender och Administration (`secondaryPages` i nav-config; regressionstestet kräver länken).
+- Företagsväljaren visar rollen på svenska.
+`npm run verify` PASS. Visuellt NOT RUN.
+
+
 ## 2026-09-24 — Samtalsarbetsyta: kundkort under samtalet och efterarbete som knappar
 
 Gren `claude/nifty-knuth-o765ik`. Bara UI och en ny server action. Ingen migration och inga ändrade RPC:er.

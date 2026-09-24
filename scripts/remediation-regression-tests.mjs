@@ -453,7 +453,7 @@ console.log("Every Vercel-scheduled Edge worker records a heartbeat through the 
 // answered "du saknar behörighet" to every role for a page that had no
 // permission rule at all, and nothing anywhere linked to it.
 {
-  const { readdirSync, statSync } = await import("node:fs");
+  const { readdirSync, readFileSync, statSync } = await import("node:fs");
   const { join } = await import("node:path");
   const root = new URL("../src/app/(dashboard)/app", import.meta.url).pathname;
   const routes = [];
@@ -483,7 +483,14 @@ console.log("Every Vercel-scheduled Edge worker records a heartbeat through the 
 
   // A page that is neither in the nav nor a child of a navigated route can only
   // be found by typing its URL.
+  // En sida utanför menyn räknas som hittbar bara om sidan den hör till står i
+  // menyn och faktiskt länkar till den.
+  const secondary = [...navConfig.matchAll(/\{ href: "(\/app[^"]*)", linkedFrom: "(\/app[^"]*)" \}/g)]
+    .map((match) => ({ href: match[1], parent: match[2] }))
+    .filter(({ href, parent }) => navHrefs.includes(parent)
+      && readFileSync(join(root, parent.replace(/^\/app/, ""), "page.tsx"), "utf8").includes(`href="${href}"`));
   const findable = (route) => navHrefs.some((href) => route === href || route.startsWith(`${href}/`))
+    || secondary.some(({ href }) => route === href || route.startsWith(`${href}/`))
     || route === "/app" || route.startsWith("/app/platform");
   const hidden = routes.filter((route) => !route.includes("[") && !findable(route));
   assert.deepEqual(hidden, [], `Pages with no navigation path: ${hidden}`);

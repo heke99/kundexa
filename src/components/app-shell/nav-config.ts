@@ -1,7 +1,7 @@
 import {
-  Activity, BarChart3, Blocks, BookUser, Bot, BriefcaseBusiness, Building2, CalendarCheck2, CalendarDays,
-  CircleDollarSign, ClipboardList, Contact, FileSignature, FileText, Headphones,
-  Import, Inbox, KeyRound, LayoutList, ListFilter, Megaphone, MessageSquareText, Package,
+  BarChart3, BookUser, Bot, BriefcaseBusiness, Building2, CalendarCheck2, CalendarDays,
+  ClipboardList, Contact, FileSignature, Headphones,
+  Import, Inbox, KeyRound, ListFilter, Megaphone, MessageSquareText, Package,
   PhoneCall, Plug, ScrollText, Search, Settings, ShieldCheck, Users, Webhook,
   type LucideIcon,
 } from "@/components/icons";
@@ -31,6 +31,20 @@ export type NavSection = {
  * do. `routeAccessMap` in lib/permissions stays the single source of truth for
  * who may reach what; this file only decides shape and order.
  */
+/**
+ * Sidor som inte står i menyn men nås via en länk på en sida som gör det.
+ * Menyn hade 31 rader, varav flera var tomma (Pipeline: inget i systemet skapar
+ * affärer) eller beskrivningssidor (Säkerhet, Fakturering). De finns kvar och
+ * länkas från sidan de hör till; regressionstestet kontrollerar att länken finns.
+ */
+export const secondaryPages: ReadonlyArray<{ href: string; linkedFrom: string }> = [
+  { href: "/app/pipeline", linkedFrom: "/app/contracts" },
+  { href: "/app/documents", linkedFrom: "/app/contracts" },
+  { href: "/app/activities", linkedFrom: "/app/calendar" },
+  { href: "/app/security", linkedFrom: "/app/admin" },
+  { href: "/app/billing", linkedFrom: "/app/admin" },
+];
+
 export const navSections: NavSection[] = [
   { id: "ringa", label: "Ringa", items: [
     { href: "/app/dialer", label: "Dialer", icon: PhoneCall },
@@ -48,15 +62,12 @@ export const navSections: NavSection[] = [
   { id: "salj", label: "Sälj", items: [
     { href: "/app/contracts", label: "Avtal", icon: FileSignature },
     { href: "/app/orders", label: "Order", icon: ClipboardList },
-    { href: "/app/pipeline", label: "Pipeline", icon: LayoutList },
     { href: "/app/products", label: "Produkter & priser", icon: Package },
     { href: "/app/templates", label: "Avtalsmallar", icon: ScrollText },
-    { href: "/app/documents", label: "PDF-arkiv", icon: FileText },
   ]},
   { id: "kommunikation", label: "Kommunikation", items: [
     { href: "/app/sms", label: "SMS", icon: MessageSquareText },
     { href: "/app/email", label: "E-post", icon: Inbox },
-    { href: "/app/activities", label: "Aktiviteter", icon: Activity },
     { href: "/app/calendar", label: "Kalender", icon: CalendarDays },
     { href: "/app/campaigns", label: "Kampanjer", icon: Megaphone },
     { href: "/app/automations", label: "Automatiseringar", icon: Bot },
@@ -70,9 +81,7 @@ export const navSections: NavSection[] = [
     { href: "/app/admin", label: "Administration", icon: Settings },
     { href: "/app/integrations", label: "Integrationer", icon: Plug },
     { href: "/app/compliance", label: "Spärrar & compliance", icon: ShieldCheck },
-    { href: "/app/security", label: "Säkerhet", icon: Blocks },
     { href: "/app/data-sources", label: "Datakällor", icon: ClipboardList },
-    { href: "/app/billing", label: "Fakturering", icon: CircleDollarSign },
     { href: "/app/api", label: "API-nycklar", icon: KeyRound },
     { href: "/app/webhooks", label: "Webhooks", icon: Webhook },
   ]},

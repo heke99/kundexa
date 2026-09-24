@@ -1,5 +1,12 @@
 # Session log
 
+## 2026-09-24 (UI-städning)
+
+- Genomförde förslagen från UI-genomgången: tidslinje, färre kort på kundkortet, ett sökfält i dialern,
+  kortare avtalsflöde från dialern, kortare meny, svenska rollnamn. `npm run verify` PASS.
+- Ringlistans sessionsknappar lämnades: högst två syns samtidigt redan.
+
+
 ## 2026-09-24 (samtalsarbetsyta)
 
 - UI-genomgång av dialer, ringlista och kundkort på användarens begäran.

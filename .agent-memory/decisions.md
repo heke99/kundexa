@@ -250,3 +250,7 @@ till `failed`.
 - Bara skickade fält skrivs; huvudnumret (numret som rings) ändras inte under samtalet.
 - Avtal skickas fortfarande först efter ett avslutat, avtalsgrundande samtal (`resolve_contract_eligible_calls`).
   Ringlistan öppnar avtalet i ny flik och pausar sessionen.
+
+## ADR-0028 — Sidor utanför menyn måste länkas från en menysida
+- Sällan använda eller tomma sidor tas ur menyn men finns kvar. Varje sådan sida står i `secondaryPages`
+  med sin föräldersida, och regressionstestet kräver att föräldern står i menyn och innehåller länken.
