@@ -13,7 +13,10 @@ Den här grenen:
   order/sale/sold → kund, not_interested → förlorad (från prospekt/lead). Aldrig bakåt, aldrig spärrade.
   **Inte applicerad i prod.**
 - Import kan skapa en ny ringlista (ägare/admin; utkast). Dialern visar chefer listor som säljarna inte ser (utkast/pausad).
-Öppen fråga till användaren: vem delar ut en lista (skaparen ensam, eller även ägare/admin)?
+Utdelning (användarens beslut): teamledare, ägare och superadmin ska kunna dela ut. Teamledare/ägare kunde redan.
+Migration `202609240013` ger plattformsadmin `platform_share_allocated_list` / `platform_list_distribution`: företaget härleds
+ur tilldelningen, team korskontrolleras mot samma företag, audit `customer_list.shared_by_platform`. UI under
+Plattform → Listor ("Dela ut"). **Inte applicerad i prod.** Tvåbolagstest i PGlite.
 
 
 ## 2026-09-24 — Kundkortet öppnas bredvid telefonen

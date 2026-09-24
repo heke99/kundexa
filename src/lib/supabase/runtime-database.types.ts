@@ -200,7 +200,9 @@ type MissingFunctionName =
   | "update_tenant_member"
   | "update_tenant_member_v2"
   | "tenant_user_security_states"
-  | "update_tenant_member_v3";
+  | "update_tenant_member_v3"
+  | "platform_list_distribution"
+  | "platform_share_allocated_list";
 
 type FunctionOverrides = {
   [Name in MissingFunctionName]: FunctionOrFallback<Name>;

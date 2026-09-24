@@ -106,3 +106,29 @@ export async function revokePlatformAllocation(form: FormData) {
   revalidatePath("/app/platform/lists");
   redirect(`/app/platform/lists?message=${encodeURIComponent(`${Number(data ?? 0)} obearbetade poster återkallades`)}`);
 }
+
+// Plattformsadmin delar ut en tilldelad lista till företagets team och bestämmer
+// om den är aktiv i ringvyn. Företaget följer tilldelningen (se migration 202609240013).
+export async function sharePlatformAllocation(form: FormData) {
+  const context = await getPlatformContext();
+  if (!isPlatformAdmin(context.platformRole)) redirect("/app/platform/lists?error=Plattformsadmin krävs");
+  const allocationId = value(form, "allocation_id");
+  if (!z.uuid().safeParse(allocationId).success) redirect("/app/platform/lists?error=Ogiltig tilldelning");
+  const teamIds = form.getAll("team_ids").map(String).filter((id) => z.uuid().safeParse(id).success);
+  const active = form.get("active") === "on";
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("platform_share_allocated_list", { p_allocation_id: allocationId, p_team_ids: teamIds, p_active: active });
+  if (error) {
+    const known: Array<[string, string]> = [
+      ["team_not_found", "Ett valt team finns inte i företaget eller är inaktivt."],
+      ["allocation_revoked", "Tilldelningen är återkallad."],
+      ["allocation_list_missing", "Tilldelningen har ingen lista hos företaget."],
+      ["platform_admin_required", "Plattformsadmin krävs."],
+    ];
+    redirect(`/app/platform/lists?error=${encodeURIComponent(known.find(([code]) => error.message.includes(code))?.[1] ?? "Listan kunde inte delas ut.")}`);
+  }
+  revalidatePath("/app/platform/lists");
+  redirect(`/app/platform/lists?message=${encodeURIComponent(teamIds.length
+    ? `Listan är utdelad till ${teamIds.length} team${active ? " och aktiv i ringvyn" : " men inte aktiv än"}.`
+    : "Listan är inte delad med något team.")}`);
+}

@@ -4565,4 +4565,46 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   console.log("An outcome moves the customer forward only: interested -> lead, not interested -> lost (never a customer), order -> customer, and a list's own positive group counts.");
 }
 
+// Plattformsadmin delar ut en tilldelad lista (202609240013).
+{
+  const platformOwner = "00000000-0000-0000-0000-000000000014";
+  const tenantUser = "00000000-0000-0000-0000-000000000040";
+  const foreignTeam = "00000000-0000-0000-0000-000000000026"; // hör till ett annat bolag
+  await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${platformOwner}',false);`);
+  // En egen tilldelning: den tidigare i skriptet är återkallad.
+  const shareList = String((await db.query(`insert into public.platform_lists(name,source_provider,status,exclusivity_mode,default_exclusive_days,created_by)
+    values('Utdelningsprov','verify','active','exclusive',30,$1) returning id`, [platformOwner])).rows[0].id);
+  await db.query(`insert into public.platform_list_entries(platform_list_id,source_key,organization_number,display_name,company_name,phone_e164,city,industry,state,data_hash)
+    values($1,'share-entry-1','5599000187','Utdelning Ett','Utdelning Ett AB','+46700000187','Malmö','IT','available','share-hash-1')`, [shareList]);
+  await db.query(`select public.refresh_platform_list_counts($1)`, [shareList]);
+  const shareAllocation = String((await db.query(`select public.allocate_platform_list_to_tenant($1,$2,'Utdelningsprov',1,'{}'::jsonb,'exclusive',null,null) as id`, [shareList, distributedTenantId])).rows[0].id);
+  const shareTarget = String((await db.query(`select target_list_id from public.platform_list_allocations where id=$1`, [shareAllocation])).rows[0].target_list_id);
+  const allocationId_ = shareAllocation;
+  const before = (await db.query(`select public.platform_list_distribution($1) as d`, [allocationId_])).rows[0].d;
+  if (before.listId !== shareTarget || !before.teams.some((team) => team.id === distributedTeamId)) {
+    throw new Error(`The platform could not see the allocated list and the tenant's teams: ${JSON.stringify(before)}`);
+  }
+  if (before.teams.some((team) => team.id === foreignTeam)) throw new Error("Another tenant's team was offered for this allocation");
+  await db.query(`select public.platform_share_allocated_list($1,array[$2]::uuid[],true)`, [allocationId_, distributedTeamId]);
+  const shared = (await db.query(`select l.status,(select count(*)::int from public.customer_list_team_shares s where s.list_id=l.id and s.team_id=$2) n
+    from public.customer_lists l where l.id=$1`, [shareTarget, distributedTeamId])).rows[0];
+  if (shared.status !== "active" || shared.n !== 1) throw new Error(`The platform's distribution did not land: ${JSON.stringify(shared)}`);
+  let foreignRefused = false;
+  try { await db.query(`select public.platform_share_allocated_list($1,array[$2]::uuid[],true)`, [allocationId_, foreignTeam]); }
+  catch (error) { foreignRefused = String(error).includes("team_not_found"); }
+  if (!foreignRefused) throw new Error("A team from another tenant received a platform-allocated list");
+  const kept = (await db.query(`select count(*)::int n from public.customer_list_team_shares where list_id=$1`, [shareTarget])).rows[0].n;
+  if (kept !== 1) throw new Error(`A refused distribution still changed the shares (${kept})`);
+  await db.exec(`select set_config('request.jwt.claim.sub','${tenantUser}',false)`);
+  let tenantRefused = false;
+  try { await db.query(`select public.platform_share_allocated_list($1,array[]::uuid[],false)`, [allocationId_]); }
+  catch (error) { tenantRefused = String(error).includes("platform_admin_required"); }
+  if (!tenantRefused) throw new Error("A tenant user used the platform distribution");
+  let readRefused = false;
+  try { await db.query(`select public.platform_list_distribution($1)`, [allocationId_]); }
+  catch (error) { readRefused = String(error).includes("platform_admin_required"); }
+  if (!readRefused) throw new Error("A tenant user read the platform distribution");
+  console.log("The platform distributes its allocated list to the tenant's own teams and can activate it; another tenant's team and non-platform users are refused.");
+}
+
 await db.close();
