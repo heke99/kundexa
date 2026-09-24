@@ -5,6 +5,9 @@ import { Phone, PhoneOff, Radio } from "@/components/icons";
 import { useDialerPanel } from "@/hooks/use-dialer";
 import { useCallRealtime } from "@/hooks/use-call-realtime";
 import { WebphoneAudioPanel } from "@/components/webphone-audio-panel";
+import { LiveCustomerCard } from "@/components/call-workspace/live-customer-card";
+import { CallbackTimeField, OutcomePicker } from "@/components/call-workspace/outcome-picker";
+import { manualOutcomeOptions } from "@/lib/dialer/outcomes";
 
 type Customer = { id: string; display_name: string; phone_e164: string | null; do_not_call: boolean };
 // Numret som visas för mottagaren, ur företagets egna nummer. Tidigare kom det
@@ -281,36 +284,28 @@ export function DialerPanel({
     {error ? <p className="form-error">{error}</p> : null}
     {afterCall && callId ? <form className="manual-after-call" onSubmit={complete}>
       <h3>Efterarbete</h3>
-      <p>Registrera utfallet innan du ringer nästa nummer.</p>
-      <label className="field"><span>Samtalsutfall</span><select required value={disposition} onChange={(event) => setDisposition(event.target.value)}>
-        <option value="">Välj utfall</option>
-        <option value="interested">Intresserad</option>
-        <option value="callback">Återkomst</option>
-        <option value="not_interested">Inte intresserad</option>
-        <option value="no_answer">Inget svar</option>
-        <option value="busy">Upptaget</option>
-        <option value="voicemail">Telefonsvarare</option>
-        <option value="wrong_number">Fel nummer</option>
-        <option value="do_not_call">Ring inte igen</option>
-        <option value="nix_listed">Nixat nummer</option>
-      </select></label>
+      <p>Välj utfall med ett klick eller siffertangent 1–9.</p>
+      <OutcomePicker options={manualOutcomeOptions} value={disposition} onChange={setDisposition} />
       {disposition === "nix_listed" ? <p className="notice warning">
         Numret registreras som NIX-spärrat och blockeras permanent för utgående samtal — även om
         kunden läggs upp på nytt senare.
       </p> : null}
-      <label className="field"><span>Anteckning</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
       {disposition === "callback" ? <>
-        <label className="field"><span>Återkomsttyp</span><select value={callbackScope} onChange={(event) => setCallbackScope(event.target.value as "personal" | "global")}>
-          <option value="personal">Personlig</option><option value="global">Global teamkö</option>
+        <CallbackTimeField value={callbackDueAt} onChange={setCallbackDueAt} required />
+        <label className="field"><span>Vem ringer tillbaka?</span><select value={callbackScope} onChange={(event) => setCallbackScope(event.target.value as "personal" | "global")}>
+          <option value="personal">Jag själv</option><option value="global">Hela teamet</option>
         </select></label>
-        <label className="field"><span>Tidpunkt</span><input type="datetime-local" required value={callbackDueAt} onChange={(event) => setCallbackDueAt(event.target.value)} /></label>
       </> : null}
+      <label className="field"><span>Anteckning</span><textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Vad sades? Syns på kundkortet." /></label>
       <div className="toolbar-left">
-        <button className="button button-primary" type="submit" value="continue">Spara efterarbete</button>
+        <button className="button button-primary" type="submit" value="continue" disabled={!disposition}>Spara efterarbete</button>
         {contractDispositions.includes(disposition)
           ? <button className="button button-secondary" type="submit" value="create_contract">Spara och skapa avtal</button>
           : null}
       </div>
     </form> : null}
+    {/* Kunden i luren: uppgifterna fylls i här och sparas utan sidladdning, så
+        samtalet i webbläsaren och efterarbetet ligger kvar. */}
+    {callId && selected ? <div className="phone-panel-live"><LiveCustomerCard customerId={selected} heading={afterCall ? "Kunduppgifter" : "Fyll i under samtalet"} /></div> : null}
   </div>;
 }

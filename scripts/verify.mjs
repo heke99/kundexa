@@ -357,7 +357,10 @@ assert.match(nixMigration, /'listed',now\(\),now\(\)\+interval '1 year'/, "A sel
 const completeRoute = await readFile(join(root, "src/app/api/v1/calls/complete/route.ts"), "utf8");
 assert.match(completeRoute, /"nix_listed"/, "The after-call API must accept the seller NIX report");
 const dialerNix = await readFile(join(root, "src/components/dialer-panel.tsx"), "utf8");
-assert.match(dialerNix, /Nixat nummer/, "The seller must be able to report a NIX listing from the dialer");
+// Utfallen ligger i den delade listan som efterarbetets knappar byggs av.
+const dialerOutcomes = await readFile(join(root, "src/lib/dialer/outcomes.ts"), "utf8");
+assert.match(dialerNix, /manualOutcomeOptions/, "The dialer's after-call must be built from the shared outcome list");
+assert.match(dialerOutcomes, /key: "nix_listed", label: "NIX-registrerad"/, "The seller must be able to report a NIX listing from the dialer");
 const complianceAdminActions = await readFile(join(root, "src/app/actions/admin.ts"), "utf8");
 assert.match(complianceAdminActions, /saveComplianceScreeningPolicy/, "The screening mode must be settable by a tenant administrator");
 assert.match(complianceAdminActions, /mode === "pre_screened_source" && !defaultLegalBasis/, "Relaxing NIX screening must require a documented legal basis");

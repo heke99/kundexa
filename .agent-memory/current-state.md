@@ -1,5 +1,20 @@
 # Current state
 
+## 2026-09-24 — Samtalsarbetsyta: kundkort under samtalet och efterarbete som knappar
+
+Gren `claude/nifty-knuth-o765ik`. Bara UI och en ny server action. Ingen migration och inga ändrade RPC:er.
+- Under samtalet (och i efterarbetet) blir kundkortet ett formulär (`LiveCustomerCard`) i både ringlistan
+  och den fristående dialern. Det sparar via `saveCallCustomer` utan sidladdning, så webbtelefonen ligger kvar.
+  Bara ändrade fält skrivs. Huvudnummer, kundstatus och rättslig grund rörs inte. Auditlogg `customer.details_updated`
+  med `source: call_workspace`. En checklista visar vad avtalet saknar (id-nummer, e-post, adress).
+- Efterarbetet: grupperade utfallsknappar (Affär/Följ upp/Nej/Nåddes inte/Spärra), siffertangent 1–9,
+  snabbval för återkomst (om en timme, 15:00, nästa vardag 09:00, om en vecka). I ringlistan ligger efterarbetet
+  överst. Ordern visas bara för positiva utfall eller när utfallet kräver det.
+- "Spara och skapa avtal" i ringlistan öppnar avtalet i en ny flik och pausar sessionen (i stället för att lämna sidan).
+- Kundkortssidan: uppgifter och redigering i ett kort; SMS/E-post flyttade till sidhuvudet.
+`npm run verify` PASS. Visuell kontroll i webbläsare och skarpt samtal: NOT RUN (ingen Supabase/telefoni i miljön).
+
+
 ## 2026-09-24 — Kodgranskning: fem fel åtgärdade (FAILURE-0137…0141)
 
 Gren `claude/brave-shannon-e1ep4l`. Migration `202609240011_callbacks_and_answers_stay_honest.sql`

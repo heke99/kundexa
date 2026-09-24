@@ -1,5 +1,13 @@
 # Session log
 
+## 2026-09-24 (samtalsarbetsyta)
+
+- UI-genomgång av dialer, ringlista och kundkort på användarens begäran.
+- Byggde kundkort under samtalet, efterarbete med utfallsknappar, snabbval för återkomst och avtal i ny flik.
+- Slog ihop kundkortets två uppgiftskort; flyttade SMS/E-post till sidhuvudet.
+- `npm run verify` PASS. Visuellt och skarpt NOT RUN.
+
+
 ## 2026-07-30
 
 - Genomförde en andra arkitektur-cutover från tenantägd till central Rinkel-plattform.

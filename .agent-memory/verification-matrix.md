@@ -255,3 +255,11 @@ för `npm run verify`, som kör mot PGlite. Den kontrollen är manuell.
 | Inkommande SMS omleverans, avtalsåtgärder och RLS (0140/0141) | PASS statiskt | fallerar på gammal kod |
 | Provsamtal avvisat 07:28 UTC | PASS i prod | ICE → DiCE `BUSY` → `busy`, plats släppt |
 | `202609240011` i produktion | NOT RUN | kräver merge |
+
+## 2026-09-24 samtalsarbetsyta
+| Kontroll | Status |
+|---|---|
+| `npm run verify` (typecheck, typecheck:edge, test, build) | PASS |
+| `test:api` utfallsgrupper/återkomstsnabbval | PASS |
+| Visuell kontroll i webbläsare | NOT RUN |
+| Skarpt samtal: redigera kort under samtal, efterarbete, avtal i ny flik | NOT RUN |

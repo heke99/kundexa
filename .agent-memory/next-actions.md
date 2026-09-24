@@ -1,5 +1,10 @@
 # Next actions
 
+**2026-09-24, samtalsarbetsytan:** Provsamtal från en ringlista: svara, fyll i e-post/adress under samtalet,
+välj "Intresserad" med tangent 1, "Spara och skapa avtal" ska öppna ny flik och pausa sessionen. Kontrollera
+att kortet i den smala telefonpanelen på kundkortssidan är läsbart.
+
+
 **2026-09-24, efter kodgranskningen:**
 1. Merga grenen och applicera `202609240011` i produktion (jämför funktionernas md5 mot PGlite efteråt).
 2. Provsamtal: svara och lägg på; kontrollera att `metadata.provider_answered` sätts av ACE.

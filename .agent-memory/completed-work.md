@@ -1,5 +1,11 @@
 # Completed work
 
+## 2026-09-24 samtalsarbetsyta
+- `LiveCustomerCard` + `saveCallCustomer`/`loadCallCustomer` (`src/app/actions/call-workspace.ts`).
+- `OutcomePicker`/`CallbackTimeField` och `src/lib/dialer/outcomes.ts` (gruppering, tangenter, snabbval) med test i `test:api`.
+- Ringlistan: efterarbete överst, avtal i ny flik med paus. Kundkortssidan: ett kort mindre, SMS/E-post i sidhuvudet.
+
+
 ## 2026-07-30 central Rinkel-cutover
 
 - Ersatte tenantägda Rinkel-credentials med en central plattformsintegration och en server-side miljönyckel.

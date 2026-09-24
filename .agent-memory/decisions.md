@@ -243,3 +243,10 @@ teamledare får bara byta bort en kampanj de själva leder.
 Tillägg till ADR-0019: produkt- och mallkontrollen görs vid commit, inte före INSERT.
 Tillägg till ADR-0020: leverantören får också ändra `unanswered` till `busy`, på samma villkor som
 till `failed`.
+
+## ADR-0027 — Kundkortet redigeras under samtalet utan sidladdning
+- En sidladdning mitt i ett samtal river webbtelefonen, så kortet under samtalet sparas via en server action som
+  returnerar resultat (`saveCallCustomer`) i stället för `updateCustomerDetails` som omdirigerar.
+- Bara skickade fält skrivs; huvudnumret (numret som rings) ändras inte under samtalet.
+- Avtal skickas fortfarande först efter ett avslutat, avtalsgrundande samtal (`resolve_contract_eligible_calls`).
+  Ringlistan öppnar avtalet i ny flik och pausar sessionen.

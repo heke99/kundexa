@@ -5,6 +5,7 @@ import { expectedWebhookUrl } from "../src/lib/env";
 import { isoToZonedDateOnly, isoToZonedLocalDateTime, zonedLocalDateTimeToIso } from "../src/lib/domain/time";
 import { acceptanceCode } from "../src/lib/crypto";
 import { ok, SupabaseReadError } from "../src/lib/supabase/read";
+import { callbackPresets, groupOutcomes, manualOutcomeOptions, toLocalDateTimeInput } from "../src/lib/dialer/outcomes";
 
 function withEnv(values: Record<string, string | undefined>, run: () => void) {
   const previous = new Map(Object.keys(values).map((key) => [key, process.env[key]]));
@@ -228,3 +229,29 @@ async function testOk() {
 }
 
 void testOk().then(() => console.log("ok() raises real read failures and passes a missing row through."));
+
+// Efterarbetet som knappar: fast gruppordning, siffertangent 1–9 i visningsordning,
+// okända grupper hamnar sist i stället för att försvinna.
+{
+  const groups = groupOutcomes([
+    ...manualOutcomeOptions,
+    { key: "custom_outcome", label: "Eget utfall", outcomeGroup: "something_new" },
+  ]);
+  assert.deepEqual(groups.map((group) => group.key), ["positive", "neutral", "negative", "unreachable", "blocked", "other"]);
+  const flat = groups.flatMap((group) => group.options);
+  assert.equal(flat.length, manualOutcomeOptions.length + 1, "inget utfall får tappas");
+  assert.deepEqual(flat.slice(0, 9).map((option) => option.shortcut), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  assert.equal(flat[9].shortcut, null, "tangent finns bara för de nio första");
+  assert.equal(groupOutcomes([{ key: "a", label: "A", outcomeGroup: "negative" }]).length, 1, "tomma grupper visas inte");
+
+  // Onsdag 2026-09-23 10:07 lokal tid.
+  const wednesday = new Date(2026, 8, 23, 10, 7);
+  const presets = callbackPresets(wednesday);
+  assert.deepEqual(presets.map((preset) => preset.value), ["2026-09-23T11:15", "2026-09-23T15:00", "2026-09-24T09:00", "2026-09-30T09:00"]);
+  // Fredag kväll: ingen eftermiddag kvar, nästa vardag är måndag.
+  const fridayEvening = new Date(2026, 8, 25, 18, 50);
+  const friday = callbackPresets(fridayEvening).map((preset) => preset.value);
+  assert.deepEqual(friday, ["2026-09-25T20:00", "2026-09-28T09:00", "2026-10-02T09:00"]);
+  assert.equal(toLocalDateTimeInput(new Date(2026, 0, 5, 7, 3)), "2026-01-05T07:03");
+  console.log("Utfallsgrupper och återkomstsnabbval stämmer.");
+}
