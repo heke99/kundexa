@@ -1,7 +1,8 @@
 # Next actions
 
 **2026-09-24, efter kodgranskningen:**
-1. Merga grenen och applicera `202609240011` i produktion (jämför funktionernas md5 mot PGlite efteråt).
+1. ~~Merga och applicera `202609240011`~~. Klart: PR #50 (`5a8e003`), applicerad 07:48 UTC. Kvar:
+   kontrollera att Vercel är READY på `5a8e003`, kör säkerhetsrådgivaren och jämför md5 mot PGlite.
 2. Provsamtal: svara och lägg på; kontrollera att `metadata.provider_answered` sätts av ACE.
 3. Avtalssvar via SMS kan provas först när ett svenskt SMS-nummer finns.
 **2026-09-24, systemgenomgången:**

@@ -2,9 +2,13 @@
 
 ## 2026-09-24 — Kodgranskning: fem fel åtgärdade (FAILURE-0137…0141)
 
-Gren `claude/brave-shannon-e1ep4l`. Migration `202609240011_callbacks_and_answers_stay_honest.sql`
-samt ändringar i `webhooks/sms/inbound` och `actions/contracts.ts`. **Inte applicerat i produktion**
-och inte mergat. Produktionen (main `0c56ab4`) kör fortfarande den gamla koden.
+PR #50 mergad till main (`5a8e003`), CI `verify` grön på PR:en och på main. Migration
+`202609240011_callbacks_and_answers_stay_honest.sql` applicerad i produktion 2026-09-24 07:48 UTC via MCP
+(tvilling `20260924074811`) och registrerad som repoversion `202609240011`. Före appliceringen var de sex
+funktionerna i produktion identiska med PGlite (normaliserad md5). Efteråt innehåller alla sex sina nya
+steg och EXECUTE-rättigheterna är oförändrade; ett ACE-bekräftat samtal märktes `provider_answered`.
+Ej kontrollerat efteråt (nekat av behörighetskontrollen): Vercel-deployen av `5a8e003`, full
+md5-jämförelse mot PGlite och säkerhetsrådgivaren.
 
 Beteende: liståterkomster måste komma från kön; efterarbetet stänger bara samtalets egen återkomst;
 DiCE rättar klientens svar; inkommande SMS behandlas om efter fel; avtalsåtgärder följer avtals-RLS.

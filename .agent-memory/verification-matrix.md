@@ -254,4 +254,6 @@ för `npm run verify`, som kör mot PGlite. Den kontrollen är manuell.
 | DiCE rättar klientsvar, behåller ACE-svar, lagar missat svar (0139) | PASS i PGlite | |
 | Inkommande SMS omleverans, avtalsåtgärder och RLS (0140/0141) | PASS statiskt | fallerar på gammal kod |
 | Provsamtal avvisat 07:28 UTC | PASS i prod | ICE → DiCE `BUSY` → `busy`, plats släppt |
-| `202609240011` i produktion | NOT RUN | kräver merge |
+| `202609240011` i produktion | PASS | applicerad 07:48 UTC, alla sex funktioner har sina nya steg, rättigheter oförändrade |
+| CI `verify` på main efter merge | PASS | körning 179 på `5a8e003` |
+| Vercel på `5a8e003`, rådgivare, md5 mot PGlite | NOT RUN | nekat av behörighetskontrollen i sessionen |
