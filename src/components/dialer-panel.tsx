@@ -53,6 +53,9 @@ export function DialerPanel({
   const [customerOptions, setCustomerOptions] = useState<Customer[]>(customers);
   const [customerSearchLoading, setCustomerSearchLoading] = useState(false);
   const [pickingCustomer, setPickingCustomer] = useState(false);
+  // Kunden som klickades fram. Sparas som post: en sökning som svarar efter
+  // klicket får inte ta bort den ur listan och lämna ringknappen utan nummer.
+  const [pickedCustomer, setPickedCustomer] = useState<Customer | null>(null);
   // Sidan kan ge kortet en egen plats (`#dialer-live-slot`) bredvid telefonen.
   // I den smala telefonpanelen hamnade det under knapparna och syntes inte.
   const [liveSlot, setLiveSlot] = useState<HTMLElement | null>(null);
@@ -111,8 +114,9 @@ export function DialerPanel({
     const byId = new Map<string, Customer>();
     for (const customer of customerOptions) byId.set(customer.id, customer);
     for (const customer of customers) byId.set(customer.id, customer);
+    if (pickedCustomer) byId.set(pickedCustomer.id, pickedCustomer);
     return [...byId.values()];
-  }, [customerOptions, customers]);
+  }, [customerOptions, customers, pickedCustomer]);
 
   const selectedCustomer = visibleCustomers.find((customer) => customer.id === selected) ?? null;
 
@@ -225,7 +229,7 @@ export function DialerPanel({
         // under sökfältet upprepade samma träffar en gång till.
         ? <div className="dialer-selected-customer">
             <div><strong>{selectedCustomer.display_name}</strong><small>{selectedCustomer.phone_e164 ?? "Inget nummer"}</small></div>
-            <button type="button" className="button button-ghost button-sm" onClick={() => setPickingCustomer(true)} disabled={Boolean(callId)}>Byt</button>
+            <button type="button" className="button button-ghost button-sm" onClick={() => { setSelected(""); setPickingCustomer(true); }} disabled={Boolean(callId)}>Byt</button>
           </div>
         : <div className="field dialer-customer-select">
             <label htmlFor="dialer-customer-search">Sök kund eller prospekt</label>
@@ -233,7 +237,7 @@ export function DialerPanel({
             <small>{customerSearchLoading ? "Söker…" : visibleCustomers.length ? "Klicka på kunden du vill ringa" : "Inga träffar"}</small>
             {visibleCustomers.length ? <ul className="dialer-results">
               {visibleCustomers.slice(0, 8).map((customer) => <li key={customer.id}>
-                <button type="button" disabled={customer.do_not_call || !customer.phone_e164} onClick={() => { setSelected(customer.id); setPickingCustomer(false); }}>
+                <button type="button" disabled={customer.do_not_call || !customer.phone_e164} onClick={() => { setPickedCustomer(customer); setSelected(customer.id); setPickingCustomer(false); }}>
                   <strong>{customer.display_name}</strong>
                   <small>{customer.do_not_call ? "Spärrad" : customer.phone_e164 ?? "Inget nummer"}</small>
                 </button>

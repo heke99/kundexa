@@ -172,7 +172,7 @@ export async function saveCallCustomer(customerId: string, patch: CallCustomerPa
   if (!Object.keys(update).length) return loadCallCustomer(customerId);
 
   const { data, error } = await supabase.from("customers").update(update).eq("id", customerId).select(customerColumns).maybeSingle();
-  if (error) return { ok: false, error: error.message.includes("duplicate") ? "Ett annat kundkort har redan det numret." : "Uppgifterna kunde inte sparas." };
+  if (error) return { ok: false, error: error.message.includes("duplicate") ? "Ett annat kundkort har redan samma nummer eller id-nummer." : "Uppgifterna kunde inte sparas." };
   if (!data) return { ok: false, error: "Kunden kunde inte uppdateras. Kontrollera att du har åtkomst till kundkortet." };
 
   const { error: auditError } = await supabase.from("audit_logs").insert({
