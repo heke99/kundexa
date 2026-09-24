@@ -1,5 +1,9 @@
 # Next actions
 
+**2026-09-24, efter kodgranskningen:**
+1. Merga grenen och applicera `202609240011` i produktion (jämför funktionernas md5 mot PGlite efteråt).
+2. Provsamtal: svara och lägg på; kontrollera att `metadata.provider_answered` sätts av ACE.
+3. Avtalssvar via SMS kan provas först när ett svenskt SMS-nummer finns.
 **2026-09-24, systemgenomgången:**
 1. ~~Merga grenen~~. Klart: PR #48, `f6fca59`. Vercel READY, Edge Functions deployade och
    `*/5` observerat. Kontrollerat vid mergen:

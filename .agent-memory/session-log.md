@@ -427,3 +427,9 @@ Genomgången av dem visade:
   (`202608100005`), en zip-export och ett granskningsdokument från 2026-08-06.
 
 Ingen av grenarna mergades, eftersom de skulle ta tillbaka borttagen kod och göra CI röd.
+
+## 2026-09-24 — Kodgranskning och rättelser
+Användaren bad om granskning av koden, inte testresultat. Fem fel hittades och åtgärdades
+(FAILURE-0137…0141) med migration `202609240011`, två kodändringar och regressionstest som fallerar utan
+rättelsen. Användaren avböjde att kräva leverantörsbekräftelse för avtal; den delen togs bort.
+Användarens provsamtal 07:28 UTC (avvisat) registrerades korrekt som `busy`. Inte applicerat i prod.

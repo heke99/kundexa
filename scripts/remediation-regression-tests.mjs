@@ -830,3 +830,24 @@ console.log("No dialer lets the seller call before the webphone has registered."
     "every proxy redirect must carry the refreshed session, or it retires a token the browser still holds");
 }
 console.log("A database blip cannot sign a user out, and no redirect drops a refreshed session.");
+
+// Kodgranskningen 2026-09-24 (FAILURE-0140, FAILURE-0141).
+{
+  const inbound = await read("src/app/api/webhooks/sms/inbound/route.ts");
+  assert.ok(!/if \(providerId && !event\) return new NextResponse\(null, \{ status: 204 \}\);/.test(inbound),
+    "a redelivered inbound SMS must not be acknowledged unprocessed; a failed first attempt would lose the reply");
+  assert.match(inbound, /\["processed", "ignored"\]\.includes\(existingEvent\.status\)/,
+    "only a redelivery of an already processed inbound SMS may be skipped");
+
+  const contractActions = await read("src/app/actions/contracts.ts");
+  for (const action of ["extendContractExpiry", "cancelFutureContractReminders"]) {
+    const body = contractActions.slice(contractActions.indexOf(`export async function ${action}(`));
+    const beforeAdmin = body.slice(0, body.indexOf("createAdminClient()"));
+    assert.match(beforeAdmin, /userMayReachContract\(contractId\)/,
+      `${action} must check the contract's own access rules before writing with the service client`);
+  }
+  const cancel = contractActions.slice(contractActions.indexOf("export async function cancelContract("));
+  assert.match(cancel.slice(0, cancel.indexOf("contract_acceptance_requests")), /await createClient\(\)\)\.from\("contracts"\)/,
+    "cancelContract must read the contract through the user's client so its RLS decides access");
+}
+console.log("A redelivered inbound SMS is processed unless the first attempt finished, and contract actions respect contract access.");

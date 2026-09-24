@@ -244,3 +244,14 @@ för `npm run verify`, som kör mot PGlite. Den kontrollen är manuell.
 | Vercel produktion på merge-SHA | PASS | `dpl_2BK2NpK3YQnHF9JcuRax2A79cmVM` READY på `f6fca59` |
 | Edge Functions efter merge | PASS | `deploy-edge-functions` #16; maintenance/parsehub/process-outbox `updated_at` 22:46 UTC |
 | Maintenance-schema `*/5` | PASS | lyckad 06:50, ny körning 06:55 (2026-09-24) |
+
+## 2026-09-24 — kodgranskning
+
+| Kontroll | Status | Notering |
+|---|---|---|
+| Liståterkomst från kön, annan aktivitet nekas (0137/0138) | PASS i PGlite | fallerar utan `202609240011` |
+| Återkomst utan listplats följer inte med annat prospekt | PASS i PGlite | |
+| DiCE rättar klientsvar, behåller ACE-svar, lagar missat svar (0139) | PASS i PGlite | |
+| Inkommande SMS omleverans, avtalsåtgärder och RLS (0140/0141) | PASS statiskt | fallerar på gammal kod |
+| Provsamtal avvisat 07:28 UTC | PASS i prod | ICE → DiCE `BUSY` → `busy`, plats släppt |
+| `202609240011` i produktion | NOT RUN | kräver merge |
