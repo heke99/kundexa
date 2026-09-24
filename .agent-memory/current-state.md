@@ -1,5 +1,17 @@
 # Current state
 
+## 2026-09-24 — Kodgranskning: fem fel åtgärdade (FAILURE-0137…0141)
+
+Gren `claude/brave-shannon-e1ep4l`. Migration `202609240011_callbacks_and_answers_stay_honest.sql`
+samt ändringar i `webhooks/sms/inbound` och `actions/contracts.ts`. **Inte applicerat i produktion**
+och inte mergat. Produktionen (main `0c56ab4`) kör fortfarande den gamla koden.
+
+Beteende: liståterkomster måste komma från kön; efterarbetet stänger bara samtalets egen återkomst;
+DiCE rättar klientens svar; inkommande SMS behandlas om efter fel; avtalsåtgärder följer avtals-RLS.
+Avtalsbehörigheten är oförändrad.
+
+Verifierat skarpt 2026-09-24 07:28 UTC (före ändringen): ett avvisat samtal gav ICE, DiCE
+`result=BUSY` och status `busy`; klientens senare rapport ändrade inget; platsen släpptes.
 ## 2026-09-24 — Systemgenomgång: 31 brytpunkter åtgärdade (FAILURE-0101…0131)
 
 Gren `claude/charming-mendel-tsfomg` (från `bf83bb9`, PR #47). Fem kodcommits (PR 1–5 i planen) och en

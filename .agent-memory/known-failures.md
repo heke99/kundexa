@@ -1901,3 +1901,22 @@ enhetstest. Testet fallerade utan fixen och passerade med den. Status: `FIXED` p
   - Resend-webhooken slog upp e-post och replay per integrationens tenant, men kontot delas av alla.
   - .docx saknade en gräns för uppackning (`maxOutputLength`).
   - `list_team_access` saknade rollfilter, så viewer och finance såg delade listor.
+
+## FAILURE-0137 till FAILURE-0141 — kodgranskningen 2026-09-24 (åtgärdade)
+
+Hittade genom att läsa koden, inte testerna. Migration `202609240011`, kodändringar och nya
+regressionstest; varje test fallerar utan sin rättelse.
+
+- **0137** Ett listsamtal prövade inte återkomst-id:t (`reserve_outbound_call`). Nu måste det vara
+  återkomsten som kön gav säljaren i sessionen.
+- **0138** Efterarbetet stängde aktiviteten utan typ- eller kundkontroll (`complete_dialer_work`,
+  `complete_manual_call_work`). Nu bara samtalets egen återkomst.
+- **0139** Webbläsarens rapport om svar stod kvar mot DiCE. Nu rättar DiCE (`NOANSWER`/`BUSY`/
+  `FAILED`) ett svar som bara klienten sett, och `ANSWERED` lagar ett missat. ACE märker
+  `provider_answered`. Avtalsbehörigheten ändrades inte (användarens beslut: avtal kan skickas utan
+  leverantörsbekräftelse, även efter manuellt registrerat samtal).
+- **0140** Ett inkommande SMS vars första behandling felade kvitterades som dubblett vid omleveransen.
+  Nu behandlas en händelse som inte är `processed`/`ignored` om.
+- **0141** Avbryt/förläng avtal och stoppa påminnelser prövade inte avtalsåtkomsten. Nu avgör avtalets RLS.
+- Kantfall: kön gav en återkomst vars kund saknar listplats tillsammans med ett annat prospekt. Åtgärdat
+  i `claim_next_list_member`.

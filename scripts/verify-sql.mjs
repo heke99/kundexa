@@ -4389,4 +4389,122 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   console.log("No database function calls a removed Rinkel function.");
 }
 
+// Kodgranskningen 2026-09-24 (FAILURE-0137…0139, 202609240011).
+{
+  const seller = '00000000-0000-0000-0000-000000000020';
+  const admin = '00000000-0000-0000-0000-000000000002';
+  const tenant = '00000000-0000-0000-0000-000000000001';
+  const listCustomer = '00000000-0000-0000-0000-000000000025';
+  await db.exec(`
+    select set_config('request.jwt.claim.role','authenticated',false);
+    update public.dial_attempts set status='completed' where seller_user_id='${seller}' and public.dial_attempt_holds_seat(status);
+    update public.dialer_sessions set state='ended' where user_id='${seller}' and state<>'ended';
+    update public.customer_lists set status='active',allowed_days='{1,2,3,4,5,6,7}',allowed_start_time='00:00',allowed_end_time='23:59:59',starts_at=null,ends_at=null where id='${runtimeListId}';
+    update public.customer_list_members set state='pending',claimed_by=null,claim_expires_at=null,next_attempt_at=null,attempts=0
+      where list_id='${runtimeListId}' and customer_id='${listCustomer}';
+    update public.activities set status='completed' where list_id='${runtimeListId}' and type='callback' and status in ('open','in_progress');
+    select set_config('request.jwt.claim.sub','${admin}',false);
+  `);
+  const foreign = String((await db.query(`insert into public.activities(tenant_id,customer_id,type,status,title,assigned_user_id,priority,due_at,created_by)
+    values($1,'00000000-0000-0000-0000-000000000021','task','open','Annan användares uppgift',$2,'high',now()+interval '1 day',$2) returning id`, [tenant, admin])).rows[0].id);
+
+  // 0137: ett listsamtal får inte bära en aktivitet som kön inte gav säljaren.
+  await db.exec(`select set_config('request.jwt.claim.sub','${seller}',false)`);
+  const session = String((await db.query(`select public.start_dialer_session($1) as id`, [runtimeListId])).rows[0].id);
+  const claim = (await db.query(`select public.claim_next_list_member($1,$2) as c`, [runtimeListId, session])).rows[0].c;
+  if (claim.empty || claim.customer?.id !== listCustomer) throw new Error(`Callback fixture claim failed: ${JSON.stringify(claim)}`);
+  let refused = false;
+  try {
+    await db.query(`select public.reserve_outbound_call($1,null,'+46702222225',$2,$3,$4,gen_random_uuid(),'review-foreign-activity','direct_marketing',null,null)`,
+      [listCustomer, session, claim.memberId, foreign]);
+  } catch (error) { refused = String(error).includes('callback_not_available'); }
+  const untouched = (await db.query(`select status,claimed_by,call_id from public.activities where id=$1`, [foreign])).rows[0];
+  if (!refused || untouched.status !== 'open' || untouched.claimed_by !== null || untouched.call_id !== null) {
+    throw new Error(`A list call took an activity the queue never gave the seller: ${JSON.stringify({ refused, untouched })}`);
+  }
+  await db.query(`select public.release_list_member_claim($1,'end')`, [session]);
+
+  // Den riktiga vägen fungerar fortfarande: köns återkomst reserveras och stängs.
+  await db.exec(`select set_config('request.jwt.claim.sub','${admin}',false)`);
+  const own = String((await db.query(`insert into public.activities(tenant_id,customer_id,type,status,title,assigned_user_id,priority,due_at,created_by,list_id,callback_scope)
+    values($1,$2,'callback','open','Egen återkomst',$3,'high',now()-interval '1 minute',$3,$4,'personal') returning id`, [tenant, listCustomer, seller, runtimeListId])).rows[0].id);
+  await db.exec(`select set_config('request.jwt.claim.sub','${seller}',false)`);
+  const session2 = String((await db.query(`select public.start_dialer_session($1) as id`, [runtimeListId])).rows[0].id);
+  const claim2 = (await db.query(`select public.claim_next_list_member($1,$2) as c`, [runtimeListId, session2])).rows[0].c;
+  if (claim2.callbackActivityId !== own) throw new Error(`The queue did not hand out the seller's callback: ${JSON.stringify(claim2)}`);
+  const reserved = (await db.query(`select public.reserve_outbound_call($1,null,'+46702222225',$2,$3,$4,gen_random_uuid(),'review-own-callback','direct_marketing',null,null) as r`,
+    [listCustomer, session2, claim2.memberId, own])).rows[0].r;
+  await db.query(`update public.calls set status='completed',ended_at=now() where id=$1`, [reserved.callId]);
+  await db.query(`update public.dial_attempts set status='completed' where call_id=$1`, [reserved.callId]);
+  await db.query(`select public.complete_dialer_work($1,'order','x',null,null,true,'00000000-0000-0000-0000-000000000023',1,null,'review-own-callback-work')`, [reserved.callId]);
+  const ownState = (await db.query(`select status from public.activities where id=$1`, [own])).rows[0];
+  if (ownState.status !== 'completed') throw new Error(`The claimed callback was not closed by after-call work: ${JSON.stringify(ownState)}`);
+
+  // 0138: efterarbetet stänger bara samtalets egen återkomst, även om raden pekar fel.
+  const stray = String((await db.query(`select public.reserve_outbound_call($1,null,'+46702222225',null,null,null,gen_random_uuid(),'review-stray','customer_service',null,null) as r`, [listCustomer])).rows[0].r.callId);
+  await db.query(`update public.calls set status='completed',ended_at=now(),callback_activity_id=$2 where id=$1`, [stray, foreign]);
+  await db.query(`update public.dial_attempts set status='completed' where call_id=$1`, [stray]);
+  await db.query(`select public.complete_manual_call_work($1,'interested','x',null,null)`, [stray]);
+  const stillOpen = (await db.query(`select status from public.activities where id=$1`, [foreign])).rows[0];
+  if (stillOpen.status !== 'open') throw new Error(`After-call work closed an unrelated activity: ${JSON.stringify(stillOpen)}`);
+  console.log("A list call cannot take or close an activity the queue did not give the seller; the queue's own callback still works.");
+
+  // Kantfallet: en återkomst vars kund saknar listplats följer inte med ett annat prospekt.
+  await db.exec(`select set_config('request.jwt.claim.sub','${admin}',false)`);
+  const orphanCustomer = String((await db.query(`insert into public.customers(tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by)
+    values($1,'company','prospect','Utan listplats','+46702222299',true,'legitimate_interest',$2) returning id`, [tenant, admin])).rows[0].id);
+  const orphan = String((await db.query(`insert into public.activities(tenant_id,customer_id,type,status,title,assigned_user_id,priority,due_at,created_by,list_id,callback_scope)
+    values($1,$2,'callback','open','Återkomst utan listplats',$3,'high',now()-interval '1 minute',$3,$4,'personal') returning id`, [tenant, orphanCustomer, seller, runtimeListId])).rows[0].id);
+  await db.query(`update public.customer_list_members set state='pending',claimed_by=null,claim_expires_at=null,next_attempt_at=null where list_id=$1 and customer_id=$2`, [runtimeListId, listCustomer]);
+  await db.exec(`select set_config('request.jwt.claim.sub','${seller}',false)`);
+  const session3 = String((await db.query(`select public.start_dialer_session($1) as id`, [runtimeListId])).rows[0].id);
+  const claim3 = (await db.query(`select public.claim_next_list_member($1,$2) as c`, [runtimeListId, session3])).rows[0].c;
+  const orphanState = (await db.query(`select status from public.activities where id=$1`, [orphan])).rows[0];
+  if (claim3.callbackActivityId === orphan || orphanState.status !== 'open') {
+    throw new Error(`A callback without a list place rode along with another prospect: ${JSON.stringify({ claim3, orphanState })}`);
+  }
+  await db.query(`select public.release_list_member_claim($1,'end')`, [session3]);
+  console.log("A callback whose customer has no list place is never handed out with another prospect.");
+
+  // 0139: DiCE rättar ett svar som bara webbläsaren rapporterat, men inte ett som ACE bekräftat.
+  await db.exec(`select set_config('request.jwt.claim.sub','${admin}',false)`);
+  const webphone = (await db.query(`select public.open_webphone_session('sinch','review') as s`)).rows[0].s.sessionId;
+  async function clientAnsweredCall(key, externalId) {
+    await db.exec(`
+      update public.dial_attempts set status='completed' where seller_user_id='${admin}' and public.dial_attempt_holds_seat(status);
+      select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${admin}',false)`);
+    const r = (await db.query(`select public.reserve_outbound_call($1,null,'+46702222225',null,null,null,gen_random_uuid(),$2,'customer_service',null,null) as r`, [listCustomer, key])).rows[0].r;
+    await db.query(`select public.finalize_dial($1,$2,'accepted',$3,null,null)`, [r.callId, r.attemptId, externalId]);
+    return r.callId;
+  }
+  async function dice(externalId, result, reason) {
+    await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+    const payload = JSON.stringify({ event: 'dice', callid: externalId, result, reason, duration: result === 'ANSWERED' ? 30 : 0 });
+    await db.query(`select public.ingest_sinch_voice_event('dice',$1,$2,$3::jsonb,now())`, [externalId, `dice:${externalId}`, payload]);
+    await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${admin}',false)`);
+  }
+  const overruled = await clientAnsweredCall('review-client-answer', 'review-ext-1');
+  await db.query(`select public.record_webphone_leg_event($1,$2,'answered',now())`, [overruled, webphone]);
+  await db.query(`select public.record_webphone_leg_event($1,$2,'ended',now())`, [overruled, webphone]);
+  await dice('review-ext-1', 'NOANSWER', 'CALLERHANGUP');
+  const overruledRow = (await db.query(`select status,answered_at,metadata->>'answered_at_source' src from public.calls where id=$1`, [overruled])).rows[0];
+  if (overruledRow.status !== 'unanswered' || overruledRow.answered_at !== null || overruledRow.src !== 'overruled_by_provider') {
+    throw new Error(`DiCE NOANSWER did not overrule a client-only answer: ${JSON.stringify(overruledRow)}`);
+  }
+
+  const confirmed = await clientAnsweredCall('review-ace-answer', 'review-ext-2');
+  await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+  await db.query(`select public.ingest_sinch_voice_event('ace','review-ext-2','ace:review-ext-2','{"event":"ace","callid":"review-ext-2"}'::jsonb,now())`);
+  await dice('review-ext-2', 'NOANSWER', 'CALLEEHANGUP');
+  const confirmedRow = (await db.query(`select status,answered_at is not null answered from public.calls where id=$1`, [confirmed])).rows[0];
+  if (confirmedRow.status !== 'completed' || !confirmedRow.answered) throw new Error(`DiCE overruled an answer ACE had confirmed: ${JSON.stringify(confirmedRow)}`);
+
+  const missed = await clientAnsweredCall('review-missed-answer', 'review-ext-3');
+  await db.query(`select public.record_webphone_leg_event($1,$2,'ended',now())`, [missed, webphone]);
+  await dice('review-ext-3', 'ANSWERED', 'CALLERHANGUP');
+  const missedRow = (await db.query(`select status,answered_at is not null answered from public.calls where id=$1`, [missed])).rows[0];
+  if (missedRow.status !== 'completed' || !missedRow.answered) throw new Error(`DiCE ANSWERED did not repair a call the browser saw as unanswered: ${JSON.stringify(missedRow)}`);
+  console.log("DiCE overrules a browser-only answer, keeps an ACE-confirmed one and repairs a missed one.");
+}
+
 await db.close();

@@ -697,6 +697,17 @@ export async function sendContractReminder(form: FormData) {
   redirect(`/app/contracts/${contractId}?message=Påminnelsen är köad`);
 }
 
+/**
+ * Tjänsteklienten nedan ser alla företagets avtal. Rollen säger att användaren
+ * får ändra avtal, inte vilka: en säljare når bara sina egna kunders. Samma
+ * läsning med användarens klient låter avtalets RLS avgöra det, innan något
+ * skrivs med tjänsteklienten.
+ */
+async function userMayReachContract(contractId: string) {
+  const { data } = await (await createClient()).from("contracts").select("id").eq("id", contractId).maybeSingle();
+  return Boolean(data);
+}
+
 export async function extendContractExpiry(form: FormData) {
   const ctx = await getAppContext();
   assertPermission(ctx.role, "contracts.manage_expiry");
@@ -705,6 +716,7 @@ export async function extendContractExpiry(form: FormData) {
   try { expiresAt = new Date(zonedLocalDateTimeToIso(value(form, "expires_at"), ctx.tenantTimezone)); }
   catch { redirect(`/app/contracts/${contractId}?error=Det nya svarsdatumet är ogiltigt för företagets tidszon`); }
   if (!Number.isFinite(expiresAt!.getTime()) || expiresAt! <= new Date()) redirect(`/app/contracts/${contractId}?error=Det nya svarsdatumet måste vara i framtiden`);
+  if (!await userMayReachContract(contractId)) redirect(`/app/contracts?error=${encodeURIComponent("Avtalet finns inte.")}`);
   const admin = createAdminClient();
   const { data: request } = await admin.from("contract_acceptance_requests").select("id,expires_at").eq("tenant_id", ctx.tenantId).eq("contract_id", contractId).eq("status", "pending").order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (!request) redirect(`/app/contracts/${contractId}?error=Ingen aktiv acceptbegäran finns`);
@@ -738,6 +750,7 @@ export async function cancelFutureContractReminders(form: FormData) {
   const ctx = await getAppContext();
   assertPermission(ctx.role, "contracts.remind");
   const contractId = z.uuid().parse(value(form, "contract_id"));
+  if (!await userMayReachContract(contractId)) redirect(`/app/contracts?error=${encodeURIComponent("Avtalet finns inte.")}`);
   const admin = createAdminClient();
   const now = new Date().toISOString();
   const { data: requests, error: requestError } = await admin.from("contract_acceptance_requests")
@@ -778,7 +791,8 @@ export async function cancelContract(form: FormData) {
   const back = value(form, "return_to") || "/app/contracts";
   const admin = createAdminClient();
 
-  const { data: contract, error: readError } = await admin.from("contracts")
+  // Läses med användarens klient: avtalets RLS avgör om hen når det.
+  const { data: contract, error: readError } = await (await createClient()).from("contracts")
     .select("id,status,contract_number").eq("tenant_id", ctx.tenantId).eq("id", contractId).maybeSingle();
   if (readError) redirect(`${back}?error=${encodeURIComponent("Avtalet kunde inte läsas. Försök igen.")}`);
   if (!contract) redirect(`${back}?error=${encodeURIComponent("Avtalet finns inte.")}`);

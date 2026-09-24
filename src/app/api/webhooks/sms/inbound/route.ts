@@ -29,7 +29,7 @@ export async function POST(request: Request) {
     // no SMS provider redelivers after a 2xx: an inbound SMS, contract acceptance
     // included, was lost for good. The Resend webhook already separates the two;
     // this one did not.
-    const { data: event, error: eventError } = await admin.from("provider_webhook_events").upsert({
+    const { data: insertedEvent, error: eventError } = await admin.from("provider_webhook_events").upsert({
       tenant_id: number.tenant_id,
       provider: adapter.id,
       event_type: "sms.inbound",
@@ -39,7 +39,23 @@ export async function POST(request: Request) {
       status: "received",
     }, { onConflict: "provider,provider_event_id", ignoreDuplicates: true }).select("id").maybeSingle();
     if (eventError) throw eventError;
-    if (providerId && !event) return new NextResponse(null, { status: 204 });
+    let event = insertedEvent;
+    // En omleverans är bara en dubblett om den första leveransen blev klar. Ett
+    // fel längre ner svarar 500 för att leverantören ska skicka igen, och den
+    // nya leveransen träffar då händelsen som redan sparats. Att kvittera den
+    // med 204 tappade svaret för gott -- ett "JA" till ett avtal inräknat.
+    // Varje steg nedan tål att köras igen: meddelandet och spärren skrivs
+    // idempotent, och ett avtalssvar registreras bara mot en väntande begäran.
+    if (providerId && !event) {
+      const { data: existingEvent, error: existingEventError } = await admin.from("provider_webhook_events")
+        .select("id,status")
+        .eq("provider", adapter.id)
+        .eq("provider_event_id", providerId)
+        .maybeSingle();
+      if (existingEventError || !existingEvent) throw existingEventError ?? new Error("inbound_sms_replay_lookup_failed");
+      if (["processed", "ignored"].includes(existingEvent.status)) return new NextResponse(null, { status: 204 });
+      event = { id: existingEvent.id };
+    }
 
     const { data: customer } = await admin.from("customers")
       .select("id")
