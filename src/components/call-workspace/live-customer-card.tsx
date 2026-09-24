@@ -37,9 +37,11 @@ function contractReadiness(draft: Draft, type: CallCustomer["customerType"]) {
   ];
 }
 
-export function LiveCustomerCard({ customerId, heading = "Kunduppgifter", contractHref }: {
+export function LiveCustomerCard({ customerId, heading = "Kunduppgifter", contractHref, fullCardLink = false }: {
   customerId: string;
   heading?: string;
+  /** Länk till hela kundkortet i ny flik; sidbyte i samma flik lägger på samtalet. */
+  fullCardLink?: boolean;
   /** Visas när avtal kan skapas, t.ex. efter ett avtalsgrundande utfall. */
   contractHref?: string | null;
 }) {
@@ -96,8 +98,8 @@ export function LiveCustomerCard({ customerId, heading = "Kunduppgifter", contra
   const readiness = contractReadiness(draft, customer.customerType);
   return <form className="live-card" onSubmit={save}>
     <div className="live-card-header">
-      <h3>{heading}</h3>
-      <span className="muted">{customer.customerType === "person" ? "Privatperson" : "Företag"} · {customer.phone ?? "inget nummer"}</span>
+      <div><span className="eyebrow">{heading}</span><h3>{customer.displayName}</h3></div>
+      <span className="muted">{customer.customerType === "person" ? "Privatperson" : "Företag"} · {customer.phone ?? "inget nummer"}{fullCardLink ? <> · <Link href={`/app/customers/${customer.id}`} target="_blank" rel="noopener">Hela kundkortet</Link></> : null}</span>
     </div>
     <div className="live-card-grid">
       {input("displayName", "Namn på kortet", { required: true, minLength: 2 })}

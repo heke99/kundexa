@@ -37,6 +37,8 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
     <div className="dialer-grid">
       <div className="phone-panel"><DialerPanel customers={selectedCustomer ? [selectedCustomer] : []} initialCustomer={selectedCustomer?.id} callbackActivityId={params.callback} callerIdOptions={(callerIdData ?? []) as Array<{ id: string; number_e164: string }>} mayManageIntegrations={can(context.role, "integrations.manage")} contractDispositions={contractDispositionKeys} /></div>
       <div className="grid">
+        {/* Kundkortet öppnas här när ett samtal startar (DialerPanel). */}
+        <div id="dialer-live-slot" className="live-card-slot" />
         <Card><CardHeader><h2><Plus size={17} /> Ring ett nytt nummer</h2></CardHeader><CardContent>
           <p className="muted">Kundkortet öppnas, eller skapas om numret är nytt. Du ringer därifrån.</p>
           <form action={createManualProspect} className="form-grid">

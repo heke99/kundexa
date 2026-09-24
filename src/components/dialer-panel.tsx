@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 import { Phone, PhoneOff, Radio } from "@/components/icons";
 import { useDialerPanel } from "@/hooks/use-dialer";
 import { useCallRealtime } from "@/hooks/use-call-realtime";
@@ -52,6 +53,10 @@ export function DialerPanel({
   const [customerOptions, setCustomerOptions] = useState<Customer[]>(customers);
   const [customerSearchLoading, setCustomerSearchLoading] = useState(false);
   const [pickingCustomer, setPickingCustomer] = useState(false);
+  // Sidan kan ge kortet en egen plats (`#dialer-live-slot`) bredvid telefonen.
+  // I den smala telefonpanelen hamnade det under knapparna och syntes inte.
+  const [liveSlot, setLiveSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => { setLiveSlot(document.getElementById("dialer-live-slot")); }, []);
   const [callId, setCallId] = useState<string | null>(null);
   // Tomt betyder automatiskt: numret följer kampanj, team och företagets förval,
   // så som en administratör eller teamledare har bestämt.
@@ -314,8 +319,10 @@ export function DialerPanel({
           : null}
       </div>
     </form> : null}
-    {/* Kunden i luren: uppgifterna fylls i här och sparas utan sidladdning, så
+    {/* Kunden i luren: kortet öppnas och uppgifterna sparas utan sidladdning, så
         samtalet i webbläsaren och efterarbetet ligger kvar. */}
-    {callId && selected ? <div className="phone-panel-live"><LiveCustomerCard customerId={selected} heading={afterCall ? "Kunduppgifter" : "Fyll i under samtalet"} /></div> : null}
+    {callId && selected ? (liveSlot
+      ? createPortal(<LiveCustomerCard customerId={selected} heading={afterCall ? "Samtalet är avslutat" : "Pågående samtal · fyll i uppgifterna"} fullCardLink={!lockedToCustomer} />, liveSlot)
+      : <div className="phone-panel-live"><LiveCustomerCard customerId={selected} heading={afterCall ? "Kunduppgifter" : "Fyll i under samtalet"} fullCardLink={!lockedToCustomer} /></div>) : null}
   </div>;
 }

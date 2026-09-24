@@ -75,7 +75,7 @@
 /* Kundkortet under samtalet och efterarbetet som knappar. */
 .live-card { margin:18px 0; padding:16px; display:grid; gap:12px; background:white; color:#17202a; border:1px solid #dce5e6; border-radius:13px; }
 .live-card-header { display:flex; justify-content:space-between; align-items:baseline; gap:10px; flex-wrap:wrap; }
-.live-card-header h3 { margin:0; font-size:15px; }
+.live-card-header h3 { margin:6px 0 0; font-size:17px; }
 .live-card-header .muted { font-size:12px; }
 .live-card-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px 12px; }
 .live-field { gap:4px; font-size:12px; }
@@ -87,6 +87,8 @@
 .live-card-actions .muted { font-size:12px; }
 .live-saved { display:inline-flex; align-items:center; gap:5px; color:#0b6e59; font-size:12px; font-weight:700; }
 .phone-panel-live .live-card { margin-top:20px; }
+.live-card-slot:empty { display:none; }
+.live-card-slot .live-card { margin:0; border:2px solid #1dbb85; box-shadow:0 8px 24px #102b2614; }
 .phone-panel-live .live-card-grid { grid-template-columns:1fr; }
 .outcome-picker { display:grid; gap:10px; }
 .outcome-group { display:grid; grid-template-columns:96px 1fr; align-items:center; gap:10px; }

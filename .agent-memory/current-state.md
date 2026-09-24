@@ -1,5 +1,13 @@
 # Current state
 
+## 2026-09-24 — Kundkortet öppnas bredvid telefonen
+
+Användaren ringde och fick inget kundkort. Orsak 1: PR #51 var inte mergad, så produktionen körde gammal kod.
+Orsak 2: kortet renderades längst ner i den smala telefonpanelen. Nu portaleras det (`createPortal`) till
+`#dialer-live-slot`: överst i högerkolumnen på Dialer och överst i vänsterkolumnen på kundkortssidan, med
+kundens namn och grön ram. Utan slot (ringlistan har eget kort) ligger det kvar i panelen. `npm run verify` PASS.
+
+
 ## 2026-09-24 — UI-städning (samma gren, andra passet)
 
 - Kundkortet: historiken är en tidslinje (samtal + aktiviteter, nyast först, samtalsanteckning visas).
