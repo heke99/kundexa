@@ -1,5 +1,11 @@
 # Session log
 
+## 2026-09-24 (migrationer 12–13 i prod)
+
+- Mergade #52, applicerade `202609240012` och `202609240013` i prod, jämförde md5 mot PGlite (lika) och provkörde
+  statusregeln med rollback. Inget skarpt samtal eller utdelning körd.
+
+
 ## 2026-09-24 (UI-städning)
 
 - Genomförde förslagen från UI-genomgången: tidslinje, färre kort på kundkortet, ett sökfält i dialern,

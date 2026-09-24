@@ -1,5 +1,14 @@
 # Current state
 
+## 2026-09-24 — PR #52 mergad (`de852fc`) och migrationerna applicerade i prod
+
+`202609240012` och `202609240013` är applicerade via MCP och registrerade med repoversionerna (plus MCP:s
+tidsstämpeltvillingar). Kontrollerat i prod: triggern `call_outcome_sets_customer_status` finns och är aktiv;
+`project_call_outcome_to_customer` kan inte anropas av authenticated; `platform_share_allocated_list` kan inte anropas
+av anon; `search_path=public` på alla tre. Funktionernas md5 (utan kommentarer och blanksteg) är identisk med PGlite.
+Provkörning i transaktion med rollback på provsamtalet 11:06: `prospect` → `lead` vid "interested"; inget sparades.
+Typerna är inte regenererade (de två funktionerna står i `MissingFunctionName` i runtime-typerna).
+
 ## 2026-09-24 — Efter första skarpa provet (PR #51 mergad som `95e9899`)
 
 Användaren provringde: kundkortet kom upp. Avtal gick inte att skicka. Mätt i prod: Gridex har 0 produkter,
@@ -11,12 +20,12 @@ Den här grenen:
 - Enter sparar efterarbetet. Ett obesvarat eller upptaget samtal får utfallet förvalt.
 - Migration `202609240012`: trigger på `calls.disposition` flyttar kunden framåt: positivt → lead (från prospekt),
   order/sale/sold → kund, not_interested → förlorad (från prospekt/lead). Aldrig bakåt, aldrig spärrade.
-  **Inte applicerad i prod.**
+  Applicerad i prod (se ovan).
 - Import kan skapa en ny ringlista (ägare/admin; utkast). Dialern visar chefer listor som säljarna inte ser (utkast/pausad).
 Utdelning (användarens beslut): teamledare, ägare och superadmin ska kunna dela ut. Teamledare/ägare kunde redan.
 Migration `202609240013` ger plattformsadmin `platform_share_allocated_list` / `platform_list_distribution`: företaget härleds
 ur tilldelningen, team korskontrolleras mot samma företag, audit `customer_list.shared_by_platform`. UI under
-Plattform → Listor ("Dela ut"). **Inte applicerad i prod.** Tvåbolagstest i PGlite.
+Plattform → Listor ("Dela ut"). Applicerad i prod (se ovan). Tvåbolagstest i PGlite.
 
 
 ## 2026-09-24 — Kundkortet öppnas bredvid telefonen

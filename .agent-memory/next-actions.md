@@ -1,5 +1,10 @@
 # Next actions
 
+**2026-09-24, efter #52 och migrationerna:**
+1. Användaren: lägg in en produkt med pris, koppla avtalsmallen, skapa/importera en lista, aktivera och dela den.
+2. Provsamtal med "Intresserad" → skicka avtal till egen e-post (första skarpa avtalsleveransen).
+3. Regenerera Supabase-typerna så att `platform_list_distribution`/`platform_share_allocated_list` kan tas bort ur `MissingFunctionName`.
+
 **2026-09-24, samtalsarbetsytan:** Provsamtal från en ringlista: svara, fyll i e-post/adress under samtalet,
 välj "Intresserad" med tangent 1, "Spara och skapa avtal" ska öppna ny flik och pausa sessionen. Kontrollera
 att kortet i den smala telefonpanelen på kundkortssidan är läsbart.
