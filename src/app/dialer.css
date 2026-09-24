@@ -59,5 +59,54 @@
 .assignment-settings { margin-top:16px; }
 .assignment-settings>summary { cursor:pointer; font-size:13px; font-weight:750; color:#536269; }
 .assignment-settings[open]>summary { margin-bottom:12px; }
+/* Ett sökfält med klickbara träffar i stället för sökfält plus rullista. */
+.dialer-selected-customer { margin-top:18px; display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 14px; border:1px solid #ffffff2e; border-radius:11px; background:#ffffff14; color:white; }
+.dialer-selected-customer div { display:grid; gap:2px; min-width:0; }
+.dialer-selected-customer small { color:#cfe6df; }
+.dialer-selected-customer .button-ghost { color:#cfe6df; }
+.dialer-results { list-style:none; margin:4px 0 0; padding:0; display:grid; gap:4px; max-height:280px; overflow:auto; }
+.dialer-results button { width:100%; display:flex; justify-content:space-between; gap:10px; padding:9px 11px; border:1px solid #ffffff24; border-radius:9px; background:#ffffff0f; color:white; text-align:left; }
+.dialer-results button:hover:not(:disabled) { background:#ffffff24; }
+.dialer-results button:disabled { opacity:.5; cursor:not-allowed; }
+.dialer-results small { color:#cfe6df; white-space:nowrap; }
+.dialer-caller-id { margin-top:14px; color:#cfe6df; font-size:12px; }
+.dialer-caller-id summary { cursor:pointer; }
+.dialer-caller-id .dialer-customer-select { margin-top:10px; }
+/* Kundkortet under samtalet och efterarbetet som knappar. */
+.live-card { margin:18px 0; padding:16px; display:grid; gap:12px; background:white; color:#17202a; border:1px solid #dce5e6; border-radius:13px; }
+.live-card-header { display:flex; justify-content:space-between; align-items:baseline; gap:10px; flex-wrap:wrap; }
+.live-card-header h3 { margin:6px 0 0; font-size:17px; }
+.live-card-header .muted { font-size:12px; }
+.live-card-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px 12px; }
+.live-field { gap:4px; font-size:12px; }
+.live-field input { padding:8px 10px; }
+.readiness { list-style:none; margin:0; padding:0; display:flex; flex-wrap:wrap; gap:6px; }
+.readiness li { display:inline-flex; align-items:center; gap:5px; padding:4px 9px; border-radius:999px; background:#fff4e5; color:#8a5a12; font-size:11px; font-weight:700; }
+.readiness li.done { background:#e8fff8; color:#0b6e59; }
+.live-card-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.live-card-actions .muted { font-size:12px; }
+.live-saved { display:inline-flex; align-items:center; gap:5px; color:#0b6e59; font-size:12px; font-weight:700; }
+.phone-panel-live .live-card { margin-top:20px; }
+.live-card-slot:empty { display:none; }
+.live-card-slot .live-card { margin:0; border:2px solid #1dbb85; box-shadow:0 8px 24px #102b2614; }
+.phone-panel-live .live-card-grid { grid-template-columns:1fr; }
+.outcome-picker { display:grid; gap:10px; }
+.outcome-group { display:grid; grid-template-columns:96px 1fr; align-items:center; gap:10px; }
+.outcome-group-label { color:#6a7980; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; }
+.outcome-chips { display:flex; flex-wrap:wrap; gap:7px; }
+.outcome-chip { display:inline-flex; align-items:center; gap:7px; padding:8px 12px; border:1px solid #d5dfe1; border-radius:999px; background:white; color:#1d2b31; font-size:13px; font-weight:700; transition:.12s; }
+.outcome-chip:hover { border-color:#8ac8ba; }
+.outcome-chip:focus-visible { outline:2px solid #14866d; outline-offset:2px; }
+.outcome-chip kbd { min-width:18px; padding:1px 5px; border-radius:5px; background:#eef3f3; color:#56666d; font:700 10px/1.4 ui-monospace,monospace; text-align:center; }
+.outcome-chip.selected { color:white; border-color:transparent; }
+.outcome-chip.selected kbd { background:#ffffff33; color:white; }
+.outcome-success.selected { background:#107a64; }
+.outcome-info.selected { background:#1f6fb2; }
+.outcome-neutral.selected { background:#44535a; }
+.outcome-muted.selected { background:#7b888e; }
+.outcome-danger { color:#a72d37; }
+.outcome-danger.selected { background:#c93444; }
+.manual-after-call .outcome-group { grid-template-columns:1fr; gap:5px; }
+@media(max-width:760px) { .live-card-grid { grid-template-columns:1fr; } .outcome-group { grid-template-columns:1fr; gap:5px; } }
 @media(max-width:980px) { .dialer-customer-layout { grid-template-columns:1fr; } .dialer-customer-card { border-right:0; border-bottom:1px solid #e6ecec; } }
 @media(max-width:760px) { .dialer-workspace-header { align-items:flex-start; flex-direction:column; } .dialer-customer-card,.dialer-context-panel,.after-call-panel { padding:18px; } .key-value { grid-template-columns:110px 1fr; } }

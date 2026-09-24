@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { ok } from "@/lib/supabase/read";
 import { Settings } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
@@ -83,6 +84,8 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
   ]);
 
   return <ModuleOverview title="Administration" description="Juridiska avsändare, funktionsspärrar, compliance, retention och användningsgränser." icon={Settings} features={["Feature policies per tenant och team", "Juridiska avsändarbolag", "Ringdagar och tillåtna tider", "Kostnadstak per kanal", "Branding och avtalsidentitet"]}>
+    {/* Säkerhetslogg och användning står inte i menyn längre; de nås härifrån. */}
+    <Card><CardHeader><h2>Loggar och användning</h2></CardHeader><CardContent><div className="toolbar-left"><Link className="button button-secondary button-sm" href="/app/security">Säkerhetshändelser</Link><Link className="button button-secondary button-sm" href="/app/billing">Användning och fakturering</Link></div></CardContent></Card>
     {params.error ? <p className="form-error">{params.error}</p> : null}
     {params.message ? <div className="notice">{params.message}</div> : null}
     <div className="split-layout">

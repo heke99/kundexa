@@ -1,10 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 import { Phone, PhoneOff, Radio } from "@/components/icons";
 import { useDialerPanel } from "@/hooks/use-dialer";
 import { useCallRealtime } from "@/hooks/use-call-realtime";
 import { WebphoneAudioPanel } from "@/components/webphone-audio-panel";
+import { LiveCustomerCard } from "@/components/call-workspace/live-customer-card";
+import { CallbackTimeField, OutcomePicker } from "@/components/call-workspace/outcome-picker";
+import { manualOutcomeOptions } from "@/lib/dialer/outcomes";
 
 type Customer = { id: string; display_name: string; phone_e164: string | null; do_not_call: boolean };
 // Numret som visas för mottagaren, ur företagets egna nummer. Tidigare kom det
@@ -48,6 +52,14 @@ export function DialerPanel({
   const [customerQuery, setCustomerQuery] = useState("");
   const [customerOptions, setCustomerOptions] = useState<Customer[]>(customers);
   const [customerSearchLoading, setCustomerSearchLoading] = useState(false);
+  const [pickingCustomer, setPickingCustomer] = useState(false);
+  // Kunden som klickades fram. Sparas som post: en sökning som svarar efter
+  // klicket får inte ta bort den ur listan och lämna ringknappen utan nummer.
+  const [pickedCustomer, setPickedCustomer] = useState<Customer | null>(null);
+  // Sidan kan ge kortet en egen plats (`#dialer-live-slot`) bredvid telefonen.
+  // I den smala telefonpanelen hamnade det under knapparna och syntes inte.
+  const [liveSlot, setLiveSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => { setLiveSlot(document.getElementById("dialer-live-slot")); }, []);
   const [callId, setCallId] = useState<string | null>(null);
   // Tomt betyder automatiskt: numret följer kampanj, team och företagets förval,
   // så som en administratör eller teamledare har bestämt.
@@ -102,8 +114,11 @@ export function DialerPanel({
     const byId = new Map<string, Customer>();
     for (const customer of customerOptions) byId.set(customer.id, customer);
     for (const customer of customers) byId.set(customer.id, customer);
+    if (pickedCustomer) byId.set(pickedCustomer.id, pickedCustomer);
     return [...byId.values()];
-  }, [customerOptions, customers]);
+  }, [customerOptions, customers, pickedCustomer]);
+
+  const selectedCustomer = visibleCustomers.find((customer) => customer.id === selected) ?? null;
 
   async function call() {
     if (!selected || dialer.calling) return;
@@ -209,23 +224,31 @@ export function DialerPanel({
       ? <p className="muted" style={{ marginBottom: 12 }}>
           Ringer {visibleCustomers.find((customer) => customer.id === selected)?.display_name ?? "kunden"} från det här kundkortet.
         </p>
-      : <>
-        <label className="field dialer-customer-select">
-          <span>Sök kund eller prospekt</span>
-          <input type="search" value={customerQuery} onChange={(event) => setCustomerQuery(event.target.value)} placeholder="Namn, telefon eller e-post" autoComplete="off" />
-          <small>{customerSearchLoading ? "Söker…" : "Visar högst 30 behöriga träffar"}</small>
-        </label>
-        <label className="field dialer-customer-select">
-          <span>Kund eller prospekt</span>
-          <select value={selected} onChange={(event) => setSelected(event.target.value)}>
-            <option value="">Välj kund</option>
-            {visibleCustomers.map((customer) => <option key={customer.id} value={customer.id} disabled={customer.do_not_call}>
-              {customer.display_name} · {customer.phone_e164}{customer.do_not_call ? " · SPÄRRAD" : ""}
-            </option>)}
-          </select>
-        </label>
-      </>}
-    {callerIdOptions.length > 0 ? <label className="field dialer-customer-select">
+      : selectedCustomer && !pickingCustomer
+        // Ett fält i stället för två: sök, klicka på träffen, klart. Rullistan
+        // under sökfältet upprepade samma träffar en gång till.
+        ? <div className="dialer-selected-customer">
+            <div><strong>{selectedCustomer.display_name}</strong><small>{selectedCustomer.phone_e164 ?? "Inget nummer"}</small></div>
+            <button type="button" className="button button-ghost button-sm" onClick={() => { setSelected(""); setPickingCustomer(true); }} disabled={Boolean(callId)}>Byt</button>
+          </div>
+        : <div className="field dialer-customer-select">
+            <label htmlFor="dialer-customer-search">Sök kund eller prospekt</label>
+            <input id="dialer-customer-search" type="search" value={customerQuery} onChange={(event) => setCustomerQuery(event.target.value)} placeholder="Namn, telefon eller e-post" autoComplete="off" autoFocus={pickingCustomer} />
+            <small>{customerSearchLoading ? "Söker…" : visibleCustomers.length ? "Klicka på kunden du vill ringa" : "Inga träffar"}</small>
+            {visibleCustomers.length ? <ul className="dialer-results">
+              {visibleCustomers.slice(0, 8).map((customer) => <li key={customer.id}>
+                <button type="button" disabled={customer.do_not_call || !customer.phone_e164} onClick={() => { setPickedCustomer(customer); setSelected(customer.id); setPickingCustomer(false); }}>
+                  <strong>{customer.display_name}</strong>
+                  <small>{customer.do_not_call ? "Spärrad" : customer.phone_e164 ?? "Inget nummer"}</small>
+                </button>
+              </li>)}
+            </ul> : null}
+          </div>}
+    {/* Nästan alltid "Automatiskt": numret följer lista, kampanj och team. Valet
+        ligger därför bakom en rad som visar vad som gäller. */}
+    {callerIdOptions.length > 0 ? <details className="dialer-caller-id">
+      <summary>Utgående nummer: {callerIdOptions.find((number) => number.id === callerIdPhoneNumberId)?.number_e164 ?? "automatiskt"}</summary>
+      <label className="field dialer-customer-select">
       <span>Utgående nummer</span>
       <select
         value={callerIdPhoneNumberId}
@@ -234,10 +257,9 @@ export function DialerPanel({
         <option value="">Automatiskt (team eller företag)</option>
         {callerIdOptions.map((number) => <option key={number.id} value={number.id}>
           {number.number_e164}
-          
         </option>)}
       </select>
-    </label> : <p className="form-error">Företaget har inget utgående nummer ännu. Be en administratör lägga till ett.</p>}
+    </label></details> : <p className="form-error">Företaget har inget utgående nummer ännu. Be en administratör lägga till ett.</p>}
     <button type="button" className="call-button" onClick={call}
       disabled={!dialer.registered || !selected || callerIdOptions.length === 0 || afterCall || dialer.calling}
       aria-label="Ring via telefoni">
@@ -281,36 +303,30 @@ export function DialerPanel({
     {error ? <p className="form-error">{error}</p> : null}
     {afterCall && callId ? <form className="manual-after-call" onSubmit={complete}>
       <h3>Efterarbete</h3>
-      <p>Registrera utfallet innan du ringer nästa nummer.</p>
-      <label className="field"><span>Samtalsutfall</span><select required value={disposition} onChange={(event) => setDisposition(event.target.value)}>
-        <option value="">Välj utfall</option>
-        <option value="interested">Intresserad</option>
-        <option value="callback">Återkomst</option>
-        <option value="not_interested">Inte intresserad</option>
-        <option value="no_answer">Inget svar</option>
-        <option value="busy">Upptaget</option>
-        <option value="voicemail">Telefonsvarare</option>
-        <option value="wrong_number">Fel nummer</option>
-        <option value="do_not_call">Ring inte igen</option>
-        <option value="nix_listed">Nixat nummer</option>
-      </select></label>
+      <p>Välj utfall med ett klick eller siffertangent 1–9.</p>
+      <OutcomePicker options={manualOutcomeOptions} value={disposition} onChange={setDisposition} />
       {disposition === "nix_listed" ? <p className="notice warning">
         Numret registreras som NIX-spärrat och blockeras permanent för utgående samtal — även om
         kunden läggs upp på nytt senare.
       </p> : null}
-      <label className="field"><span>Anteckning</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
       {disposition === "callback" ? <>
-        <label className="field"><span>Återkomsttyp</span><select value={callbackScope} onChange={(event) => setCallbackScope(event.target.value as "personal" | "global")}>
-          <option value="personal">Personlig</option><option value="global">Global teamkö</option>
+        <CallbackTimeField value={callbackDueAt} onChange={setCallbackDueAt} required />
+        <label className="field"><span>Vem ringer tillbaka?</span><select value={callbackScope} onChange={(event) => setCallbackScope(event.target.value as "personal" | "global")}>
+          <option value="personal">Jag själv</option><option value="global">Hela teamet</option>
         </select></label>
-        <label className="field"><span>Tidpunkt</span><input type="datetime-local" required value={callbackDueAt} onChange={(event) => setCallbackDueAt(event.target.value)} /></label>
       </> : null}
+      <label className="field"><span>Anteckning</span><textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Vad sades? Syns på kundkortet." /></label>
       <div className="toolbar-left">
-        <button className="button button-primary" type="submit" value="continue">Spara efterarbete</button>
+        <button className="button button-primary" type="submit" value="continue" disabled={!disposition}>Spara efterarbete</button>
         {contractDispositions.includes(disposition)
           ? <button className="button button-secondary" type="submit" value="create_contract">Spara och skapa avtal</button>
           : null}
       </div>
     </form> : null}
+    {/* Kunden i luren: kortet öppnas och uppgifterna sparas utan sidladdning, så
+        samtalet i webbläsaren och efterarbetet ligger kvar. */}
+    {callId && selected ? (liveSlot
+      ? createPortal(<LiveCustomerCard customerId={selected} heading={afterCall ? "Samtalet är avslutat" : "Pågående samtal · fyll i uppgifterna"} fullCardLink={!lockedToCustomer} />, liveSlot)
+      : <div className="phone-panel-live"><LiveCustomerCard customerId={selected} heading={afterCall ? "Kunduppgifter" : "Fyll i under samtalet"} fullCardLink={!lockedToCustomer} /></div>) : null}
   </div>;
 }

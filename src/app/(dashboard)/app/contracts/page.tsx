@@ -107,7 +107,7 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
     return `/app/contracts?${next.toString()}`;
   };
   return <>
-    <PageHeader title="Avtal" description="Spårbara avtalsversioner med källsamtal, kanonisk PDF, leveransstatus och påminnelser." action={mayCreate ? <Link href="/app/contracts/new" className="button button-primary"><Plus size={16} /> Nytt avtal</Link> : undefined} />
+    <PageHeader title="Avtal" description="Spårbara avtalsversioner med källsamtal, kanonisk PDF, leveransstatus och påminnelser." action={<div className="toolbar-right"><Link href="/app/documents" className="button button-ghost button-sm">PDF-arkiv</Link><Link href="/app/pipeline" className="button button-ghost button-sm">Pipeline</Link>{mayCreate ? <Link href="/app/contracts/new" className="button button-primary"><Plus size={16} /> Nytt avtal</Link> : null}</div>} />
     {params.error ? <p className="form-error">{params.error}</p> : null}
     {params.message ? <p className="notice">{params.message}</p> : null}
     {/* The status dropdown covers all fourteen statuses; these five are the

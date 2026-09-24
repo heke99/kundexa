@@ -1,5 +1,6 @@
 import { Bell } from "@/components/icons";
 import { initials } from "@/lib/utils";
+import { roleLabel } from "@/lib/ui/labels";
 import { signOut } from "@/app/actions/auth";
 import { switchTenant } from "@/app/actions/organization";
 
@@ -29,7 +30,7 @@ export function Topbar({
       <input type="hidden" name="return_to" value={platformMode ? "/app/platform" : "/app"} />
       <select name="tenant_id" defaultValue={activeTenant?.tenant_id ?? ""} aria-label="Aktiv tenant" style={{ maxWidth: 190, border: "1px solid #d5dfe1", borderRadius: 9, padding: "8px 9px", background: "white" }}>
         {!activeTenant ? <option value="" disabled>Välj tenant</option> : null}
-        {tenants.map((tenant) => <option key={tenant.tenant_id} value={tenant.tenant_id}>{tenant.tenant_name} · {tenant.membership_role}</option>)}
+        {tenants.map((tenant) => <option key={tenant.tenant_id} value={tenant.tenant_id}>{tenant.tenant_name} · {roleLabel(tenant.membership_role)}</option>)}
       </select>
       <button className="button button-secondary button-sm">Byt</button>
     </form> : null}
