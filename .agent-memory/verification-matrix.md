@@ -240,3 +240,7 @@ för `npm run verify`, som kör mot PGlite. Den kontrollen är manuell.
 | SMS-svar ("JA 1234", oklart svar) | NOT RUN | svenskt SMS-nummer saknas |
 | Säljare med delad lista, dagsgräns, paus, kampanjteam | NOT RUN | inga aktiva säljare |
 | Import med riktig fil, create_only/review_conflicts, ParseHub | NOT RUN | ingen import körd i prod |
+| CI `verify` på main efter merge | PASS | körning 175 på `f6fca59` |
+| Vercel produktion på merge-SHA | PASS | `dpl_2BK2NpK3YQnHF9JcuRax2A79cmVM` READY på `f6fca59` |
+| Edge Functions efter merge | PASS | `deploy-edge-functions` #16; maintenance/parsehub/process-outbox `updated_at` 22:46 UTC |
+| Maintenance-schema `*/5` | PASS | lyckad 06:50, ny körning 06:55 (2026-09-24) |

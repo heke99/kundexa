@@ -415,3 +415,15 @@ Avstämningen mot produktionen hittade två saker:
 Funktioner (normaliserad md5), policyer, RLS-flaggor och triggrar är identiska mellan produktion och
 PGlite. Enda undantaget är en oanvänd variabel som skilde redan tidigare. `npm run verify` PASS.
 Ingen PR är skapad. Live-test är NOT RUN.
+
+## 2026-09-24 — Merge av systemgenomgången
+PR #48 mergad till main (`f6fca59`) på användarens begäran efter grön CI. Vercel READY och Edge Functions
+deployade; `maintenance-worker` kör var femte minut.
+
+Användaren bad även om "andra commits". Sex gamla grenar från augusti har commits som inte finns i main.
+Genomgången av dem visade:
+- deras migrationer finns redan i main och i produktion;
+- resten är borttagen Rinkel-kod, en migration med ett versionsnummer som redan används
+  (`202608100005`), en zip-export och ett granskningsdokument från 2026-08-06.
+
+Ingen av grenarna mergades, eftersom de skulle ta tillbaka borttagen kod och göra CI röd.
