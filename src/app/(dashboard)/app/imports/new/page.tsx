@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/server";
+import { getAppContext } from "@/lib/auth";
 
 export default async function NewImportPage({ searchParams }: { searchParams: Promise<{ list?: string }> }) {
   const { list: presetList } = await searchParams;
@@ -20,6 +21,10 @@ export default async function NewImportPage({ searchParams }: { searchParams: Pr
     return data === true ? list : null;
   }))).filter((list): list is NonNullable<typeof list> => list !== null);
   const preset = manageable.some((list) => list.id === presetList) ? presetList : "";
+  // En lista utan team kan bara ägare och administratörer skapa (create_managed_customer_list);
+  // en teamledare skapar sin lista på listsidan, där teamet väljs.
+  const context = await getAppContext();
+  const mayCreateList = ["owner", "admin"].includes(context.role);
   return <>
     <PageHeader title="Ny import" description="Ladda upp resultat från ParseHub eller annan godkänd källa. Importen genomförs först efter förhandsgranskning." action={<div style={{ display: "flex", gap: 8 }}><Link className="button button-secondary" href="/app/imports/profiles">Skapa profil</Link><Link className="button button-secondary" href="/app/imports">Till översikten</Link></div>} />
     <div className="split-layout">
@@ -34,7 +39,8 @@ export default async function NewImportPage({ searchParams }: { searchParams: Pr
               <label className="field"><span>Excel-arbetsblad (valfritt)</span><input name="worksheet_name" placeholder="Företag" /></label>
               <label className="field"><span>Rubrikrad</span><input type="number" name="header_row" min="1" max="100" defaultValue="1" /></label>
             </div>
-            <label className="field"><span>Mållista</span><select name="target_list_id" defaultValue={preset}><option value="">Ingen lista, bara kundregistret</option>{manageable.map((list) => <option key={list.id} value={list.id}>{list.name} · {list.dialing_mode === "automatic" ? "automatisk uppringning" : "manuell ringning"}</option>)}</select></label>
+            <label className="field"><span>Mållista</span><select name="target_list_id" defaultValue={preset}><option value="">{mayCreateList ? "Ny lista (namnge nedan) eller bara kundregistret" : "Ingen lista, bara kundregistret"}</option>{manageable.map((list) => <option key={list.id} value={list.id}>{list.name} · {list.dialing_mode === "automatic" ? "automatisk uppringning" : "manuell ringning"}</option>)}</select></label>
+            {mayCreateList ? <label className="field"><span>Ny ringlista (valfritt)</span><input name="new_list_name" maxLength={120} placeholder="t.ex. Allabolag Malmö september" /><small>Används när ingen lista är vald ovan. Listan skapas som utkast; aktivera och dela den med ett team under Ringlistor så ser säljarna den i dialern.</small></label> : null}
             <label className="field"><span>JSON, CSV eller XLSX</span><input type="file" name="file" accept=".csv,.json,.jsonl,.ndjson,.xlsx,text/csv,application/json,application/x-ndjson,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required /></label>
             <label style={{ display: "flex", gap: 9, fontSize: 13 }}><input type="checkbox" name="simulate" defaultChecked /> Kräv manuell granskning före commit</label>
             <button className="button button-primary"><Upload size={16} /> Ladda upp och validera</button>

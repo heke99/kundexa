@@ -1,5 +1,24 @@
 # Current state
 
+## 2026-09-24 — Efter första skarpa provet (PR #51 mergad som `95e9899`)
+
+Användaren provringde: kundkortet kom upp. Avtal gick inte att skicka. Mätt i prod: Gridex har 0 produkter,
+0 prisversioner och 0 ringlistor, och provsamtalet (11:06) fick aldrig något utfall sparat. Det är alltså inget kodfel.
+Den här grenen:
+- Kundkortet under samtalet har växeln Företag/Privatperson; fälten byts (personnr ↔ org.nr). Byte till företag tömmer personnumret.
+- Dialer och ringlista säger i efterarbetet när inget avtal kan skickas (0 säljbara produkter, `countSellableProducts`)
+  och döljer då "Spara och skapa avtal".
+- Enter sparar efterarbetet. Ett obesvarat eller upptaget samtal får utfallet förvalt.
+- Migration `202609240012`: trigger på `calls.disposition` flyttar kunden framåt: positivt → lead (från prospekt),
+  order/sale/sold → kund, not_interested → förlorad (från prospekt/lead). Aldrig bakåt, aldrig spärrade.
+  **Inte applicerad i prod.**
+- Import kan skapa en ny ringlista (ägare/admin; utkast). Dialern visar chefer listor som säljarna inte ser (utkast/pausad).
+Utdelning (användarens beslut): teamledare, ägare och superadmin ska kunna dela ut. Teamledare/ägare kunde redan.
+Migration `202609240013` ger plattformsadmin `platform_share_allocated_list` / `platform_list_distribution`: företaget härleds
+ur tilldelningen, team korskontrolleras mot samma företag, audit `customer_list.shared_by_platform`. UI under
+Plattform → Listor ("Dela ut"). **Inte applicerad i prod.** Tvåbolagstest i PGlite.
+
+
 ## 2026-09-24 — Kundkortet öppnas bredvid telefonen
 
 Användaren ringde och fick inget kundkort. Orsak 1: PR #51 var inte mergad, så produktionen körde gammal kod.

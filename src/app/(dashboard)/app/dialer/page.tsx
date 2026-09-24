@@ -7,6 +7,7 @@ import { claimCallback } from "@/app/actions/callbacks";
 import { createClient } from "@/lib/supabase/server";
 import { getAppContext } from "@/lib/auth";
 import { manualContractDispositions } from "@/lib/contracts/manual-dispositions";
+import { countSellableProducts } from "@/lib/contracts/sellable-products";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DialerPanel } from "@/components/dialer-panel";
@@ -19,6 +20,13 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
   const [supabase, context] = await Promise.all([createClient(), getAppContext()]);
   const now = new Date().toISOString();
   const contractDispositionKeys = (await manualContractDispositions(supabase, context.tenantId)).map((item) => item.key);
+  const sellableProducts = await countSellableProducts(supabase);
+  // Listor som inte syns för säljarna. En importerad lista är ett utkast tills
+  // någon aktiverar den, och det syntes ingenstans i dialern varför den saknades.
+  const mayManageLists = can(context.role, "lists.manage");
+  const { data: hiddenLists } = mayManageLists
+    ? await ok(supabase.from("customer_lists").select("id,name,status").in("status", ["draft", "paused"]).order("updated_at", { ascending: false }).limit(6))
+    : { data: [] as Array<{ id: string; name: string; status: string }> };
   const [{ data: selectedCustomer }, { data: lists }, { data: callbacks }, { data: callerIdData }] = await Promise.all([
     params.customer
       ? supabase.from("customers").select("id,display_name,phone_e164,do_not_call").eq("id", params.customer).not("phone_e164", "is", null).is("deleted_at", null).maybeSingle()
@@ -32,10 +40,13 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
     {params.error ? <p className="form-error">{params.error}</p> : null}
     <div className="grid grid-3" style={{ marginBottom: 18 }}>
       {lists?.map((list) => <Link key={list.id} href={`/app/dialer/lists/${list.id}`} className="list-launch-card"><span className="stat-icon"><ListFilter size={18} /></span><div><strong>{list.name}</strong><p>{list.dialing_mode === "automatic" ? "Automatisk sekventiell ringning" : "Manuell ringning"}</p></div><Badge className="badge-success">Starta</Badge></Link>)}
+      {hiddenLists?.length ? <div className="notice warning" style={{ gridColumn: "1 / -1" }}>
+        Syns inte för säljarna: {hiddenLists.map((list, index) => <span key={list.id}>{index ? ", " : ""}<Link href={`/app/lists/${list.id}`}><strong>{list.name}</strong></Link> ({list.status === "draft" ? "utkast" : "pausad"})</span>)}. Öppna listan, sätt den som aktiv och dela den med ett team eller en kampanj.
+      </div> : null}
       {!lists?.length ? <div className="notice">Inga listor att ringa just nu. En lista syns här när den är aktiv, inom ringtiden och delad med ditt team eller dig. Fråga din teamledare om du saknar en.</div> : null}
     </div>
     <div className="dialer-grid">
-      <div className="phone-panel"><DialerPanel customers={selectedCustomer ? [selectedCustomer] : []} initialCustomer={selectedCustomer?.id} callbackActivityId={params.callback} callerIdOptions={(callerIdData ?? []) as Array<{ id: string; number_e164: string }>} mayManageIntegrations={can(context.role, "integrations.manage")} contractDispositions={contractDispositionKeys} /></div>
+      <div className="phone-panel"><DialerPanel customers={selectedCustomer ? [selectedCustomer] : []} initialCustomer={selectedCustomer?.id} callbackActivityId={params.callback} callerIdOptions={(callerIdData ?? []) as Array<{ id: string; number_e164: string }>} mayManageIntegrations={can(context.role, "integrations.manage")} contractDispositions={contractDispositionKeys} sellableProducts={sellableProducts} mayManageProducts={can(context.role, "products.manage")} /></div>
       <div className="grid">
         {/* Kundkortet öppnas här när ett samtal startar (DialerPanel). */}
         <div id="dialer-live-slot" className="live-card-slot" />

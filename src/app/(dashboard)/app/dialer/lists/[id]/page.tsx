@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
 import { ListDialerWorkspace } from "@/components/list-dialer-workspace";
+import { countSellableProducts } from "@/lib/contracts/sellable-products";
 import { Card, CardContent } from "@/components/ui/card";
 
 // `setCallDisposition` bounces a list-bound call here with
@@ -20,10 +21,11 @@ export default async function ListDialerPage({ params, searchParams }: { params:
     ok(supabase.from("products").select("id,name").eq("active", true).order("name")),
   ]);
   if (!list) notFound();
+  const sellableProducts = await countSellableProducts(supabase);
   if (list.status !== "active") return <Card><CardContent><h2>Listan är inte aktiv</h2><p>En teamadministratör måste aktivera listan innan den kan ringas.</p><Link className="button button-secondary" href={`/app/lists/${id}`}><ArrowLeft size={15} /> Till listan</Link></CardContent></Card>;
   return <>
     <Link href="/app/dialer" className="muted back-link"><ArrowLeft size={15} /> Till dialer</Link>
     {query.error ? <p className="form-error">{query.error}</p> : null}
-    <ListDialerWorkspace listId={list.id} listName={list.name} mode={list.dialing_mode as "manual" | "automatic"} dispositions={dispositions ?? []} products={products ?? []} />
+    <ListDialerWorkspace listId={list.id} listName={list.name} mode={list.dialing_mode as "manual" | "automatic"} dispositions={dispositions ?? []} products={products ?? []} sellableProducts={sellableProducts} />
   </>;
 }

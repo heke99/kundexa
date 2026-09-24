@@ -88,13 +88,14 @@ const plainTextColumns = {
   website: "website",
 } as const;
 
-export type CallCustomerPatch = Partial<Record<
+export type CallCustomerPatch = { customerType?: "person" | "company" } & Partial<Record<
   "displayName" | "firstName" | "lastName" | "companyName" | "organizationNumber" | "personalIdentityNumber"
   | "email" | "alternatePhone" | "addressLine1" | "postalCode" | "city" | "website",
   string
 >>;
 
 const patchSchema = z.object({
+  customerType: z.enum(["person", "company"]).optional(),
   displayName: z.string().max(200).optional(),
   firstName: z.string().max(100).optional(),
   lastName: z.string().max(100).optional(),
@@ -122,13 +123,21 @@ export async function saveCallCustomer(customerId: string, patch: CallCustomerPa
   if (!current) return { ok: false, error: "Kundkortet finns inte eller är inte tillgängligt." };
 
   type CustomerUpdate = {
-    display_name?: string; first_name?: string | null; last_name?: string | null; company_name?: string | null;
+    customer_type?: "person" | "company"; display_name?: string; first_name?: string | null; last_name?: string | null; company_name?: string | null;
     organization_number?: string | null; personal_identity_number?: string | null; email?: string | null;
     alternate_phone_e164?: string | null; address_line1?: string | null; postal_code?: string | null;
     city?: string | null; website?: string | null;
   };
   const update: CustomerUpdate = {};
   const text = (raw: string | undefined) => (raw ?? "").trim() || null;
+  // Kundtypen styr vilket id-nummer som gäller och kontaktpolicyn (en privatperson
+  // kräver rättslig grund för marknadsföringssamtal). Ett företag har inget
+  // personnummer, så det töms när typen byts dit.
+  const targetType = input.customerType ?? (current.customer_type === "person" ? "person" : "company");
+  if (input.customerType !== undefined && input.customerType !== current.customer_type) {
+    update.customer_type = input.customerType;
+    if (input.customerType === "company") update.personal_identity_number = null;
+  }
 
   if (input.displayName !== undefined) {
     const name = input.displayName.trim();
@@ -163,7 +172,7 @@ export async function saveCallCustomer(customerId: string, patch: CallCustomerPa
   if (input.personalIdentityNumber !== undefined) {
     const raw = text(input.personalIdentityNumber);
     if (raw) {
-      if (current.customer_type !== "person") return { ok: false, error: "Ett företag har inget personnummer." };
+      if (targetType !== "person") return { ok: false, error: "Ett företag har inget personnummer." };
       const normalized = normalizeOrganizationNumber(raw, { allowPerson: true });
       if (!normalized.valid || !normalized.canonical || normalized.kind !== "person") return { ok: false, error: "Personnumret är ogiltigt." };
       update.personal_identity_number = normalized.canonical;
@@ -181,7 +190,7 @@ export async function saveCallCustomer(customerId: string, patch: CallCustomerPa
     action: "customer.details_updated",
     entity_type: "customer",
     entity_id: customerId,
-    after_data: { fields: Object.keys(update), source: "call_workspace" },
+    after_data: { fields: Object.keys(update), source: "call_workspace", ...(update.customer_type ? { customer_type: update.customer_type } : {}) },
   });
   if (auditError) return { ok: false, error: "Uppgifterna sparades men auditloggen kunde inte skrivas." };
 

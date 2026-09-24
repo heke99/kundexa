@@ -4507,4 +4507,104 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   console.log("DiCE overrules a browser-only answer, keeps an ACE-confirmed one and repairs a missed one.");
 }
 
+// Utfallet sätter kundens status (202609240012).
+{
+  const T = "00000000-0000-0000-0000-000000000001";
+  const seller = "00000000-0000-0000-0000-000000000002";
+  await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${seller}',false);`);
+  // Som tjänst: en säljare får bara skapa prospekt, och testet behöver andra lägen.
+  const customer = async (id, lifecycle, phone) => {
+    await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+    await db.query(`insert into public.customers(id,tenant_id,customer_type,lifecycle,display_name,phone_e164,marketing_allowed,legal_basis,created_by)
+      values($1,$2,'company',$3::public.customer_lifecycle,'Status '||$3::text,$4,true,'legitimate_interest',$5) on conflict(id) do nothing`, [id, T, lifecycle, phone, seller]);
+    await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
+    return id;
+  };
+  const endedCall = async (customerId, phone) => (await db.query(`
+    insert into public.calls(tenant_id,customer_id,user_id,direction,from_number,to_number,status,provider,started_at,ended_at,callback_token_hash,purpose)
+    values($1,$2,$3,'outbound','+46401234567',$4,'completed','sinch',now()-interval '1 minute',now(),gen_random_uuid()::text,'direct_marketing')
+    returning id`, [T, customerId, seller, phone])).rows[0].id;
+  const finish = async (id, lifecycle, phone, disposition) => {
+    await customer(id, lifecycle, phone);
+    const stored = (await db.query(`select lifecycle from public.customers where id=$1`, [id])).rows[0]?.lifecycle;
+    if (stored !== lifecycle) throw new Error(`Test setup stored ${stored} for ${lifecycle}`);
+    const call = await endedCall(id, phone);
+    await db.query(`select public.complete_manual_call_work_v2($1,$2,null,null,null)`, [call, disposition]);
+    return (await db.query(`select lifecycle from public.customers where id=$1`, [id])).rows[0].lifecycle;
+  };
+  const cases = [
+    ["00000000-0000-0000-0000-0000000007c1", "prospect", "+46707771001", "interested", "lead"],
+    ["00000000-0000-0000-0000-0000000007c2", "prospect", "+46707771002", "not_interested", "lost"],
+    ["00000000-0000-0000-0000-0000000007c3", "lead", "+46707771003", "not_interested", "lost"],
+    ["00000000-0000-0000-0000-0000000007c4", "customer", "+46707771004", "not_interested", "customer"],
+    ["00000000-0000-0000-0000-0000000007c5", "lead", "+46707771005", "interested", "lead"],
+    ["00000000-0000-0000-0000-0000000007c6", "prospect", "+46707771006", "no_answer", "prospect"],
+    ["00000000-0000-0000-0000-0000000007c7", "prospect", "+46707771007", "wrong_number", "prospect"],
+  ];
+  for (const [id, before, phone, disposition, expected] of cases) {
+    const after = await finish(id, before, phone, disposition);
+    if (after !== expected) throw new Error(`"${disposition}" moved a ${before} to ${after}, expected ${expected}`);
+  }
+  // Ett listutfall följer listans egen grupp: ett eget positivt utfall ger lead.
+  await db.query(`insert into public.list_dispositions(tenant_id,list_id,key,label,outcome_group,terminal,sort_order)
+    values($1,$2,'booked_meeting','Möte bokat','positive',true,99) on conflict(list_id,key) do nothing`, [T, runtimeListId]);
+  const listCustomer = await customer("00000000-0000-0000-0000-0000000007c8", "prospect", "+46707771008");
+  const listCall = await endedCall(listCustomer, "+46707771008");
+  await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
+  await db.query(`update public.calls set list_id=$1 where id=$2`, [runtimeListId, listCall]);
+  await db.query(`update public.calls set disposition='booked_meeting' where id=$1`, [listCall]);
+  const listed = (await db.query(`select lifecycle from public.customers where id=$1`, [listCustomer])).rows[0].lifecycle;
+  if (listed !== "lead") throw new Error(`A list's own positive outcome left the customer as ${listed}`);
+  // Samma kund-id i ett annat bolag rörs aldrig: uppdateringen är låst till samtalets bolag.
+  const other = "00000000-0000-0000-0000-000000000099";
+  const foreign = (await db.query(`select count(*)::int n from public.customers where tenant_id<>$1 and id in (select customer_id from public.calls where tenant_id=$1 and disposition is not null) and lifecycle<>'prospect'`, [T])).rows[0].n;
+  if (foreign !== 0) throw new Error(`An outcome changed a customer outside the call's tenant (${other})`);
+  const direct = await db.query(`select has_function_privilege('authenticated','public.project_call_outcome_to_customer()','execute') as can`);
+  if (direct.rows[0].can) throw new Error("The outcome projection must not be callable directly");
+  await db.exec(`select set_config('request.jwt.claim.role','authenticated',false)`);
+  console.log("An outcome moves the customer forward only: interested -> lead, not interested -> lost (never a customer), order -> customer, and a list's own positive group counts.");
+}
+
+// Plattformsadmin delar ut en tilldelad lista (202609240013).
+{
+  const platformOwner = "00000000-0000-0000-0000-000000000014";
+  const tenantUser = "00000000-0000-0000-0000-000000000040";
+  const foreignTeam = "00000000-0000-0000-0000-000000000026"; // hör till ett annat bolag
+  await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${platformOwner}',false);`);
+  // En egen tilldelning: den tidigare i skriptet är återkallad.
+  const shareList = String((await db.query(`insert into public.platform_lists(name,source_provider,status,exclusivity_mode,default_exclusive_days,created_by)
+    values('Utdelningsprov','verify','active','exclusive',30,$1) returning id`, [platformOwner])).rows[0].id);
+  await db.query(`insert into public.platform_list_entries(platform_list_id,source_key,organization_number,display_name,company_name,phone_e164,city,industry,state,data_hash)
+    values($1,'share-entry-1','5599000187','Utdelning Ett','Utdelning Ett AB','+46700000187','Malmö','IT','available','share-hash-1')`, [shareList]);
+  await db.query(`select public.refresh_platform_list_counts($1)`, [shareList]);
+  const shareAllocation = String((await db.query(`select public.allocate_platform_list_to_tenant($1,$2,'Utdelningsprov',1,'{}'::jsonb,'exclusive',null,null) as id`, [shareList, distributedTenantId])).rows[0].id);
+  const shareTarget = String((await db.query(`select target_list_id from public.platform_list_allocations where id=$1`, [shareAllocation])).rows[0].target_list_id);
+  const allocationId_ = shareAllocation;
+  const before = (await db.query(`select public.platform_list_distribution($1) as d`, [allocationId_])).rows[0].d;
+  if (before.listId !== shareTarget || !before.teams.some((team) => team.id === distributedTeamId)) {
+    throw new Error(`The platform could not see the allocated list and the tenant's teams: ${JSON.stringify(before)}`);
+  }
+  if (before.teams.some((team) => team.id === foreignTeam)) throw new Error("Another tenant's team was offered for this allocation");
+  await db.query(`select public.platform_share_allocated_list($1,array[$2]::uuid[],true)`, [allocationId_, distributedTeamId]);
+  const shared = (await db.query(`select l.status,(select count(*)::int from public.customer_list_team_shares s where s.list_id=l.id and s.team_id=$2) n
+    from public.customer_lists l where l.id=$1`, [shareTarget, distributedTeamId])).rows[0];
+  if (shared.status !== "active" || shared.n !== 1) throw new Error(`The platform's distribution did not land: ${JSON.stringify(shared)}`);
+  let foreignRefused = false;
+  try { await db.query(`select public.platform_share_allocated_list($1,array[$2]::uuid[],true)`, [allocationId_, foreignTeam]); }
+  catch (error) { foreignRefused = String(error).includes("team_not_found"); }
+  if (!foreignRefused) throw new Error("A team from another tenant received a platform-allocated list");
+  const kept = (await db.query(`select count(*)::int n from public.customer_list_team_shares where list_id=$1`, [shareTarget])).rows[0].n;
+  if (kept !== 1) throw new Error(`A refused distribution still changed the shares (${kept})`);
+  await db.exec(`select set_config('request.jwt.claim.sub','${tenantUser}',false)`);
+  let tenantRefused = false;
+  try { await db.query(`select public.platform_share_allocated_list($1,array[]::uuid[],false)`, [allocationId_]); }
+  catch (error) { tenantRefused = String(error).includes("platform_admin_required"); }
+  if (!tenantRefused) throw new Error("A tenant user used the platform distribution");
+  let readRefused = false;
+  try { await db.query(`select public.platform_list_distribution($1)`, [allocationId_]); }
+  catch (error) { readRefused = String(error).includes("platform_admin_required"); }
+  if (!readRefused) throw new Error("A tenant user read the platform distribution");
+  console.log("The platform distributes its allocated list to the tenant's own teams and can activate it; another tenant's team and non-platform users are refused.");
+}
+
 await db.close();

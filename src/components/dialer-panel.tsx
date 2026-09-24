@@ -26,6 +26,8 @@ export function DialerPanel({
   lockedToCustomer = false,
   mayManageIntegrations = false,
   contractDispositions = ["interested"],
+  sellableProducts = null,
+  mayManageProducts = false,
 }: {
   customers: Customer[];
   initialCustomer?: string;
@@ -41,6 +43,13 @@ export function DialerPanel({
   mayManageIntegrations?: boolean;
   /** Utfallen som får leda till avtal, enligt företagets inställning (samma regel som databasen). */
   contractDispositions?: string[];
+  /**
+   * Antal produkter med godkänt avtal och pris. Noll betyder att inget avtal kan
+   * skickas; det sägs i efterarbetet i stället för på avtalssidan efteråt.
+   * `null` när sidan inte räknat.
+   */
+  sellableProducts?: number | null;
+  mayManageProducts?: boolean;
   /**
    * On the customer card the dialer belongs to the record it sits on. Locking
    * it removes the search and the picker rather than hiding them, so there is
@@ -72,11 +81,21 @@ export function DialerPanel({
   const [error, setError] = useState<string | null>(null);
   const [endMessage, setEndMessage] = useState<string | null>(null);
   const requestKeyRef = useRef<string | null>(null);
+  const afterCallFormRef = useRef<HTMLFormElement>(null);
   const dialer = useDialerPanel();
-  const callState = useCallRealtime(callId, () => {
+  const callState = useCallRealtime(callId, (status) => {
     dialer.markEnded();
+    preselectOutcome(status);
     setAfterCall(true);
   });
+
+  // Ingen svarade: utfallet är redan känt, så det förväljs och Enter sparar.
+  // Ett besvarat samtal får ingen gissning; där väljer säljaren själv.
+  function preselectOutcome(status: string | null | undefined) {
+    const known: Record<string, string> = { unanswered: "no_answer", no_answer: "no_answer", busy: "busy", voicemail: "voicemail" };
+    const key = status ? known[status] : undefined;
+    if (key) setDisposition((current) => current || key);
+  }
   // Once the customer has picked up, Kundexa can no longer end anything: the
   // provider exposes no hangup, so all that is left is releasing the seat.
   const callAnswered = callState.status === "answered" || callState.status === "in_progress";
@@ -165,7 +184,7 @@ export function DialerPanel({
       // open immediately rather than waiting for a realtime update that will
       // never carry anything new. A call that was already answered is left to
       // the provider, and its own terminal event opens the form.
-      if (result.callClosed) setAfterCall(true);
+      if (result.callClosed) { preselectOutcome(result.callStatus); setAfterCall(true); }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Samtalet kunde inte avslutas");
     }
@@ -301,10 +320,10 @@ export function DialerPanel({
     {callState.recovering ? <p className="notice">Samtalets slutstatus är ännu inte säkerställd. Kundexa fortsätter automatisk avstämning—starta inte ett nytt samtal.</p> : null}
     {callId && callState.connectionState === "degraded" ? <p className="notice">Realtime är tillfälligt frånkopplat. Samtalsstatus hämtas via säker fallback.</p> : null}
     {error ? <p className="form-error">{error}</p> : null}
-    {afterCall && callId ? <form className="manual-after-call" onSubmit={complete}>
+    {afterCall && callId ? <form className="manual-after-call" onSubmit={complete} ref={afterCallFormRef}>
       <h3>Efterarbete</h3>
-      <p>Välj utfall med ett klick eller siffertangent 1–9.</p>
-      <OutcomePicker options={manualOutcomeOptions} value={disposition} onChange={setDisposition} />
+      <p>Välj utfall med ett klick eller siffertangent 1–9. Enter sparar.</p>
+      <OutcomePicker options={manualOutcomeOptions} value={disposition} onChange={setDisposition} onConfirm={() => afterCallFormRef.current?.requestSubmit()} />
       {disposition === "nix_listed" ? <p className="notice warning">
         Numret registreras som NIX-spärrat och blockeras permanent för utgående samtal — även om
         kunden läggs upp på nytt senare.
@@ -315,10 +334,17 @@ export function DialerPanel({
           <option value="personal">Jag själv</option><option value="global">Hela teamet</option>
         </select></label>
       </> : null}
+      {/* Avtalet skickas efter samtalet och kräver ett utfall som får leda till
+          avtal. Säljaren fick ingen förklaring när knappen saknades. */}
+      {sellableProducts === 0 && (!disposition || contractDispositions.includes(disposition))
+        ? <p className="notice warning">Inget avtal kan skickas ännu: företaget har ingen produkt med godkänt avtal och pris. {mayManageProducts ? <a href="/app/products">Lägg in en produkt</a> : "Be en administratör lägga in en produkt."}</p>
+        : disposition && !contractDispositions.includes(disposition)
+          ? null
+          : !disposition ? <p className="muted">Vill kunden ha avtal? Välj {contractDispositions.includes("interested") ? "Intresserad" : "ett avtalsgrundande utfall"}, så kan du skapa och skicka det direkt.</p> : null}
       <label className="field"><span>Anteckning</span><textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Vad sades? Syns på kundkortet." /></label>
       <div className="toolbar-left">
         <button className="button button-primary" type="submit" value="continue" disabled={!disposition}>Spara efterarbete</button>
-        {contractDispositions.includes(disposition)
+        {contractDispositions.includes(disposition) && sellableProducts !== 0
           ? <button className="button button-secondary" type="submit" value="create_contract">Spara och skapa avtal</button>
           : null}
       </div>

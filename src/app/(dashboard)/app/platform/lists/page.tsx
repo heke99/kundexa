@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { Import, ListFilter, ShieldCheck } from "@/components/icons";
 import { canReadPlatformAdministration, getPlatformContext, isPlatformAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { allocatePlatformList, revokePlatformAllocation } from "@/app/actions/platform-lists";
+import { allocatePlatformList, revokePlatformAllocation, sharePlatformAllocation } from "@/app/actions/platform-lists";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +25,15 @@ export default async function PlatformListsPage({ searchParams }: { searchParams
   const listNames = new Map((lists ?? []).map((list) => [list.id, list.name]));
   const tenantNames = new Map((tenants ?? []).map((tenant) => [tenant.id, tenant.name]));
   const mayWrite = isPlatformAdmin(context.platformRole);
+  // Utdelningen per aktiv tilldelning: företagets team och vilka som har listan.
+  type Distribution = { listId: string | null; listStatus?: string; teams: Array<{ id: string; name: string; shared: boolean }> };
+  const distributions = new Map<string, Distribution>();
+  if (mayWrite) {
+    await Promise.all((allocations ?? []).filter((allocation) => allocation.status === "active" && allocation.target_list_id).slice(0, 25).map(async (allocation) => {
+      const { data } = await ok(admin.rpc("platform_list_distribution", { p_allocation_id: allocation.id }));
+      if (data) distributions.set(allocation.id, data as Distribution);
+    }));
+  }
 
   return <>
     <PageHeader
@@ -111,6 +120,19 @@ export default async function PlatformListsPage({ searchParams }: { searchParams
           <span className="activity-dot"><ShieldCheck size={14} /></span>
           <div style={{ flex: 1 }}><strong>{allocation.name}</strong><p>{listNames.get(allocation.platform_list_id) ?? "Lista"} → {tenantNames.get(allocation.tenant_id) ?? "Tenant"} · {allocation.allocated_count} poster · {allocation.exclusivity_mode}</p></div>
           <Badge className={allocation.status === "active" ? "badge-success" : "badge-warning"}>{allocation.status}</Badge>
+          {mayWrite && distributions.get(allocation.id)?.listId ? (() => {
+            const distribution = distributions.get(allocation.id)!;
+            return <details className="assignment-settings" style={{ minWidth: 240 }}>
+              <summary>Dela ut ({distribution.teams.filter((team) => team.shared).length} team · {distribution.listStatus === "active" ? "aktiv" : "inte aktiv"})</summary>
+              <form action={sharePlatformAllocation} className="form-stack">
+                <input type="hidden" name="allocation_id" value={allocation.id} />
+                {distribution.teams.length ? <div className="selection-list">{distribution.teams.map((team) => <label className="check-row" key={team.id}><input type="checkbox" name="team_ids" value={team.id} defaultChecked={team.shared} /> {team.name}</label>)}</div>
+                  : <p className="muted">Företaget har inga aktiva team ännu.</p>}
+                <label className="check-row"><input type="checkbox" name="active" defaultChecked={distribution.listStatus === "active" || distribution.listStatus === "draft"} /> Aktiv i ringvyn</label>
+                <button className="button button-primary button-sm">Spara utdelning</button>
+              </form>
+            </details>;
+          })() : null}
           {mayWrite && allocation.status === "active" ? <form action={revokePlatformAllocation} className="form-stack" style={{ minWidth: 220 }}>
             <input type="hidden" name="allocation_id" value={allocation.id} />
             <input name="reason" minLength={5} required placeholder="Anledning till återkallelse" />

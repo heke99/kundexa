@@ -254,3 +254,12 @@ till `failed`.
 ## ADR-0028 — Sidor utanför menyn måste länkas från en menysida
 - Sällan använda eller tomma sidor tas ur menyn men finns kvar. Varje sådan sida står i `secondaryPages`
   med sin föräldersida, och regressionstestet kräver att föräldern står i menyn och innehåller länken.
+
+## ADR-0029 — Utfallet flyttar kundens status framåt
+- En trigger på `calls.disposition` sätter kundens status, så att båda efterarbetsvägarna (lista och kundkort) och
+  framtida vägar följer samma regel. Den flyttar bara framåt och rör aldrig kund, tidigare kund eller spärrad kund
+  med ett nej.
+
+## ADR-0030 — Plattformsadmin delar ut listor den tilldelat
+- Teamledare och ägare delar ut som förut (`set_customer_list_sharing`). Plattformsadmin saknar medlemskap i företaget
+  och får därför egna funktioner som härleder företaget ur tilldelningen och avvisar team från andra företag.
