@@ -1,5 +1,27 @@
 # Current state
 
+## 2026-10-13 PDF-fält och godkänd GitHub-publicering
+
+Användaren har uttryckligen godkänt publicering till heke99/kundexa. Nytt krav: administratören placerar PDF-fält och kopplar dem till kundkortet; säljaren fyller i kunddata och förhandsgranskar ifyllt avtal. Specifikation: docs/PDF_FIELD_TEMPLATES_AND_DOCUSEAL.md. DocuSeal stöder byggare/förifyllning; inbyggda vyer listas som Pro. Ingen runtimeintegration, installation eller BankID-lösning är ännu genomförd. Publicering görs på dokumentationsgren/PR, utan merge eller produktionsdeploy.
+
+## 2026-10-13 Sparade granskningar och avtalsplan
+
+Aktuell referens är main `de852fcd5bccc6fdffc82d49c7a2611545d09e33` och Kundexas körande databas,
+läst 13 oktober. Detta avsnitt ersätter äldre nulägespåståenden där de motsägs av oktobergranskningen.
+
+- Granskningarna finns i `docs/reviews/2026-10-13/`: 28 produktionsfynd och separat signering/säljarvy.
+- Genomförandeplan: `docs/CONTRACT_PRODUCTION_PLAN_2026-10-13.md`.
+- Sinch är aktuell telefoni. DocuSeal/DocuSign är inte inkopplat; simple_click används.
+- En aktiv produkt och prisversion finns, men den godkända mallen saknar produktkoppling,
+  har ofärdiga villkor och kräver värden som prisversionen saknar.
+- SMS är avstängt/nummer saknar stöd; Resend-webhookar är inte registrerade som klara.
+- Kärnflöden är INTE operativt godkända. Sju friska workers och READY-deploy bevisar inte avtalskedjan.
+- Fynd är OPEN. Ingen produktionsrättning, migration eller leverantörsinstallation gjordes i detta pass.
+- Användaren vill spara fynden och planera fungerande avtal/signering med BankID i framtiden.
+  Rekommenderad modell: gemensam signeringsorchestration med separata provideradaptrar.
+  DocuSeal-drift/Pro/BankID-leverantör är ännu inte valda.
+- Sparad dokumentation ger inte tillstånd att ersätta slutliga avtalsvillkor med gissade värden.
+
 ## 2026-09-24 — Efter första skarpa provet (PR #51 mergad som `95e9899`)
 
 Användaren provringde: kundkortet kom upp. Avtal gick inte att skicka. Mätt i prod: Gridex har 0 produkter,

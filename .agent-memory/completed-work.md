@@ -203,3 +203,14 @@
   - RLS-delen av `202609240002` applicerad.
   - 40 repoversioner registrerade (128/128).
   - Funktioner, policyer och triggrar avstämda mot PGlite.
+
+## 2026-10-13 Granskningar och plan sparade
+
+Två oktobergranskningar sparade i `docs/reviews/2026-10-13/`.
+`docs/CONTRACT_PRODUCTION_PLAN_2026-10-13.md` beskriver sju genomförandesteg och godkännandekriterier.
+Projektets minne pekar på denna baslinje och skiljer föreslagen arkitektur från levererade rättningar.
+Runtime och produktionsdata är oförändrade.
+
+## 2026-10-13 PDF-krav dokumenterat
+
+Sparat användarens PDF-fält/kundkortsresa i docs/PDF_FIELD_TEMPLATES_AND_DOCUSEAL.md och länkat från genomförandeplanen. Genomförandesteg, snapshot/versioner, säljarbehörighet, DocuSeal-förifyllning och framtida BankID beskrivna. Ingen produktionsrättning genomförd.

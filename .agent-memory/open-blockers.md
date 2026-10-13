@@ -1,5 +1,22 @@
 # Open blockers
 
+## 2026-10-13 PDF-mallkrav
+
+PDF-placering, fältkoppling och ifylld förhandsgranskning saknas som levererat flöde. Ny specifikation kompletterar oktoberfynden. Drift/licens för DocuSeal måste väljas; liveintegration och BankID-stöd är fortfarande ej verifierade.
+
+## 2026-10-13 Aktuella blockerare
+
+Oktobergranskningen och avtalsplanen är nu kanoniska för fortsättningsarbetet:
+`docs/reviews/2026-10-13/` och `docs/CONTRACT_PRODUCTION_PLAN_2026-10-13.md`.
+
+Prioritet: kund-RLS/avtalsstatus/API-status, slutlig produktmall/pris, osparade säljaruppgifter,
+fjärrljud och samtalsåterhämtning, OTP/UI/API-policy, outboxlease/databasfel,
+leveranswebhookar och acceptansbundna slutdokument. Alla är OPEN tills rättning verifierats.
+
+DocuSeal saknar adapter. BankID är framtida signering och får inte erbjudas som live.
+Faktiska slutvillkor, kontrollerade mottagare och providerdrift måste fastställas innan liveaktivering.
+Historiska Rinkel-device-krav och gamla mergepåståenden nedan är inte aktuell driftsinstruktion.
+
 Uppdaterad 2026-08-07.
 
 ## Löst sedan förra passet
