@@ -34,7 +34,8 @@ tidigare kundlänkar. Köläggning sker atomiskt efter kontroll av aktuell gener
 | 21 riktade databaskontroller, två tenants, säljare/läsroll, idempotens, generation och lease | PASS lokalt |
 | Tre nya migrationer och lästa RPC-rättigheter i länkat Kundexa-projekt | APPLIED / PASS |
 | Supabase-typer regenererade från länkat projekt | DONE |
-| Docker/Rails build och boot | NOT RUN lokalt; separat GitHub-jobb tillagt |
+| Docker/Rails build | PASS i GitHub Actions, run 38402406691 |
+| Docker/Rails boot och syntetiskt PDF-flöde | PENDING i separat GitHub-jobb |
 | Två riktiga JWT-sessioner, privat Storage och säljarens UI | NOT RUN |
 | Verkligt Sinch-samtal, Resend-utskick, kundsignatur och signerad bilaga | NOT RUN |
 | Produktionsrelease av webb och process-outbox | NOT DONE |
@@ -71,7 +72,7 @@ startar inte denna Rails-/Postgres-tjänst. Driftmål och credentials saknas i d
 2. Kör `sh services/documents/build.sh` och
    `docker compose --env-file services/documents/.env -f services/documents/compose.yaml up -d`.
    Kontrollera först Docker-jobbet i PR. Pinna därefter även databasimage till digest.
-3. Kör `docker compose --env-file services/documents/.env -f services/documents/compose.yaml exec -T documents /app/bin/rails runner /app/lib/kundexa/bootstrap.rb`.
+3. Kör `docker compose --env-file services/documents/.env -f services/documents/compose.yaml exec -T documents /app/bin/rails runner "Kundexa::Bootstrap.call"`.
    Kommandot skapar en dedikerad konto/användare och sätter API-nyckeln utan att skriva ut den.
 4. Sätt HTTPS-proxy till loopback-port 3100. Konfigurera `X-Forwarded-Proto` korrekt
    eftersom `FORCE_SSL=true`. Säkerhetskopiera båda volymerna och verifiera återläsning.

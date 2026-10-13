@@ -1,5 +1,7 @@
 # Verification matrix
 
+Implementations-PR: https://github.com/heke99/kundexa/pull/54. Portens Docker-build PASS i GitHub run 38402406691, boot ännu pending. Befintlig verify-CI stoppade på äldre fixture som band en ej godkänd mall; fixturen är ändrad till approved, produktionsregeln behålls. Lokalt körs fortfarande inga testsviter. Isolerad PDF-probe i dokumentjobbet kompletterar byggkontrollen.
+
 ## 2026-10-13 Portad dokumentmotor och integrerat avtalsflöde
 
 | Kontroll | Status |

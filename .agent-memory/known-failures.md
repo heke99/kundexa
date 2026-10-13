@@ -1,5 +1,9 @@
 # Known failures
 
+Dokumentjobb run 38402406691: Docker-build PASS, första boot FAIL eftersom bootstrap.rb var ett script i en eager-loaded katalog. Rättat till Kundexa::Bootstrap.call utan sidoeffekt vid boot; explicit runner krävs. Invändar ny CI.
+
+Implementations-PR: https://github.com/heke99/kundexa/pull/54. Portens Docker-build PASS i GitHub run 38402406691, boot ännu pending. Befintlig verify-CI stoppade på äldre fixture som band en ej godkänd mall; fixturen är ändrad till approved, produktionsregeln behålls. Lokalt körs fortfarande inga testsviter. Isolerad PDF-probe i dokumentjobbet kompletterar byggkontrollen.
+
 ## 2026-10-13 Portad dokumentmotor och integrerat avtalsflöde
 
 - KX26 24: REVOKE i första nya migrationen på `spatial_ref_sys` gav inte avsedd effekt; readback visar äldre skrivrättigheter. Owner `supabase_admin`, aktuell roll `postgres` utan medlemskap. Håll OPEN.

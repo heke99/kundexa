@@ -37,9 +37,15 @@ jobs:
             sleep 2
           done
           curl --fail http://127.0.0.1:3100/up
-          docker exec documents /app/bin/rails runner /app/lib/kundexa/bootstrap.rb
+          docker exec documents /app/bin/rails runner "Kundexa::Bootstrap.call"
           curl --fail --silent -H 'X-Auth-Token: isolated-ci-api-key-at-least-32-characters' http://127.0.0.1:3100/api/templates
           docker exec documents /app/bin/rails zeitwerk:check
+      - name: Probe PDF field and submission flow
+        env:
+          DOCUMENTS_CHECK_URL: http://localhost:3100
+          KUNDEXA_DOCUMENTS_API_KEY: isolated-ci-api-key-at-least-32-characters
+          KUNDEXA_DOCUMENTS_SECRET: isolated-ci-documents-secret-at-least-32-characters
+        run: python3 services/documents/check-flow.py
       - name: Container diagnostics
         if: failure()
         run: docker logs documents

@@ -19,10 +19,15 @@ module Kundexa
       allowed = params.require(:template).permit(:name, fields: [:uuid, :name, :type, :submitter_uuid, :required,
         :title, :description, { preferences: {}, areas: %i[uuid x y w h cell_w attachment_uuid page option_uuid],
                               validation: %i[message pattern min max step], options: %i[value uuid] }])
-      if allowed[:fields]&.any? { |f| f[:submitter_uuid] != @template.submitters.first['uuid'] }
-        return render json: { error: 'invalid_signer' }, status: :unprocessable_content
+      @template.with_lock do
+        if @template.preferences['kundexa_locked']
+          return render json: { error: 'approved_template_is_immutable' }, status: :conflict
+        end
+        if allowed[:fields]&.any? { |f| f[:submitter_uuid] != @template.submitters.first['uuid'] }
+          return render json: { error: 'invalid_signer' }, status: :unprocessable_content
+        end
+        @template.update!(allowed)
       end
-      @template.update!(allowed)
       head :ok
     end
 
