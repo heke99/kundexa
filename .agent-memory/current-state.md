@@ -755,3 +755,7 @@ källa inte ändrats sedan långt före deployen — svagare, men utan känd mot
 **2026-09-23 09:50:** Sinch-kontot kan ringa PSTN (testsamtal OK). Webbläsarsamtal till PSTN bryts
 fortfarande med GENERALERROR ~1 s efter ICE-svaret; senaste SVAML-förenkling ej provad. ICE kopplas
 nu till försöket (202609230002).
+
+## 2026-10-13 Publicering slutförd
+
+Rapporter, avtalsplan, PDF-fältspecifikation och projektminne är publicerade i [PR #53](https://github.com/heke99/kundexa/pull/53). PR är öppen och inte mergad. Publicerat git-träd matchade exakt det lokala dokumentationsträdet (12 ändrade filer). Vanlig git-push saknade terminalautentisering; GitHub-anslutningen användes med användarens uttryckliga mandat. Ingen produktionsdeploy gjordes.
