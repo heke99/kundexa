@@ -36,6 +36,7 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
     ok(supabase.from("phone_numbers").select("id,number_e164").eq("status","active").eq("supports_voice",true).order("number_e164")),
   ]);
   return <>
+    <div className="toolbar-left" style={{ marginBottom: 12 }}><Link className="button button-ghost" href="/app/lists">Ringlistor</Link><Link className="button button-ghost" href="/app/calls">Samtalshistorik</Link></div>
     <PageHeader title="Dialer" description="Välj en ringlista eller ring ett enskilt nummer." />
     {params.error ? <p className="form-error">{params.error}</p> : null}
     <div className="grid grid-3" style={{ marginBottom: 18 }}>

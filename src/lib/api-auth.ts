@@ -51,6 +51,11 @@ export async function authenticateRequest(request: Request, requiredScope?: stri
     if (!allowed) throw jsonError("rate_limit_exceeded", 429, { "retry-after": "60" });
 
     if (!key.created_by) throw jsonError("api_key_actor_missing", 403);
+    const { data: tenant, error: tenantError } = await admin.from("tenants").select("status,onboarding_status")
+      .eq("id", key.tenant_id).maybeSingle();
+    if (tenantError) throw jsonError("tenant_state_unavailable", 503);
+    if (!tenant || !["active","trial"].includes(tenant.status) || tenant.onboarding_status !== "active")
+      throw jsonError("api_tenant_inactive", 403);
     const { data: membership } = await admin.from("tenant_memberships")
       .select("role,status")
       .eq("tenant_id", key.tenant_id)

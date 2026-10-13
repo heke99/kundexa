@@ -1,5 +1,19 @@
 # Open blockers
 
+## 2026-10-13 Portad dokumentmotor och integrerat avtalsflöde
+
+Koden är implementerad men hela produktionsflödet är inte godkänt:
+
+1. Dokumenttjänstens containerhost, HTTPS, beständig lagring/backup och hemligheter saknas. Rails-/Docker-runtime ej körd lokalt; separat CI-jobb tillagt.
+2. Slutlig verksamhetsgodkänd PDF, fältkoppling, produktkoppling och kompletta kommersiella villkor måste matas in. Befintlig ofärdig mall är inte gjord operativ med gissningar.
+3. Webb och process-outbox behöver releasas tillsammans efter granskning. Riktiga JWT/Storage/säljarvy samt kontrollerat samtal, mejl och kundsignatur NOT RUN.
+4. Resend-webhook/driftkonfiguration och eventuell framtida SMS-kanal måste bekräftas.
+5. KX26 24 kvarstår: geografitabellens owner är `supabase_admin`, tillgänglig roll saknar rätt att rätta ACL. Advisor är fortfarande röd här.
+6. KX26 14 i äldre API-flöden, KX26 27 och UI 03/06–11 är inte fullständigt rättade. Se driftinstruktionens scope.
+7. BankID är inte live. Senare provider/credential/flöde krävs.
+
+Användarens fullständiga återanvändningsmandat gäller; standardlicens/paketköp är inte en arbetsblockerare.
+
 ## 2026-10-13 Full återanvändning av DocuSeal och byggordning
 
 Användarens uppgivna fullständiga återanvändningsgodkännande ersätter tidigare standardlicens-/paketval som blockerare. Källinventering, dokumenttjänstens drift, integration, slutvillkor och samtliga ofixade oktoberfynd återstår. Återanvändningsmandat gör inte befintliga utskick operativa.

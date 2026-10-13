@@ -22,8 +22,10 @@ export default async function CallsPage({ searchParams }: { searchParams: Promis
   // setCallDisposition, which requires `calls.create`. Kvalitet and viewer
   // saw a form the server action would always refuse.
   const mayLog = can(context.role, "calls.create");
+  let callsQuery = supabase.from("calls").select("*,customers(display_name)").order("created_at", { ascending: false }).limit(100);
+  if (context.role === "sales") callsQuery = callsQuery.eq("user_id", context.userId);
   const [{ data }, { data: eligibleRows }] = await Promise.all([
-    ok(supabase.from("calls").select("*,customers(display_name)").order("created_at", { ascending: false }).limit(100)),
+    ok(callsQuery),
     ok(supabase.from("list_dispositions").select("list_id,key").eq("active", true).eq("contract_eligible", true)),
   ]);
   // Samma regel som `is_contract_call_eligible`: ett listsamtal följer sin egen
@@ -35,7 +37,7 @@ export default async function CallsPage({ searchParams }: { searchParams: Promis
     call.list_id ? listEligible.has(`${call.list_id}:${call.disposition}`) : manualEligible.has(String(call.disposition)));
 
   return <>
-    <PageHeader title="Mina samtal" description="Dina samtal och deras utfall." />
+    <PageHeader title={context.role === "sales" ? "Mina samtal" : "Samtal"} description={context.role === "sales" ? "Dina samtal och deras utfall." : "Samtal inom din behörighet."} />
     {/* The action used to fail silently in both directions: a refusal had nowhere
         to be shown, and a success looked the same as a no-op. */}
     {params.error ? <p className="form-error">{params.error}</p> : null}

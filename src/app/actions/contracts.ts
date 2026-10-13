@@ -18,6 +18,8 @@ import { ensureCanonicalContractDocument } from "@/lib/contracts/canonical-docum
 import { contractAcceptanceModes, contractDeliveryBlocker, NO_ANSWER_PATH_MESSAGE } from "@/lib/contracts/delivery-readiness";
 import { renderContractDeliveryEmail } from "@/lib/email/templates/contract-delivery";
 import { normalizeVariableFees } from "@/lib/contracts/price-terms";
+import { queueDocusealContract, usesDocuseal } from "@/lib/signing/send-contract";
+import { reconcileDocusealEnvelope } from "@/lib/signing/docuseal";
 
 const value = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
 const contractNumber = () => `KX-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
@@ -154,6 +156,11 @@ export async function createContract(form: FormData) {
     product = productData as ProductRecord;
     price = priceData as PriceRecord;
   }
+  if (!["owner","admin","contract_manager"].includes(ctx.role)) {
+    if (input.bindingMonths || input.noticeMonths || input.paymentTermsDays || input.contractValue || input.specialTerms)
+      back("Din roll använder produktens godkända priser och villkor.");
+    input.currency = price!.currency;
+  }
   // Titeln är produktens namn om ingen annan angetts. Säljaren ska inte behöva
   // hitta på vad avtalet heter.
   const title = input.title || product.name;
@@ -185,6 +192,7 @@ export async function createContract(form: FormData) {
     language: input.language,
     product_id: product?.id ?? null,
     product_name: product?.name ?? null,
+    product_sku: product?.sku ?? null, product_description: product?.description ?? null,
     price_version: price?.version ?? null,
     additional_terms: additionalTerms,
   };
@@ -550,6 +558,18 @@ export async function sendContract(form: FormData) {
 
   const supabase = await createClient();
   const admin = createAdminClient();
+  if (await usesDocuseal(supabase, ctx.tenantId, contractId)) {
+    try {
+      await queueDocusealContract(supabase, { tenantId: ctx.tenantId, actorUserId: ctx.userId,
+        contractId, channel, name: recipientNameOverride, email: emailOverride,
+        expiresAt: expiresAt!.toISOString(), idempotencyKey: value(form, "idempotency_key") });
+    } catch (error) {
+      console.error("contract_signing_queue_failed", { contractId, error: error instanceof Error ? error.message : "unknown" });
+      redirect(`/app/contracts/${contractId}?error=${encodeURIComponent("Signeringen kunde inte köas. Kontrollera mottagaren, PDF-fälten och dokumenttjänstens inställningar.")}`);
+    }
+    revalidatePath(`/app/contracts/${contractId}`);
+    redirect(`/app/contracts/${contractId}?message=${encodeURIComponent("Avtalet är köat för kundsignering. Du kan följa status här.")}`);
+  }
   const { data: contract, error: contractError } = await supabase
     .from("contracts")
     .select("id,contract_number,title,customer_id,active_version_id,source_call_id,seller_snapshot,legal_entity_id,customers(display_name,email,phone_e164)")
@@ -680,6 +700,30 @@ export async function sendContract(form: FormData) {
   revalidatePath(`/app/contracts/${contractId}`);
   revalidatePath("/app/contracts");
   redirect(`/app/contracts/${contractId}?message=Avtalsversionen är låst och utskicket har köats`);
+}
+
+export async function prepareContractPreview(form: FormData) {
+  const ctx = await getAppContext(); assertPermission(ctx.role, "contracts.send");
+  const id = z.uuid().parse(value(form, "contract_id")); const db = await createClient();
+  const { data: contract, error } = await db.from("contracts").select("id").eq("tenant_id", ctx.tenantId).eq("id", id).maybeSingle();
+  if (error || !contract) redirect("/app/contracts?error=Avtalet är inte tillgängligt");
+  try { await ensureCanonicalContractDocument(createAdminClient(), { tenantId: ctx.tenantId, contractId: id, actorUserId: ctx.userId }); }
+  catch (caught) {
+    console.error("contract_preview_failed", { id, error: caught instanceof Error ? caught.message : "unknown" });
+    redirect(`/app/contracts/${id}?error=${encodeURIComponent("PDF kunde inte förberedas. Kontrollera kunduppgifter, mallfält och dokumenttjänsten.")}`);
+  }
+  revalidatePath(`/app/contracts/${id}`); redirect(`/app/contracts/${id}?message=PDF är klar för granskning`);
+}
+
+export async function refreshContractSigning(form: FormData) {
+  const ctx = await getAppContext(); assertPermission(ctx.role, "contracts.read");
+  const id = z.uuid().parse(value(form, "contract_id")); const db = await createClient();
+  const { data: envelope, error } = await db.from("signing_envelopes").select("id,provider_envelope_id")
+    .eq("tenant_id", ctx.tenantId).eq("contract_id", id).eq("provider", "docuseal").order("generation", { ascending: false }).limit(1).maybeSingle();
+  if (error || !envelope?.provider_envelope_id) redirect(`/app/contracts/${id}?error=Signeringen har inte startat ännu`);
+  try { await reconcileDocusealEnvelope(ctx.tenantId, envelope.id); }
+  catch { redirect(`/app/contracts/${id}?error=Signeringsstatus kunde inte hämtas just nu`); }
+  revalidatePath(`/app/contracts/${id}`); redirect(`/app/contracts/${id}`);
 }
 
 export async function sendContractReminder(form: FormData) {

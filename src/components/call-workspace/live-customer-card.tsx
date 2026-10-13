@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { CheckCircle2, FileSignature } from "@/components/icons";
 import { loadCallCustomer, saveCallCustomer, type CallCustomer, type CallCustomerPatch } from "@/app/actions/call-workspace";
@@ -39,19 +39,23 @@ function contractReadiness(draft: Draft, type: CallCustomer["customerType"]) {
   ];
 }
 
-export function LiveCustomerCard({ customerId, heading = "Kunduppgifter", contractHref, fullCardLink = false }: {
+export type LiveCustomerCardHandle = { save: () => Promise<boolean> };
+export const LiveCustomerCard = forwardRef<LiveCustomerCardHandle, {
   customerId: string;
   heading?: string;
   /** Länk till hela kundkortet i ny flik; sidbyte i samma flik lägger på samtalet. */
   fullCardLink?: boolean;
   /** Visas när avtal kan skapas, t.ex. efter ett avtalsgrundande utfall. */
   contractHref?: string | null;
-}) {
+}>(({ customerId, heading = "Kunduppgifter", contractHref, fullCardLink = false }, ref) => {
   const [customer, setCustomer] = useState<CallCustomer | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [pending, startTransition] = useTransition();
+  const [saving, setSaving] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  const saveInFlight = useRef<Promise<boolean> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -71,6 +75,24 @@ export function LiveCustomerCard({ customerId, heading = "Kunduppgifter", contra
     return Object.fromEntries(Object.entries(draft).filter(([key, value]) => original[key as keyof Draft] !== value)) as CallCustomerPatch;
   }, [customer, draft]);
   const dirty = Object.keys(changed).length > 0;
+  const saveChanges = useCallback(async (): Promise<boolean> => {
+    if (!customer || !draft) return false;
+    if (!dirty || !customer.canEdit) return true;
+    if (saveInFlight.current) return saveInFlight.current;
+    if (formRef.current && !formRef.current.reportValidity()) return false;
+    setError(null);
+    setSaving(true);
+    const saving = (async () => {
+      try {
+        const result = await saveCallCustomer(customerId, changed);
+        if (!result.ok) { setError(result.error); return false; }
+        setCustomer(result.customer); setDraft(toDraft(result.customer)); setSavedAt(Date.now()); return true;
+      } catch { setError("Kunduppgifterna kunde inte sparas. Försök igen."); return false; }
+      finally { saveInFlight.current = null; setSaving(false); }
+    })();
+    saveInFlight.current = saving; return saving;
+  }, [customer, draft, dirty, customerId, changed]);
+  useImperativeHandle(ref, () => ({ save: saveChanges }), [saveChanges]);
 
   if (error && !customer) return <section className="live-card"><p className="form-error">{error}</p></section>;
   if (!customer || !draft) return <section className="live-card"><p className="muted">Hämtar kundkortet…</p></section>;
@@ -89,11 +111,7 @@ export function LiveCustomerCard({ customerId, heading = "Kunduppgifter", contra
     if (!dirty || readOnly) return;
     setError(null);
     startTransition(async () => {
-      const result = await saveCallCustomer(customerId, changed);
-      if (!result.ok) { setError(result.error); return; }
-      setCustomer(result.customer);
-      setDraft(toDraft(result.customer));
-      setSavedAt(Date.now());
+      await saveChanges();
     });
   }
 
@@ -106,11 +124,12 @@ export function LiveCustomerCard({ customerId, heading = "Kunduppgifter", contra
     setSavedAt(null);
   };
   const readiness = contractReadiness(draft, type);
-  return <form className="live-card" onSubmit={save}>
+  return <form ref={formRef} className="live-card" onSubmit={save}>
     <div className="live-card-header">
       <div><span className="eyebrow">{heading}</span><h3>{customer.displayName}</h3></div>
       <span className="muted">{customer.phone ?? "inget nummer"}{fullCardLink ? <> · <Link href={`/app/customers/${customer.id}`} target="_blank" rel="noopener">Hela kundkortet</Link></> : null}</span>
     </div>
+    <fieldset disabled={saving || pending} style={{ border: 0, padding: 0, margin: 0 }}>
     <div className="segmented" role="radiogroup" aria-label="Kundtyp">
       {(["company", "person"] as const).map((option) => <button key={option} type="button" role="radio" aria-checked={type === option}
         className={type === option ? "selected" : ""} disabled={readOnly} onClick={() => setType(option)}>
@@ -133,16 +152,19 @@ export function LiveCustomerCard({ customerId, heading = "Kunduppgifter", contra
       {input("postalCode", "Postnummer", { autoComplete: "off", inputMode: "numeric" })}
       {input("city", "Ort", { autoComplete: "off" })}
     </div>
+    </fieldset>
     <ul className="readiness" aria-label="Underlag för avtal">
       {readiness.map((item) => <li key={item.label} className={item.done ? "done" : ""}><CheckCircle2 size={13} /> {item.label}</li>)}
     </ul>
+    <p className="muted">Produktens avtalsmall avgör vilka uppgifter som krävs.</p>
     {error ? <p className="form-error">{error}</p> : null}
     <div className="live-card-actions">
       {readOnly ? <span className="muted">Din roll kan inte ändra uppgifterna.</span>
         : <button className="button button-primary button-sm" disabled={!dirty || pending}>{pending ? "Sparar…" : "Spara uppgifter"}</button>}
       {savedAt && !dirty ? <span className="live-saved"><CheckCircle2 size={14} /> Sparat</span> : null}
       {dirty && !pending ? <span className="muted">Ändringar som inte är sparade</span> : null}
-      {contractHref ? <Link className="button button-secondary button-sm" href={contractHref} target="_blank" rel="noopener"><FileSignature size={14} /> Skapa avtal</Link> : null}
+      {contractHref ? <button type="button" className="button button-secondary button-sm" disabled={pending}
+        onClick={() => startTransition(async () => { if (await saveChanges()) window.location.assign(contractHref); })}><FileSignature size={14} /> Skapa avtal</button> : null}
     </div>
   </form>;
-}
+});

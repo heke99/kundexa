@@ -7,10 +7,12 @@ import { normalizePhone } from "@/lib/domain/phone";
 import { acceptanceCode, encryptJson, randomToken, sha256 } from "@/lib/crypto";
 import { canonicalAppBaseUrl, serverEnv } from "@/lib/env";
 import { ensureCanonicalContractDocument } from "@/lib/contracts/canonical-document";
-import { contractDeliveryBlocker } from "@/lib/contracts/delivery-readiness";
+import { contractAcceptanceModes, contractDeliveryBlocker } from "@/lib/contracts/delivery-readiness";
 import { renderContractDeliveryEmail } from "@/lib/email/templates/contract-delivery";
 import { normalizeVariableFees } from "@/lib/contracts/price-terms";
 import { readJsonObject, toJson, toJsonObject } from "@/lib/supabase/json";
+import { dataClientForIdentity } from "@/lib/api-auth";
+import { queueDocusealContract, usesDocuseal } from "@/lib/signing/send-contract";
 
 export const apiCreateContractSchema = z.object({
   customer_id: z.uuid(),
@@ -146,7 +148,8 @@ export async function createContractFromApi(identity: ApiIdentity, input: Create
     variable_fees: variableFees.fees,
     binding_months: price?.binding_months ?? null, notice_months: price?.notice_months ?? null,
     payment_terms_days: price?.payment_terms_days ?? null, product_id: product?.id ?? null,
-    product_name: product?.name ?? null, price_version: price?.version ?? null,
+    product_name: product?.name ?? null,
+    product_sku: product?.sku ?? null, product_description: product?.description ?? null, price_version: price?.version ?? null,
     starts_on: input.starts_on ?? null, ends_on: input.ends_on ?? null, language: input.language ?? "sv",
     additional_terms: {
       ...toJsonObject(price?.terms ?? {}),
@@ -202,6 +205,12 @@ export async function createContractFromApi(identity: ApiIdentity, input: Create
 }
 
 export async function sendContractFromApi(identity: ApiIdentity, contractId: string, input: SendInput) {
+  const scopedDb = await dataClientForIdentity(identity);
+  if (await usesDocuseal(scopedDb, identity.tenantId, contractId)) {
+    return queueDocusealContract(scopedDb, { tenantId: identity.tenantId, actorUserId: actor(identity),
+      contractId, channel: input.channel, email: input.email, name: input.recipient_name,
+      expiresAt: input.expires_at, idempotencyKey: input.idempotency_key, serviceContext: identity.source === "api_key" });
+  }
   const prior = await replay(identity, "contract.api_sent", input.idempotency_key);
   if (prior) return { ...(prior.after_data as Record<string, unknown>), idempotent_replay: true };
 
@@ -275,8 +284,19 @@ export async function sendContractFromApi(identity: ApiIdentity, contractId: str
   const contact = [sellerSnapshot.email, sellerSnapshot.phone_e164, sellerSnapshot.website]
     .filter((item): item is string => typeof item === "string" && item.length > 0)
     .join(" · ") || null;
-  const rendered = renderContractDeliveryEmail({ legalName, customerName: recipientName, contractNumber: contract.contract_number, contractTitle: contract.title, acceptUrl, expiresAt: expiryLabel, introduction: input.introduction, contact, logoUrl });
-  const smsBody = `Avtal ${contract.contract_number} från ${legalName}. Granska: ${acceptUrl}. Svara JA ${code} eller NEJ ${code}. Giltigt till ${expiryLabel}.`;
+  const modes = await contractAcceptanceModes(admin, identity.tenantId);
+  const smsAnswers = modes.sms && input.channel !== "email";
+  if (!modes.web && !smsAnswers) throw new Error("contract_answer_channel_disabled");
+  const { data: policyContract, error: policyContractError } = await admin.from("contracts").select("active_version_id")
+    .eq("tenant_id", identity.tenantId).eq("id", contractId).single();
+  if (policyContractError || !policyContract?.active_version_id) throw new Error("contract_version_missing");
+  const { data: policyVersion, error: policyError } = await admin.from("contract_versions").select("signature_policy_snapshot")
+    .eq("tenant_id", identity.tenantId).eq("id", policyContract.active_version_id).single();
+  if (policyError) throw new Error(policyError.message);
+  const method = (policyVersion?.signature_policy_snapshot as Record<string, unknown> | null)?.method;
+  const requireCode = input.channel !== "email" || ["email_otp","sms_otp"].includes(String(method));
+  const rendered = renderContractDeliveryEmail({ legalName, customerName: recipientName, contractNumber: contract.contract_number, contractTitle: contract.title, acceptUrl, expiresAt: expiryLabel, introduction: input.introduction, contact, logoUrl, acceptanceCode: requireCode ? code : null });
+  const smsBody = `Avtal ${contract.contract_number} från ${legalName}. Granska: ${acceptUrl}. ${smsAnswers ? `Svara JA ${code} eller NEJ ${code}.` : "Lämna ditt besked via länken."} Giltigt till ${expiryLabel}.`;
   const attachments = [{ document_id: canonical.id, filename: canonical.file_name, mime_type: "application/pdf" }];
   const { data, error } = await admin.rpc("prepare_contract_delivery_api_v2", {
     p_tenant_id: identity.tenantId, p_actor_user_id: actor(identity), p_contract_id: contractId,

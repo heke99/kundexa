@@ -20,6 +20,13 @@ const globalEmailFromAddress = Deno.env.get("DEFAULT_EMAIL_FROM_ADDRESS") ?? "";
 const globalEmailFromName = Deno.env.get("DEFAULT_EMAIL_FROM_NAME") ?? "Kundexa";
 const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
+async function checkedDb<T extends { error: { message: string } | null }>(operation: PromiseLike<T>): Promise<T> {
+  const result = await operation;
+  if (result.error) throw new Error(result.error.message);
+  return result;
+}
+
+
 /**
  * Adressen kundens avtalslänk pekar på.
  *
@@ -208,13 +215,13 @@ async function processSms(job: Job) {
         cost: reconciled.cost ?? sms.cost,
       }).eq("tenant_id", job.tenant_id).eq("id", sms.id);
       if (reconcileError) throw reconcileError;
-      await supabase.from("contract_deliveries").update({
-        status: reconciled.status === "delivered" ? "delivered" : "sent",
+      await checkedDb(supabase.from("contract_deliveries").update({
+        status: reconciled.status === "delivered" ? "delivered" : reconciled.status === "failed" ? "failed" : "sent",
         provider_status: `reconciled_${reconciled.status}`,
         sent_at: sentAt,
-      }).eq("tenant_id", job.tenant_id).eq("sms_message_id", sms.id);
-      await supabase.from("contract_reminders").update({ status: "sent", sent_at: sentAt })
-        .eq("tenant_id", job.tenant_id).eq("sms_message_id", sms.id).in("status", ["queued", "scheduled"]);
+      }).eq("tenant_id", job.tenant_id).eq("sms_message_id", sms.id));
+      await checkedDb(supabase.from("contract_reminders").update({ status: reconciled.status === "failed" ? "failed" : "sent", sent_at: sentAt })
+        .eq("tenant_id", job.tenant_id).eq("sms_message_id", sms.id).in("status", ["queued", "scheduled"]));
       return;
     }
     const submittingAgeMs = Date.now() - new Date(sms.updated_at).getTime();
@@ -233,7 +240,7 @@ async function processSms(job: Job) {
   // leverantören", och det tar en kvarts avstämning att ta sig ur -- för ett fel
   // som aldrig rörde leverantören.
   const deliveryCallbackUrl = `${requireAppUrl()}/api/webhooks/sms/delivery?token=${encodeURIComponent(token.token)}&message_id=${encodeURIComponent(sms.id)}&from_number=${encodeURIComponent(sms.from_number)}`;
-  await supabase.from("sms_messages").update({ status: "submitting" }).eq("id", sms.id);
+  await checkedDb(supabase.from("sms_messages").update({ status: "submitting" }).eq("id", sms.id));
   const submission = await provider.send({
     from: sms.from_number,
     to: sms.to_number,
@@ -242,20 +249,20 @@ async function processSms(job: Job) {
     deliveryCallbackUrl,
   });
   const sentAt = submission.sentAt;
-  await supabase.from("sms_messages").update({
+  await checkedDb(supabase.from("sms_messages").update({
     provider_message_id: submission.providerMessageId,
     sent_at: sentAt,
     parts: submission.parts,
     cost: submission.cost,
-  }).eq("id", sms.id);
+  }).eq("id", sms.id));
   // Statusen skrivs bara om leveransrapporten inte redan hunnit före. Annars
   // skrev den här raden tillbaka "levererat" eller "misslyckat" till "skickat",
   // samma fel som e-postens väg rättades för.
-  await supabase.from("sms_messages").update({ status: submission.status })
-    .eq("id", sms.id).in("status", ["queued", "submitting", "created"]);
-  await supabase.from("contract_deliveries").update({ status: "sent", provider_status: "submitted", sent_at: sentAt })
-    .eq("sms_message_id", sms.id).in("status", ["draft", "queued", "submitting", "created"]);
-  await supabase.from("contract_reminders").update({ status: "sent", sent_at: sentAt }).eq("tenant_id", job.tenant_id).eq("sms_message_id", sms.id).in("status", ["queued", "scheduled"]);
+  await checkedDb(supabase.from("sms_messages").update({ status: submission.status })
+    .eq("id", sms.id).in("status", ["queued", "submitting", "created"]));
+  await checkedDb(supabase.from("contract_deliveries").update({ status: "sent", provider_status: "submitted", sent_at: sentAt })
+    .eq("sms_message_id", sms.id).in("status", ["draft", "queued", "submitting", "created"]));
+  await checkedDb(supabase.from("contract_reminders").update({ status: "sent", sent_at: sentAt }).eq("tenant_id", job.tenant_id).eq("sms_message_id", sms.id).in("status", ["queued", "scheduled"]));
 }
 
 function bytesToBase64(bytes: Uint8Array) {
@@ -294,7 +301,26 @@ async function processEmail(job: Job) {
   const { data: email, error } = await supabase.from("email_messages").select("*")
     .eq("tenant_id", job.tenant_id).eq("id", job.aggregate_id).single();
   if (error || !email) throw new Error("email_not_found");
-  if (email.provider_message_id || ["sent", "delivered", "opened", "clicked"].includes(email.status)) return;
+  if (email.provider_message_id || ["sent", "delivered", "opened", "clicked", "cancelled"].includes(email.status)) return;
+  if (job.payload.signing_envelope_id) {
+    const { data: envelope, error: envelopeError } = await supabase.from("signing_envelopes")
+      .select("contract_version_id,generation,status").eq("tenant_id", job.tenant_id)
+      .eq("id", String(job.payload.signing_envelope_id)).single();
+    const { data: contract, error: contractError } = await supabase.from("contracts")
+      .select("active_version_id,acceptance_generation,status").eq("tenant_id", job.tenant_id)
+      .eq("id", email.contract_id).single();
+    if (envelopeError || contractError) throw new Error("signing_invitation_binding_lookup_failed");
+    if (!envelope || !contract || envelope.contract_version_id !== contract.active_version_id
+      || envelope.generation !== contract.acceptance_generation
+      || ["cancelled","expired","declined","completed","failed"].includes(envelope.status)
+      || contract.status !== "signing") {
+      await checkedDb(supabase.from("email_messages").update({ status: "cancelled" })
+        .eq("tenant_id", job.tenant_id).eq("id", email.id));
+      await checkedDb(supabase.from("contract_deliveries").update({ status: "cancelled" })
+        .eq("tenant_id", job.tenant_id).eq("email_message_id", email.id));
+      return;
+    }
+  }
 
   const [{ data: outboundEmail, error: outboundEmailError }, { data: contractEmail, error: contractEmailError }] = await Promise.all([
     supabase.from("tenant_features").select("enabled").eq("tenant_id", job.tenant_id).eq("feature_key", "outbound_email").maybeSingle(),
@@ -315,7 +341,7 @@ async function processEmail(job: Job) {
   const issuerName = await contractIssuerName(job.tenant_id, email.contract_id ?? null, config.fromName);
   const senderIdentity = `${cleanHeaderName(issuerName)} <${config.address}>`;
   const attachments = await resolveEmailAttachments(email as Record<string, unknown>, job.tenant_id);
-  await supabase.from("email_messages").update({ status: "submitting", provider_status: "submitting" }).eq("id", email.id);
+  await checkedDb(supabase.from("email_messages").update({ status: "submitting", provider_status: "submitting" }).eq("id", email.id));
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -346,9 +372,9 @@ async function processEmail(job: Job) {
   const result = await response.json() as Record<string, unknown>;
   if (!response.ok) {
     const message = String(result.message ?? result.name ?? `http_${response.status}`).slice(0, 500);
-    const permanent = [400, 401, 403, 404, 409, 422].includes(response.status);
-    await supabase.from("email_messages").update({ status: "failed", provider_status: `http_${response.status}`, failure_code: permanent ? "permanent_provider_error" : "temporary_provider_error", error_message: message }).eq("id", email.id);
-    await supabase.from("contract_deliveries").update({ status: "failed", provider_status: `http_${response.status}`, failure_code: permanent ? "permanent_provider_error" : "temporary_provider_error", failure_message: message }).eq("email_message_id", email.id);
+    const permanent = [400, 401, 403, 404, 422].includes(response.status) || (response.status === 409 && result.name !== "concurrent_idempotent_requests");
+    await checkedDb(supabase.from("email_messages").update({ status: "failed", provider_status: `http_${response.status}`, failure_code: permanent ? "permanent_provider_error" : "temporary_provider_error", error_message: message }).eq("id", email.id));
+    await checkedDb(supabase.from("contract_deliveries").update({ status: "failed", provider_status: `http_${response.status}`, failure_code: permanent ? "permanent_provider_error" : "temporary_provider_error", failure_message: message }).eq("email_message_id", email.id));
     throw new Error(`${permanent ? "permanent_" : ""}email_${response.status}:${message}`);
   }
   const sentAt = new Date().toISOString();
@@ -366,11 +392,11 @@ async function processEmail(job: Job) {
   if (sentError) throw new Error(`email_sent_state_write_failed:${sentError.code ?? "unknown"}`);
   // Statusen "skickat" skrivs bara om leverantörens webhook inte redan hunnit
   // före. Annars skrev den här raden tillbaka "levererat" till "skickat".
-  await supabase.from("email_messages").update({ status: "sent", provider_status: "email.sent" })
-    .eq("id", email.id).is("provider_status_at", null);
-  await supabase.from("contract_deliveries").update({ status: "sent", provider_status: "email.sent", sent_at: sentAt })
-    .eq("email_message_id", email.id).is("provider_status_at", null);
-  await supabase.from("contract_reminders").update({ status: "sent", sent_at: sentAt }).eq("tenant_id", job.tenant_id).eq("email_message_id", email.id).in("status", ["queued", "scheduled"]);
+  await checkedDb(supabase.from("email_messages").update({ status: "sent", provider_status: "email.sent" })
+    .eq("id", email.id).is("provider_status_at", null));
+  await checkedDb(supabase.from("contract_deliveries").update({ status: "sent", provider_status: "email.sent", sent_at: sentAt })
+    .eq("email_message_id", email.id).is("provider_status_at", null));
+  await checkedDb(supabase.from("contract_reminders").update({ status: "sent", sent_at: sentAt }).eq("tenant_id", job.tenant_id).eq("email_message_id", email.id).in("status", ["queued", "scheduled"]));
 }
 
 function escapeHtml(value: string) {
@@ -391,7 +417,7 @@ async function processContractReminder(job: Job) {
   ]);
   if (!request || !contract || !recipient) throw new Error("reminder_data_missing");
   if (request.status !== "pending" || new Date(request.expires_at) <= new Date()) {
-    await supabase.from("contract_reminders").update({ status: "cancelled", cancelled_at: new Date().toISOString(), cancel_reason: request.status === "pending" ? "expired" : request.status }).eq("id", reminder.id);
+    await checkedDb(supabase.from("contract_reminders").update({ status: "cancelled", cancelled_at: new Date().toISOString(), cancel_reason: request.status === "pending" ? "expired" : request.status }).eq("id", reminder.id));
     return;
   }
   const timezone = policy?.timezone ?? "Europe/Stockholm";
@@ -444,15 +470,15 @@ async function processContractReminder(job: Job) {
       }, { onConflict: "tenant_id,idempotency_key" }).select("id").single();
       if (emailError || !email) throw new Error(emailError?.message ?? "reminder_email_create_failed");
       emailMessageId = email.id;
-      await supabase.from("contract_deliveries").upsert({
+      await checkedDb(supabase.from("contract_deliveries").upsert({
         tenant_id: job.tenant_id, contract_id: contract.id, contract_version_id: request.contract_version_id, recipient_id: recipient.id,
         acceptance_request_id: request.id, channel: "email", status: "queued", email_message_id: email.id,
         delivery_kind: deliveryKind, attempt_number: 1, canonical_document_id: request.canonical_document_id,
         canonical_document_sha256: request.canonical_document_sha256, idempotency_key: idempotencyKey, scheduled_at: new Date().toISOString(),
-      }, { onConflict: "tenant_id,idempotency_key" });
-      await supabase.from("outbox_jobs").upsert({ tenant_id: job.tenant_id, job_type: "email.send", aggregate_type: "email_message", aggregate_id: email.id, payload: { email_message_id: email.id, acceptance_request_id: request.id, reminder_id: reminder.id }, idempotency_key: idempotencyKey, priority: 25 }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true });
+      }, { onConflict: "tenant_id,idempotency_key" }));
+      await checkedDb(supabase.from("outbox_jobs").upsert({ tenant_id: job.tenant_id, job_type: "email.send", aggregate_type: "email_message", aggregate_id: email.id, payload: { email_message_id: email.id, acceptance_request_id: request.id, reminder_id: reminder.id }, idempotency_key: idempotencyKey, priority: 25 }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true }));
     } else if (channel === "email") {
-      await supabase.from("contract_reminders").update({ status: "cancelled", cancelled_at: new Date().toISOString(), cancel_reason: permanentFailure ? "permanent_email_failure" : "recipient_email_missing" }).eq("id", reminder.id);
+      await checkedDb(supabase.from("contract_reminders").update({ status: "cancelled", cancelled_at: new Date().toISOString(), cancel_reason: permanentFailure ? "permanent_email_failure" : "recipient_email_missing" }).eq("id", reminder.id));
       return;
     }
   }
@@ -470,15 +496,15 @@ async function processContractReminder(job: Job) {
         const { data: sms, error: smsError } = await supabase.from("sms_messages").upsert({ tenant_id: job.tenant_id, customer_id: contract.customer_id, contract_id: contract.id, direction: "outbound", from_number: number.number_e164, to_number: recipient.phone_e164, body, status: "queued", idempotency_key: idempotencyKey, purpose: "contract_reminder" }, { onConflict: "tenant_id,idempotency_key" }).select("id").single();
         if (smsError || !sms) throw new Error(smsError?.message ?? "reminder_sms_create_failed");
         smsMessageId = sms.id;
-        await supabase.from("contract_deliveries").upsert({ tenant_id: job.tenant_id, contract_id: contract.id, contract_version_id: request.contract_version_id, recipient_id: recipient.id, acceptance_request_id: request.id, channel: "sms", status: "queued", sms_message_id: sms.id, delivery_kind: deliveryKind, attempt_number: 1, canonical_document_id: request.canonical_document_id, canonical_document_sha256: request.canonical_document_sha256, idempotency_key: idempotencyKey, scheduled_at: new Date().toISOString() }, { onConflict: "tenant_id,idempotency_key" });
-        await supabase.from("outbox_jobs").upsert({ tenant_id: job.tenant_id, job_type: "sms.send", aggregate_type: "sms_message", aggregate_id: sms.id, payload: { sms_message_id: sms.id, acceptance_request_id: request.id, reminder_id: reminder.id }, idempotency_key: idempotencyKey, priority: 25 }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true });
+        await checkedDb(supabase.from("contract_deliveries").upsert({ tenant_id: job.tenant_id, contract_id: contract.id, contract_version_id: request.contract_version_id, recipient_id: recipient.id, acceptance_request_id: request.id, channel: "sms", status: "queued", sms_message_id: sms.id, delivery_kind: deliveryKind, attempt_number: 1, canonical_document_id: request.canonical_document_id, canonical_document_sha256: request.canonical_document_sha256, idempotency_key: idempotencyKey, scheduled_at: new Date().toISOString() }, { onConflict: "tenant_id,idempotency_key" }));
+        await checkedDb(supabase.from("outbox_jobs").upsert({ tenant_id: job.tenant_id, job_type: "sms.send", aggregate_type: "sms_message", aggregate_id: sms.id, payload: { sms_message_id: sms.id, acceptance_request_id: request.id, reminder_id: reminder.id }, idempotency_key: idempotencyKey, priority: 25 }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true }));
       } else if (channel === "sms") throw new Error("permanent_reminder_sms_number_missing");
     } else if (channel === "sms") throw new Error("permanent_reminder_recipient_phone_missing");
   }
 
   if (!emailMessageId && !smsMessageId) throw new Error("permanent_reminder_no_valid_channel");
-  await supabase.from("contract_reminders").update({ status: "queued", email_message_id: emailMessageId, sms_message_id: smsMessageId }).eq("id", reminder.id);
-  await supabase.from("contract_events").insert({ tenant_id: job.tenant_id, contract_id: contract.id, event_type: "contract.reminder_queued", payload: { reminder_id: reminder.id, channel, acceptance_request_id: request.id } });
+  await checkedDb(supabase.from("contract_reminders").update({ status: "queued", email_message_id: emailMessageId, sms_message_id: smsMessageId }).eq("id", reminder.id));
+  await checkedDb(supabase.from("contract_events").insert({ tenant_id: job.tenant_id, contract_id: contract.id, event_type: "contract.reminder_queued", payload: { reminder_id: reminder.id, channel, acceptance_request_id: request.id } }));
 }
 
 function escapePdfText(value: string) {
@@ -577,8 +603,8 @@ async function processEvidence(job: Job) {
   const canonicalBytes = new Uint8Array(await canonicalBlob.arrayBuffer());
   if (await sha256Bytes(canonicalBytes) !== canonicalHash) throw new Error("canonical_document_hash_mismatch_for_evidence");
 
-  const tenant = singleRelation(contract.tenants);
-  const customer = singleRelation(contract.customers);
+  const tenant = contract.seller_snapshot as Record<string, unknown> | null;
+  const customer = contract.counterparty_snapshot as Record<string, unknown> | null;
   const generation = Number(request?.generation ?? contract.acceptance_generation ?? 0);
   const manifestBase = {
     schema: "kundexa.evidence.v3",
@@ -662,7 +688,7 @@ async function processEvidence(job: Job) {
   };
   const { error: evidenceError } = await supabase.from("evidence_packages").upsert(evidenceRow, { onConflict: "tenant_id,acceptance_id" });
   if (evidenceError) throw evidenceError;
-  await supabase.from("contract_events").insert({ tenant_id: job.tenant_id, contract_id: contractId, event_type: "evidence.completed", payload: { acceptance_id: acceptance.id, generation, manifest_hash: finalManifestHash, signed_pdf_id: insertedDocuments.signed_pdf, evidence_pdf_id: insertedDocuments.evidence_pdf, canonical_document_id: canonicalDocument.id } });
+  await checkedDb(supabase.from("contract_events").insert({ tenant_id: job.tenant_id, contract_id: contractId, event_type: "evidence.completed", payload: { acceptance_id: acceptance.id, generation, manifest_hash: finalManifestHash, signed_pdf_id: insertedDocuments.signed_pdf, evidence_pdf_id: insertedDocuments.evidence_pdf, canonical_document_id: canonicalDocument.id } }));
 }
 
 async function processContractConfirmation(job: Job) {
@@ -677,8 +703,8 @@ async function processContractConfirmation(job: Job) {
     supabase.from("contracts").select("contract_number,title,customer_id").eq("tenant_id", job.tenant_id).eq("id", request.contract_id).single(),
     supabase.from("contract_recipients").select("id,full_name,email,phone_e164").eq("tenant_id", job.tenant_id).eq("id", request.recipient_id).single(),
     supabase.from("tenants").select("legal_name").eq("id", job.tenant_id).single(),
-    supabase.from("contract_documents").select("id,file_name,sha256").eq("tenant_id", job.tenant_id).eq("contract_id", request.contract_id).eq("document_type", "signed_pdf").order("created_at", { ascending: false }).limit(1).maybeSingle(),
-    supabase.from("contract_documents").select("id,file_name,sha256").eq("tenant_id", job.tenant_id).eq("contract_id", request.contract_id).eq("document_type", "evidence_pdf").order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("contract_documents").select("id,file_name,sha256").eq("tenant_id", job.tenant_id).eq("contract_id", request.contract_id).eq("contract_version_id", request.contract_version_id).eq("document_type", "signed_pdf").contains("metadata", { acceptance_id: acceptanceId }).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("contract_documents").select("id,file_name,sha256").eq("tenant_id", job.tenant_id).eq("contract_id", request.contract_id).eq("contract_version_id", request.contract_version_id).eq("document_type", "evidence_pdf").contains("metadata", { acceptance_id: acceptanceId }).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     acceptanceId ? supabase.from("contract_acceptances").select("accepted_at,acceptance_phrase").eq("tenant_id", job.tenant_id).eq("id", acceptanceId).maybeSingle() : Promise.resolve({ data: null }),
   ]);
   if (!contract || !recipient || !tenant) throw new Error("confirmation_data_missing");
@@ -703,13 +729,13 @@ async function processContractConfirmation(job: Job) {
       body_text: text, body_html: html, status: "queued", attachments, idempotency_key: idempotencyKey, purpose: "contract_confirmation",
     }, { onConflict: "tenant_id,idempotency_key" }).select("id").single();
     if (emailError || !email) throw emailError ?? new Error("confirmation_email_create_failed");
-    await supabase.from("contract_deliveries").upsert({
+    await checkedDb(supabase.from("contract_deliveries").upsert({
       tenant_id: job.tenant_id, contract_id: request.contract_id, contract_version_id: request.contract_version_id, recipient_id: recipient.id,
       acceptance_request_id: request.id, channel: "email", status: "queued", email_message_id: email.id,
       delivery_kind: "acceptance_confirmation", attempt_number: 1, canonical_document_id: acceptedDocument.id,
       canonical_document_sha256: acceptedDocument.sha256, idempotency_key: idempotencyKey, scheduled_at: new Date().toISOString(),
-    }, { onConflict: "tenant_id,idempotency_key" });
-    await supabase.from("outbox_jobs").upsert({ tenant_id: job.tenant_id, job_type: "email.send", aggregate_type: "email_message", aggregate_id: email.id, payload: { email_message_id: email.id, acceptance_request_id: request.id, acceptance_id: acceptanceId || null }, idempotency_key: idempotencyKey, priority: 30 }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true });
+    }, { onConflict: "tenant_id,idempotency_key" }));
+    await checkedDb(supabase.from("outbox_jobs").upsert({ tenant_id: job.tenant_id, job_type: "email.send", aggregate_type: "email_message", aggregate_id: email.id, payload: { email_message_id: email.id, acceptance_request_id: request.id, acceptance_id: acceptanceId || null }, idempotency_key: idempotencyKey, priority: 30 }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true }));
   }
 
   if (recipient.phone_e164) {
@@ -720,11 +746,11 @@ async function processContractConfirmation(job: Job) {
       const smsBody = `Bekräftelse: ditt besked för avtal ${contract.contract_number} hos ${issuerLegalName} registrerades ${acceptedLabel}.`;
       const { data: sms, error: smsError } = await supabase.from("sms_messages").upsert({ tenant_id: job.tenant_id, customer_id: contract.customer_id, contract_id: request.contract_id, direction: "outbound", from_number: number.number_e164, to_number: recipient.phone_e164, body: smsBody, status: "queued", idempotency_key: idempotencyKey, purpose: "contract_confirmation" }, { onConflict: "tenant_id,idempotency_key" }).select("id").single();
       if (smsError || !sms) throw smsError ?? new Error("confirmation_sms_create_failed");
-      await supabase.from("contract_deliveries").upsert({ tenant_id: job.tenant_id, contract_id: request.contract_id, contract_version_id: request.contract_version_id, recipient_id: recipient.id, acceptance_request_id: request.id, channel: "sms", status: "queued", sms_message_id: sms.id, delivery_kind: "acceptance_confirmation", attempt_number: 1, canonical_document_id: acceptedDocument.id, canonical_document_sha256: acceptedDocument.sha256, idempotency_key: idempotencyKey, scheduled_at: new Date().toISOString() }, { onConflict: "tenant_id,idempotency_key" });
-      await supabase.from("outbox_jobs").upsert({ tenant_id: job.tenant_id, job_type: "sms.send", aggregate_type: "sms_message", aggregate_id: sms.id, payload: { sms_message_id: sms.id, acceptance_request_id: request.id, acceptance_id: acceptanceId || null }, idempotency_key: idempotencyKey, priority: 30 }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true });
+      await checkedDb(supabase.from("contract_deliveries").upsert({ tenant_id: job.tenant_id, contract_id: request.contract_id, contract_version_id: request.contract_version_id, recipient_id: recipient.id, acceptance_request_id: request.id, channel: "sms", status: "queued", sms_message_id: sms.id, delivery_kind: "acceptance_confirmation", attempt_number: 1, canonical_document_id: acceptedDocument.id, canonical_document_sha256: acceptedDocument.sha256, idempotency_key: idempotencyKey, scheduled_at: new Date().toISOString() }, { onConflict: "tenant_id,idempotency_key" }));
+      await checkedDb(supabase.from("outbox_jobs").upsert({ tenant_id: job.tenant_id, job_type: "sms.send", aggregate_type: "sms_message", aggregate_id: sms.id, payload: { sms_message_id: sms.id, acceptance_request_id: request.id, acceptance_id: acceptanceId || null }, idempotency_key: idempotencyKey, priority: 30 }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true }));
     }
   }
-  await supabase.from("contract_events").insert({ tenant_id: job.tenant_id, contract_id: request.contract_id, event_type: "contract.confirmation_queued", payload: { acceptance_request_id: request.id, acceptance_id: acceptanceId || null, signed_document_id: acceptedDocument.id, evidence_document_id: evidenceDocument?.id ?? null } });
+  await checkedDb(supabase.from("contract_events").insert({ tenant_id: job.tenant_id, contract_id: request.contract_id, event_type: "contract.confirmation_queued", payload: { acceptance_request_id: request.id, acceptance_id: acceptanceId || null, signed_document_id: acceptedDocument.id, evidence_document_id: evidenceDocument?.id ?? null } }));
 }
 
 
@@ -844,13 +870,13 @@ async function processWebhook(job: Job) {
     redirect: "error",
   });
   const responseBody = (await response.text()).slice(0, 4000);
-  await supabase.from("webhook_deliveries").update({
+  await checkedDb(supabase.from("webhook_deliveries").update({
     status: response.ok ? "completed" : "failed",
     response_status: response.status,
     response_body: responseBody,
     attempts: delivery.attempts + 1,
     next_attempt_at: response.ok ? null : new Date(Date.now() + 60_000).toISOString(),
-  }).eq("id", delivery.id);
+  }).eq("id", delivery.id));
   if (!response.ok) throw new Error(`webhook_http_${response.status}`);
 }
 
@@ -1001,7 +1027,7 @@ async function processTelephonyRetention(job: Job) {
     if (error) throw error;
   }
 
-  await supabase.from("audit_logs").insert({
+  await checkedDb(supabase.from("audit_logs").insert({
     tenant_id: job.tenant_id,
     actor_user_id: null,
     action: "telephony.retention_executed",
@@ -1015,10 +1041,19 @@ async function processTelephonyRetention(job: Job) {
       raw_events_scrubbed: legacyEventIds.length,
       raw_cutoff: rawCutoff,
     },
-  });
+  }));
 }
 
 async function processJob(job: Job) {
+  if (["docuseal.send", "docuseal.reconcile", "docuseal.cancel"].includes(job.job_type)) {
+    const response = await fetch(`${requireAppUrl()}/api/internal/documents/jobs`, { method: "POST",
+      headers: { "content-type": "application/json", "x-cron-secret": cronSecret },
+      body: JSON.stringify({ jobId: job.id }), redirect: "error", signal: AbortSignal.timeout(50_000) });
+    if (!response.ok) throw new Error(`documents_job_http_${response.status}`);
+    const result = await response.json() as { pending?: boolean };
+    if (result.pending) throw new Error("signing_pending");
+    return;
+  }
   if (job.job_type === "sms.send") return processSms(job);
   // Samtal startas i webbläsaren mot leverantörens webbtelefon, aldrig ur kön.
   if (job.job_type === "call.start") throw new Error("permanent_legacy_queued_voice_job_disabled_use_webphone");
@@ -1043,6 +1078,7 @@ async function processJob(job: Job) {
 Deno.serve(async (request) => {
   if (request.headers.get("x-cron-secret") !== cronSecret) return new Response("Forbidden", { status: 403 });
   const worker = `edge-${crypto.randomUUID()}`;
+  await checkedDb(supabase.rpc("reconcile_resend_delivery_events", { p_limit: 100 }));
   const { data: remindersEnqueued, error: reminderError } = await supabase.rpc("enqueue_due_contract_reminders", { p_limit: 100 });
   if (reminderError) return Response.json({ error: reminderError.message }, { status: 500 });
   const { data: jobs, error } = await supabase.rpc("claim_outbox_jobs", { p_worker: worker, p_limit: 25 });
@@ -1051,30 +1087,32 @@ Deno.serve(async (request) => {
   for (const job of (jobs ?? []) as Job[]) {
     try {
       await processJob(job);
-      await supabase.rpc("complete_outbox_job", { p_job_id: job.id });
+      const { data: settled, error: settleError } = await supabase.rpc("settle_outbox_job", { p_job_id: job.id, p_worker: worker });
+      if (settleError || !settled) throw new Error(settleError?.message ?? "outbox_lease_lost");
       results.push({ id: job.id, status: "completed" });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const permanent = message.startsWith("permanent_");
       if (permanent) {
-        await supabase.rpc("dead_letter_outbox_job", { p_job_id: job.id, p_error: message });
+        const settled = await checkedDb(supabase.rpc("settle_outbox_job", { p_job_id: job.id, p_worker: worker, p_error: message, p_permanent: true }));
+        if (!settled.data) { results.push({ id: job.id, status: "failed", error: "outbox_lease_lost" }); continue; }
         if (job.job_type === "email.send") {
-          await supabase.from("email_messages").update({ status: "dead_letter", provider_status: "dead_letter", error_message: message.slice(0, 500) }).eq("tenant_id", job.tenant_id).eq("id", job.aggregate_id);
-          await supabase.from("contract_deliveries").update({ status: "dead_letter", provider_status: "dead_letter", failure_code: "permanent_error", failure_message: message.slice(0, 500) }).eq("tenant_id", job.tenant_id).eq("email_message_id", job.aggregate_id);
+          await checkedDb(supabase.from("email_messages").update({ status: "dead_letter", provider_status: "dead_letter", error_message: message.slice(0, 500) }).eq("tenant_id", job.tenant_id).eq("id", job.aggregate_id));
+          await checkedDb(supabase.from("contract_deliveries").update({ status: "dead_letter", provider_status: "dead_letter", failure_code: "permanent_error", failure_message: message.slice(0, 500) }).eq("tenant_id", job.tenant_id).eq("email_message_id", job.aggregate_id));
         }
         if (job.job_type === "sms.send") {
-          await supabase.from("sms_messages").update({ status: "dead_letter", error_message: message.slice(0, 500) }).eq("tenant_id", job.tenant_id).eq("id", job.aggregate_id);
-          await supabase.from("contract_deliveries").update({ status: "dead_letter", provider_status: "dead_letter", failure_code: "permanent_error", failure_message: message.slice(0, 500) }).eq("tenant_id", job.tenant_id).eq("sms_message_id", job.aggregate_id);
+          await checkedDb(supabase.from("sms_messages").update({ status: "dead_letter", error_message: message.slice(0, 500) }).eq("tenant_id", job.tenant_id).eq("id", job.aggregate_id));
+          await checkedDb(supabase.from("contract_deliveries").update({ status: "dead_letter", provider_status: "dead_letter", failure_code: "permanent_error", failure_message: message.slice(0, 500) }).eq("tenant_id", job.tenant_id).eq("sms_message_id", job.aggregate_id));
         }
-        if (job.job_type === "contract.reminder.dispatch") await supabase.from("contract_reminders").update({ status: "failed", cancel_reason: message.slice(0, 200) }).eq("tenant_id", job.tenant_id).eq("id", job.aggregate_id);
+        if (job.job_type === "contract.reminder.dispatch") await checkedDb(supabase.from("contract_reminders").update({ status: "failed", cancel_reason: message.slice(0, 200) }).eq("tenant_id", job.tenant_id).eq("id", job.aggregate_id));
       } else {
-        await supabase.rpc("fail_outbox_job", {
-          p_job_id: job.id,
-          p_error: message,
-          p_delay_seconds: message === "reminder_quiet_hours_retry" ? 3600 : Math.min(3600, 2 ** Math.min(job.attempts, 10) * 15),
-        });
+        const settled = await checkedDb(supabase.rpc("settle_outbox_job", {
+          p_job_id: job.id, p_worker: worker, p_error: message,
+          p_delay_seconds: message === "signing_pending" ? 60 : message === "reminder_quiet_hours_retry" ? 3600 : Math.min(3600, 2 ** Math.min(job.attempts, 10) * 15),
+        }));
+        if (!settled.data) { results.push({ id: job.id, status: "failed", error: "outbox_lease_lost" }); continue; }
       }
-      results.push({ id: job.id, status: permanent ? "dead_letter" : "failed", error: message });
+      results.push({ id: job.id, status: message === "signing_pending" ? "retrying" : permanent ? "dead_letter" : "failed", error: message });
     }
   }
   return Response.json({ worker, reminders_enqueued: remindersEnqueued ?? 0, claimed: jobs?.length ?? 0, results, delivery: deliveryConfiguration() });

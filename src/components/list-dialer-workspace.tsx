@@ -7,7 +7,7 @@ import { Phone, PhoneOff, Pause, Play, StickyNote } from "@/components/icons";
 import { useDialerPanel } from "@/hooks/use-dialer";
 import { useCallRealtime } from "@/hooks/use-call-realtime";
 import { WebphoneAudioPanel } from "@/components/webphone-audio-panel";
-import { LiveCustomerCard } from "@/components/call-workspace/live-customer-card";
+import { LiveCustomerCard, type LiveCustomerCardHandle } from "@/components/call-workspace/live-customer-card";
 import { CallbackTimeField, OutcomePicker } from "@/components/call-workspace/outcome-picker";
 import type { OutcomeOption } from "@/lib/dialer/outcomes";
 
@@ -86,6 +86,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
   const [claim, setClaim] = useState<Claim | null>(null);
   const [callId, setCallId] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
+  const customerCardRef = useRef<LiveCustomerCardHandle | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dispositionKey, setDispositionKey] = useState("");
   const [notes, setNotes] = useState("");
@@ -330,6 +331,9 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
     const submitter = (event.nativeEvent as SubmitEvent).submitter;
     const createContractAfterSave = submitter instanceof HTMLButtonElement && submitter.value === "create_contract";
     if (!callId || !selectedDisposition || !sessionId) return;
+    if (!customerCardRef.current || !await customerCardRef.current.save()) {
+      setError("Kunduppgifterna måste sparas innan du går vidare."); return;
+    }
     const completedCallId = callId;
     // Fliken öppnas i klicket, annars stoppar webbläsaren den som popup. Avtalet
     // skrivs där medan ringsessionen står pausad här, i stället för att sidbytet
@@ -431,7 +435,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
         </div>
         {/* Kunden är i luren: kortet blir ett formulär. Uppgifterna sparas utan
             sidladdning, så samtalet i webbläsaren ligger kvar. */}
-        {phase === "calling" || phase === "after_call" ? <LiveCustomerCard customerId={claim.customer.id} heading={phase === "calling" ? "Fyll i under samtalet" : "Kunduppgifter"} /> : null}
+        {phase === "calling" || phase === "after_call" ? <LiveCustomerCard ref={customerCardRef} customerId={claim.customer.id} heading={phase === "calling" ? "Fyll i under samtalet" : "Kunduppgifter"} /> : null}
         <Link className="muted" href={`/app/customers/${claim.customer.id}`} target="_blank" rel="noopener">Öppna fullständigt kundkort i ny flik</Link>
       </section>
       <aside className="dialer-context-panel">

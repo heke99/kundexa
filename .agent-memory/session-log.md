@@ -1,5 +1,9 @@
 # Session log
 
+## 2026-10-13 Portad dokumentmotor och integrerat avtalsflöde
+
+Fortsatt implementation efter användarens ”porta delarna” och ”allt ska fungera med vårt projekt”. Granskat faktisk kod och DB, portat DocuSeal och anslutit den till Kundexas kundkort, PDF-mallar och outbox/signering. Rättat prioriterade fynd, stoppat direkta status-/policy-/prisändringar samt sena gamla signeringsordrar. Tre forward-migrationer applicerade i länkat projekt och typer regenererade. Webbbuild/Edge-typecheck/schema-replay och 21 riktade DB-prober PASS. Ingen testsvit, kundkontakt, merge eller webb/Edge-release utförd. Dokumentruntime saknar lokal Docker/Ruby; separat CI-build/boot tillagd. Riktig PDF/drift/credentials/mottagare behövs för livegodkännande. Geografitabellens ACL-rättning misslyckades och kvarstår öppet.
+
 ## 2026-09-24 (UI-städning)
 
 - Genomförde förslagen från UI-genomgången: tidslinje, färre kort på kundkortet, ett sökfält i dialern,

@@ -1,5 +1,14 @@
 # Decisions
 
+## 2026-10-13 Portad dokumentmotor och integrerat avtalsflöde
+
+- Vi portar användarens auktoriserade DocuSeal-källa i repot med läsbara Kundexa-tillägg och egen Rails-runtime. Vi byter inte till en Cloud-integration som ersättning för portningen.
+- Första externa PDF-flödet har en kundsignerare och e-postkanal. SMS/BankID får inte anges som live.
+- Fältkonfiguration och PDF låses med schemafingeravtryck. Kunddata fryses i avtalsversionen, och generation följer signeringsorder, källfil, länk och slutfil.
+- Providerarbete och bekräftelse går via outbox. Efter provider-HTTP köas inbjudan i transaktion under contract-lock. Sena gamla events får inte återuppliva avtal.
+- Vi verifierar kod/DB och riktade flöden enligt användarens prioritering; testsviter ersätter inte riktig leverantörsverifiering.
+- Databasmigrationer appliceras forward-only; lokala filversioner synkas med hosted migration history. Ingen huvudgren merge eller runtime-release i detta pass.
+
 ## ADR-0001 — Ett kanoniskt CRM
 
 `customers` är kund-/prospektkortet. Listmedlemskap, samtal, återkomster, anteckningar och order hålls i separata kanoniska tabeller; inga parallella kundkopior.

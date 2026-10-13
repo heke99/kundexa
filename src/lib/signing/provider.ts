@@ -1,3 +1,6 @@
+import "server-only";
+import { docusealProvider } from "./docuseal";
+
 export type IdentityAssuranceLevel = "low" | "substantial" | "high";
 export type SignatureMethod = "simple_click" | "email_otp" | "sms_otp" | "bankid" | "external_esign";
 
@@ -75,7 +78,7 @@ export interface SigningProvider {
   verifyWebhook(rawBody: Uint8Array, headers: Headers): VerifiedSigningEvent;
 }
 
-const providers = new Map<string, SigningProvider>();
+const providers = new Map<string, SigningProvider>([["docuseal", docusealProvider]]);
 
 export function registerSigningProvider(provider: SigningProvider) {
   if (!provider.name.trim()) throw new Error("signing_provider_name_required");

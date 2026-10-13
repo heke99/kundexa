@@ -1,5 +1,25 @@
 # Verification matrix
 
+## 2026-10-13 Portad dokumentmotor och integrerat avtalsflöde
+
+| Kontroll | Status |
+|---|---|
+| Web TypeScript och Next produktionsbuild | PASS, Node 24.19 (avsedd Node 22) |
+| Edge TypeScript | PASS |
+| SQL-schema från tom DB | PASS i PGlite, Supabase/pgcrypto-stubbar |
+| Tvåtenant/roll-, price/status-, idempotens/generation- och lease-prober | PASS, 21 riktade kontroller |
+| Tre hosted migrationer | APPLIED, lästa service-only RPC-rättigheter PASS |
+| Hosted genererade Supabase-typer | REGENERATED efter alla tre |
+| Git diff whitespace / build.sh syntax | PASS |
+| Application test suites / npm run verify | NOT RUN enligt användarens prioritering |
+| Rails/Docker build/boot | NOT RUN lokalt, separat GitHub-jobb tillagt |
+| Riktiga JWT/Storage/säljarbrowser | NOT RUN |
+| Sinch samtal / Resend e-post / kundsignatur / signerad kopia | NOT RUN |
+| Production web/Edge deployment | NOT DONE |
+| Supabase Security Advisor | Öppna äldre avvikelser; spatial_ref_sys kvarstår ERROR |
+
+Källkod och databaskontroller är inte ett livegodkännande. Äldre PASS-tabeller nedan avser äldre pass.
+
 | Område | Kontroll | Status 2026-08-07 |
 |---|---|---|
 | Dependencyinstallation | `npm ci` | PASS (150 paket, Node 22.22.2/npm 10.9.7) |

@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createCanonicalContractSnapshot } from "@/lib/contracts/canonical-contract-snapshot";
 import { generateContractPdf } from "@/lib/contracts/generate-contract-pdf";
 import { hashPdfBytes } from "@/lib/contracts/document-hash";
+import { pdfConfiguration, renderPdfTemplate } from "./pdf-template";
 
 export type CanonicalDocumentResult = {
   id: string;
@@ -25,7 +26,7 @@ export async function ensureCanonicalContractDocument(
   if (contractError || !contract?.active_version_id) throw new Error(contractError?.message ?? "contract_or_active_version_missing");
   if (!contract.source_call_id) throw new Error("source_call_required_before_canonical_pdf");
 
-  const { data: existing } = await supabase
+  const { data: existing, error: existingError } = await supabase
     .from("contract_documents")
     .select("id,sha256,file_name,storage_path,size_bytes,metadata")
     .eq("tenant_id", input.tenantId)
@@ -36,6 +37,7 @@ export async function ensureCanonicalContractDocument(
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  if (existingError) throw new Error(existingError.message);
   if (existing) {
     return {
       id: existing.id,
@@ -72,7 +74,14 @@ export async function ensureCanonicalContractDocument(
     },
     { id: call.id, ended_at: call.ended_at, disposition: call.disposition, user_id: call.user_id },
   );
-  const bytes = await generateContractPdf(snapshot, snapshotHash);
+  const { data: templateVersion, error: templateError } = version.template_version_id
+    ? await supabase.from("contract_template_versions").select("signing_configuration")
+      .eq("tenant_id", input.tenantId).eq("id", version.template_version_id).single()
+    : { data: null, error: null };
+  if (templateError) throw new Error(templateError.message);
+  const pdfTemplate = pdfConfiguration(templateVersion?.signing_configuration);
+  const pdfRender = pdfTemplate ? await renderPdfTemplate(pdfTemplate, snapshot, input.tenantId) : null;
+  const bytes = pdfRender?.bytes ?? await generateContractPdf(snapshot, snapshotHash);
   if (bytes.byteLength > 20 * 1024 * 1024) throw new Error("generated_contract_pdf_exceeds_20_mb");
   const fileName = `${contract.contract_number}.pdf`.replace(/[^a-zA-Z0-9._-]/g, "_");
   const storagePath = `${input.tenantId}/${input.contractId}/${version.id}/${fileName}`;
@@ -102,7 +111,8 @@ export async function ensureCanonicalContractDocument(
     mime_type: "application/pdf",
     size_bytes: canonicalBytes.byteLength,
     sha256: pdfHash,
-    metadata: { canonical: true, snapshot_hash: snapshotHash, schema_version: snapshot.schema_version, generated_at: snapshot.generated_at },
+    metadata: { canonical: true, snapshot_hash: snapshotHash, schema_version: snapshot.schema_version, generated_at: snapshot.generated_at,
+      ...(pdfTemplate ? { provider: "docuseal", pdf_template: pdfTemplate, field_values: pdfRender!.values } : {}) },
   }, { onConflict: "tenant_id,storage_path" }).select("id,sha256,file_name,storage_path,size_bytes").single();
   if (documentError || !document) {
     if (!uploadError) await supabase.storage.from("contract-documents").remove([storagePath]);
@@ -113,13 +123,14 @@ export async function ensureCanonicalContractDocument(
     .update({ snapshot_hash: snapshotHash })
     .eq("tenant_id", input.tenantId).eq("id", version.id).is("locked_at", null);
   if (versionUpdateError) throw new Error(versionUpdateError.message);
-  await supabase.from("contract_events").insert({
+  const { error: eventError } = await supabase.from("contract_events").insert({
     tenant_id: input.tenantId,
     contract_id: input.contractId,
     event_type: "document.canonical_generated",
     actor_user_id: input.actorUserId,
     payload: { document_id: document.id, snapshot_hash: snapshotHash, pdf_sha256: pdfHash, size_bytes: canonicalBytes.byteLength },
   });
+  if (eventError) throw new Error(eventError.message);
 
   return { ...document, size_bytes: Number(document.size_bytes ?? canonicalBytes.byteLength), snapshot_hash: snapshotHash };
 }

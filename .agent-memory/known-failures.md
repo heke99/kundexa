@@ -1,5 +1,13 @@
 # Known failures
 
+## 2026-10-13 Portad dokumentmotor och integrerat avtalsflöde
+
+- KX26 24: REVOKE i första nya migrationen på `spatial_ref_sys` gav inte avsedd effekt; readback visar äldre skrivrättigheter. Owner `supabase_admin`, aktuell roll `postgres` utan medlemskap. Håll OPEN.
+- Docker, Ruby och podman saknas lokalt; OS-packageinstallation blockeras av setgroups/setuid. Rails build/boot NOT RUN, inte ett PASS.
+- Git push saknar CLI-credentials; använd GitHub Git-data-connector för redan godkänd publicering. Inga secrets ska skrivas ut eller checkas in.
+- Nytt generationrace hittades i kodgranskning: providerordern kan lyckas efter omskick/avbrott. Atomisk invitation-RPC och terminal-/completion-guards införda och negativa DB-prober PASS.
+- Lokala DB-fixtures behöver aktivt primärteam för sales och Supabase-liknande tabellgrants. PGlite är inte hosted JWT/Storage eller kryptografisk verifiering.
+
 ## FAILURE-0001 — Composite FK nollade tenant_id
 
 - Upptäckt: `split_customer_list_to_team` misslyckades med SQLSTATE 23502 när källmedlem raderades.

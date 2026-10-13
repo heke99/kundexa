@@ -1,5 +1,15 @@
 # Next actions
 
+## 2026-10-13 Portad dokumentmotor och integrerat avtalsflöde
+
+1. Läs `docs/DOCUMENT_ENGINE_OPERATIONS.md` och implementationens PR. Kontrollera separata Docker-jobbets build/boot; lokalt Docker/Ruby saknas.
+2. Kör dokumentmotor på vald HTTPS-containerhost och konfigurera dedicated service account via bootstrap; injicera server-only env i webbruntime.
+3. Lägg in riktig PDF för produkt och avsändarbolag, mappa kundfält samt signatur, lås och godkänn version; komplettera prisdata.
+4. Publicera kompatibel webb och process-outbox; verifiera Resend-webhook. Ingen merge/release har redan gjorts.
+5. Kör kontrollerad faktisk resa samt två riktiga JWT-sessioner: kundsparande → samtalsutfall → ifylld PDF → mejl → signatur → samma slutfil för kund/säljare.
+6. Kontrollera omskick/avbrott/gammal länk, leveransfel och leaseåterhämtning, sedan aktivering.
+7. Åtgärda kvarvarande KX26/UI-fynd och geografitabellens ACL med behörig ägarroll; BankID separat.
+
 ## 2026-10-13 Full återanvändning av DocuSeal och byggordning
 
 Följ docs/KUNDEXA_BUILD_WITH_DOCUSEAL.md: skydda avtals-/kundgrund och sparande; inventera och avgränsa auktoriserad dokumentkod; inför PDF-fältkoppling/versioner; bygg enkel säljarresa och riktig extern signeringskedja; rätta telefoni och verifiera drift. BankID är senare separat adapter.

@@ -22,7 +22,7 @@ export async function respondPublicContract(formData: FormData) {
   const tokenHash = sha256(token + env.KUNDEXA_WEBHOOK_PEPPER);
   const { data: request } = await admin
     .from("contract_acceptance_requests")
-    .select("id,tenant_id,status,expires_at,require_code,canonical_document_id,canonical_document_sha256")
+    .select("id,tenant_id,status,expires_at,require_code,canonical_document_id,canonical_document_sha256,contract_version_id")
     .eq("public_token_hash", tokenHash)
     .single();
   if (!request) redirect(`/accept/${token}?error=Länken är ogiltig`);
@@ -57,13 +57,17 @@ export async function respondPublicContract(formData: FormData) {
   if (!allowed) redirect(`/accept/${token}?error=För många försök. Försök igen senare.`);
 
   const requestHeaders = await headers();
+  const { data: version, error: versionError } = await admin.from("contract_versions").select("signature_policy_snapshot")
+    .eq("tenant_id", request.tenant_id).eq("id", request.contract_version_id).single();
+  if (versionError || !version) redirect(`/accept/${token}?error=Tjänsten är tillfälligt otillgänglig`);
+  const policyMethod = (version.signature_policy_snapshot as Record<string,unknown> | null)?.method;
   const ip = requestHeaders.get("x-forwarded-for")?.split(",")[0]?.trim() ?? requestHeaders.get("x-real-ip") ?? null;
   const userAgent = requestHeaders.get("user-agent");
   const accepted = parsed.data.decision === "accept";
   const acceptanceText = accepted ? ACCEPTANCE_TEXT : DECLINE_TEXT;
   const { error } = await admin.rpc("record_contract_acceptance_v3", {
     p_request_id: request.id,
-    p_method: "web",
+    p_method: policyMethod === "email_otp" ? "email_otp" : policyMethod === "sms_otp" ? "sms_otp" : "web",
     p_status: accepted ? "accepted_via_web" : "declined",
     p_raw_response: accepted ? "WEB_ACCEPT" : "WEB_DECLINE",
     p_normalized_response: accepted ? "WEB_ACCEPT" : "WEB_DECLINE",

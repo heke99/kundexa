@@ -158,6 +158,7 @@ export function useAudioDevices() {
 
   const selectOutput = useCallback((deviceId: string) => {
     store(OUTPUT_KEY, deviceId);
+    window.dispatchEvent(new Event("kundexa:audio-output-change"));
     setState((previous) => ({ ...previous, outputId: deviceId }));
   }, []);
 
