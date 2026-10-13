@@ -6,6 +6,9 @@ on:
     paths: ['services/documents/**', '.github/workflows/documents-build.yml']
 permissions:
   contents: read
+concurrency:
+  group: documents-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   document-engine:
     runs-on: ubuntu-latest
@@ -37,9 +40,9 @@ jobs:
             sleep 2
           done
           curl --fail http://127.0.0.1:3100/up
-          docker exec documents /app/bin/rails runner "Kundexa::Bootstrap.call"
-          curl --fail --silent -H 'X-Auth-Token: isolated-ci-api-key-at-least-32-characters' http://127.0.0.1:3100/api/templates
-          docker exec documents /app/bin/rails zeitwerk:check
+          docker exec -w /app documents /app/bin/rails runner "Kundexa::Bootstrap.call"
+          curl --fail --silent --location -H 'X-Auth-Token: isolated-ci-api-key-at-least-32-characters' http://127.0.0.1:3100/api/templates
+          docker exec -w /app documents /app/bin/rails zeitwerk:check
       - name: Probe PDF field and submission flow
         env:
           DOCUMENTS_CHECK_URL: http://localhost:3100
