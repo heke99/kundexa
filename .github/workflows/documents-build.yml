@@ -41,6 +41,7 @@ jobs:
           done
           curl --fail http://127.0.0.1:3100/up
           docker exec -w /app documents /app/bin/rails runner "Kundexa::Bootstrap.call"
+          docker exec -w /app documents /app/bin/rails runner "before = Account.find_by!(name: 'Kundexa documents').encrypted_configs.find_by!(key: EncryptedConfig::ESIGN_CERTS_KEY).value; Kundexa::Bootstrap.call; abort('certificate_changed_on_bootstrap_replay') unless before == Account.find_by!(name: 'Kundexa documents').encrypted_configs.find_by!(key: EncryptedConfig::ESIGN_CERTS_KEY).value"
           curl --fail --silent --location -H 'X-Auth-Token: isolated-ci-api-key-at-least-32-characters' http://127.0.0.1:3100/api/templates
           docker exec -w /app documents /app/bin/rails zeitwerk:check
       - name: Probe PDF field and submission flow

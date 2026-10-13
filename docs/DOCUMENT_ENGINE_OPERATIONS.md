@@ -28,7 +28,7 @@ tidigare kundlänkar. Köläggning sker atomiskt efter kontroll av aktuell gener
 
 | Kontroll | Status |
 |---|---|
-| Webbens typkontroll och produktionsbuild | PASS |
+| Webbens typkontroll och produktionsbuild | PASS lokalt och i ordinarie CI run 38465724911 |
 | Edge-typkontroll | PASS |
 | Samtliga SQL-migrationer från tomt lokalt schema | PASS i PGlite med Supabase-stubbar |
 | 24 riktade databaskontroller, två tenants, säljare/läsroll, idempotens, generation och lease | PASS lokalt |
@@ -74,7 +74,7 @@ startar inte denna Rails-/Postgres-tjänst. Driftmål och credentials saknas i d
    `docker compose --env-file services/documents/.env -f services/documents/compose.yaml up -d`.
    Kontrollera först Docker-jobbet i PR. Pinna därefter även databasimage till digest.
 3. Kör `docker compose --env-file services/documents/.env -f services/documents/compose.yaml exec -T documents /app/bin/rails runner "Kundexa::Bootstrap.call"`.
-   Kommandot skapar en dedikerad konto/användare och sätter API-nyckeln utan att skriva ut den.
+   Kommandot skapar ett dedikerat konto/användare, sätter API-nyckeln och initierar det lokala integritetscertifikatet utan att skriva ut hemligheter. Omkörning bevarar certifikatet. Ritad/textsignatur och detta certifikat är inte BankID.
 4. Sätt HTTPS-proxy till loopback-port 3100. Konfigurera `X-Forwarded-Proto` korrekt
    eftersom `FORCE_SSL=true`. Säkerhetskopiera båda volymerna och verifiera återläsning.
 5. Sätt webbmiljöns `KUNDEXA_DOCUMENTS_URL`, `KUNDEXA_DOCUMENTS_API_KEY` och

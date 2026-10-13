@@ -1,5 +1,7 @@
 # Open blockers
 
+Kundexas ordinarie CI run 38465724911 PASS. Utökad dokumentkörning signerade via kundformuläret men slut-PDF/bevis stoppades av saknad ESIGN_CERTS_KEY i bootstrap. Uppstarten kompletterad med native GenerateCertificate i krypterad konto-konfiguration och replay-kontroll som bevarar certifikatet; ny CI återstår.
+
 Efter utökad CI: språkfelet ”sv is not a valid locale” i kundens riktiga formulär hittat och rättat med Rails-locale samt svenska Vue-texter. Statisk readiness-kontroll uppdaterad för samma probe i ny kodform. Utökad signatur/slut-PDF-beviskörning inväntar omkörning. Inget driftmål valdes; production web/Edge/engine är inte releasade.
 
 Dokumentmotor: build, HTTP-start, Railsloader och isolerat PDF-fält-/preview-/idempotensflöde PASS i GitHub run 38403830145. Utökad syntetisk kundsignatur/slutfil/bevis-probe inväntar CI. Verklig Kundexa/Resend/Sinch-resa är fortsatt NOT RUN.

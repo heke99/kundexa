@@ -1,5 +1,7 @@
 # Current state
 
+Kundexas ordinarie CI run 38465724911 PASS. Utökad dokumentkörning signerade via kundformuläret men slut-PDF/bevis stoppades av saknad ESIGN_CERTS_KEY i bootstrap. Uppstarten kompletterad med native GenerateCertificate i krypterad konto-konfiguration och replay-kontroll som bevarar certifikatet; ny CI återstår.
+
 Efter utökad CI: språkfelet ”sv is not a valid locale” i kundens riktiga formulär hittat och rättat med Rails-locale samt svenska Vue-texter. Statisk readiness-kontroll uppdaterad för samma probe i ny kodform. Utökad signatur/slut-PDF-beviskörning inväntar omkörning. Inget driftmål valdes; production web/Edge/engine är inte releasade.
 
 Dokumentmotor: build, HTTP-start, Railsloader och isolerat PDF-fält-/preview-/idempotensflöde PASS i GitHub run 38403830145. Utökad syntetisk kundsignatur/slutfil/bevis-probe inväntar CI. Verklig Kundexa/Resend/Sinch-resa är fortsatt NOT RUN.
@@ -13,7 +15,7 @@ Detta avsnitt ersätter tidigare uppgifter om att ingen runtimekod importerats. 
 - Kundsparande, säljarens kommersiella begränsningar, API-tenantstatus, OTP-metod, telefoni/ljud/DTMF/återhämtning, outboxlease och leveransavstämning har kodrättningar.
 - Fyra nya migrationer applicerade i länkat Kundexa: `20261013121657`, `20261013123756`, `20261013125758`, `20261013132203`. Supabase-typer regenererade efter sista migrationen.
 - Webbtypkontroll+build, Edge-typkontroll, schema-replay och 24 lokala riktade DB-prober PASS. Inga applikationstestsviter kördes lokalt enligt användarens prioritering.
-- Docker/Rails build/boot och verkliga samtal/utskick/signering/JWT/UI är NOT RUN. Dokumenthost/credentials och slutlig produktmall återstår. BankID framtida.
+- Docker/Rails build, boot och PDF-fältflöde PASS i CI; verkliga samtal/utskick/signering/JWT/UI är NOT RUN. Dokumenthost/credentials och slutlig produktmall återstår. BankID framtida.
 - `spatial_ref_sys`-rättningen saknade effekt eftersom tillgänglig roll inte äger objektet; fynd KX26 24 kvarstår OPEN.
 
 Aktuell driftinstruktion och exakt omfattning: `docs/DOCUMENT_ENGINE_OPERATIONS.md`.

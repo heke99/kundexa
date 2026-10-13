@@ -18,6 +18,17 @@ module Kundexa
           user = account.users.create!(email:, password:, first_name: 'Kundexa', last_name: 'Documents')
         end
         user.access_token.update!(token:)
+        # Native setup initializes signing material before accepting submissions.
+        # Keep the same certificate on reruns: historical PDFs must not change key.
+        account = user.account
+        account.with_lock do
+          account.encrypted_configs.create_or_find_by!(key: EncryptedConfig::ESIGN_CERTS_KEY) do |config|
+            config.value = GenerateCertificate.call('Kundexa').transform_values(&:to_pem)
+          end
+          account.encrypted_configs.create_or_find_by!(key: EncryptedConfig::APP_URL_KEY) do |config|
+            config.value = ENV.fetch('APP_URL')
+          end
+        end
       end
       puts 'Kundexa document service account configured'
     end
