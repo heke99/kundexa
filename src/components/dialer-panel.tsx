@@ -6,7 +6,7 @@ import { Phone, PhoneOff, Radio } from "@/components/icons";
 import { useDialerPanel } from "@/hooks/use-dialer";
 import { useCallRealtime } from "@/hooks/use-call-realtime";
 import { WebphoneAudioPanel } from "@/components/webphone-audio-panel";
-import { LiveCustomerCard } from "@/components/call-workspace/live-customer-card";
+import { LiveCustomerCard, type LiveCustomerCardHandle } from "@/components/call-workspace/live-customer-card";
 import { CallbackTimeField, OutcomePicker } from "@/components/call-workspace/outcome-picker";
 import { manualOutcomeOptions } from "@/lib/dialer/outcomes";
 
@@ -78,6 +78,7 @@ export function DialerPanel({
   const [notes, setNotes] = useState("");
   const [callbackScope, setCallbackScope] = useState<"personal" | "global">("personal");
   const [callbackDueAt, setCallbackDueAt] = useState("");
+  const customerCardRef = useRef<LiveCustomerCardHandle | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [endMessage, setEndMessage] = useState<string | null>(null);
   const requestKeyRef = useRef<string | null>(null);
@@ -196,6 +197,9 @@ export function DialerPanel({
     const createContractAfterSave = submitter instanceof HTMLButtonElement && submitter.value === "create_contract";
     if (!callId || !disposition) return;
     setError(null);
+    if (!customerCardRef.current || !await customerCardRef.current.save()) {
+      setError("Kunduppgifterna måste sparas innan du går vidare."); return;
+    }
     const response = await fetch("/api/v1/calls/complete", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -352,7 +356,7 @@ export function DialerPanel({
     {/* Kunden i luren: kortet öppnas och uppgifterna sparas utan sidladdning, så
         samtalet i webbläsaren och efterarbetet ligger kvar. */}
     {callId && selected ? (liveSlot
-      ? createPortal(<LiveCustomerCard customerId={selected} heading={afterCall ? "Samtalet är avslutat" : "Pågående samtal · fyll i uppgifterna"} fullCardLink={!lockedToCustomer} />, liveSlot)
-      : <div className="phone-panel-live"><LiveCustomerCard customerId={selected} heading={afterCall ? "Kunduppgifter" : "Fyll i under samtalet"} fullCardLink={!lockedToCustomer} /></div>) : null}
+      ? createPortal(<LiveCustomerCard ref={customerCardRef} customerId={selected} heading={afterCall ? "Samtalet är avslutat" : "Pågående samtal · fyll i uppgifterna"} fullCardLink={!lockedToCustomer} />, liveSlot)
+      : <div className="phone-panel-live"><LiveCustomerCard ref={customerCardRef} customerId={selected} heading={afterCall ? "Kunduppgifter" : "Fyll i under samtalet"} fullCardLink={!lockedToCustomer} /></div>) : null}
   </div>;
 }

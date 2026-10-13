@@ -14,6 +14,7 @@ import { TemplateFieldButtons } from "@/components/template-field-buttons";
 import { formatDate } from "@/lib/utils";
 import { getAppContext } from "@/lib/auth";
 import { can } from "@/lib/permissions";
+import { PdfTemplateCreateForm } from "@/components/pdf-template-create-form";
 
 type TemplateVersion = { id: string; version: number; status: string; approved_at: string | null; created_at: string };
 
@@ -34,6 +35,8 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Pr
   const preselected = params.product_id && productName.has(params.product_id) && !taken.has(params.product_id) ? params.product_id : "";
 
   return <>
+    {mayAuthor ? <Card><CardContent><PdfTemplateCreateForm products={(products ?? []).filter(product => !taken.has(product.id))}
+      legalEntities={legalEntities ?? []} productId={preselected} legalEntityId={legalEntities?.find(entity => entity.is_default)?.id} /></CardContent></Card> : null}
     <PageHeader title="Avtalsmallar" description="Varje avtal hör till en produkt. Säljaren väljer produkten och får avtalet med kundens uppgifter ifyllda." />
     {params.error ? <p className="form-error">{params.error}</p> : null}
     {params.message ? <div className="notice">{params.message}</div> : null}

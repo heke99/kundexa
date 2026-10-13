@@ -1,5 +1,15 @@
 # Known failures
 
+Slutstatus 2026-10-13: kodcommit `6ebccff2f6617bfde273442a70e1553deb497c8b` i PR #54 har både ordinarie CI (`38466613716`) och dokumentmotor-CI (`38466613911`) PASS. Dokumentkörningen omfattar PDF-uppladdning, fältplacering/låsning, förifyllning, manipulation av skrivskyddat fält (nekad), idempotens, syntetisk kundsignatur, signerad slut-PDF och audit-PDF. Bootstrap-replay bevarar signeringscertifikatet. 24 lokala DB-prober PASS och fyra migrationer applicerade. Verkligt Kundexa → Sinch/Resend → kund → privat slutfil är NOT RUN. Ingen merge eller produktionsrelease. Driftmål/credentials och slutlig produktmall/pris saknas; inga kundmeddelanden har skickats. BankID och kvarstående oktoberfynd är fortsatt öppna.
+
+## 2026-10-13 Portad dokumentmotor och integrerat avtalsflöde
+
+- KX26 24: REVOKE i första nya migrationen på `spatial_ref_sys` gav inte avsedd effekt; readback visar äldre skrivrättigheter. Owner `supabase_admin`, aktuell roll `postgres` utan medlemskap. Håll OPEN.
+- Docker, Ruby och podman saknas lokalt; OS-packageinstallation blockeras av setgroups/setuid. Rails build/boot NOT RUN, inte ett PASS.
+- Git push saknar CLI-credentials; använd GitHub Git-data-connector för redan godkänd publicering. Inga secrets ska skrivas ut eller checkas in.
+- Nytt generationrace hittades i kodgranskning: providerordern kan lyckas efter omskick/avbrott. Atomisk invitation-RPC och terminal-/completion-guards införda och negativa DB-prober PASS.
+- Lokala DB-fixtures behöver aktivt primärteam för sales och Supabase-liknande tabellgrants. PGlite är inte hosted JWT/Storage eller kryptografisk verifiering.
+
 ## FAILURE-0001 — Composite FK nollade tenant_id
 
 - Upptäckt: `split_customer_list_to_team` misslyckades med SQLSTATE 23502 när källmedlem raderades.
@@ -1920,3 +1930,19 @@ regressionstest; varje test fallerar utan sin rättelse.
 - **0141** Avbryt/förläng avtal och stoppa påminnelser prövade inte avtalsåtkomsten. Nu avgör avtalets RLS.
 - Kantfall: kön gav en återkomst vars kund saknar listplats tillsammans med ett annat prospekt. Åtgärdat
   i `claim_next_list_member`.
+
+## 2026-10-13 Aktuella öppna fynd
+
+Fyndregistret KX26 01–28 finns i `docs/reviews/2026-10-13/production-audit.md`.
+SIGN 01–03 och UI 01–12 finns i `docs/reviews/2026-10-13/signing-and-seller-review.md`.
+Registren överlappar delvis och ska inte summeras till ett antal unika fel.
+Status: OPEN, belagda genom kod/live DB eller uttryckligen villkorade kodkedjor.
+Ingen rättning eller ny incidentbekräftelse gjordes i dokumentationspasset.
+
+## 2026-10-13 PDF-fältkrav som saknad förmåga
+
+PDF-mallar med kundkortskopplade placerbara fält är inte implementerade. Detta är ett nytt produktkrav, inte ytterligare ett verifierat runtimefel eller en rättning av SIGN 01. Tidigare KX26/SIGN/UI-fynd kvarstår OPEN.
+
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Ingen befintlig defekt rättad genom det nya återanvändningsmandatet eller byggplanen. Fyndstatus kvarstår OPEN. Faktiskt Pro-/speciallevererat källmaterial är ännu inte inspekterat; ingen sådan modul antas redan installerad.

@@ -272,11 +272,17 @@ export async function POST(request: Request) {
     }
     reserved = result.data as unknown as Reservation;
     if (reserved.idempotentReplay) {
+      const { data: priorAttempt, error: priorError } = await supabase.from("dial_attempts")
+        .select("id,destination_number_e164,external_call_id,status")
+        .eq("tenant_id", context.tenantId).eq("call_id", reserved.callId).eq("seller_user_id", context.userId).maybeSingle();
+      if (priorError) throw new Error("reservation_recovery_unavailable");
       const uncertain = ["provider_outcome_unknown", "reconciliation_required", "unknown"]
         .includes(reserved.attemptStatus ?? reserved.providerStatus ?? reserved.status);
       const active = reserved.callActive ?? false;
       return apiJson(correlationId, {
         callId: reserved.callId,
+        ...(priorAttempt && !priorAttempt.external_call_id && ["reserved","requested"].includes(priorAttempt.status)
+          ? { attemptId: priorAttempt.id, to: priorAttempt.destination_number_e164 } : {}),
         status: reserved.status,
         attemptStatus: reserved.attemptStatus ?? reserved.status,
         providerStatus: reserved.providerStatus ?? "unknown",

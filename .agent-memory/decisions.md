@@ -1,5 +1,16 @@
 # Decisions
 
+Slutstatus 2026-10-13: kodcommit `6ebccff2f6617bfde273442a70e1553deb497c8b` i PR #54 har både ordinarie CI (`38466613716`) och dokumentmotor-CI (`38466613911`) PASS. Dokumentkörningen omfattar PDF-uppladdning, fältplacering/låsning, förifyllning, manipulation av skrivskyddat fält (nekad), idempotens, syntetisk kundsignatur, signerad slut-PDF och audit-PDF. Bootstrap-replay bevarar signeringscertifikatet. 24 lokala DB-prober PASS och fyra migrationer applicerade. Verkligt Kundexa → Sinch/Resend → kund → privat slutfil är NOT RUN. Ingen merge eller produktionsrelease. Driftmål/credentials och slutlig produktmall/pris saknas; inga kundmeddelanden har skickats. BankID och kvarstående oktoberfynd är fortsatt öppna.
+
+## 2026-10-13 Portad dokumentmotor och integrerat avtalsflöde
+
+- Vi portar användarens auktoriserade DocuSeal-källa i repot med läsbara Kundexa-tillägg och egen Rails-runtime. Vi byter inte till en Cloud-integration som ersättning för portningen.
+- Första externa PDF-flödet har en kundsignerare och e-postkanal. SMS/BankID får inte anges som live.
+- Fältkonfiguration och PDF låses med schemafingeravtryck. Kunddata fryses i avtalsversionen, och generation följer signeringsorder, källfil, länk och slutfil.
+- Providerarbete och bekräftelse går via outbox. Efter provider-HTTP köas inbjudan i transaktion under contract-lock. Sena gamla events får inte återuppliva avtal.
+- Vi verifierar kod/DB och riktade flöden enligt användarens prioritering; testsviter ersätter inte riktig leverantörsverifiering.
+- Databasmigrationer appliceras forward-only; lokala filversioner synkas med hosted migration history. Ingen huvudgren merge eller runtime-release i detta pass.
+
 ## ADR-0001 — Ett kanoniskt CRM
 
 `customers` är kund-/prospektkortet. Listmedlemskap, samtal, återkomster, anteckningar och order hålls i separata kanoniska tabeller; inga parallella kundkopior.
@@ -263,3 +274,19 @@ till `failed`.
 ## ADR-0030 — Plattformsadmin delar ut listor den tilldelat
 - Teamledare och ägare delar ut som förut (`set_customer_list_sharing`). Plattformsadmin saknar medlemskap i företaget
   och får därför egna funktioner som härleder företaget ur tilldelningen och avvisar team från andra företag.
+
+## 2026-10-13 Planeringsinriktning för signering
+
+Användarkrav: fynd ska sparas och avtal ska kunna skickas/signeras; BankID ska kunna införas senare.
+Föreslagen arkitektur: Kundexa äger avtalsversion, produkt, rättigheter, utskick och CRM-status.
+Signering sker genom provideradaptrar; DocuSeal är rekommenderat alternativ, ännu inte beställd drift.
+BankID är separat signeringskapabilitet och får inte likställas med login eller simple_click.
+Befintligt stöd för verkligt manuellt registrerat källsamtal bevaras i planen.
+
+## 2026-10-13 Användarkrav och publiceringsmandat
+
+Användaren godkände uttryckligen GitHub-publiceringen efter tidigare automatisk avvisning. PDF-byggaren hör till behörig administration; säljaren använder kundkortet. Kundexa äger fältkoppling/versioner/policy. DocuSeal föreslås som separat adaptertjänst; val av betalplan/drift är ännu öppet. BankID hålls separat från mall och enkel autentisering.
+
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Arbetsförutsättning från användaren: godkännande till hela DocuSeal-projektets återanvändning som egen lösning. Rekommenderad teknisk gräns är en egen anpassad dokumenttjänst bakom Kundexa, inte omskrivning av hela dokumentmotorn till Next.js. Kundexa äger CRM, pris, rättigheter, status och kundkortskoppling. Inget nytt köpmandat efterfrågas för redan auktoriserad kodåteranvändning.

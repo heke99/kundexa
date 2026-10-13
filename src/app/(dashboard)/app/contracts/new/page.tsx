@@ -35,6 +35,7 @@ export default async function NewContractPage({ searchParams }: { searchParams: 
   // språk, kanal och ägare följer med som dolda fält i stället för fyra val
   // med ett enda rimligt svar.
   const isSeller = ctx.role === "sales";
+  const canOverrideTerms = ["owner", "admin", "contract_manager"].includes(ctx.role);
   if (!mayWrite) {
     return <>
       <Link href="/app/contracts" className="muted" style={{ display: "inline-flex", gap: 6, alignItems: "center", marginBottom: 16 }}><ArrowLeft size={15} /> Till avtal</Link>
@@ -196,10 +197,12 @@ export default async function NewContractPage({ searchParams }: { searchParams: 
               <div className="form-stack" style={{ marginTop: 12 }}>
                 <Field label="Avtalstitel" name="title" placeholder="Produktens namn" />
                 <div className="grid grid-2"><Field label="Startdatum" name="starts_on" type="date" defaultValue={dateInput(now)} /><Field label="Slutdatum (valfritt)" name="ends_on" type="date" /></div>
+                {canOverrideTerms ? <>
                 <div className="grid grid-2"><Field label="Bindningstid, månader" name="binding_months" type="number" min={0} max={240} placeholder="Från produkten" /><Field label="Uppsägningstid, månader" name="notice_months" type="number" min={0} max={120} placeholder="Från produkten" /></div>
                 <div className="grid grid-2"><Field label="Betalningsvillkor, dagar" name="payment_terms_days" type="number" min={0} max={365} placeholder="Från produkten" /><Field label="Avtalsvärde" name="contract_value" type="number" min={0} step="0.01" placeholder="Från produkten" /></div>
+                </> : null}
                 {isSeller ? <><input type="hidden" name="currency" value="SEK" /><input type="hidden" name="language" value="sv" /></> : <div className="grid grid-2"><Field label="Valuta" name="currency" defaultValue="SEK" minLength={3} maxLength={3} required /><SelectField label="Språk" name="language" defaultValue="sv"><option value="sv">Svenska</option><option value="en">Engelska</option></SelectField></div>}
-                <TextareaField label="Särskilda villkor" name="special_terms" placeholder="Valfritt" />
+                {canOverrideTerms ? <TextareaField label="Särskilda villkor" name="special_terms" placeholder="Valfritt" /> : null}
                 {isSeller ? <><input type="hidden" name="owner_user_id" value={ctx.userId} />{sellerTeams.length > 1
                   ? <SelectField label="Team" name="team_id" defaultValue={sellerTeams[0].id}>{sellerTeams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</SelectField>
                   : <input type="hidden" name="team_id" value={sellerTeams[0]?.id ?? ""} />}</> : <div className="grid grid-2"><SelectField label="Ansvarig säljare" name="owner_user_id" defaultValue={ctx.userId} required>{selectableMembers.map((member) => { const profile = Array.isArray(member.profiles) ? member.profiles[0] : member.profiles; return <option key={member.user_id} value={member.user_id}>{profile?.full_name ?? member.user_id} · {member.role}</option>; })}</SelectField><SelectField label="Team" name="team_id" defaultValue={selectableTeams.find((team) => ctx.teamIds.includes(team.id))?.id ?? ""}><option value="">Inget team</option>{selectableTeams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</SelectField></div>}

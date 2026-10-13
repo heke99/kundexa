@@ -1,5 +1,42 @@
 # Open blockers
 
+Slutstatus 2026-10-13: kodcommit `6ebccff2f6617bfde273442a70e1553deb497c8b` i PR #54 har både ordinarie CI (`38466613716`) och dokumentmotor-CI (`38466613911`) PASS. Dokumentkörningen omfattar PDF-uppladdning, fältplacering/låsning, förifyllning, manipulation av skrivskyddat fält (nekad), idempotens, syntetisk kundsignatur, signerad slut-PDF och audit-PDF. Bootstrap-replay bevarar signeringscertifikatet. 24 lokala DB-prober PASS och fyra migrationer applicerade. Verkligt Kundexa → Sinch/Resend → kund → privat slutfil är NOT RUN. Ingen merge eller produktionsrelease. Driftmål/credentials och slutlig produktmall/pris saknas; inga kundmeddelanden har skickats. BankID och kvarstående oktoberfynd är fortsatt öppna.
+
+## 2026-10-13 Portad dokumentmotor och integrerat avtalsflöde
+
+Koden är implementerad men hela produktionsflödet är inte godkänt:
+
+1. Dokumenttjänstens containerhost, HTTPS, beständig lagring/backup och hemligheter saknas. Rails-/Docker-runtime ej körd lokalt; separat CI-jobb tillagt.
+2. Slutlig verksamhetsgodkänd PDF, fältkoppling, produktkoppling och kompletta kommersiella villkor måste matas in. Befintlig ofärdig mall är inte gjord operativ med gissningar.
+3. Webb och process-outbox behöver releasas tillsammans efter granskning. Riktiga JWT/Storage/säljarvy samt kontrollerat samtal, mejl och kundsignatur NOT RUN.
+4. Resend-webhook/driftkonfiguration och eventuell framtida SMS-kanal måste bekräftas.
+5. KX26 24 kvarstår: geografitabellens owner är `supabase_admin`, tillgänglig roll saknar rätt att rätta ACL. Advisor är fortfarande röd här.
+6. KX26 14 i äldre API-flöden, KX26 27 och UI 03/06–11 är inte fullständigt rättade. Se driftinstruktionens scope.
+7. BankID är inte live. Senare provider/credential/flöde krävs.
+
+Användarens fullständiga återanvändningsmandat gäller; standardlicens/paketköp är inte en arbetsblockerare.
+
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Användarens uppgivna fullständiga återanvändningsgodkännande ersätter tidigare standardlicens-/paketval som blockerare. Källinventering, dokumenttjänstens drift, integration, slutvillkor och samtliga ofixade oktoberfynd återstår. Återanvändningsmandat gör inte befintliga utskick operativa.
+
+## 2026-10-13 PDF-mallkrav
+
+PDF-placering, fältkoppling och ifylld förhandsgranskning saknas som levererat flöde. Ny specifikation kompletterar oktoberfynden. Drift/licens för DocuSeal måste väljas; liveintegration och BankID-stöd är fortfarande ej verifierade.
+
+## 2026-10-13 Aktuella blockerare
+
+Oktobergranskningen och avtalsplanen är nu kanoniska för fortsättningsarbetet:
+`docs/reviews/2026-10-13/` och `docs/CONTRACT_PRODUCTION_PLAN_2026-10-13.md`.
+
+Prioritet: kund-RLS/avtalsstatus/API-status, slutlig produktmall/pris, osparade säljaruppgifter,
+fjärrljud och samtalsåterhämtning, OTP/UI/API-policy, outboxlease/databasfel,
+leveranswebhookar och acceptansbundna slutdokument. Alla är OPEN tills rättning verifierats.
+
+DocuSeal saknar adapter. BankID är framtida signering och får inte erbjudas som live.
+Faktiska slutvillkor, kontrollerade mottagare och providerdrift måste fastställas innan liveaktivering.
+Historiska Rinkel-device-krav och gamla mergepåståenden nedan är inte aktuell driftsinstruktion.
+
 Uppdaterad 2026-08-07.
 
 ## Löst sedan förra passet

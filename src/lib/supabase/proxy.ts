@@ -31,6 +31,8 @@ export async function updateSession(request: NextRequest) {
   const supabaseOrigin = url ? new URL(url).origin : "";
   const supabaseSocket = supabaseOrigin.replace(/^http/, "ws");
   const developmentScriptPolicy = process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : "";
+  let documentsOrigin = "";
+  try { documentsOrigin = process.env.KUNDEXA_DOCUMENTS_URL ? new URL(process.env.KUNDEXA_DOCUMENTS_URL).origin : ""; } catch {}
   const contentSecurityPolicy = [
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${developmentScriptPolicy}`,
@@ -39,6 +41,7 @@ export async function updateSession(request: NextRequest) {
     "font-src 'self' data:",
     `connect-src 'self' ${supabaseOrigin} ${supabaseSocket} ${webphoneConnectSources.join(" ")}`.trim(),
     "worker-src 'self' blob:",
+    `frame-src 'self' ${documentsOrigin}`.trim(),
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",

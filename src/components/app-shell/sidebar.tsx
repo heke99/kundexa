@@ -94,7 +94,7 @@ export function Sidebar({
   }
 
   const nav = <nav>
-    {!platformMode && role ? <div className="nav-group">
+    {!platformMode && role && role !== "sales" ? <div className="nav-group">
       <Link href="/app" className={cn("nav-link", pathname === "/app" && "active")}>
         <Gauge size={17} /><span>Dashboard</span>
       </Link>

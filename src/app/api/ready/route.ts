@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { expectedWebhookUrl, isUsablePublicAppUrl, publicEnv, serverEnv } from "@/lib/env";
 import { probeWebphoneRegistration, type WebphoneRegistrationProbe } from "@/lib/telephony/webphone";
 import { telephonyConfigured } from "@/lib/telephony/webphone";
+import { documentsConfiguration, probeDocumentsService } from "@/lib/signing/docuseal-client";
 
 export const dynamic = "force-dynamic";
 
@@ -135,7 +136,7 @@ export async function GET() {
     // rapport. Saknas den säger vi att den saknas -- inte att allt är bra.
     let delivery: DeliveryChecks = UNREPORTED;
     const { data: heartbeat } = await admin.from("platform_worker_heartbeats")
-      .select("metadata,updated_at")
+      .select("metadata,updated_at,status")
       .eq("worker_key", "process-outbox")
       .maybeSingle();
     if (heartbeat) {
@@ -164,12 +165,26 @@ export async function GET() {
       delivery = { ...delivery, smsIpAllowlistNetworks: allowlistError ? null : count ?? 0 };
     }
 
+    const registration = await webphoneRegistration();
+    const fresh = Boolean(heartbeat?.updated_at && Date.now() - Date.parse(heartbeat.updated_at) < 5 * 60_000);
+    const blockers: string[] = [];
+    if (!configured || registration.state !== "ok") blockers.push("telephony_not_ready");
+    if (!appBaseUrlUsable) blockers.push("public_link_host_invalid");
+    if (!fresh || heartbeat?.status !== "healthy") blockers.push("outbox_worker_not_ready");
+    if (!delivery.platformEmailConfigured || !webEmailConfigured || delivery.linkHostAligned !== true) blockers.push("email_delivery_not_ready");
+    const { count: pdfTemplates, error: pdfReadError } = await admin.from("contract_template_versions")
+      .select("id", { count: "exact", head: true }).eq("status", "approved").not("signing_configuration->pdf", "is", null);
+    let documentsConfigured = false;
+    try { documentsConfiguration(); documentsConfigured = true; } catch {}
+    const documentsReachable = documentsConfigured ? await probeDocumentsService() : false;
+    if (pdfReadError || (pdfTemplates && !documentsReachable)) blockers.push("documents_service_not_ready");
+    const ready = blockers.length === 0;
     return NextResponse.json({
-      status: "ready",
+      status: ready ? "ready" : "not_ready",
       service: "kundexa-web",
-      checks: { database: true, telephonyConfigured: configured, appBaseUrl, appBaseUrlUsable, webhookUrl, delivery, webphoneRegistration: await webphoneRegistration() },
+      checks: { database: true, telephonyConfigured: configured, appBaseUrl, appBaseUrlUsable, webhookUrl, delivery, webphoneRegistration: registration, documentsConfigured, documentsReachable, outboxFresh: fresh, blockers },
       durationMs: Date.now() - startedAt,
-    }, { headers: { "cache-control": "no-store" } });
+    }, { status: ready ? 200 : 503, headers: { "cache-control": "no-store" } });
   } catch {
     return NextResponse.json({
       status: "not_ready",

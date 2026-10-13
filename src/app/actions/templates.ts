@@ -9,8 +9,51 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { can } from "@/lib/permissions";
 import { requiredTemplateVariableNames, templateVariableNames } from "@/lib/domain/template";
 import { validateTemplateVariables, describeTemplateVariableProblem } from "@/lib/contracts/template-context";
+import { documentsConfiguration, documentsRequest } from "@/lib/signing/docuseal-client";
+import { toJson } from "@/lib/supabase/json";
 
 const value = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
+
+export async function createPdfContractTemplate(form: FormData) {
+  const ctx = await getAppContext();
+  if (!can(ctx.role, "contracts.manage_templates")) redirect("/app/templates?error=Du saknar behörighet att skapa mallar");
+  const input = z.object({ productId: z.uuid(), legalEntityId: z.uuid(), templateId: z.union([z.uuid(),z.literal("")]),
+    name: z.string().min(2).max(120), audience: z.enum(["B2B","B2C","BOTH"]) }).parse({
+    productId: value(form,"product_id"), legalEntityId: value(form,"legal_entity_id"),
+    templateId: value(form,"template_id"), name: value(form,"name"), audience: value(form,"audience") });
+  const file = form.get("file");
+  if (!(file instanceof File) || file.type !== "application/pdf" || file.size > 20 * 1024 * 1024)
+    redirect("/app/templates?error=Ladda upp en PDF på högst 20 MB");
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (new TextDecoder().decode(bytes.slice(0,5)) !== "%PDF-") redirect("/app/templates?error=Ogiltig PDF");
+  try { documentsConfiguration(); } catch { redirect("/app/templates?error=Dokumenttjänsten är inte konfigurerad ännu"); }
+  const db = await createClient();
+  const { data: versionId, error } = await db.rpc("create_product_contract_template_version", {
+    p_product_id: input.productId, p_template_id: input.templateId || null, p_name: input.name,
+    p_contract_type: "PDF", p_audience: input.audience, p_description: null, p_legal_entity_id: input.legalEntityId,
+    p_title_template: "{{contract.title}}", p_body_template: "Avtalsinnehåll enligt uppladdad och godkänd PDF-version.",
+    p_terms_template: "Villkor ingår i den uppladdade och godkända PDF-versionen.",
+    p_variables: ["contract.title"], p_variables_schema: { "contract.title": { type: "string", required: true } },
+    p_signing_configuration: { document_mode: "pdf" },
+  });
+  if (error || !versionId) redirect(`/app/templates?error=${encodeURIComponent("PDF-utkastet kunde inte skapas. Kontrollera produkt och avsändarbolag.")}`);
+  let uploadFailed = false;
+  try {
+    const externalId = `kundexa:${ctx.tenantId}:${versionId}`;
+    const upload = new FormData(); upload.set("file",file); upload.set("external_id",externalId); upload.set("name",input.name);
+    const created = await documentsRequest<{ id: number; external_id: string }>("/kundexa/templates",{method:"POST",body:upload});
+    if (created.external_id !== externalId) throw new Error("template_binding_mismatch");
+    const saved = await db.from("contract_template_versions").update({ signing_configuration: toJson({ document_mode: "pdf",
+      pdf_draft: { template_id: created.id, external_id: externalId } }) }).eq("tenant_id",ctx.tenantId).eq("id",versionId).eq("status","draft");
+    if (saved.error) throw new Error(saved.error.message);
+  } catch { uploadFailed = true; }
+  const { data: version, error: versionError } = await db.from("contract_template_versions").select("template_id").eq("tenant_id",ctx.tenantId).eq("id",versionId).single();
+  if (versionError || !version) redirect("/app/templates?error=Utkastet är skapat men kunde inte läsas. Öppna mallistan igen.");
+  revalidatePath("/app/templates");
+  redirect(`/app/templates/${version.template_id}?version=${versionId}&${uploadFailed
+    ? "error=PDF-utkastet är sparat men filen kunde inte föras över. Ladda upp filen på nytt här."
+    : "message=PDF är uppladdad. Öppna den och placera fälten."}`);
+}
 
 export async function createContractTemplateVersion(form: FormData) {
   const ctx = await getAppContext();

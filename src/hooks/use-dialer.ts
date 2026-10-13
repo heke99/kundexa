@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useWebphone } from "./use-webphone";
 
 export type EndCallResult = {
@@ -77,6 +77,7 @@ export function useDialerPanel() {
   const [calling, setCalling] = useState(false);
   const [ending, setEnding] = useState(false);
   const [status, setStatus] = useState("Kontrollerar telefoni…");
+  const reservationRef = useRef<Record<string,unknown> | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -127,12 +128,13 @@ export function useDialerPanel() {
 
     setCalling(true);
     setStatus("Kopplar upp samtalet i webbtelefonen…");
-    const body = {
+    const body = reservationRef.current ?? {
       ...payload,
       webphoneSessionId: payload.webphoneSessionId ?? webphone.currentSessionId(),
       clientRequestId: payload.clientRequestId ?? crypto.randomUUID(),
       idempotencyKey: payload.idempotencyKey ?? `call:${crypto.randomUUID()}`,
     };
+    reservationRef.current = body;
     let response: Response;
     try {
       response = await fetch("/api/v1/calls", {
@@ -141,11 +143,11 @@ export function useDialerPanel() {
         body: JSON.stringify(body),
       });
     } catch {
-      setCalling(true);
-      setStatus("Svaret från samtalsstarten saknas – inväntar webhook eller CDR-avstämning");
-      const uncertain = new Error("Samtalsstartens utfall är oklart. Starta inte ett nytt samtal.") as Error & { outcomeUnknown: boolean };
-      uncertain.outcomeUnknown = true;
-      throw uncertain;
+      // The browser has not asked the SDK to dial. Retrying the SAME reservation
+      // key recovers the row without creating a second outbound call.
+      setCalling(false);
+      setStatus("Reservationens svar saknas. Försök igen för att hämta samma försök.");
+      throw new Error("Kunde inte hämta samtalsreservationen. Försök igen.");
     }
     let data: {
       callId?: string;
@@ -163,14 +165,13 @@ export function useDialerPanel() {
     try {
       data = await response.json() as typeof data;
     } catch {
-      setCalling(true);
-      setStatus("Samtalsstartens svar kunde inte tolkas – inväntar säker avstämning");
-      const uncertain = new Error("Samtalsstartens utfall är oklart. Starta inte ett nytt samtal.") as Error & { outcomeUnknown: boolean };
-      uncertain.outcomeUnknown = true;
-      throw uncertain;
+      setCalling(false);
+      setStatus("Reservationens svar kunde inte läsas. Försök igen med samma försök.");
+      throw new Error("Kunde inte läsa samtalsreservationen. Försök igen.");
     }
     if (!response.ok && response.status !== 202) {
       setCalling(false);
+      reservationRef.current = null;
       const reference = data.correlationId ? ` Referens: ${data.correlationId}.` : "";
       const message = `${publicTelephonyMessage(data.message ?? data.error ?? "Samtalet kunde inte startas")}${reference}`;
       setStatus(message);
@@ -193,7 +194,7 @@ export function useDialerPanel() {
       setStatus("Samtalsresultatet är oklart – inväntar säker avstämning");
       return data.callId;
     }
-    if (data.idempotentReplay) {
+    if (data.idempotentReplay && (!data.to || !data.attemptId || webphone.state.phase === "calling")) {
       // Reservationen återanvändes, så samtalet är redan uppkopplat. Att ringa
       // en gång till hade gett mottagaren två samtal för ett tryck.
       setCalling(true);
@@ -220,11 +221,13 @@ export function useDialerPanel() {
       throw new Error(message);
     }
     setCalling(true);
+    reservationRef.current = null;
     setStatus("Webbtelefonen ringer upp");
     return data.callId;
   }, [webphone]);
 
   const markEnded = useCallback(() => {
+    reservationRef.current = null;
     setCalling(false);
     setStatus("Telefoni redo");
   }, []);

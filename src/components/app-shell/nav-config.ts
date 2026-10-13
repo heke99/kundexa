@@ -47,7 +47,7 @@ export const secondaryPages: ReadonlyArray<{ href: string; linkedFrom: string }>
 
 export const navSections: NavSection[] = [
   { id: "ringa", label: "Ringa", items: [
-    { href: "/app/dialer", label: "Dialer", icon: PhoneCall },
+    { href: "/app/dialer", label: "Ringa", icon: PhoneCall },
     { href: "/app/callbacks", label: "Återkomster", icon: CalendarCheck2 },
     { href: "/app/calls", label: "Mina samtal", icon: Headphones },
   ]},
@@ -97,6 +97,6 @@ export const navSections: NavSection[] = [
  * de står bara inte i vägen.
  */
 export const sellerNavHrefs: ReadonlySet<string> = new Set([
-  "/app/dialer", "/app/callbacks", "/app/calls", "/app/customers", "/app/lists", "/app/contracts",
+  "/app/dialer", "/app/callbacks", "/app/customers", "/app/contracts",
 ]);
 

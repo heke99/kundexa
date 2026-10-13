@@ -66,7 +66,7 @@ export function WebphoneAudioPanel({
     {audio.permission === "granted" ? <>
       <label className="field">
         <span>Mikrofon</span>
-        <select value={audio.inputId} onChange={(event) => audio.selectInput(event.target.value)}>
+        <select disabled={inCall} value={audio.inputId} onChange={(event) => audio.selectInput(event.target.value)}>
           {audio.inputs.map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label}</option>)}
         </select>
       </label>

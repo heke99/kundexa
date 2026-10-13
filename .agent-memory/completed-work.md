@@ -1,5 +1,16 @@
 # Completed work
 
+Slutstatus 2026-10-13: kodcommit `6ebccff2f6617bfde273442a70e1553deb497c8b` i PR #54 har både ordinarie CI (`38466613716`) och dokumentmotor-CI (`38466613911`) PASS. Dokumentkörningen omfattar PDF-uppladdning, fältplacering/låsning, förifyllning, manipulation av skrivskyddat fält (nekad), idempotens, syntetisk kundsignatur, signerad slut-PDF och audit-PDF. Bootstrap-replay bevarar signeringscertifikatet. 24 lokala DB-prober PASS och fyra migrationer applicerade. Verkligt Kundexa → Sinch/Resend → kund → privat slutfil är NOT RUN. Ingen merge eller produktionsrelease. Driftmål/credentials och slutlig produktmall/pris saknas; inga kundmeddelanden har skickats. BankID och kvarstående oktoberfynd är fortsatt öppna.
+
+## 2026-10-13 Portad dokumentmotor och integrerat avtalsflöde
+
+- Portat och pinnat DocuSeal-app, Vue PDF-byggare och signerings-/PDF-kärna med originalattribution, egen overlay och build/compose/bootstrap.
+- Integrerat produkt-PDF-utkast, fältmapping, fryst preview, extern kundsignering, privat slutfil/bevis samt seller/customer download.
+- Rättat prioriterade CRM-/telefon-/OTP-/outbox-/behörighetsfel och lagt terminal-/generation-/leasekontroller.
+- Fyra DB-migrationer applicerade; typer genererade från länkat projekt.
+- Bygg-/typkontroller och 24 riktade tvåtenant/roll/generation/idempotens/lease-prober passerade.
+- Skrivit `docs/DOCUMENT_ENGINE_OPERATIONS.md` med scope, drift och kvarstående releasegates. Allt är inte grönt i produktion.
+
 ## 2026-09-24 samtalsarbetsyta
 - `LiveCustomerCard` + `saveCallCustomer`/`loadCallCustomer` (`src/app/actions/call-workspace.ts`).
 - `OutcomePicker`/`CallbackTimeField` och `src/lib/dialer/outcomes.ts` (gruppering, tangenter, snabbval) med test i `test:api`.
@@ -203,3 +214,22 @@
   - RLS-delen av `202609240002` applicerad.
   - 40 repoversioner registrerade (128/128).
   - Funktioner, policyer och triggrar avstämda mot PGlite.
+
+## 2026-10-13 Granskningar och plan sparade
+
+Två oktobergranskningar sparade i `docs/reviews/2026-10-13/`.
+`docs/CONTRACT_PRODUCTION_PLAN_2026-10-13.md` beskriver sju genomförandesteg och godkännandekriterier.
+Projektets minne pekar på denna baslinje och skiljer föreslagen arkitektur från levererade rättningar.
+Runtime och produktionsdata är oförändrade.
+
+## 2026-10-13 PDF-krav dokumenterat
+
+Sparat användarens PDF-fält/kundkortsresa i docs/PDF_FIELD_TEMPLATES_AND_DOCUSEAL.md och länkat från genomförandeplanen. Genomförandesteg, snapshot/versioner, säljarbehörighet, DocuSeal-förifyllning och framtida BankID beskrivna. Ingen produktionsrättning genomförd.
+
+## 2026-10-13 Publicering slutförd
+
+Rapporter, avtalsplan, PDF-fältspecifikation och projektminne är publicerade i [PR #53](https://github.com/heke99/kundexa/pull/53). PR är öppen och inte mergad. Publicerat git-träd matchade exakt det lokala dokumentationsträdet (12 ändrade filer). Vanlig git-push saknade terminalautentisering; GitHub-anslutningen användes med användarens uttryckliga mandat. Ingen produktionsdeploy gjordes.
+
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Tillagt docs/KUNDEXA_BUILD_WITH_DOCUSEAL.md och uppdaterat PDF-/avtalsplan med användarens uppgivna fullständiga återanvändningsgodkännande. Rekommenderad gräns och sex konkreta leveranser dokumenterade. Ingen runtimeimplementation.

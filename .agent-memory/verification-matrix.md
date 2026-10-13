@@ -1,5 +1,27 @@
 # Verification matrix
 
+Slutstatus 2026-10-13: kodcommit `6ebccff2f6617bfde273442a70e1553deb497c8b` i PR #54 har både ordinarie CI (`38466613716`) och dokumentmotor-CI (`38466613911`) PASS. Dokumentkörningen omfattar PDF-uppladdning, fältplacering/låsning, förifyllning, manipulation av skrivskyddat fält (nekad), idempotens, syntetisk kundsignatur, signerad slut-PDF och audit-PDF. Bootstrap-replay bevarar signeringscertifikatet. 24 lokala DB-prober PASS och fyra migrationer applicerade. Verkligt Kundexa → Sinch/Resend → kund → privat slutfil är NOT RUN. Ingen merge eller produktionsrelease. Driftmål/credentials och slutlig produktmall/pris saknas; inga kundmeddelanden har skickats. BankID och kvarstående oktoberfynd är fortsatt öppna.
+
+## 2026-10-13 Portad dokumentmotor och integrerat avtalsflöde
+
+| Kontroll | Status |
+|---|---|
+| Web TypeScript och Next produktionsbuild | PASS, Node 24.19 (avsedd Node 22) |
+| Edge TypeScript | PASS |
+| SQL-schema från tom DB | PASS i PGlite, Supabase/pgcrypto-stubbar |
+| Tvåtenant/roll-, price/status-, idempotens/generation- och lease-prober | PASS, 24 riktade kontroller |
+| Fyra hosted migrationer | APPLIED, lästa service-only RPC-rättigheter PASS |
+| Hosted genererade Supabase-typer | REGENERATED efter schemaändringarna |
+| Git diff whitespace / build.sh syntax | PASS |
+| Application test suites / npm run verify | NOT RUN enligt användarens prioritering |
+| Rails/Docker build, boot, loader, PDF och syntetisk kundsignering/slutfil/bevis | PASS i GitHub run 38466613911 |
+| Riktiga JWT/Storage/säljarbrowser | NOT RUN |
+| Sinch samtal / Resend e-post / kundsignatur / signerad kopia | NOT RUN |
+| Production web/Edge deployment | NOT DONE |
+| Supabase Security Advisor | Öppna äldre avvikelser; spatial_ref_sys kvarstår ERROR |
+
+Källkod och databaskontroller är inte ett livegodkännande. Äldre PASS-tabeller nedan avser äldre pass.
+
 | Område | Kontroll | Status 2026-08-07 |
 |---|---|---|
 | Dependencyinstallation | `npm ci` | PASS (150 paket, Node 22.22.2/npm 10.9.7) |
@@ -263,3 +285,27 @@ för `npm run verify`, som kör mot PGlite. Den kontrollen är manuell.
 | `test:api` utfallsgrupper/återkomstsnabbval | PASS |
 | Visuell kontroll i webbläsare | NOT RUN |
 | Skarpt samtal: redigera kort under samtal, efterarbete, avtal i ny flik | NOT RUN |
+
+## 2026-10-13 Granskning och dokumentationspass
+
+| Kontroll | Status | Avgränsning |
+|---|---|---|
+| GitHub main mot lokal referens | CONFIRMED | de852fcd5bccc6fdffc82d49c7a2611545d09e33 |
+| Produktion/databas/workerbaslinje | READ ONLY REVIEW | Rapporterna anger datum och detaljer |
+| DocuSeal/DocuSign inkopplat | NOT IMPLEMENTED | Tomt providerregister, inga signing_envelopes |
+| Säljarvy | CODE REVIEW | Inget visuellt inloggat säljarprov |
+| Kodrättningar och migrationsändringar | NOT DONE | Detta pass sparar dokumentation |
+| npm verify/build/tests i detta pass | NOT RUN | Ingen runtimekod ändrad |
+| Riktigt avtal/providerflöde efter rättning | NOT RUN | Planerat, inte utfört |
+
+## 2026-10-13 PDF-fältspecifikation
+
+Källkod: SigningProvider, template-context och PDF-generator granskade. Officiella DocuSeal-källor: visuell byggare, förifyllning, readonly, Pro/AGPL kontrollerade. git diff --check: PASS för dokumentationsändringen. Applikationstester, live DB-skrivningar, PDF-rendering/signering och providerinstallation: NOT RUN; ingen runtimekod ändrad.
+
+## 2026-10-13 Publicering slutförd
+
+Rapporter, avtalsplan, PDF-fältspecifikation och projektminne är publicerade i [PR #53](https://github.com/heke99/kundexa/pull/53). PR är öppen och inte mergad. Publicerat git-träd matchade exakt det lokala dokumentationsträdet (12 ändrade filer). Vanlig git-push saknade terminalautentisering; GitHub-anslutningen användes med användarens uttryckliga mandat. Ingen produktionsdeploy gjordes.
+
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Dokumentationspass om återanvändningsmandat och byggordning. Relevant tidigare källgranskning används; ingen ny live DB-/providerkontroll. git diff --check: PASS för dokumentationsändringarna. Applikationstester, samtal, signering, kodimport och deployment: NOT RUN.

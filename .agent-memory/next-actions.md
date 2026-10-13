@@ -1,5 +1,40 @@
 # Next actions
 
+Slutstatus 2026-10-13: kodcommit `6ebccff2f6617bfde273442a70e1553deb497c8b` i PR #54 har både ordinarie CI (`38466613716`) och dokumentmotor-CI (`38466613911`) PASS. Dokumentkörningen omfattar PDF-uppladdning, fältplacering/låsning, förifyllning, manipulation av skrivskyddat fält (nekad), idempotens, syntetisk kundsignatur, signerad slut-PDF och audit-PDF. Bootstrap-replay bevarar signeringscertifikatet. 24 lokala DB-prober PASS och fyra migrationer applicerade. Verkligt Kundexa → Sinch/Resend → kund → privat slutfil är NOT RUN. Ingen merge eller produktionsrelease. Driftmål/credentials och slutlig produktmall/pris saknas; inga kundmeddelanden har skickats. BankID och kvarstående oktoberfynd är fortsatt öppna.
+
+## 2026-10-13 Portad dokumentmotor och integrerat avtalsflöde
+
+1. Läs `docs/DOCUMENT_ENGINE_OPERATIONS.md` och PR #54. Båda CI-jobben PASS för ovan angiven kodcommit; välj dokumenthost och konfigurera drift.
+2. Kör dokumentmotor på vald HTTPS-containerhost och konfigurera dedicated service account via bootstrap; injicera server-only env i webbruntime.
+3. Lägg in riktig PDF för produkt och avsändarbolag, mappa kundfält samt signatur, lås och godkänn version; komplettera prisdata.
+4. Publicera kompatibel webb och process-outbox; verifiera Resend-webhook. Ingen merge/release har redan gjorts.
+5. Kör kontrollerad faktisk resa samt två riktiga JWT-sessioner: kundsparande → samtalsutfall → ifylld PDF → mejl → signatur → samma slutfil för kund/säljare.
+6. Kontrollera omskick/avbrott/gammal länk, leveransfel och leaseåterhämtning, sedan aktivering.
+7. Åtgärda kvarvarande KX26/UI-fynd och geografitabellens ACL med behörig ägarroll; BankID separat.
+
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Följ docs/KUNDEXA_BUILD_WITH_DOCUSEAL.md: skydda avtals-/kundgrund och sparande; inventera och avgränsa auktoriserad dokumentkod; inför PDF-fältkoppling/versioner; bygg enkel säljarresa och riktig extern signeringskedja; rätta telefoni och verifiera drift. BankID är senare separat adapter.
+
+## 2026-10-13 Kompletterad avtalsresa
+
+Efter behörighets-/avtalsgrund: versionsbundna PDF-mallar och typade fältkopplingar, säljarens sparande/ifyllda preview, därefter DocuSeal-adapter och faktisk slutdokumentimport. Följ docs/PDF_FIELD_TEMPLATES_AND_DOCUSEAL.md tillsammans med avtalsplanen. Inga dokumentationsfynd ska markeras lösta.
+
+## 2026-10-13 Nästa arbetsordning
+
+Följ `docs/CONTRACT_PRODUCTION_PLAN_2026-10-13.md`:
+
+1. PR 1: skrivbehörigheter och avtalsintegritet.
+2. PR 2: komplett produktmall/pris och gemensam UI/API-planering.
+3. PR 3: avbrottssäker utskickskö och leveransavstämning.
+4. PR 4: versionsbundna bevis, bilagor och aktivering.
+5. PR 5: gemensamt kund-/efterarbetssparande, enkel säljarresa och samtalsgrund.
+6. PR 6: DocuSeal-adapter om drift/funktioner väljs.
+7. PR 7: BankID-förberedelse; verklig integration separat när tjänst/konfiguration finns.
+
+Första leveransmål är kontrollerad e-post/webbacceptans. Full extern signering är ett eget mål,
+inte uppnått genom en lyckad acceptans. Inga fynd är rättade i dokumentationspasset.
+
 **2026-09-24, samtalsarbetsytan:** Provsamtal från en ringlista: svara, fyll i e-post/adress under samtalet,
 välj "Intresserad" med tangent 1, "Spara och skapa avtal" ska öppna ny flik och pausa sessionen. Kontrollera
 att kortet i den smala telefonpanelen på kundkortssidan är läsbart.

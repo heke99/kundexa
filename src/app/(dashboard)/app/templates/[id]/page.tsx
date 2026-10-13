@@ -13,10 +13,14 @@ import { ContractTemplateDocumentUpload } from "@/components/contract-template-d
 import { TemplateFieldReference } from "@/components/template-field-reference";
 import { TemplateFieldButtons } from "@/components/template-field-buttons";
 import { formatDate } from "@/lib/utils";
+import { PdfTemplateEditor } from "@/components/pdf-template-editor";
+import { allTemplatePlaceholders } from "@/lib/contracts/template-context";
+import { PdfTemplateCreateForm } from "@/components/pdf-template-create-form";
 
 type Version = {
   id: string; version: number; status: string; approved_at: string | null; created_at: string;
   title_template: string; body_template: string; terms_template: string;
+  signing_configuration?: Record<string,unknown>;
 };
 
 /**
@@ -43,7 +47,7 @@ export default async function TemplateDetailPage({
   const [ctx, supabase] = await Promise.all([getAppContext(), createClient()]);
   const [{ data: template }, { data: legalEntities }, { data: products }, { data: linked }] = await Promise.all([
     ok(supabase.from("contract_templates")
-      .select("id,name,contract_type,audience,description,active,current_version_id,legal_entity_id,product_id,contract_template_versions!contract_template_versions_tenant_id_template_id_fkey(id,version,status,approved_at,created_at,title_template,body_template,terms_template)")
+      .select("id,name,contract_type,audience,description,active,current_version_id,legal_entity_id,product_id,contract_template_versions!contract_template_versions_tenant_id_template_id_fkey(id,version,status,approved_at,created_at,title_template,body_template,terms_template,signing_configuration)")
       .eq("id", id).maybeSingle()),
     ok(supabase.from("tenant_legal_entities").select("id,legal_name,organization_number,is_default").eq("active", true).order("is_default", { ascending: false }).order("legal_name")),
     ok(supabase.from("products").select("id,name").eq("active", true).order("name")),
@@ -74,6 +78,15 @@ export default async function TemplateDetailPage({
     {query.error ? <p className="form-error">{query.error}</p> : null}
     {query.message ? <div className="notice">{query.message}</div> : null}
     {!template.product_id ? <div className="notice warning">Avtalet hör inte till någon produkt, så ingen säljare kan välja det. Välj produkt under Redigera och spara.</div> : null}
+
+    {mayEdit && shown?.status === "draft" ? <Card><CardContent>
+      <PdfTemplateEditor key={shown.id} versionId={shown.id}
+        hasDraft={Boolean(shown.signing_configuration?.pdf_draft)} configured={Boolean(shown.signing_configuration?.pdf)}
+        sources={allTemplatePlaceholders()} />
+    </CardContent></Card> : shown?.signing_configuration?.pdf ? <p className="notice">Den här versionen använder en PDF med kundkortsfält och kundsignering.</p> : null}
+    {mayEdit ? <Card><CardContent><PdfTemplateCreateForm templateId={template.id} productId={template.product_id ?? undefined}
+      name={template.name} audience={template.audience} legalEntityId={template.legal_entity_id ?? undefined}
+      products={(products ?? []).filter(item => !taken.has(item.id))} legalEntities={legalEntities ?? []} /></CardContent></Card> : null}
 
     <div className="split-layout">
       <Card>

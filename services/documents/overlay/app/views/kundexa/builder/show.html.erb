@@ -1,0 +1,5 @@
+<template-builder class="grid" data-template="<%= @template_data.to_json %>"
+  data-base-url="<%= ENV.fetch('APP_URL') %>/kundexa" data-fetch-options="<%= { headers: { 'X-Kundexa-Builder' => @builder_token } }.to_json %>"
+  data-locale="sv" data-with-send-button="false" data-with-sign-yourself-button="false"
+  data-with-fields-detection="false" data-with-revisions-menu="false" data-with-logo="false"
+  data-with-stripe="false"></template-builder>

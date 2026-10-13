@@ -50,7 +50,8 @@ type ProviderCall = {
   mute?: () => void;
   unmute?: () => void;
   setMuted?: (muted: boolean) => void;
-  sendDTMF?: (digit: string) => void;
+  sendDtmf?: (digit: string) => void;
+  incomingStream?: MediaStream;
   details?: { endCause?: number; error?: { message?: string; code?: unknown } };
 };
 
@@ -74,7 +75,9 @@ function createReusableMicrophone() {
       if (options.video) {
         return navigator.mediaDevices.getUserMedia({ audio: options.audio ?? true, video: options.video });
       }
-      const audio = options.audio ?? true;
+      let inputId = "";
+      try { inputId = localStorage.getItem("kundexa.webphone.inputDeviceId") ?? ""; } catch {}
+      const audio = inputId ? { ...(typeof options.audio === "object" ? options.audio : {}), deviceId: { exact: inputId } } : options.audio ?? true;
       const key = JSON.stringify(audio);
       if (!alive(master) || key !== masterKey) {
         master?.getTracks().forEach((track) => track.stop());
@@ -112,6 +115,7 @@ export function useSinchWebphone() {
   const clientRef = useRef<unknown>(null);
   const sessionRef = useRef<string | null>(null);
   const callRef = useRef<ProviderCall | null>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const [muted, setMutedState] = useState(false);
   const [capabilities, setCapabilities] = useState<CallAudioCapabilities>({ mute: false, dtmf: false });
   // Registreringen startas en gång. Utan den här spärren bygger en omrendering
@@ -182,7 +186,7 @@ export function useSinchWebphone() {
 
     const opened = await postJson("/api/v1/telephony/webphone/session", {
       userAgent: navigator.userAgent.slice(0, 400),
-    });
+    }).catch(() => ({ ok: false, status: 503, data: null }));
     if (!opened.ok || !opened.data) {
       startedRef.current = false;
       setState({
@@ -350,12 +354,24 @@ export function useSinchWebphone() {
     // rapporten till servern, och ett samtal som hann ringa eller brytas under
     // den väntan lämnade inga spår: dialern stod kvar på "ringer" och det gick
     // inte att se varför.
+    const playRemote = (activeCall: ProviderCall) => {
+      if (!activeCall?.incomingStream) return;
+      const audio = remoteAudioRef.current ?? new Audio();
+      remoteAudioRef.current = audio; audio.autoplay = true; audio.srcObject = activeCall.incomingStream;
+      let outputId = "";
+      try { outputId = localStorage.getItem("kundexa.webphone.outputDeviceId") ?? ""; } catch {}
+      const sink = audio as HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> };
+      void (outputId && sink.setSinkId ? sink.setSinkId(outputId) : Promise.resolve())
+        .then(() => audio.play()).catch(() => console.error("remote_audio_playback_failed"));
+    };
     call.addListener({
       onCallRinging: () => void reportLeg(input.callId, "ringing"),
       onCallAnswered: () => void reportLeg(input.callId, "answered"),
-      onCallEstablished: () => void reportLeg(input.callId, "answered"),
+      onCallEstablished: (activeCall: ProviderCall) => { playRemote(activeCall); void reportLeg(input.callId, "answered"); },
+      onRemoteTrack: (activeCall: ProviderCall) => playRemote(activeCall),
       onCallEnded: (ended: ProviderCall) => {
         callRef.current = null;
+        if (remoteAudioRef.current) { remoteAudioRef.current.pause(); remoteAudioRef.current.srcObject = null; }
         setMutedState(false);
         setCapabilities({ mute: false, dtmf: false });
         setState({ phase: "ready" });
@@ -366,7 +382,7 @@ export function useSinchWebphone() {
     setMutedState(false);
     setCapabilities({
       mute: typeof call.setMuted === "function" || (typeof call.mute === "function" && typeof call.unmute === "function"),
-      dtmf: typeof call.sendDTMF === "function",
+      dtmf: typeof call.sendDtmf === "function",
     });
     setState({ phase: "calling", callId: input.callId });
 
@@ -375,7 +391,7 @@ export function useSinchWebphone() {
     const reported = await postJson("/api/v1/calls/dialing", {
       callId: input.callId, attemptId: input.attemptId,
       outcome: "accepted", externalCallId: call.id,
-    });
+    }).catch(() => ({ ok: false, status: 503, data: null }));
     if (!reported.ok) {
       console.error("webphone_dialing_report_failed", { status: reported.status });
     }
@@ -415,10 +431,21 @@ export function useSinchWebphone() {
    */
   const sendDtmf = useCallback((digit: string) => {
     const call = callRef.current;
-    if (!call || typeof call.sendDTMF !== "function") return false;
+    if (!call || typeof call.sendDtmf !== "function") return false;
     if (!/^[0-9*#]$/.test(digit)) return false;
-    call.sendDTMF(digit);
+    call.sendDtmf(digit);
     return true;
+  }, []);
+
+  useEffect(() => {
+    const applyOutput = () => {
+      const audio = remoteAudioRef.current as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null;
+      if (!audio?.setSinkId) return;
+      let id = ""; try { id = localStorage.getItem("kundexa.webphone.outputDeviceId") ?? ""; } catch {}
+      void audio.setSinkId(id).catch(() => console.error("remote_audio_device_failed"));
+    };
+    window.addEventListener("kundexa:audio-output-change", applyOutput);
+    return () => window.removeEventListener("kundexa:audio-output-change", applyOutput);
   }, []);
 
   useEffect(() => () => {
@@ -426,6 +453,8 @@ export function useSinchWebphone() {
     // säljaren tills sopningen tar den en och en halv minut senare.
     if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
     callRef.current?.hangup();
+    remoteAudioRef.current?.pause();
+    if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
     // Mikrofonen stängs när dialern lämnas, så att lampan inte lyser kvar.
     microphoneRef.current?.release();
     const sessionId = sessionRef.current;

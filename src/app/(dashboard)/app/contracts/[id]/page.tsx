@@ -3,7 +3,7 @@ import Link from "next/link";
 import { ArrowLeft, Download, FileSignature, LockKeyhole, Phone, Send, Upload } from "@/components/icons";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { activateContract, cancelContract, cancelFutureContractReminders, deleteContract, extendContractExpiry, linkContractSourceCall, registerExternalContractCall, sendContract, sendContractReminder, uploadContractPdf } from "@/app/actions/contracts";
+import { activateContract, cancelContract, cancelFutureContractReminders, deleteContract, extendContractExpiry, linkContractSourceCall, registerExternalContractCall, sendContract, sendContractReminder, uploadContractPdf, prepareContractPreview, refreshContractSigning } from "@/app/actions/contracts";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -63,6 +63,11 @@ export default async function ContractDetail({ params, searchParams }: { params:
     ok(supabase.from("evidence_packages").select("*").eq("contract_id", id).order("created_at", { ascending: false })),
   ]);
   if (!contract) notFound();
+  const activeVersion = versions?.find(version => version.id === contract.active_version_id);
+  const externalSigning = (activeVersion?.signature_policy_snapshot as Record<string,unknown> | null)?.method === "external_esign";
+  const finalDocument = documents?.find(document => document.document_type === "signed_pdf"
+    && document.contract_version_id === contract.active_version_id
+    && Number((document.metadata as Record<string,unknown> | null)?.generation) === contract.acceptance_generation);
   const customer = Array.isArray(contract.customers) ? contract.customers[0] : contract.customers;
   const product = Array.isArray(contract.products) ? contract.products[0] : contract.products;
   const legalEntity = Array.isArray(contract.tenant_legal_entities) ? contract.tenant_legal_entities[0] : contract.tenant_legal_entities;
@@ -98,14 +103,14 @@ export default async function ContractDetail({ params, searchParams }: { params:
         admin.from("phone_numbers").select("id").eq("tenant_id", ctx.tenantId).eq("supports_sms", true).eq("status", "active").limit(1).maybeSingle(),
       ]);
       channelBlockers = {
-        email: emailBlocker?.message ?? (!modes.web ? "Godkännande via länken är avstängt, så ett mejl kan inte besvaras." : null),
-        sms: smsBlocker?.message
+        email: emailBlocker?.message ?? (!externalSigning && !modes.web ? "Godkännande via länken är avstängt, så ett mejl kan inte besvaras." : null),
+        sms: externalSigning ? "PDF-signering skickas via e-post." : smsBlocker?.message
           ?? (!smsNumber.data ? "Företaget har inget nummer som kan skicka SMS." : null)
           ?? (!customer?.phone_e164 ? "Kunden saknar mobilnummer." : null)
           ?? (!modes.web && !modes.sms ? "Varken svar via länken eller via SMS är påslaget." : null),
       };
     } catch {
-      channelBlockers = { email: null, sms: null };
+      channelBlockers = { email: "Leveransinställningar kunde inte läsas.", sms: "Leveransinställningar kunde inte läsas." };
     }
   }
   const channelOptions = [
@@ -119,6 +124,23 @@ export default async function ContractDetail({ params, searchParams }: { params:
     <Link href="/app/contracts" className="muted" style={{ display: "inline-flex", gap: 6, alignItems: "center", marginBottom: 16 }}><ArrowLeft size={15} /> Till avtal</Link>
     <PageHeader title={`${contract.contract_number} · ${contract.title}`} description={`${customer?.display_name ?? "Okänd kund"} · ${product?.name ?? "Fristående avtal"}`} action={<Badge className={contractStatusTone(contract.status)}>{contractStatusLabel(contract.status)}</Badge>} />
     {query.error ? <p className="form-error">{query.error}</p> : null}{query.message ? <p className="notice">{query.message}</p> : null}
+    {externalSigning ? <Card><CardHeader><h2>Kundsignering</h2></CardHeader><CardContent>
+      {finalDocument && ["signed","active","terminated"].includes(contract.status) ? <>
+        <p>Avtalet är signerat. Kunden får samma signerade kopia via e-post och sin avtalslänk.</p>
+        <Link className="button button-primary" href={`/api/v1/contracts/${id}/documents/${finalDocument.id}`}>Hämta signerad kopia</Link>
+        {mayActivate && contract.status === "signed" ? <form action={activateContract} style={{ marginTop: 12 }}>
+          <input type="hidden" name="contract_id" value={id} /><button className="button button-secondary">Aktivera avtalet</button>
+        </form> : null}
+      </> : <>
+        <p>{contract.status === "signing" ? "Avtalet väntar på kundens signering." : "Granska den ifyllda PDF:en innan du skickar för signering."}</p>
+        {maySend && !canonicalDocument ? <form action={prepareContractPreview}><input type="hidden" name="contract_id" value={id} />
+          <button className="button button-secondary">Förbered ifylld PDF</button></form> : null}
+        {canonicalDocument ? <Link className="button button-secondary" href={`/api/v1/contracts/${id}/documents/${canonicalDocument.id}`}>Granska ifylld PDF</Link> : null}
+        {contract.status === "signing" ? <form action={refreshContractSigning} style={{ marginTop: 12 }}>
+          <input type="hidden" name="contract_id" value={id} /><button className="button button-ghost">Uppdatera signeringsstatus</button>
+        </form> : null}
+      </>}
+    </CardContent></Card> : null}
     {!contract.source_call_id ? <div className="notice warning"><strong>Utskick blockerat:</strong> avtalet saknar ett giltigt tidigare kundsamtal. Utkastet kan granskas och kompletteras, men versionen låses inte förrän samtalet är länkat.</div> : null}
     {unclearReplies.length ? <div className="notice warning"><strong>Kunden svarade något som inte är ett besked:</strong> {unclearReplies.map((event) => `"${String((event.payload as Record<string, unknown> | null)?.raw_response ?? "")}"`).join(", ")}. Avtalet väntar fortfarande på svar – kontakta kunden.</div> : null}
     {latestDelivery && ["failed", "bounced", "complained", "suppressed", "dead_letter"].includes(latestDelivery.status) ? <div className="notice warning"><strong>Leveransfel:</strong> {latestDelivery.failure_message ?? deliveryStatusLabel(latestDelivery.status)}. Automatiska e-postpåminnelser stoppas vid permanent bounce, complaint eller suppression.</div> : null}

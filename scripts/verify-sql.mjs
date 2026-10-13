@@ -1645,13 +1645,15 @@ await db.exec(`
   insert into public.contract_templates(id,tenant_id,name,contract_type,audience)
   values('00000000-0000-0000-0000-000000000084','00000000-0000-0000-0000-000000000001','Signing verify','sales','B2B');
   insert into public.contract_template_versions(
-    id,tenant_id,template_id,version,title_template,body_template,signature_policy,created_by
+    id,tenant_id,template_id,version,status,title_template,body_template,signature_policy,created_by
   ) values(
     '00000000-0000-0000-0000-000000000085','00000000-0000-0000-0000-000000000001',
-    '00000000-0000-0000-0000-000000000084',1,'Verify','Verify body',
+    '00000000-0000-0000-0000-000000000084',1,'draft','Verify','Verify body',
     '{"method":"external_esign","identityAssuranceLevel":"high","orderedSigning":true,"requireFinalProviderDocument":true}',
     '00000000-0000-0000-0000-000000000002'
   );
+  select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);
+  select public.approve_contract_template_version('00000000-0000-0000-0000-000000000085');
   insert into public.contracts(
     id,tenant_id,contract_number,customer_id,template_id,owner_user_id,audience,status,title
   ) values(
