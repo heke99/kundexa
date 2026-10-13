@@ -1,12 +1,6 @@
 # Known failures
 
-Kundexas ordinarie CI run 38465724911 PASS. Utökad dokumentkörning signerade via kundformuläret men slut-PDF/bevis stoppades av saknad ESIGN_CERTS_KEY i bootstrap. Uppstarten kompletterad med native GenerateCertificate i krypterad konto-konfiguration och replay-kontroll som bevarar certifikatet; ny CI återstår.
-
-Efter utökad CI: språkfelet ”sv is not a valid locale” i kundens riktiga formulär hittat och rättat med Rails-locale samt svenska Vue-texter. Statisk readiness-kontroll uppdaterad för samma probe i ny kodform. Utökad signatur/slut-PDF-beviskörning inväntar omkörning. Inget driftmål valdes; production web/Edge/engine är inte releasade.
-
-Dokumentjobb run 38402406691: Docker-build PASS, första boot FAIL eftersom bootstrap.rb var ett script i en eager-loaded katalog. Rättat till Kundexa::Bootstrap.call utan sidoeffekt vid boot; explicit runner krävs. Invändar ny CI.
-
-Implementations-PR: https://github.com/heke99/kundexa/pull/54. Portens Docker-build PASS i GitHub run 38402406691, boot ännu pending. Befintlig verify-CI stoppade på äldre fixture som band en ej godkänd mall; fixturen är ändrad till approved, produktionsregeln behålls. Lokalt körs fortfarande inga testsviter. Isolerad PDF-probe i dokumentjobbet kompletterar byggkontrollen.
+Slutstatus 2026-10-13: kodcommit `6ebccff2f6617bfde273442a70e1553deb497c8b` i PR #54 har både ordinarie CI (`38466613716`) och dokumentmotor-CI (`38466613911`) PASS. Dokumentkörningen omfattar PDF-uppladdning, fältplacering/låsning, förifyllning, manipulation av skrivskyddat fält (nekad), idempotens, syntetisk kundsignatur, signerad slut-PDF och audit-PDF. Bootstrap-replay bevarar signeringscertifikatet. 24 lokala DB-prober PASS och fyra migrationer applicerade. Verkligt Kundexa → Sinch/Resend → kund → privat slutfil är NOT RUN. Ingen merge eller produktionsrelease. Driftmål/credentials och slutlig produktmall/pris saknas; inga kundmeddelanden har skickats. BankID och kvarstående oktoberfynd är fortsatt öppna.
 
 ## 2026-10-13 Portad dokumentmotor och integrerat avtalsflöde
 

@@ -28,21 +28,21 @@ tidigare kundlänkar. Köläggning sker atomiskt efter kontroll av aktuell gener
 
 | Kontroll | Status |
 |---|---|
-| Webbens typkontroll och produktionsbuild | PASS lokalt och i ordinarie CI run 38465724911 |
+| Webbens typkontroll och produktionsbuild | PASS lokalt och i ordinarie CI run 38466613716 |
 | Edge-typkontroll | PASS |
 | Samtliga SQL-migrationer från tomt lokalt schema | PASS i PGlite med Supabase-stubbar |
 | 24 riktade databaskontroller, två tenants, säljare/läsroll, idempotens, generation och lease | PASS lokalt |
 | Fyra nya migrationer och lästa RPC-rättigheter i länkat Kundexa-projekt | APPLIED / PASS |
 | Supabase-typer regenererade från länkat projekt | DONE |
-| Docker/Rails build | PASS i GitHub Actions, run 38402406691 |
-| Docker/Rails boot, loader och syntetiskt PDF-fältflöde | PASS i GitHub Actions, run 38403830145 |
-| Syntetisk kundsignatur, slutfil och bevis i dokumentmotorn | PENDING i utökad probe |
+| Docker/Rails build | PASS i GitHub Actions, run 38466613911 |
+| Docker/Rails boot, loader och syntetiskt PDF-fältflöde | PASS i GitHub Actions, run 38466613911 |
+| Syntetisk kundsignatur, slutfil, integritetscertifikat och bevis i dokumentmotorn | PASS i GitHub Actions, run 38466613911 |
 | Två riktiga JWT-sessioner, privat Storage och säljarens UI | NOT RUN |
 | Verkligt Sinch-samtal, Resend-utskick, kundsignatur och signerad bilaga | NOT RUN |
 | Produktionsrelease av webb och process-outbox | NOT DONE |
 | BankID | FUTURE, inte inkopplat |
 
-Inga applikationstestsviter kördes lokalt enligt användarens prioritering. De riktade
+Båda CI-jobben är PASS för kodcommit `6ebccff2f6617bfde273442a70e1553deb497c8b` i [PR #54](https://github.com/heke99/kundexa/pull/54). Befintliga GitHub-testsviter kördes automatiskt och är PASS. Inga applikationstestsviter kördes lokalt enligt användarens prioritering. De riktade
 databaskontrollerna är inte ett bevis för leverantörsdrift eller kryptografisk signering.
 PGlite saknar hosted Supabase och pgcrypto; dess kryptofunktioner är stubbar.
 

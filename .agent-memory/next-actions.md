@@ -1,14 +1,10 @@
 # Next actions
 
-Kundexas ordinarie CI run 38465724911 PASS. Utökad dokumentkörning signerade via kundformuläret men slut-PDF/bevis stoppades av saknad ESIGN_CERTS_KEY i bootstrap. Uppstarten kompletterad med native GenerateCertificate i krypterad konto-konfiguration och replay-kontroll som bevarar certifikatet; ny CI återstår.
-
-Efter utökad CI: språkfelet ”sv is not a valid locale” i kundens riktiga formulär hittat och rättat med Rails-locale samt svenska Vue-texter. Statisk readiness-kontroll uppdaterad för samma probe i ny kodform. Utökad signatur/slut-PDF-beviskörning inväntar omkörning. Inget driftmål valdes; production web/Edge/engine är inte releasade.
-
-Dokumentmotor: build, HTTP-start, Railsloader och isolerat PDF-fält-/preview-/idempotensflöde PASS i GitHub run 38403830145. Utökad syntetisk kundsignatur/slutfil/bevis-probe inväntar CI. Verklig Kundexa/Resend/Sinch-resa är fortsatt NOT RUN.
+Slutstatus 2026-10-13: kodcommit `6ebccff2f6617bfde273442a70e1553deb497c8b` i PR #54 har både ordinarie CI (`38466613716`) och dokumentmotor-CI (`38466613911`) PASS. Dokumentkörningen omfattar PDF-uppladdning, fältplacering/låsning, förifyllning, manipulation av skrivskyddat fält (nekad), idempotens, syntetisk kundsignatur, signerad slut-PDF och audit-PDF. Bootstrap-replay bevarar signeringscertifikatet. 24 lokala DB-prober PASS och fyra migrationer applicerade. Verkligt Kundexa → Sinch/Resend → kund → privat slutfil är NOT RUN. Ingen merge eller produktionsrelease. Driftmål/credentials och slutlig produktmall/pris saknas; inga kundmeddelanden har skickats. BankID och kvarstående oktoberfynd är fortsatt öppna.
 
 ## 2026-10-13 Portad dokumentmotor och integrerat avtalsflöde
 
-1. Läs `docs/DOCUMENT_ENGINE_OPERATIONS.md` och implementationens PR. Kontrollera separata Docker-jobbets build/boot; lokalt Docker/Ruby saknas.
+1. Läs `docs/DOCUMENT_ENGINE_OPERATIONS.md` och PR #54. Båda CI-jobben PASS för ovan angiven kodcommit; välj dokumenthost och konfigurera drift.
 2. Kör dokumentmotor på vald HTTPS-containerhost och konfigurera dedicated service account via bootstrap; injicera server-only env i webbruntime.
 3. Lägg in riktig PDF för produkt och avsändarbolag, mappa kundfält samt signatur, lås och godkänn version; komplettera prisdata.
 4. Publicera kompatibel webb och process-outbox; verifiera Resend-webhook. Ingen merge/release har redan gjorts.
