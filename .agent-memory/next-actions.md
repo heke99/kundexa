@@ -1,5 +1,9 @@
 # Next actions
 
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Följ docs/KUNDEXA_BUILD_WITH_DOCUSEAL.md: skydda avtals-/kundgrund och sparande; inventera och avgränsa auktoriserad dokumentkod; inför PDF-fältkoppling/versioner; bygg enkel säljarresa och riktig extern signeringskedja; rätta telefoni och verifiera drift. BankID är senare separat adapter.
+
 ## 2026-10-13 Kompletterad avtalsresa
 
 Efter behörighets-/avtalsgrund: versionsbundna PDF-mallar och typade fältkopplingar, säljarens sparande/ifyllda preview, därefter DocuSeal-adapter och faktisk slutdokumentimport. Följ docs/PDF_FIELD_TEMPLATES_AND_DOCUSEAL.md tillsammans med avtalsplanen. Inga dokumentationsfynd ska markeras lösta.

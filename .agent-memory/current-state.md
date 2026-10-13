@@ -1,5 +1,9 @@
 # Current state
 
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Användaren uppger att DocuSeal har godkänt återanvändning av hela sitt projekt som egen lösning efter ett samarbete. Planen utgår från detta. docs/KUNDEXA_BUILD_WITH_DOCUSEAL.md beskriver egen dokumenttjänst, kundkortskoppling, enkel säljarresa, extern signering, dialerrättningar och BankID senare. Standardpaket/köp är inte en arbetsblockerare för den redan auktoriserade återanvändningen. Faktiska källkod/moduler ska inventeras. Ingen runtimekod importerad, ingen rättning eller deploy gjord.
+
 ## 2026-10-13 PDF-fält och godkänd GitHub-publicering
 
 Användaren har uttryckligen godkänt publicering till heke99/kundexa. Nytt krav: administratören placerar PDF-fält och kopplar dem till kundkortet; säljaren fyller i kunddata och förhandsgranskar ifyllt avtal. Specifikation: docs/PDF_FIELD_TEMPLATES_AND_DOCUSEAL.md. DocuSeal stöder byggare/förifyllning; inbyggda vyer listas som Pro. Ingen runtimeintegration, installation eller BankID-lösning är ännu genomförd. Publicering görs på dokumentationsgren/PR, utan merge eller produktionsdeploy.

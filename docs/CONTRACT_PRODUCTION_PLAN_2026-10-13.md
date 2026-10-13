@@ -22,6 +22,11 @@ De två fyndregistren överlappar delvis. Deras antal ska inte summeras som ett 
 
 ## Föreslagen signeringsarkitektur
 
+**Ny arbetsförutsättning:** Användaren uppger godkännande från DocuSeal för återanvändning
+av hela deras projekt. Genomförandet utgår från egen anpassad dokumenttjänst med återanvänd
+kod. Tidigare villkor om standardpaket/köp är inte en blockerare för redan godkänd återanvändning.
+Se [byggordningen med DocuSeal-kod](KUNDEXA_BUILD_WITH_DOCUSEAL.md).
+
 **Tillagt användarkrav 13 oktober:** PDF-mallar ska ha visuellt placerbara fält kopplade till
 kundkortet, förifyllning och enkel förhandsgranskning för säljaren. Se
 [PDF-fält och DocuSeal](PDF_FIELD_TEMPLATES_AND_DOCUSEAL.md) för modellen och genomförandet.

@@ -218,3 +218,7 @@ Sparat användarens PDF-fält/kundkortsresa i docs/PDF_FIELD_TEMPLATES_AND_DOCUS
 ## 2026-10-13 Publicering slutförd
 
 Rapporter, avtalsplan, PDF-fältspecifikation och projektminne är publicerade i [PR #53](https://github.com/heke99/kundexa/pull/53). PR är öppen och inte mergad. Publicerat git-träd matchade exakt det lokala dokumentationsträdet (12 ändrade filer). Vanlig git-push saknade terminalautentisering; GitHub-anslutningen användes med användarens uttryckliga mandat. Ingen produktionsdeploy gjordes.
+
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Tillagt docs/KUNDEXA_BUILD_WITH_DOCUSEAL.md och uppdaterat PDF-/avtalsplan med användarens uppgivna fullständiga återanvändningsgodkännande. Rekommenderad gräns och sex konkreta leveranser dokumenterade. Ingen runtimeimplementation.

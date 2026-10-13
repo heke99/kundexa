@@ -283,3 +283,7 @@ Källkod: SigningProvider, template-context och PDF-generator granskade. Officie
 ## 2026-10-13 Publicering slutförd
 
 Rapporter, avtalsplan, PDF-fältspecifikation och projektminne är publicerade i [PR #53](https://github.com/heke99/kundexa/pull/53). PR är öppen och inte mergad. Publicerat git-träd matchade exakt det lokala dokumentationsträdet (12 ändrade filer). Vanlig git-push saknade terminalautentisering; GitHub-anslutningen användes med användarens uttryckliga mandat. Ingen produktionsdeploy gjordes.
+
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Dokumentationspass om återanvändningsmandat och byggordning. Relevant tidigare källgranskning används; ingen ny live DB-/providerkontroll. git diff --check: PASS för dokumentationsändringarna. Applikationstester, samtal, signering, kodimport och deployment: NOT RUN.

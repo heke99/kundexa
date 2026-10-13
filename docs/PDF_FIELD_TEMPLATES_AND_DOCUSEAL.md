@@ -2,6 +2,13 @@
 
 Datum: 13 oktober 2026. Status: användarkrav och genomförandespecifikation; inte implementerat.
 
+**Uppdaterad förutsättning:** Användaren uppger uttryckligt godkännande från DocuSeal att
+återanvända hela deras projekt och relevanta delar som egen lösning, efter ett samarbete.
+Planen utgår från detta mandat. Tidigare resonemang om att ett standardpaket behöver köpas
+är inte en aktuell arbetsblockerare. Den faktiska källkodsversionen och tillgängliga modulerna
+ska inventeras vid införandet; levererat Pro-material har inte inspekterats här.
+Se [byggordningen för Kundexa](KUNDEXA_BUILD_WITH_DOCUSEAL.md).
+
 Användaren godkänner publicering av sparade granskningar, avtalsplan och projektminne till
 `heke99/kundexa`. Användaren kräver en mallresa där administratören placerar textfält på en PDF,
 kopplar dem till kundkortet och säljarens inmatning sedan visas på dessa platser i avtalet.
@@ -55,14 +62,14 @@ Källor: [repository](https://github.com/docusealco/docuseal),
 [pris/funktionsplan](https://www.docuseal.com/pricing).
 
 Rekommenderad riktning är DocuSeal som separat dokument-/signeringstjänst genom Kundexas adapter.
-Inbyggd mallbyggare är förstahandsval om motsvarande licens/driftmodell väljs. Köp, installation
+Inbyggd mallbyggare är förstahandsval med användarens uppgivna återanvändningsmandat. Installation
 eller liveaktivering görs inte genom denna specifikation. En fristående mallbyggare kan vara ett
 första administratörsflöde; säljarens resa ska fortfarande ligga i Kundexa.
 
-Open source-repot är AGPLv3 med ytterligare tillskrivningsvillkor; det är inte en MIT-komponent
-att kopiera fritt in i CRM-koden. Exakt licens/funktionspaket ska väljas för den faktiska
-integrationen. Moln- och självhostad Pro har enligt embedding-sidan API/embeddingavgifter;
-självhosting innebär därför inte automatiskt fri inbyggd signering.
+Det publika open source-repot är AGPLv3 med ytterligare tillskrivningsvillkor.
+Den tidigare granskningen av standardlicens/pris beskriver det publika erbjudandet;
+den fastställer inte villkoren i användarens uppgivna separata överenskommelse.
+Ingen ny köp- eller godkännandeförfrågan införs för redan auktoriserad återanvändning.
 Se [licens](https://github.com/docusealco/docuseal/blob/master/LICENSE) och
 [ytterligare villkor](https://github.com/docusealco/docuseal/blob/master/LICENSE_ADDITIONAL_TERMS).
 Ingen bedömning av hur AGPL påverkar hela Kundexas kodbas görs här.

@@ -1932,3 +1932,7 @@ Ingen rättning eller ny incidentbekräftelse gjordes i dokumentationspasset.
 ## 2026-10-13 PDF-fältkrav som saknad förmåga
 
 PDF-mallar med kundkortskopplade placerbara fält är inte implementerade. Detta är ett nytt produktkrav, inte ytterligare ett verifierat runtimefel eller en rättning av SIGN 01. Tidigare KX26/SIGN/UI-fynd kvarstår OPEN.
+
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Ingen befintlig defekt rättad genom det nya återanvändningsmandatet eller byggplanen. Fyndstatus kvarstår OPEN. Faktiskt Pro-/speciallevererat källmaterial är ännu inte inspekterat; ingen sådan modul antas redan installerad.

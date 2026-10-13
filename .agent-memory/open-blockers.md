@@ -1,5 +1,9 @@
 # Open blockers
 
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Användarens uppgivna fullständiga återanvändningsgodkännande ersätter tidigare standardlicens-/paketval som blockerare. Källinventering, dokumenttjänstens drift, integration, slutvillkor och samtliga ofixade oktoberfynd återstår. Återanvändningsmandat gör inte befintliga utskick operativa.
+
 ## 2026-10-13 PDF-mallkrav
 
 PDF-placering, fältkoppling och ifylld förhandsgranskning saknas som levererat flöde. Ny specifikation kompletterar oktoberfynden. Drift/licens för DocuSeal måste väljas; liveintegration och BankID-stöd är fortfarande ej verifierade.
