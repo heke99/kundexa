@@ -1,5 +1,7 @@
 # Decisions
 
+Efter utökad CI: språkfelet ”sv is not a valid locale” i kundens riktiga formulär hittat och rättat med Rails-locale samt svenska Vue-texter. Statisk readiness-kontroll uppdaterad för samma probe i ny kodform. Utökad signatur/slut-PDF-beviskörning inväntar omkörning. Inget driftmål valdes; production web/Edge/engine är inte releasade.
+
 ## 2026-10-13 Portad dokumentmotor och integrerat avtalsflöde
 
 - Vi portar användarens auktoriserade DocuSeal-källa i repot med läsbara Kundexa-tillägg och egen Rails-runtime. Vi byter inte till en Cloud-integration som ersättning för portningen.

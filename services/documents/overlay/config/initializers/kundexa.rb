@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 Rails.application.config.after_initialize do
+  I18n.available_locales = (I18n.available_locales + [:sv]).uniq
+  Rails.application.config.i18n.available_locales = I18n.available_locales
   Rails.application.routes.prepend do
     post '/kundexa/templates', to: 'kundexa/templates#create'
     post '/kundexa/templates/:id/snapshot', to: 'kundexa/templates#snapshot'

@@ -1,5 +1,7 @@
 # Verification matrix
 
+Efter utökad CI: språkfelet ”sv is not a valid locale” i kundens riktiga formulär hittat och rättat med Rails-locale samt svenska Vue-texter. Statisk readiness-kontroll uppdaterad för samma probe i ny kodform. Utökad signatur/slut-PDF-beviskörning inväntar omkörning. Inget driftmål valdes; production web/Edge/engine är inte releasade.
+
 Dokumentmotor: build, HTTP-start, Railsloader och isolerat PDF-fält-/preview-/idempotensflöde PASS i GitHub run 38403830145. Utökad syntetisk kundsignatur/slutfil/bevis-probe inväntar CI. Verklig Kundexa/Resend/Sinch-resa är fortsatt NOT RUN.
 
 Implementations-PR: https://github.com/heke99/kundexa/pull/54. Portens Docker-build PASS i GitHub run 38402406691, boot ännu pending. Befintlig verify-CI stoppade på äldre fixture som band en ej godkänd mall; fixturen är ändrad till approved, produktionsregeln behålls. Lokalt körs fortfarande inga testsviter. Isolerad PDF-probe i dokumentjobbet kompletterar byggkontrollen.

@@ -1,5 +1,7 @@
 # Known failures
 
+Efter utökad CI: språkfelet ”sv is not a valid locale” i kundens riktiga formulär hittat och rättat med Rails-locale samt svenska Vue-texter. Statisk readiness-kontroll uppdaterad för samma probe i ny kodform. Utökad signatur/slut-PDF-beviskörning inväntar omkörning. Inget driftmål valdes; production web/Edge/engine är inte releasade.
+
 Dokumentjobb run 38402406691: Docker-build PASS, första boot FAIL eftersom bootstrap.rb var ett script i en eager-loaded katalog. Rättat till Kundexa::Bootstrap.call utan sidoeffekt vid boot; explicit runner krävs. Invändar ny CI.
 
 Implementations-PR: https://github.com/heke99/kundexa/pull/54. Portens Docker-build PASS i GitHub run 38402406691, boot ännu pending. Befintlig verify-CI stoppade på äldre fixture som band en ej godkänd mall; fixturen är ändrad till approved, produktionsregeln behålls. Lokalt körs fortfarande inga testsviter. Isolerad PDF-probe i dokumentjobbet kompletterar byggkontrollen.

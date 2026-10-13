@@ -1,0 +1,83 @@
+sv:
+  language_sv: Svenska
+  language_en: Engelska
+  language_en-US: Engelska (USA)
+  language_en-GB: Engelska (Storbritannien)
+  review_and_sign: Granska och signera
+  review_and_submit: Granska och skicka
+  view_document: Visa dokument
+  signed: Signerat
+  signature: Underskrift
+  initials: Initialer
+  text: Text
+  name: Namn
+  email: E-post
+  phone: Telefon
+  page: Sida
+  role: Roll
+  reason: Anledning
+  provide_your_email_to_start: Ange din e-postadress för att börja
+  provide_your_email: Ange din e-postadress
+  provide_your_name_to_start: Ange ditt namn för att börja
+  provide_your_name: Ange ditt namn
+  start: Börja
+  starting: Startar
+  signed_on_time: 'Signerat %{time}'
+  completed_on_time: 'Slutfört %{time}'
+  document_has_been_signed_already: Avtalet är redan signerat
+  form_has_been_submitted_already: Formuläret är redan inskickat
+  send_copy_to_email: Skicka kopia via e-post
+  sending: Skickar
+  or: eller
+  download_documents: Hämta dokument
+  downloading: Hämtar
+  download: Hämta
+  decline: Avstå
+  declined: Avböjt
+  decline_reason: Anledning
+  provide_a_reason: Ange en anledning
+  notify_the_sender_with_the_reason_you_declined: Meddela avsändaren varför du avstår
+  completed_successfully: Slutfört
+  form_has_been_completed_already: Formuläret är redan slutfört
+  form_has_been_expired: Avtalet har gått ut
+  form_has_been_archived: Avtalet är arkiverat
+  form_has_been_declined: Avtalet har avböjts
+  form_is_view_only: Dokumentet kan endast läsas
+  form_expired_at_html: 'Avtalet gick ut <span class="font-semibold">%{time}</span>'
+  form_has_been_declined_on_html: 'Avtalet avböjdes <span class="font-semibold">%{time}</span>'
+  settings: Inställningar
+  save: Spara
+  cancel: Avbryt
+  close: Stäng
+  next: Nästa
+  continue: Fortsätt
+  submit: Skicka
+  sign: Signera
+  sign_now: Signera
+  sign_and_complete: Signera och slutför
+  electronically_signed: Elektroniskt signerat
+  digitally_signed_by: Elektroniskt signerat av
+  audit_log: Signeringsbevis
+  completed: Slutfört
+  pending: Väntar
+  document: Dokument
+  documents: Dokument
+  terms_and_conditions: Villkor
+  electronic_signature_disclosure: Information om elektronisk signering
+  esignature_disclosure: Information om elektronisk signering
+  your_document_copy: Din dokumentkopia
+  hello_name: 'Hej %{name}'
+  date:
+    formats:
+      default: '%Y-%m-%d'
+      short: '%d %b'
+      long: '%d %B %Y'
+    day_names: [söndag, måndag, tisdag, onsdag, torsdag, fredag, lördag]
+    abbr_day_names: [sön, mån, tis, ons, tor, fre, lör]
+    month_names: [null, januari, februari, mars, april, maj, juni, juli, augusti, september, oktober, november, december]
+    abbr_month_names: [null, jan, feb, mar, apr, maj, jun, jul, aug, sep, okt, nov, dec]
+  time:
+    formats:
+      default: '%Y-%m-%d %H:%M'
+      short: '%d %b %H:%M'
+      long: '%d %B %Y %H:%M'

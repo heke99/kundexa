@@ -1,5 +1,7 @@
 # Session log
 
+Efter utökad CI: språkfelet ”sv is not a valid locale” i kundens riktiga formulär hittat och rättat med Rails-locale samt svenska Vue-texter. Statisk readiness-kontroll uppdaterad för samma probe i ny kodform. Utökad signatur/slut-PDF-beviskörning inväntar omkörning. Inget driftmål valdes; production web/Edge/engine är inte releasade.
+
 Dokumentmotor: build, HTTP-start, Railsloader och isolerat PDF-fält-/preview-/idempotensflöde PASS i GitHub run 38403830145. Utökad syntetisk kundsignatur/slutfil/bevis-probe inväntar CI. Verklig Kundexa/Resend/Sinch-resa är fortsatt NOT RUN.
 
 Slutstegsrättning: en redan bunden policy hoppade över versionslåset i generisk finalize_signing_envelope. Fjärde forward-migration applicerad, 24 lokala DB-prober PASS inklusive signed-projektion, versionslås och behörig aktivering. Två tidigare CI-fel var fixture-/kontrolluppställning; ett var Rails-bootstrap-autoload och är rättat.
