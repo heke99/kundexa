@@ -448,3 +448,22 @@ Användaren bad om granskning av koden, inte testresultat. Fem fel hittades och 
 (FAILURE-0137…0141) med migration `202609240011`, två kodändringar och regressionstest som fallerar utan
 rättelsen. Användaren avböjde att kräva leverantörsbekräftelse för avtal; den delen togs bort.
 Användarens provsamtal 07:28 UTC (avvisat) registrerades korrekt som `busy`. Inte applicerat i prod.
+
+## 2026-10-13 Sparade fynd och nästa avtalsarbete
+
+Användaren bad att spara fynd och ta fram väg till avtalsutskick/signering, med framtida BankID.
+Två redan sparade rapporter kopierades till repositoryt. Ny genomförandeplan och minnesuppdateringar.
+Separat dokumentationsgren; inga runtimeändringar, tester, produktionsmigrationer eller utskick.
+Fortsätt enligt CONTRACT_PRODUCTION_PLAN_2026-10-13.md; ingen granskning får behandlas som löst fynd.
+
+## 2026-10-13 Godkänd publicering och PDF-mallar
+
+Användaren godkänner publicering av tidigare fynd/plan/minne till heke99/kundexa och beskriver placerbara PDF-fält som fylls från kundkortet. Kravet dokumenterat; officiella DocuSeal-funktioner och licens/funktionsnivå kontrollerade. Endast dokumentation ändrad. Tidigare push avvisades automatiskt på grund av saknat explicit publiceringsmandat; mandatet finns nu.
+
+## 2026-10-13 Publicering slutförd
+
+Rapporter, avtalsplan, PDF-fältspecifikation och projektminne är publicerade i [PR #53](https://github.com/heke99/kundexa/pull/53). PR är öppen och inte mergad. Publicerat git-träd matchade exakt det lokala dokumentationsträdet (12 ändrade filer). Vanlig git-push saknade terminalautentisering; GitHub-anslutningen användes med användarens uttryckliga mandat. Ingen produktionsdeploy gjordes.
+
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Användaren förtydligar att DocuSeal godkänt återanvändning av hela projektet efter ett samarbete och frågar hur Kundexa byggs. Genomförandeordning och egen dokumenttjänst dokumenterade, tidigare standardpaket som blockerare korrigerat. Befintligt mandat för publicering av plan/projektminne används för uppdatering av PR #53.

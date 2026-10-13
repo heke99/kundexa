@@ -1920,3 +1920,19 @@ regressionstest; varje test fallerar utan sin rättelse.
 - **0141** Avbryt/förläng avtal och stoppa påminnelser prövade inte avtalsåtkomsten. Nu avgör avtalets RLS.
 - Kantfall: kön gav en återkomst vars kund saknar listplats tillsammans med ett annat prospekt. Åtgärdat
   i `claim_next_list_member`.
+
+## 2026-10-13 Aktuella öppna fynd
+
+Fyndregistret KX26 01–28 finns i `docs/reviews/2026-10-13/production-audit.md`.
+SIGN 01–03 och UI 01–12 finns i `docs/reviews/2026-10-13/signing-and-seller-review.md`.
+Registren överlappar delvis och ska inte summeras till ett antal unika fel.
+Status: OPEN, belagda genom kod/live DB eller uttryckligen villkorade kodkedjor.
+Ingen rättning eller ny incidentbekräftelse gjordes i dokumentationspasset.
+
+## 2026-10-13 PDF-fältkrav som saknad förmåga
+
+PDF-mallar med kundkortskopplade placerbara fält är inte implementerade. Detta är ett nytt produktkrav, inte ytterligare ett verifierat runtimefel eller en rättning av SIGN 01. Tidigare KX26/SIGN/UI-fynd kvarstår OPEN.
+
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Ingen befintlig defekt rättad genom det nya återanvändningsmandatet eller byggplanen. Fyndstatus kvarstår OPEN. Faktiskt Pro-/speciallevererat källmaterial är ännu inte inspekterat; ingen sådan modul antas redan installerad.

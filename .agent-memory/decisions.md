@@ -263,3 +263,19 @@ till `failed`.
 ## ADR-0030 — Plattformsadmin delar ut listor den tilldelat
 - Teamledare och ägare delar ut som förut (`set_customer_list_sharing`). Plattformsadmin saknar medlemskap i företaget
   och får därför egna funktioner som härleder företaget ur tilldelningen och avvisar team från andra företag.
+
+## 2026-10-13 Planeringsinriktning för signering
+
+Användarkrav: fynd ska sparas och avtal ska kunna skickas/signeras; BankID ska kunna införas senare.
+Föreslagen arkitektur: Kundexa äger avtalsversion, produkt, rättigheter, utskick och CRM-status.
+Signering sker genom provideradaptrar; DocuSeal är rekommenderat alternativ, ännu inte beställd drift.
+BankID är separat signeringskapabilitet och får inte likställas med login eller simple_click.
+Befintligt stöd för verkligt manuellt registrerat källsamtal bevaras i planen.
+
+## 2026-10-13 Användarkrav och publiceringsmandat
+
+Användaren godkände uttryckligen GitHub-publiceringen efter tidigare automatisk avvisning. PDF-byggaren hör till behörig administration; säljaren använder kundkortet. Kundexa äger fältkoppling/versioner/policy. DocuSeal föreslås som separat adaptertjänst; val av betalplan/drift är ännu öppet. BankID hålls separat från mall och enkel autentisering.
+
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Arbetsförutsättning från användaren: godkännande till hela DocuSeal-projektets återanvändning som egen lösning. Rekommenderad teknisk gräns är en egen anpassad dokumenttjänst bakom Kundexa, inte omskrivning av hela dokumentmotorn till Next.js. Kundexa äger CRM, pris, rättigheter, status och kundkortskoppling. Inget nytt köpmandat efterfrågas för redan auktoriserad kodåteranvändning.
