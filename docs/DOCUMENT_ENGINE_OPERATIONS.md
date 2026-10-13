@@ -31,11 +31,12 @@ tidigare kundlänkar. Köläggning sker atomiskt efter kontroll av aktuell gener
 | Webbens typkontroll och produktionsbuild | PASS |
 | Edge-typkontroll | PASS |
 | Samtliga SQL-migrationer från tomt lokalt schema | PASS i PGlite med Supabase-stubbar |
-| 21 riktade databaskontroller, två tenants, säljare/läsroll, idempotens, generation och lease | PASS lokalt |
-| Tre nya migrationer och lästa RPC-rättigheter i länkat Kundexa-projekt | APPLIED / PASS |
+| 24 riktade databaskontroller, två tenants, säljare/läsroll, idempotens, generation och lease | PASS lokalt |
+| Fyra nya migrationer och lästa RPC-rättigheter i länkat Kundexa-projekt | APPLIED / PASS |
 | Supabase-typer regenererade från länkat projekt | DONE |
 | Docker/Rails build | PASS i GitHub Actions, run 38402406691 |
-| Docker/Rails boot och syntetiskt PDF-flöde | PENDING i separat GitHub-jobb |
+| Docker/Rails boot, loader och syntetiskt PDF-fältflöde | PASS i GitHub Actions, run 38403830145 |
+| Syntetisk kundsignatur, slutfil och bevis i dokumentmotorn | PENDING i utökad probe |
 | Två riktiga JWT-sessioner, privat Storage och säljarens UI | NOT RUN |
 | Verkligt Sinch-samtal, Resend-utskick, kundsignatur och signerad bilaga | NOT RUN |
 | Produktionsrelease av webb och process-outbox | NOT DONE |

@@ -1,5 +1,7 @@
 # Verification matrix
 
+Dokumentmotor: build, HTTP-start, Railsloader och isolerat PDF-fält-/preview-/idempotensflöde PASS i GitHub run 38403830145. Utökad syntetisk kundsignatur/slutfil/bevis-probe inväntar CI. Verklig Kundexa/Resend/Sinch-resa är fortsatt NOT RUN.
+
 Implementations-PR: https://github.com/heke99/kundexa/pull/54. Portens Docker-build PASS i GitHub run 38402406691, boot ännu pending. Befintlig verify-CI stoppade på äldre fixture som band en ej godkänd mall; fixturen är ändrad till approved, produktionsregeln behålls. Lokalt körs fortfarande inga testsviter. Isolerad PDF-probe i dokumentjobbet kompletterar byggkontrollen.
 
 ## 2026-10-13 Portad dokumentmotor och integrerat avtalsflöde
@@ -9,12 +11,12 @@ Implementations-PR: https://github.com/heke99/kundexa/pull/54. Portens Docker-bu
 | Web TypeScript och Next produktionsbuild | PASS, Node 24.19 (avsedd Node 22) |
 | Edge TypeScript | PASS |
 | SQL-schema från tom DB | PASS i PGlite, Supabase/pgcrypto-stubbar |
-| Tvåtenant/roll-, price/status-, idempotens/generation- och lease-prober | PASS, 21 riktade kontroller |
-| Tre hosted migrationer | APPLIED, lästa service-only RPC-rättigheter PASS |
-| Hosted genererade Supabase-typer | REGENERATED efter alla tre |
+| Tvåtenant/roll-, price/status-, idempotens/generation- och lease-prober | PASS, 24 riktade kontroller |
+| Fyra hosted migrationer | APPLIED, lästa service-only RPC-rättigheter PASS |
+| Hosted genererade Supabase-typer | REGENERATED efter schemaändringarna |
 | Git diff whitespace / build.sh syntax | PASS |
 | Application test suites / npm run verify | NOT RUN enligt användarens prioritering |
-| Rails/Docker build/boot | NOT RUN lokalt, separat GitHub-jobb tillagt |
+| Rails/Docker build och HTTP-start | PASS i GitHub; Railsloader/PDF-probe fortfarande pending |
 | Riktiga JWT/Storage/säljarbrowser | NOT RUN |
 | Sinch samtal / Resend e-post / kundsignatur / signerad kopia | NOT RUN |
 | Production web/Edge deployment | NOT DONE |

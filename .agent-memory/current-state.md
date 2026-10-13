@@ -1,5 +1,7 @@
 # Current state
 
+Dokumentmotor: build, HTTP-start, Railsloader och isolerat PDF-fält-/preview-/idempotensflöde PASS i GitHub run 38403830145. Utökad syntetisk kundsignatur/slutfil/bevis-probe inväntar CI. Verklig Kundexa/Resend/Sinch-resa är fortsatt NOT RUN.
+
 ## 2026-10-13 Portad dokumentmotor och integrerat avtalsflöde
 
 Detta avsnitt ersätter tidigare uppgifter om att ingen runtimekod importerats. Implementation finns på `feat/kundexa-docuseal-contract-flow-2026-10-13`, separat från dokumentations-PR #53. Ingen merge eller webb-/Edge-release gjord.
@@ -7,8 +9,8 @@ Detta avsnitt ersätter tidigare uppgifter om att ingen runtimekod importerats. 
 - DocuSeal-källan är portad till `services/documents`, pinnad vid `3c65b0e4ba872fe71d5566c0d09c3ace59a7fb8a`, med scoped PDF-byggare, låst mallfingeravtryck och durable submission-idempotens. Egen runtime; ingen Cloud/Pro-aktivering.
 - PDF-utkast kopplas till produkt/avsändare och fält till kundkort. Kundexa har preview, e-postutskick genom outbox, kundlänk, signerad PDF/bevis till privat Storage samt kund-/säljarnedladdning.
 - Kundsparande, säljarens kommersiella begränsningar, API-tenantstatus, OTP-metod, telefoni/ljud/DTMF/återhämtning, outboxlease och leveransavstämning har kodrättningar.
-- Tre nya migrationer applicerade i länkat Kundexa: `20261013121657`, `20261013123756`, `20261013125758`. Supabase-typer regenererade efter sista migrationen.
-- Webbtypkontroll+build, Edge-typkontroll, schema-replay och 21 lokala riktade DB-prober PASS. Inga applikationstestsviter kördes lokalt enligt användarens prioritering.
+- Fyra nya migrationer applicerade i länkat Kundexa: `20261013121657`, `20261013123756`, `20261013125758`, `20261013132203`. Supabase-typer regenererade efter sista migrationen.
+- Webbtypkontroll+build, Edge-typkontroll, schema-replay och 24 lokala riktade DB-prober PASS. Inga applikationstestsviter kördes lokalt enligt användarens prioritering.
 - Docker/Rails build/boot och verkliga samtal/utskick/signering/JWT/UI är NOT RUN. Dokumenthost/credentials och slutlig produktmall återstår. BankID framtida.
 - `spatial_ref_sys`-rättningen saknade effekt eftersom tillgänglig roll inte äger objektet; fynd KX26 24 kvarstår OPEN.
 

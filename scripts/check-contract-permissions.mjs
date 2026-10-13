@@ -127,5 +127,17 @@ await denies(`select public.finalize_signing_envelope('${envelope}','${document}
 await db.exec(`update public.outbox_jobs set status='processing',locked_by='owner-worker',locked_at=now(),attempts=1 where tenant_id='${ta}' and job_type='email.send';`);
 await assert(`select public.settle_outbox_job(id,'wrong-worker') as settled from public.outbox_jobs where tenant_id='${ta}' and job_type='email.send'`,r=>r.rows[0].settled===false,'wrong worker cannot settle lease');
 await assert(`select public.settle_outbox_job(id,'owner-worker') as settled from public.outbox_jobs where tenant_id='${ta}' and job_type='email.send'`,r=>r.rows[0].settled===true,'lease owner can settle job');
+// Synthetic completion checks the database projection only, not a customer signature.
+await db.exec(`update public.contracts set status='signing' where id='${contract}';
+update public.signing_envelopes set status='sent' where id='${envelope}';
+update public.signing_recipients set status='signed',signed_at=now() where envelope_id='${envelope}';
+insert into public.signing_events(tenant_id,envelope_id,provider,provider_event_id,event_type,event_at,verified,processing_status,payload)
+values('${ta}','${envelope}','docuseal','synthetic-completion','submission.completed',now(),true,'processed','{"synthetic":true}');
+insert into public.contract_documents(id,tenant_id,contract_id,contract_version_id,document_type,file_name,storage_path,mime_type,size_bytes,sha256)
+values('${id(40)}','${ta}','${contract}','${version}','signed_pdf','synthetic-signed.pdf','synthetic-signed.pdf','application/pdf',100,repeat('c',64));`);
+await assert(`select public.finalize_signing_envelope('${envelope}','${id(40)}','{"synthetic":true}') as result`,r=>r.rows[0].result.status==='signed','completed envelope projects signed contract');
+await assert(`select locked_at from public.contract_versions where id='${version}'`,r=>Boolean(r.rows[0].locked_at),'already bound policy is locked at completion');
+await db.exec(`select set_config('request.jwt.claim.sub','${owner}',false); select set_config('request.jwt.claim.role','authenticated',false);`);
+await assert(`select public.activate_completed_contract('${contract}') as result`,r=>r.rows[0].result.status==='active','owner can activate completed current evidence');
 console.log(`${checks} controlled database probes PASS; hosted JWT/storage/provider flow NOT RUN`);
 await db.close();

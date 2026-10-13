@@ -1,12 +1,14 @@
 # Completed work
 
+Dokumentmotor: build, HTTP-start, Railsloader och isolerat PDF-fält-/preview-/idempotensflöde PASS i GitHub run 38403830145. Utökad syntetisk kundsignatur/slutfil/bevis-probe inväntar CI. Verklig Kundexa/Resend/Sinch-resa är fortsatt NOT RUN.
+
 ## 2026-10-13 Portad dokumentmotor och integrerat avtalsflöde
 
 - Portat och pinnat DocuSeal-app, Vue PDF-byggare och signerings-/PDF-kärna med originalattribution, egen overlay och build/compose/bootstrap.
 - Integrerat produkt-PDF-utkast, fältmapping, fryst preview, extern kundsignering, privat slutfil/bevis samt seller/customer download.
 - Rättat prioriterade CRM-/telefon-/OTP-/outbox-/behörighetsfel och lagt terminal-/generation-/leasekontroller.
-- Tre DB-migrationer applicerade; typer genererade från länkat projekt.
-- Bygg-/typkontroller och 21 riktade tvåtenant/roll/generation/idempotens/lease-prober passerade.
+- Fyra DB-migrationer applicerade; typer genererade från länkat projekt.
+- Bygg-/typkontroller och 24 riktade tvåtenant/roll/generation/idempotens/lease-prober passerade.
 - Skrivit `docs/DOCUMENT_ENGINE_OPERATIONS.md` med scope, drift och kvarstående releasegates. Allt är inte grönt i produktion.
 
 ## 2026-09-24 samtalsarbetsyta

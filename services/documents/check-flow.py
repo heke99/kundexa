@@ -2,16 +2,22 @@
 import base64
 import hashlib
 import hmac
+import html
+import http.cookiejar
 import json
 import os
+import re
+import struct
 import time
 import urllib.error
 import urllib.request
 import uuid
+import zlib
 
 origin = os.environ["DOCUMENTS_CHECK_URL"].rstrip("/")
 api_key = os.environ["KUNDEXA_DOCUMENTS_API_KEY"]
 secret = os.environ["KUNDEXA_DOCUMENTS_SECRET"]
+opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
 
 
 def request(path, body=None, headers=None, method=None, expected=200):
@@ -21,7 +27,7 @@ def request(path, body=None, headers=None, method=None, expected=200):
     req = urllib.request.Request(origin + path, body,
         {"X-Auth-Token": api_key, **(headers or {})}, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=30) as result:
+        with opener.open(req, timeout=30) as result:
             status, data = result.status, result.read()
     except urllib.error.HTTPError as error:
         status, data = error.code, error.read()
@@ -89,6 +95,43 @@ automatic = {**order, "submitters": [{**order["submitters"][0], "completed": Tru
 request("/kundexa/submissions", automatic, {"Idempotency-Key": "isolated:auto-sign-denied"}, "POST", expected=409)
 documents = json.loads(request(f'/api/submissions/{first[0]["submission_id"]}/documents?merge=true'))
 assert len(documents["documents"]) == 1
-with urllib.request.urlopen(documents["documents"][0]["url"], timeout=30) as response:
+with opener.open(documents["documents"][0]["url"], timeout=30) as response:
+    preview = response.read()
+    assert preview.startswith(b"%PDF-")
+
+# A synthetic customer uses the public form, its CSRF token, and a drawn PNG.
+# This exercises native signing, without forging `completed` through the CRM API.
+slug = first[0]["slug"]
+form = request(f"/s/{slug}").decode()
+csrf = html.unescape(re.search(r'<meta name="csrf-token" content="([^"]+)"', form).group(1))
+public_headers = {"X-CSRF-Token": csrf, "Origin": origin}
+request(f"/s/{slug}", {"values": {fields[0]["uuid"]: "Tampered name"}}, public_headers, "PATCH", expected=422)
+pixels = bytearray([255] * 256 * 80 * 3)
+for x in range(20, 236):
+    y = 20 + (x % 35)
+    for yy in range(y, y + 4):
+        index = (yy * 256 + x) * 3
+        pixels[index:index + 3] = bytes([0, 0, 0])
+
+
+def png_chunk(kind, data):
+    return struct.pack("!I", len(data)) + kind + data + struct.pack("!I", zlib.crc32(kind + data))
+
+
+raw = b"".join(b"\0" + pixels[y * 256 * 3:(y + 1) * 256 * 3] for y in range(80))
+signature_png = b"\x89PNG\r\n\x1a\n" + png_chunk(b"IHDR", struct.pack("!IIBBBBB", 256, 80, 8, 2, 0, 0, 0)) + png_chunk(b"IDAT", zlib.compress(raw)) + png_chunk(b"IEND", b"")
+signature_body = (f'--{boundary}\r\nContent-Disposition: form-data; name="type"\r\n\r\nsignature\r\n'
+    f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="synthetic-signature.png"\r\nContent-Type: image/png\r\n\r\n').encode() + signature_png + f"\r\n--{boundary}--\r\n".encode()
+attachment = json.loads(request(f"/s/{slug}/upload", signature_body,
+    {"Content-Type": f"multipart/form-data; boundary={boundary}"}, "POST"))
+request(f"/s/{slug}", {"values": {fields[1]["uuid"]: attachment["uuid"]}, "completed": "true"}, public_headers, "PATCH")
+completed = json.loads(request(f'/api/submissions/{first[0]["submission_id"]}'))
+assert completed["status"] == "completed" and completed["completed_at"]
+final = json.loads(request(f'/api/submissions/{first[0]["submission_id"]}/documents?merge=true'))
+with opener.open(final["documents"][0]["url"], timeout=30) as response:
+    signed = response.read()
+    assert signed.startswith(b"%PDF-") and hashlib.sha256(signed).digest() != hashlib.sha256(preview).digest()
+assert completed["audit_log_url"]
+with opener.open(completed["audit_log_url"], timeout=30) as response:
     assert response.read().startswith(b"%PDF-")
-print("PASS synthetic PDF upload, field placement, fingerprint lock, readonly prefill, preview rendering, idempotent replay and auto-sign denial; no emails or real signatures")
+print("PASS synthetic PDF upload, field placement, lock, readonly prefill/tamper denial, preview, idempotency, public customer signature, final signed PDF and audit PDF; no customer messages")

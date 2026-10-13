@@ -1,5 +1,7 @@
 # Next actions
 
+Dokumentmotor: build, HTTP-start, Railsloader och isolerat PDF-fält-/preview-/idempotensflöde PASS i GitHub run 38403830145. Utökad syntetisk kundsignatur/slutfil/bevis-probe inväntar CI. Verklig Kundexa/Resend/Sinch-resa är fortsatt NOT RUN.
+
 ## 2026-10-13 Portad dokumentmotor och integrerat avtalsflöde
 
 1. Läs `docs/DOCUMENT_ENGINE_OPERATIONS.md` och implementationens PR. Kontrollera separata Docker-jobbets build/boot; lokalt Docker/Ruby saknas.
