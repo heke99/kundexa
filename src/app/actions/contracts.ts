@@ -1,5 +1,8 @@
 "use server";
 
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { freezePdfTemplate, pdfCustomFormValues, type FrozenPdfTemplate } from "@/lib/contracts/pdf-field-template";
+
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
@@ -9,14 +12,16 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { acceptanceCode, encryptJson, randomToken, sha256, sha256Bytes } from "@/lib/crypto";
 import { canonicalAppBaseUrl, serverEnv } from "@/lib/env";
 import { normalizePhone } from "@/lib/domain/phone";
-import { assertPermission, assertContractAuthor, assertContractFromProduct } from "@/lib/permissions";
+import { toJson } from "@/lib/supabase/json";
+import { can, assertPermission, assertContractAuthor, assertContractFromProduct } from "@/lib/permissions";
 import { renderStrictTemplate } from "@/lib/domain/template";
 import { buildTemplateRenderContext } from "@/lib/contracts/template-context";
 import { zonedLocalDateTimeToIso } from "@/lib/domain/time";
 import { assertContractCallEligibility } from "@/lib/contracts/call-eligibility";
-import { ensureCanonicalContractDocument } from "@/lib/contracts/canonical-document";
+import { ensureCanonicalContractDocument, loadCanonicalContractSnapshot } from "@/lib/contracts/canonical-document";
 import { contractAcceptanceModes, contractDeliveryBlocker, NO_ANSWER_PATH_MESSAGE } from "@/lib/contracts/delivery-readiness";
 import { renderContractDeliveryEmail } from "@/lib/email/templates/contract-delivery";
+import { loadContractSignatureMethod, planContractDelivery, renderContractDeliverySms } from "@/lib/contracts/delivery-plan";
 import { normalizeVariableFees } from "@/lib/contracts/price-terms";
 
 const value = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
@@ -119,7 +124,7 @@ export async function createContract(form: FormData) {
   }
 
   const [{ data: templateVersion }, { data: legalEntity }] = await Promise.all([
-    supabase.from("contract_template_versions").select("id,template_id,status,title_template,body_template,terms_template,variables,approved_at").eq("id", template.current_version_id).maybeSingle(),
+    supabase.from("contract_template_versions").select("id,template_id,status,title_template,body_template,terms_template,variables,approved_at,signing_configuration").eq("id", template.current_version_id).maybeSingle(),
     // Bolaget som står på avtalet: det avtalet skrevs för, annars företagets
     // förvalda. Ingen säljare ska behöva välja vem som utfärdar avtalet.
     template.legal_entity_id
@@ -147,7 +152,7 @@ export async function createContract(form: FormData) {
   {
     const [{ data: productData }, { data: priceData }] = await Promise.all([
       supabase.from("products").select("id,name,sku,description").eq("id", input.productId).eq("active", true).maybeSingle(),
-      supabase.from("product_price_versions").select("id,version,setup_fee,recurring_fee,variable_fees,currency,binding_months,notice_months,payment_terms_days,terms").eq("product_id", input.productId).eq("active", true).order("version", { ascending: false }).limit(1).maybeSingle(),
+      supabase.from("product_price_versions").select("id,version,setup_fee,recurring_fee,variable_fees,currency,binding_months,notice_months,payment_terms_days,terms").eq("product_id", input.productId).eq("active", true).lte("valid_from", new Date().toISOString().slice(0, 10)).or(`valid_to.is.null,valid_to.gte.${new Date().toISOString().slice(0, 10)}`).order("version", { ascending: false }).limit(1).maybeSingle(),
     ]);
     if (!productData) back("Produkten saknas eller är inaktiv.");
     if (!priceData) back("Produkten saknar ett aktivt pris. En administratör lägger in det under Produkter.");
@@ -158,6 +163,12 @@ export async function createContract(form: FormData) {
   // hitta på vad avtalet heter.
   const title = input.title || product.name;
 
+  if (!can(ctx.role, "contracts.override_commercial")) {
+    if ([input.bindingMonths, input.noticeMonths, input.paymentTermsDays, input.contractValue, input.specialTerms].some(Boolean)) {
+      back("Din roll får inte ändra produktens godkända priser eller villkor.");
+    }
+    input.currency = price?.currency ?? "SEK";
+  }
   const variableFees = normalizeVariableFees(price?.variable_fees);
   const bindingMonths = input.bindingMonths === "" ? (price?.binding_months ?? null) : Number(input.bindingMonths);
   const noticeMonths = input.noticeMonths === "" ? (price?.notice_months ?? null) : Number(input.noticeMonths);
@@ -187,6 +198,7 @@ export async function createContract(form: FormData) {
     product_name: product?.name ?? null,
     price_version: price?.version ?? null,
     additional_terms: additionalTerms,
+    pdf_fields: null as FrozenPdfTemplate | null,
   };
   const sellerSnapshot = {
     id: legalEntity.id,
@@ -245,6 +257,7 @@ export async function createContract(form: FormData) {
   let renderedBody: string;
   let renderedTerms: string;
   try {
+    commercialTerms.pdf_fields = freezePdfTemplate(templateVersion.signing_configuration, context, ctx.tenantId, pdfCustomFormValues(templateVersion.signing_configuration, form));
     renderedTitle = renderStrictTemplate(templateVersion.title_template, context);
     renderedBody = renderStrictTemplate(templateVersion.body_template, context);
     renderedTerms = renderStrictTemplate(templateVersion.terms_template ?? "", context);
@@ -259,7 +272,7 @@ export async function createContract(form: FormData) {
       : [];
     const message = missing.length
       ? `Avtalet kräver ${missing.join(", ")}, men det finns inget värde för ${missing.length === 1 ? "det" : "dem"}. Fyll i uppgiften på kundkortet, eller öppna produktens avtal och gör fältet valfritt genom att sätta ett frågetecken sist: {{${missing[0]}?}}`
-      : "Mallrenderingen misslyckades.";
+      : raw.startsWith("pdf_template_required_value:") ? `Fyll i ${raw.split(":").slice(1).join(":")} på kundkortet innan avtalet skapas.` : "Mallrenderingen misslyckades.";
     back(message);
   }
   const documentHash = sha256(`${renderedTitle}\n${renderedBody}\n${renderedTerms}\n${JSON.stringify(commercialTerms)}\n${JSON.stringify(sellerSnapshot)}\n${JSON.stringify(counterpartySnapshot)}`);
@@ -283,7 +296,7 @@ export async function createContract(form: FormData) {
     catch (sourceError) { back(sourceError instanceof Error ? sourceError.message : "Det valda samtalet är inte avtalsgrundande."); }
   }
 
-  const { data: contractId, error } = await supabase.rpc("create_contract_draft_v3", {
+  const draftInput = {
     p_contract_number: contractNumber(),
     p_customer_id: input.customerId,
     p_product_id: input.productId,
@@ -308,7 +321,12 @@ export async function createContract(form: FormData) {
     p_contract_value: contractValue,
     p_currency: input.currency,
     p_expires_at: expiresAt,
-  });
+  };
+  const { data: contractId, error } = can(ctx.role, "contracts.override_commercial")
+    ? await supabase.rpc("create_contract_draft_v3", draftInput)
+    : await (createAdminClient() as SupabaseClient).rpc("create_contract_draft_for_actor", {
+      p_tenant_id: ctx.tenantId, p_actor_user_id: ctx.userId, p_input: draftInput,
+    });
   if (error || !contractId) back(contractCreateError(error?.message));
 
   if (input.sourceCallId) {
@@ -356,6 +374,17 @@ export async function uploadContractPdf(form: FormData) {
   if (new TextDecoder().decode(bytes.slice(0, 5)) !== "%PDF-") {
     redirect(`/app/contracts/${contractId}?error=Filen har inte ett giltigt PDF-huvud`);
   }
+  const canonical = value(form, "document_mode") === "canonical";
+  let trustedMetadata: Record<string, unknown> = { canonical: false, upload_mode: "attachment" };
+  if (canonical) {
+    try {
+      const { snapshot, snapshotHash } = await loadCanonicalContractSnapshot(createAdminClient(), {
+        tenantId: ctx.tenantId, contractId, actorUserId: ctx.userId,
+      });
+      trustedMetadata = { canonical: true, canonical_origin: "kundexa_author_upload_v1", upload_mode: "canonical",
+        snapshot_hash: snapshotHash, locked_parties: { seller: snapshot.seller, counterparty: snapshot.counterparty } };
+    } catch { redirect(`/app/contracts/${contractId}?error=${encodeURIComponent("Avtalets uppgifter och källsamtal måste vara klara innan en avtals-PDF kan laddas upp.")}`); }
+  }
   const hash = sha256Bytes(bytes);
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
   const path = `${ctx.tenantId}/${contractId}/${crypto.randomUUID()}-${safeName}`;
@@ -365,7 +394,7 @@ export async function uploadContractPdf(form: FormData) {
   });
   if (uploadError) redirect(`/app/contracts/${contractId}?error=${encodeURIComponent(uploadError.message)}`);
 
-  const { error: insertError } = await supabase.from("contract_documents").insert({
+  const { error: insertError } = await (canonical ? createAdminClient() : supabase).from("contract_documents").insert({
     tenant_id: ctx.tenantId,
     contract_id: contractId,
     contract_version_id: contract.active_version_id,
@@ -375,7 +404,7 @@ export async function uploadContractPdf(form: FormData) {
     mime_type: file.type,
     size_bytes: file.size,
     sha256: hash,
-    metadata: { canonical: value(form, "document_mode") === "canonical", upload_mode: value(form, "document_mode") || "attachment" },
+    metadata: toJson(trustedMetadata),
   });
   if (insertError) {
     await supabase.storage.from("contract-documents").remove([path]);
@@ -580,8 +609,13 @@ export async function sendContract(form: FormData) {
   let acceptanceModes;
   try { acceptanceModes = await contractAcceptanceModes(admin, ctx.tenantId); }
   catch { redirect(`/app/contracts/${contractId}?error=Kunde inte läsa företagets leveransinställningar. Försök igen om en stund.`); }
-  const smsAnswers = acceptanceModes.sms && channel !== "email";
-  if (!acceptanceModes.web && !smsAnswers) redirect(`/app/contracts/${contractId}?error=${encodeURIComponent(NO_ANSWER_PATH_MESSAGE)}`);
+  let deliveryPlan;
+  try {
+    const method = await loadContractSignatureMethod(admin, ctx.tenantId, contract.active_version_id);
+    deliveryPlan = planContractDelivery({ channel, method, modes: acceptanceModes });
+  } catch (error) {
+    redirect(`/app/contracts/${contractId}?error=${encodeURIComponent(error instanceof Error ? error.message : NO_ANSWER_PATH_MESSAGE)}`);
+  }
 
   const env = serverEnv();
   let emailFrom = "pending@kundexa.local";
@@ -627,18 +661,7 @@ export async function sendContract(form: FormData) {
   const code = acceptanceCode();
   const publicUrl = `${canonicalAppBaseUrl()}/accept/${token}`;
   const expiresLabel = new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeStyle: "short", timeZone: ctx.tenantTimezone }).format(expiresAt!);
-  // Samma regel som `prepare_contract_delivery_v2` använder för `require_code`:
-  // SMS i kanalen eller en signeringsmetod med engångskod. Krävs koden ska den
-  // stå i e-posten också, annars kan den som bara läser mejlet inte svara.
-  const { data: activeVersion } = await supabase.from("contract_versions")
-    .select("signature_policy_snapshot,template_version_id").eq("id", contract.active_version_id).maybeSingle();
-  let signatureMethod = (activeVersion?.signature_policy_snapshot as { method?: string } | null)?.method ?? null;
-  if (!signatureMethod && activeVersion?.template_version_id) {
-    const { data: templateVersion } = await supabase.from("contract_template_versions")
-      .select("signature_policy").eq("id", activeVersion.template_version_id).maybeSingle();
-    signatureMethod = (templateVersion?.signature_policy as { method?: string } | null)?.method ?? null;
-  }
-  const codeRequired = channel !== "email" || signatureMethod === "sms_otp" || signatureMethod === "email_otp";
+  const codeRequired = deliveryPlan.codeRequired;
   const sellerSnapshot = (contract.seller_snapshot ?? {}) as Record<string, unknown>;
   const branding = (sellerSnapshot.branding ?? {}) as Record<string, unknown>;
   const snapshotLogoUrl = typeof branding.logo_url === "string" && /^https:\/\//i.test(branding.logo_url) ? branding.logo_url : null;
@@ -649,11 +672,11 @@ export async function sendContract(form: FormData) {
     customerName: recipientName, contractNumber: contract.contract_number, contractTitle: contract.title,
     acceptUrl: publicUrl, expiresAt: expiresLabel, introduction, contact: snapshotContact, logoUrl: snapshotLogoUrl,
     acceptanceCode: codeRequired ? code : null,
+    webAcceptance: deliveryPlan.web,
   });
   // "Svara JA" bara när företaget tar emot SMS-svar. Annars är det länken som gäller.
-  const smsBody = acceptanceModes.sms
-    ? `Avtal ${contract.contract_number} från ${sellerLegalName}. Granska: ${publicUrl}. Svara JA ${code} eller NEJ ${code}. Giltigt till ${expiresLabel}.`
-    : `Avtal ${contract.contract_number} från ${sellerLegalName}. Granska och svara: ${publicUrl}. ${codeRequired ? `Kod: ${code}. ` : ""}Giltigt till ${expiresLabel}.`;
+  const smsBody = renderContractDeliverySms({ contractNumber: contract.contract_number, legalName: sellerLegalName,
+    acceptUrl: publicUrl, expiresAt: expiresLabel, code, plan: deliveryPlan });
   const attachments = [{ document_id: canonicalDocument.id, filename: canonicalDocument.file_name, mime_type: "application/pdf" }];
   const { error } = await supabase.rpc("prepare_contract_delivery_v2", {
     p_contract_id: contractId,
@@ -800,6 +823,12 @@ export async function cancelContract(form: FormData) {
   if ((CONCLUDED_CONTRACT_STATUSES as readonly string[]).includes(contract.status)) {
     redirect(`${back}?error=${encodeURIComponent(`${contract.contract_number} är redan ingånget och kan inte avbrytas.`)}`);
   }
+
+  const { data: externalSigning, error: signingReadError } = await admin.from("signing_envelopes")
+    .select("id").eq("tenant_id", ctx.tenantId).eq("contract_id", contractId).eq("provider", "docuseal")
+    .in("status", ["draft", "creating", "sent", "partially_signed"]).limit(1).maybeSingle();
+  if (signingReadError) redirect(`${back}?error=${encodeURIComponent("Signeringen kunde inte kontrolleras. Inget avbröts.")}`);
+  if (externalSigning) redirect(`${back}?error=${encodeURIComponent("Använd Avbryt signeringen för att stänga kundens signeringslänk först.")}`);
 
   // The customer is holding a live link. Killing the acceptance request and the
   // queued reminders is the part that actually reaches them; leaving them would

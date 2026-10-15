@@ -107,7 +107,7 @@ export async function saveEmailIntegration(form: FormData) {
   }
   const sendingDomain = fromAddress.split("@")[1] ?? "";
   const admin = createAdminClient();
-  const { data: existing } = await admin.from("tenant_integrations").select("id,credentials_ciphertext,configuration").eq("tenant_id", context.tenantId).eq("provider_type", "email").eq("provider", "resend").eq("name", "Resend").maybeSingle();
+  const { data: existing } = await admin.from("tenant_integrations").select("id,credentials_ciphertext,configuration,webhook_status").eq("tenant_id", context.tenantId).eq("provider_type", "email").eq("provider", "resend").eq("name", "Resend").maybeSingle();
   let oldCredentials: ResendCredentials = {};
   if (existing?.credentials_ciphertext) {
     try {
@@ -153,6 +153,7 @@ export async function saveEmailIntegration(form: FormData) {
     provider: "resend",
     name: "Resend",
     credentials_ciphertext: encryptJson(credentials, env.KUNDEXA_ENCRYPTION_KEY),
+    webhook_status: !credentials.webhookSigningSecret ? "not_configured" : webhookSigningSecret && webhookSigningSecret !== oldCredentials.webhookSigningSecret ? "pending" : existing?.webhook_status ?? "pending",
     configuration,
     // Att spara en signeringshemlighet är inte ett skäl att stänga av
     // avtalsposten. Statusen betydde tidigare "har någon kört testet", och det
@@ -250,7 +251,7 @@ export async function generateResendWebhookAddress(form: FormData) {
   // Adressen som byts här tar emot leveranskvitton. Den har ingenting med
   // rätten att skicka att göra, och att sätta integrationen till väntande hade
   // stoppat avtalsposten för att någon roterade en webhookadress.
-  const { error } = await admin.from("tenant_integrations").update({ credentials_ciphertext: encryptJson(credentials, env.KUNDEXA_ENCRYPTION_KEY), configuration }).eq("tenant_id", context.tenantId).eq("id", integration.id);
+  const { error } = await admin.from("tenant_integrations").update({ credentials_ciphertext: encryptJson(credentials, env.KUNDEXA_ENCRYPTION_KEY), configuration, webhook_status: credentials.webhookSigningSecret ? "pending" : "not_configured" }).eq("tenant_id", context.tenantId).eq("id", integration.id);
   if (error) throw error;
   await admin.from("audit_logs").insert({ tenant_id: context.tenantId, actor_user_id: context.userId, action: "integration.resend_webhook_rotated", entity_type: "tenant_integration", entity_id: integration.id });
   revalidatePath("/app/integrations");

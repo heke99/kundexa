@@ -1,4 +1,5 @@
 /// <reference lib="deno.ns" />
+/// <reference lib="dom" />
 
 import { createHash, createHmac } from "node:crypto";
 import assert from "node:assert/strict";
@@ -291,4 +292,31 @@ Deno.test("A call the provider broke is reported as failed; a call nobody answer
   assert.equal(legEventForSinchEnd(5), "ended");
   assert.equal(legEventForSinchEnd(6), "ended");
   assert.equal(legEventForSinchEnd(undefined), "ended");
+});
+
+Deno.test("remote stream uses selected output, starts playback and is released", async () => {
+  const { playRemoteStream, clearRemoteStream } = await import("../src/lib/telephony/webphone/audio.ts");
+  const operations: string[] = [];
+  const stream = {} as MediaStream;
+  const element = {
+    srcObject: null,
+    setSinkId: async (id: string) => { operations.push(`sink:${id}`); },
+    play: async () => { operations.push("play"); },
+    pause: () => { operations.push("pause"); },
+  } as unknown as HTMLAudioElement;
+  await playRemoteStream(element, stream, "headset");
+  assert.equal(element.srcObject, stream);
+  assert.deepEqual(operations, ["sink:headset", "play"]);
+  clearRemoteStream(element);
+  assert.equal(element.srcObject, null);
+  assert.equal(operations.at(-1), "pause");
+});
+
+Deno.test("remote playback preserves stream and exposes autoplay failure for user retry", async () => {
+  const { playRemoteStream } = await import("../src/lib/telephony/webphone/audio.ts");
+  const stream = {} as MediaStream;
+  const blocked = new Error("NotAllowedError");
+  const element = { srcObject: null, play: async () => { throw blocked; } } as unknown as HTMLAudioElement;
+  await assert.rejects(playRemoteStream(element, stream, ""), blocked);
+  assert.equal(element.srcObject, stream);
 });

@@ -6,7 +6,9 @@ import { Phone, PhoneOff, Radio } from "@/components/icons";
 import { useDialerPanel } from "@/hooks/use-dialer";
 import { useCallRealtime } from "@/hooks/use-call-realtime";
 import { WebphoneAudioPanel } from "@/components/webphone-audio-panel";
-import { LiveCustomerCard } from "@/components/call-workspace/live-customer-card";
+import { ContractWorkspace } from "@/components/call-workspace/contract-workspace";
+import { saveBeforeTransition } from "@/lib/call-workspace/save-before-transition";
+import { LiveCustomerCard, type LiveCustomerCardHandle } from "@/components/call-workspace/live-customer-card";
 import { CallbackTimeField, OutcomePicker } from "@/components/call-workspace/outcome-picker";
 import { manualOutcomeOptions } from "@/lib/dialer/outcomes";
 
@@ -79,10 +81,17 @@ export function DialerPanel({
   const [callbackScope, setCallbackScope] = useState<"personal" | "global">("personal");
   const [callbackDueAt, setCallbackDueAt] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [contractWorkspace, setContractWorkspace] = useState<{ href: string; customerName: string } | null>(null);
   const [endMessage, setEndMessage] = useState<string | null>(null);
   const requestKeyRef = useRef<string | null>(null);
   const afterCallFormRef = useRef<HTMLFormElement>(null);
+  const customerCardRef = useRef<LiveCustomerCardHandle>(null);
+  const completingRef = useRef(false);
+  const [completing, setCompleting] = useState(false);
   const dialer = useDialerPanel();
+  useEffect(() => {
+    if (dialer.activeCallId) setCallId(dialer.activeCallId);
+  }, [dialer.activeCallId]);
   const callState = useCallRealtime(callId, (status) => {
     dialer.markEnded();
     preselectOutcome(status);
@@ -195,8 +204,12 @@ export function DialerPanel({
     const submitter = (event.nativeEvent as SubmitEvent).submitter;
     const createContractAfterSave = submitter instanceof HTMLButtonElement && submitter.value === "create_contract";
     if (!callId || !disposition) return;
+    if (completingRef.current) return;
+    completingRef.current = true;
+    setCompleting(true);
     setError(null);
-    const response = await fetch("/api/v1/calls/complete", {
+    try {
+    const response = await saveBeforeTransition(customerCardRef.current, () => fetch("/api/v1/calls/complete", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -206,15 +219,14 @@ export function DialerPanel({
         callbackScope: disposition === "callback" ? callbackScope : null,
         callbackDueAt: disposition === "callback" ? callbackDueAt : null,
       }),
-    });
+    }));
     const result = await response.json() as { error?: string; message?: string };
     if (!response.ok) {
       setError(result.message ?? (result.error ?? "after_call_failed").replaceAll("_", " "));
       return;
     }
     if (createContractAfterSave) {
-      window.location.assign(`/app/contracts/new?customer_id=${encodeURIComponent(selected)}&source_call_id=${encodeURIComponent(callId)}`);
-      return;
+      setContractWorkspace({ href: `/app/contracts/new?customer_id=${encodeURIComponent(selected)}&source_call_id=${encodeURIComponent(callId)}`, customerName: selectedCustomer?.display_name ?? "Kunden" });
     }
     setAfterCall(false);
     setCallId(null);
@@ -222,6 +234,14 @@ export function DialerPanel({
     setDisposition("");
     setNotes("");
     setCallbackDueAt("");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Efterarbetet kunde inte sparas.");
+    } finally { completingRef.current = false; setCompleting(false); }
+  }
+
+  if (contractWorkspace) {
+    const workspace = <ContractWorkspace {...contractWorkspace} onClose={() => setContractWorkspace(null)} />;
+    return liveSlot ? createPortal(workspace, liveSlot) : workspace;
   }
 
   return <div>
@@ -293,7 +313,9 @@ export function DialerPanel({
     <WebphoneAudioPanel
       inCall={dialer.calling}
       muted={dialer.muted}
-      capabilities={dialer.audioCapabilities}
+      audioError={dialer.audioError}
+            onResumeAudio={dialer.resumeAudio}
+            capabilities={dialer.audioCapabilities}
       onToggleMute={dialer.toggleMute}
       onSendDtmf={dialer.sendDtmf}
     />
@@ -318,12 +340,13 @@ export function DialerPanel({
     </div> : null}
     {endMessage ? <p className="notice">{endMessage}</p> : null}
     {callState.recovering ? <p className="notice">Samtalets slutstatus är ännu inte säkerställd. Kundexa fortsätter automatisk avstämning—starta inte ett nytt samtal.</p> : null}
-    {callId && callState.connectionState === "degraded" ? <p className="notice">Realtime är tillfälligt frånkopplat. Samtalsstatus hämtas via säker fallback.</p> : null}
+    {callId && callState.connectionState === "degraded" ? <p className="notice">Anslutningen återställs. Vi fortsätter att kontrollera samtalets status.</p> : null}
     {error ? <p className="form-error">{error}</p> : null}
     {afterCall && callId ? <form className="manual-after-call" onSubmit={complete} ref={afterCallFormRef}>
+      <fieldset className="form-stack" disabled={completing} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
       <h3>Efterarbete</h3>
       <p>Välj utfall med ett klick eller siffertangent 1–9. Enter sparar.</p>
-      <OutcomePicker options={manualOutcomeOptions} value={disposition} onChange={setDisposition} onConfirm={() => afterCallFormRef.current?.requestSubmit()} />
+      <OutcomePicker disabled={completing} options={manualOutcomeOptions} value={disposition} onChange={setDisposition} onConfirm={() => afterCallFormRef.current?.requestSubmit()} />
       {disposition === "nix_listed" ? <p className="notice warning">
         Numret registreras som NIX-spärrat och blockeras permanent för utgående samtal — även om
         kunden läggs upp på nytt senare.
@@ -348,11 +371,12 @@ export function DialerPanel({
           ? <button className="button button-secondary" type="submit" value="create_contract">Spara och skapa avtal</button>
           : null}
       </div>
+      </fieldset>
     </form> : null}
     {/* Kunden i luren: kortet öppnas och uppgifterna sparas utan sidladdning, så
         samtalet i webbläsaren och efterarbetet ligger kvar. */}
     {callId && selected ? (liveSlot
-      ? createPortal(<LiveCustomerCard customerId={selected} heading={afterCall ? "Samtalet är avslutat" : "Pågående samtal · fyll i uppgifterna"} fullCardLink={!lockedToCustomer} />, liveSlot)
-      : <div className="phone-panel-live"><LiveCustomerCard customerId={selected} heading={afterCall ? "Kunduppgifter" : "Fyll i under samtalet"} fullCardLink={!lockedToCustomer} /></div>) : null}
+      ? createPortal(<LiveCustomerCard ref={customerCardRef} customerId={selected} heading={afterCall ? "Samtalet är avslutat" : "Pågående samtal · fyll i uppgifterna"} fullCardLink={!lockedToCustomer} />, liveSlot)
+      : <div className="phone-panel-live"><LiveCustomerCard ref={customerCardRef} customerId={selected} heading={afterCall ? "Kunduppgifter" : "Fyll i under samtalet"} fullCardLink={!lockedToCustomer} /></div>) : null}
   </div>;
 }

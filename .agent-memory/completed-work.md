@@ -1,5 +1,17 @@
 # Completed work
 
+## 2026-10-15 Auktoriserad produktionsrelease
+
+SkarpDBrollout utförd enligt docs/releases/2026-10-15-native-production.json utanremote004. Canonicalartifactorigin säkerhetsfix010; originalsnapshot+hash verifieras, uploadpoisoning avvisas. Legacyparity011 bevarar schema/historik men blockerarnya länkar. Exaktpublictypes regenererade frånKundexa. Process-outbox26, ingestion18, maintenance22 deployade. Nya behöriga webhookregistreringsknappen+runtimeprotokolltest+native-only SQLtestprofil färdiga.
+
+## 2026-10-15 Systemgranskning och uppföljande rättningar
+
+Ny granskningsomgång: human signer/companyrecipient separerade; atomisk/idempotent cancellation007; credentialscope binding för email008; workerbudgetfix; strängare per-tenantwebhook/digest/inflightsigningreadiness; mobilen ritar rätt efterresize; anteckningar låses underasyncsave; separat PDFoccurrence edit; Next16.4.1+kompatibla säkerhetspatchar. Driftinspektion read-only, avtal@kundexa.se bekräftad i DB. Ingen release eller kundpost.
+
+## 2026-10-15 Aktuell korrigering: port i Kundexa
+
+Portad utvald DocuSeal-kod med proveniens och licenser; signature_pad pinnad; faktisk PDF-signaturbild + deterministiskt kvitto/audit; tokenbunden publik vy/preview/submit; lokal cronåterhämtning; separat service borttagen; tidigare plan53-säkerhets-,PDF-,outbox-,säljar- och telefonirättningar bevarade.
+
 ## 2026-09-24 samtalsarbetsyta
 - `LiveCustomerCard` + `saveCallCustomer`/`loadCallCustomer` (`src/app/actions/call-workspace.ts`).
 - `OutcomePicker`/`CallbackTimeField` och `src/lib/dialer/outcomes.ts` (gruppering, tangenter, snabbval) med test i `test:api`.
@@ -203,3 +215,29 @@
   - RLS-delen av `202609240002` applicerad.
   - 40 repoversioner registrerade (128/128).
   - Funktioner, policyer och triggrar avstämda mot PGlite.
+
+## 2026-10-13 Granskningar och plan sparade
+
+Två oktobergranskningar sparade i `docs/reviews/2026-10-13/`.
+`docs/CONTRACT_PRODUCTION_PLAN_2026-10-13.md` beskriver sju genomförandesteg och godkännandekriterier.
+Projektets minne pekar på denna baslinje och skiljer föreslagen arkitektur från levererade rättningar.
+Runtime och produktionsdata är oförändrade.
+
+## 2026-10-13 PDF-krav dokumenterat
+
+Sparat användarens PDF-fält/kundkortsresa i docs/PDF_FIELD_TEMPLATES_AND_DOCUSEAL.md och länkat från genomförandeplanen. Genomförandesteg, snapshot/versioner, säljarbehörighet, DocuSeal-förifyllning och framtida BankID beskrivna. Ingen produktionsrättning genomförd.
+
+## 2026-10-13 Publicering slutförd
+
+Rapporter, avtalsplan, PDF-fältspecifikation och projektminne är publicerade i [PR #53](https://github.com/heke99/kundexa/pull/53). PR är öppen och inte mergad. Publicerat git-träd matchade exakt det lokala dokumentationsträdet (12 ändrade filer). Vanlig git-push saknade terminalautentisering; GitHub-anslutningen användes med användarens uttryckliga mandat. Ingen produktionsdeploy gjordes.
+
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Tillagt docs/KUNDEXA_BUILD_WITH_DOCUSEAL.md och uppdaterat PDF-/avtalsplan med användarens uppgivna fullständiga återanvändningsgodkännande. Rekommenderad gräns och sex konkreta leveranser dokumenterade. Ingen runtimeimplementation.
+
+
+## 2026-10-15 — Implementation av plan 53
+
+Plan53 kodimplementation och installationspaket förberett. Auth/RLS, säljarens sparordning/inline avtal, PDF-mallredigering/fältkoppling/kompletteringar/preview, gemensam leveranspolicy/OTP/idempotens, leases/replay/bevis, Sinch-ljud/enheter/start och DocuSeal-adapter/orchestration/audit implementerade. Se full avgränsning i docs/IMPLEMENTATION_PLAN_53_2026-10-15.md. Ingen liveinstallation eller produktionsdatamutation.
+
+Publicerad som utkast [PR #55](https://github.com/heke99/kundexa/pull/55), kodcommit `a1b8840`. Lokal slutverifiering och slutligt typkontrollerat produktionsbygge PASS. Huvudgren och produktion oförändrade.

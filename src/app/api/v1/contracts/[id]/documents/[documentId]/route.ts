@@ -25,10 +25,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const bytes = new Uint8Array(await data.arrayBuffer());
     if (bytes.byteLength > 20 * 1024 * 1024) return apiJson(correlationId, { error: "document_too_large" }, { status: 413 });
     if (sha256Bytes(bytes) !== document.sha256) return apiJson(correlationId, { error: "document_hash_mismatch" }, { status: 409 });
+    const inline = new URL(request.url).searchParams.get("preview") === "1" && document.mime_type === "application/pdf";
     return new Response(bytes, {
       headers: {
         "content-type": document.mime_type,
-        "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(document.file_name)}`,
+        "content-security-policy": "frame-ancestors 'self'; sandbox",
+        "x-frame-options": "SAMEORIGIN",
+        "content-disposition": `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(document.file_name)}`,
         "cache-control": "private, no-store",
         "x-content-type-options": "nosniff",
         "x-document-sha256": document.sha256,

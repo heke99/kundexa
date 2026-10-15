@@ -1,5 +1,38 @@
 # Open blockers
 
+## 2026-10-15 Auktoriserad produktionsrelease
+
+Kvar: Resendwebhookstatus pending/not_configured tills autentiserad operator registrerar med nya säkra knappen och signerad eventmottagning bevisas. Verktygen har inte behörig Kundexa-appsession eller anslutning till rätt Resendkonto; nycklar ska inte hämtas till chatten. Managed PostGIS-ACL001/009 var NOOP trots migrationssuccess: supabase_admin äger objekten, postgres saknargrantoption. Effektiva anonymaSpatialwrite/extentexecute fortfarande true; kräver provideråtgärd. Authleakedpasswordskydd och SinchFTPberoendelarm kvar. Ingenprodukt skaaktiveras enligtuser.
+
+## 2026-10-15 Systemgranskning och uppföljande rättningar
+
+Drift är inte helt grön: PR55/migrationer/Edge ännu ej driftsatta; ingen staging; båda aktiva Resendintegrationerna saknar registrerad verifierad webhook; godkänd aktiv mall saknar produktkoppling. Live spatial_ref_sys anon/authINSERT tillåtet (001 tar bort), anonyma PostGISdefinerfunktioner (009). Läckta-lösenordsskydd är avstängt. Sex npm high-larm från en och samma FTP-parserbrist i Sinch→PubNub→Nodeproxy-kedjan kvarstår; browserSDK använder inte Nodevägen, leverantörsuppdatering krävs. Inget liveJWT/RLS/Storage/underskriftstest utfört.
+
+## 2026-10-15 Aktuell korrigering: port i Kundexa
+
+Separat server/DocuSeal-installation och tidigare APK403 är inte längre blockerare för vald arkitektur. Före drift återstår identifierad staging, migration/typegen/deploy, riktig JWT/RLS/Storage-verifiering med två tenants, slutlig produkt/avtalstext och egen testmottagare samt verkligt e-post-/säljar-/telefoniprov. BankID är ej implementerat.
+
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Användarens uppgivna fullständiga återanvändningsgodkännande ersätter tidigare standardlicens-/paketval som blockerare. Källinventering, dokumenttjänstens drift, integration, slutvillkor och samtliga ofixade oktoberfynd återstår. Återanvändningsmandat gör inte befintliga utskick operativa.
+
+## 2026-10-13 PDF-mallkrav
+
+PDF-placering, fältkoppling och ifylld förhandsgranskning saknas som levererat flöde. Ny specifikation kompletterar oktoberfynden. Drift/licens för DocuSeal måste väljas; liveintegration och BankID-stöd är fortfarande ej verifierade.
+
+## 2026-10-13 Aktuella blockerare
+
+Oktobergranskningen och avtalsplanen är nu kanoniska för fortsättningsarbetet:
+`docs/reviews/2026-10-13/` och `docs/CONTRACT_PRODUCTION_PLAN_2026-10-13.md`.
+
+Prioritet: kund-RLS/avtalsstatus/API-status, slutlig produktmall/pris, osparade säljaruppgifter,
+fjärrljud och samtalsåterhämtning, OTP/UI/API-policy, outboxlease/databasfel,
+leveranswebhookar och acceptansbundna slutdokument. Alla är OPEN tills rättning verifierats.
+
+DocuSeal saknar adapter. BankID är framtida signering och får inte erbjudas som live.
+Faktiska slutvillkor, kontrollerade mottagare och providerdrift måste fastställas innan liveaktivering.
+Historiska Rinkel-device-krav och gamla mergepåståenden nedan är inte aktuell driftsinstruktion.
+
 Uppdaterad 2026-08-07.
 
 ## Löst sedan förra passet
@@ -179,3 +212,8 @@ samtal — ring, svara, lägg på, och se om `answered_at` fylls i.
 - **Ingen produkt finns.** Mallen "Gridex hemsida · Mina sidor" måste kopplas till en produkt innan ett
   avtal kan skapas (ADR-0019).
 - Leaked password protection är avstängd i Supabase Auth (rådgivaren varnar).
+
+
+## 2026-10-15 — Implementation av plan 53
+
+Ingen DocuSeal-server/domän/konfiguration vald. Användaren har valt installationsförberedelse. Full källpinnad containerbuild blockerad av APK HTTP403 via korrekt proxy/CA; Rails-boot NOT RUN. Verkliga slutvillkor/produkt/testmottagare saknas. Riktiga JWT/Storage/provider- och samtalsprov NOT RUN. Stagingmigration/typregenerering återstår. Gamla canonical-dokument utan verifierade låsta partsnapshots får inte användas för nya bevis utan separat granskning.

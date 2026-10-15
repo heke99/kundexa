@@ -272,11 +272,24 @@ export async function POST(request: Request) {
     }
     reserved = result.data as unknown as Reservation;
     if (reserved.idempotentReplay) {
+      const { data: attempt, error: replayError } = await createAdminClient().from("dial_attempts")
+        .select("status,webphone_session_id,provider_request_started_at,external_call_id,destination_number_e164,source_number_e164,client_request_id,idempotency_key")
+        .eq("tenant_id", context.tenantId).eq("seller_user_id", context.userId)
+        .eq("id", reserved.attemptId).eq("call_id", reserved.callId).single();
+      if (replayError || !attempt) return apiJson(correlationId, { error: "replay_unavailable", sdkStartAllowed: false }, { status: 503 });
+      if (attempt.client_request_id !== parsed.clientRequestId || attempt.idempotency_key !== parsed.idempotencyKey || attempt.destination_number_e164 !== parsed.targetPhone || attempt.webphone_session_id !== webphoneSessionId) {
+        return apiJson(correlationId, { error: "idempotency_conflict", sdkStartAllowed: false }, { status: 409 });
+      }
+      const sdkStartAllowed = Boolean(webphoneSessionId) && attempt.status === "requested" && !attempt.provider_request_started_at && !attempt.external_call_id && reserved.status === "requested";
       const uncertain = ["provider_outcome_unknown", "reconciliation_required", "unknown"]
         .includes(reserved.attemptStatus ?? reserved.providerStatus ?? reserved.status);
       const active = reserved.callActive ?? false;
       return apiJson(correlationId, {
         callId: reserved.callId,
+        attemptId: reserved.attemptId,
+        to: sdkStartAllowed ? attempt.destination_number_e164 : undefined,
+        callerId: sdkStartAllowed ? attempt.source_number_e164 : undefined,
+        sdkStartAllowed,
         status: reserved.status,
         attemptStatus: reserved.attemptStatus ?? reserved.status,
         providerStatus: reserved.providerStatus ?? "unknown",
@@ -294,6 +307,7 @@ export async function POST(request: Request) {
     // hos leverantören rapporteras tillbaka när den finns, genom
     // POST /api/v1/calls/dialing.
     return apiJson(correlationId, {
+      sdkStartAllowed: Boolean(webphoneSessionId),
       callId: reserved.callId,
       attemptId: reserved.attemptId,
       to: reserved.to,

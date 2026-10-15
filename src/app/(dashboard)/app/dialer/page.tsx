@@ -32,13 +32,14 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
       ? supabase.from("customers").select("id,display_name,phone_e164,do_not_call").eq("id", params.customer).not("phone_e164", "is", null).is("deleted_at", null).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
     ok(supabase.from("customer_lists").select("id,name,dialing_mode,priority,status").eq("status", "active").order("priority", { ascending: false })),
-    ok(supabase.from("activities").select("id,customer_id,list_id,callback_scope,assigned_user_id,due_at,title,customers(display_name,phone_e164)").eq("type", "callback").eq("status", "open").lte("due_at", now).order("due_at").limit(20)),
+    ok(supabase.from("activities").select("id,customer_id,list_id,callback_scope,assigned_user_id,due_at,title,customers(display_name,phone_e164)").eq("type", "callback").eq("status", "open").or(`callback_scope.eq.global,assigned_user_id.eq.${context.userId}`).lte("due_at", now).order("due_at").limit(20)),
     ok(supabase.from("phone_numbers").select("id,number_e164").eq("status","active").eq("supports_voice",true).order("number_e164")),
   ]);
   return <>
-    <PageHeader title="Dialer" description="Välj en ringlista eller ring ett enskilt nummer." />
+    <PageHeader title="Ringa" description="Börja ringa från en tilldelad lista eller välj en kund. Dina återkomster finns här nedanför." action={<Link href="#ringlistor" className="button button-primary">Börja ringa</Link>} />
+    <nav className="tabs" aria-label="Ringarbetsyta"><Link className="tab active" href="/app/dialer">Ringa</Link><Link className="tab" href="/app/calls">Mina samtal</Link><Link className="tab" href="/app/lists">Ringlistor</Link><Link className="tab" href="/app/contracts?attention=waiting">Avtal att följa upp</Link></nav>
     {params.error ? <p className="form-error">{params.error}</p> : null}
-    <div className="grid grid-3" style={{ marginBottom: 18 }}>
+    <div id="ringlistor" className="grid grid-3" style={{ marginBottom: 18 }}>
       {lists?.map((list) => <Link key={list.id} href={`/app/dialer/lists/${list.id}`} className="list-launch-card"><span className="stat-icon"><ListFilter size={18} /></span><div><strong>{list.name}</strong><p>{list.dialing_mode === "automatic" ? "Automatisk sekventiell ringning" : "Manuell ringning"}</p></div><Badge className="badge-success">Starta</Badge></Link>)}
       {hiddenLists?.length ? <div className="notice warning" style={{ gridColumn: "1 / -1" }}>
         Syns inte för säljarna: {hiddenLists.map((list, index) => <span key={list.id}>{index ? ", " : ""}<Link href={`/app/lists/${list.id}`}><strong>{list.name}</strong></Link> ({list.status === "draft" ? "utkast" : "pausad"})</span>)}. Öppna listan, sätt den som aktiv och dela den med ett team eller en kampanj.
@@ -66,7 +67,7 @@ export default async function DialerPage({ searchParams }: { searchParams: Promi
         </CardContent></Card>
         <Card><CardHeader><h2><Clock3 size={17} /> Förfallna återkomster</h2><Badge className={callbacks?.length ? "badge-warning" : ""}>{callbacks?.length ?? 0}</Badge></CardHeader><CardContent>{callbacks?.map((callback) => {
           const customer = Array.isArray(callback.customers) ? callback.customers[0] : callback.customers;
-          const line = <><span className="activity-dot"><PhoneCall size={14} /></span><div><strong>{customer?.display_name ?? callback.title}</strong><p>{callback.callback_scope === "global" ? "Global återkomst" : "Personlig återkomst"} · {customer?.phone_e164 ?? "telefon saknas"}</p></div><time>{formatDate(callback.due_at)}</time></>;
+          const line = <><span className="activity-dot"><PhoneCall size={14} /></span><div><strong>{customer?.display_name ?? callback.title}</strong><p>{callback.callback_scope === "global" ? "Gemensam teamkö" : "Min återkomst"} · {customer?.phone_e164 ?? "telefon saknas"}</p></div><time>{formatDate(callback.due_at)}</time></>;
           // En global återkomst tas först, så att två säljare inte ringer samma kund.
           // Samtalet kopplas sedan till återkomsten, som annars stod kvar som förfallen.
           if (!callback.list_id && callback.assigned_user_id !== context.userId) {

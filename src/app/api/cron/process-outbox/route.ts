@@ -3,7 +3,7 @@ import { invokeScheduledEdgeWorker } from "@/lib/workers/scheduled-edge-worker";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 180;
 
 // Kept as its own path because vercel.json schedules it there, but the work now
 // goes through the same invoker as every other scheduled worker: a "running"

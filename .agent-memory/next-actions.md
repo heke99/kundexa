@@ -1,5 +1,40 @@
 # Next actions
 
+## 2026-10-15 Auktoriserad produktionsrelease
+
+Slutför PR55 CI, merge och Vercelrelease; verifierahealth/ready/arbetare och rättSHA. Behörig inloggad operator kan på Integrationer välja Registrera leveranskvitton automatiskt; serverns befintliga Resendkey används utan hemlighetsdelning. Aktiveraingenprodukt. Native skickflöde provas först med kontrollerad slutmottagare och färdigmall näranvändaren efterfrågar det. Följ providerbegränsade PostGISACL/Auth/Sinchvarningar separat.
+
+## 2026-10-15 Systemgranskning och uppföljande rättningar
+
+Granska senaste PR55-rättningar. Välj/etablera testmiljö före release; applicera framåtmigrationer, regenerera typer, deploya webb och uppdaterade Edge tillsammans. Konfigurera och verifiera Resendwebhook i rätt konto för varje aktiv tenant, koppla slutlig produkt+pris+PDF-mall och kör kontrollerad fullresa. Utred Sinch-uppdatering för ren dependency-audit; aktivera lösenordsskydd enligt driftbeslut. Skicka inga kunderutskick innan dessa verifieringar.
+
+## 2026-10-15 Aktuell korrigering: port i Kundexa
+
+Efter lokal verifiering: uppdatera befintlig utkast-PR55. Applicera endast senare på identifierad staging, regenerera schema, deploya webb/Edge och verifiera hela inbyggda flödet med riktiga testidentiteter. Ingen ny server eller DocuSeal-nyckel behövs.
+
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Följ docs/KUNDEXA_BUILD_WITH_DOCUSEAL.md: skydda avtals-/kundgrund och sparande; inventera och avgränsa auktoriserad dokumentkod; inför PDF-fältkoppling/versioner; bygg enkel säljarresa och riktig extern signeringskedja; rätta telefoni och verifiera drift. BankID är senare separat adapter.
+
+## 2026-10-13 Kompletterad avtalsresa
+
+Efter behörighets-/avtalsgrund: versionsbundna PDF-mallar och typade fältkopplingar, säljarens sparande/ifyllda preview, därefter DocuSeal-adapter och faktisk slutdokumentimport. Följ docs/PDF_FIELD_TEMPLATES_AND_DOCUSEAL.md tillsammans med avtalsplanen. Inga dokumentationsfynd ska markeras lösta.
+
+## 2026-10-13 Nästa arbetsordning
+
+Följ `docs/CONTRACT_PRODUCTION_PLAN_2026-10-13.md`:
+
+1. PR 1: skrivbehörigheter och avtalsintegritet.
+2. PR 2: komplett produktmall/pris och gemensam UI/API-planering.
+3. PR 3: avbrottssäker utskickskö och leveransavstämning.
+4. PR 4: versionsbundna bevis, bilagor och aktivering.
+5. PR 5: gemensamt kund-/efterarbetssparande, enkel säljarresa och samtalsgrund.
+6. PR 6: DocuSeal-adapter om drift/funktioner väljs.
+7. PR 7: BankID-förberedelse; verklig integration separat när tjänst/konfiguration finns.
+
+Första leveransmål är kontrollerad e-post/webbacceptans. Full extern signering är ett eget mål,
+inte uppnått genom en lyckad acceptans. Inga fynd är rättade i dokumentationspasset.
+
 **2026-09-24, samtalsarbetsytan:** Provsamtal från en ringlista: svara, fyll i e-post/adress under samtalet,
 välj "Intresserad" med tangent 1, "Spara och skapa avtal" ska öppna ny flik och pausa sessionen. Kontrollera
 att kortet i den smala telefonpanelen på kundkortssidan är läsbart.
@@ -106,3 +141,8 @@ Det som återstår kräver leverantörskonto, ett nummer eller ett riktigt samta
 - Prova ett webbläsarsamtal mot deploy med minimal SVAML (PR #40) och migration 202609230002; läs
   `sinch.call_ended`-orsaken på samtalet om DiCE kommer. Kommer ingen DiCE: kontrollera i Sinch-
   appen att "Calling → callback" även skickar DiCE, och öppna ärende hos Sinch med call-id.
+
+
+## 2026-10-15 — Implementation av plan 53
+
+Granska implementations-PR och installationsunderlaget services/docuseal/README.md. Välj server/domän, slutför källbuild och Rails-smoke, applicera migration001–005 på identifierad staging och regenerera typer. Ange produkt/slutvillkor/egen mottagare; verifiera callback, signering, audit/slutPDF, bekräftelse och aktivering. Kör verklig tvåtenant-RLS/Storage och samtal/headset. Ingen blind retry av okänt externt create.

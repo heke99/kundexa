@@ -150,5 +150,13 @@
   "/calls/dialing": {
     "classification": "internal",
     "reason": "Browser reports the provider call id for the seat it already holds"
+  },
+  "/calls/start": {
+    "classification": "internal",
+    "reason": "Authenticated browser-only atomic SDK start claim bound to the seller webphone session."
+  },
+  "/contract-templates/pdf": {
+    "classification": "internal",
+    "reason": "Session-authenticated tenant-bound PDF authoring upload and private source preview."
   }
 }

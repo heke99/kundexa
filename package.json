@@ -14,7 +14,7 @@
     "lint": "npm run typecheck",
     "typecheck": "npm run typegen && tsc --noEmit --pretty false --incremental false",
     "typecheck:edge": "deno check supabase/functions/_shared/crypto.ts supabase/functions/_shared/providers.ts supabase/functions/_shared/sms-provider.ts supabase/functions/data-worker/index.ts supabase/functions/ingestion-worker/index.ts supabase/functions/maintenance-worker/index.ts supabase/functions/compliance-worker/index.ts supabase/functions/process-outbox/index.ts supabase/functions/automation-runner/index.ts supabase/functions/parsehub-worker/index.ts",
-    "test": "node scripts/remediation-regression-tests.mjs && node scripts/verify.mjs && npm run test:telephony && npm run test:contracts && npm run test:contract-templates && npm run test:imports && npm run test:api && node scripts/verify-sql.mjs",
+    "test": "node scripts/remediation-regression-tests.mjs && node scripts/verify.mjs && npm run test:telephony && npm run test:contracts && npm run test:contract-templates && npm run test:imports && npm run test:api && node scripts/verify-sql.mjs && npm run test:pdf-fields && node scripts/native-signing-tests.mjs && node scripts/readiness-tests.mjs && node scripts/native-orchestration-tests.mjs && node scripts/signing-reconcile-tests.mjs && node scripts/resend-webhook-admin-tests.mjs && node scripts/remote-signing-parity-tests.mjs",
     "test:watch": "node scripts/verify.mjs",
     "verify": "npm run types:verify && npm run typecheck:edge && npm run test && npm run openapi:verify && npm run build",
     "platform:bootstrap-owner": "node scripts/bootstrap-platform-owner.mjs",
@@ -27,23 +27,28 @@
     "types:generate": "node scripts/generate-supabase-types.mjs",
     "geography:import": "node scripts/import-geography.mjs",
     "test:imports": "rm -rf .tmp-import-tests && tsc scripts/import-core-tests.ts --outDir .tmp-import-tests --module commonjs --moduleResolution node --target ES2022 --esModuleInterop --skipLibCheck --strict --noEmit false --types node && node .tmp-import-tests/scripts/import-core-tests.js && rm -rf .tmp-import-tests",
-    "test:contracts": "node scripts/contract-delivery-unit-tests.mjs",
+    "test:contracts": "node scripts/contract-delivery-unit-tests.mjs && deno test scripts/outbox-unit-tests.mts",
     "test:contract-templates": "rm -rf .tmp-contract-template-tests && tsc scripts/contract-template-tests.ts --outDir .tmp-contract-template-tests --module commonjs --moduleResolution node --target ES2022 --esModuleInterop --skipLibCheck --strict --noEmit false --types node && node .tmp-contract-template-tests/scripts/contract-template-tests.js && rm -rf .tmp-contract-template-tests",
     "test:telephony": "TZ=Europe/Stockholm deno test scripts/sinch-unit-tests.mts",
     "types:verify": "node scripts/verify-generated-schema.mjs",
     "test:api": "rm -rf .tmp-api-tests && tsc scripts/api-core-tests.ts --outDir .tmp-api-tests --module commonjs --moduleResolution node --target ES2022 --esModuleInterop --skipLibCheck --strict --noEmit false --types node && node .tmp-api-tests/scripts/api-core-tests.js && rm -rf .tmp-api-tests",
-    "openapi:verify": "node scripts/verify-openapi-coverage.mjs"
+    "openapi:verify": "node scripts/verify-openapi-coverage.mjs",
+    "postinstall": "node scripts/install-pdf-worker.mjs",
+    "test:pdf-fields": "rm -rf work/pdf-field-tests && tsc scripts/pdf-field-tests.ts --outDir work/pdf-field-tests --module commonjs --moduleResolution node --target ES2022 --esModuleInterop --skipLibCheck --strict --noEmit false --types node && node work/pdf-field-tests/scripts/pdf-field-tests.js"
   },
   "dependencies": {
+    "@pdf-lib/upng": "1.0.1",
     "@supabase/ssr": "0.12.3",
     "@supabase/supabase-js": "2.110.7",
     "exceljs": "^4.4.0",
     "libphonenumber-js": "1.12.29",
-    "next": "16.2.10",
+    "next": "16.4.1",
     "papaparse": "5.5.4",
     "pdf-lib": "1.17.1",
+    "pdfjs-dist": "6.4.299",
     "react": "19.2.7",
     "react-dom": "19.2.7",
+    "signature_pad": "4.1.5",
     "sinch-rtc": "^2.48.11",
     "zod": "4.4.3"
   },
@@ -58,10 +63,13 @@
   },
   "packageManager": "npm@10.9.2",
   "optionalDependencies": {
-    "@next/swc-linux-x64-gnu": "^16.2.10"
+    "@next/swc-linux-x64-gnu": "16.4.1"
   },
   "overrides": {
-    "postcss": "8.5.19",
-    "uuid": "11.1.1"
+    "postcss": "8.5.30",
+    "uuid": "11.1.1",
+    "brace-expansion@^1.1.7": "1.1.21",
+    "brace-expansion@^2.0.1": "2.1.7",
+    "baseline-browser-mapping": "2.11.28"
   }
 }

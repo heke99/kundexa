@@ -52,14 +52,16 @@ Deno.serve(async (request) => {
     p_limit: Math.max(1, Math.min(Number(body.lostWebphoneSessionLimit ?? 200), 1000)),
   }));
 
-  const segmentResults: unknown[] = [];
+  await step(results, "resend_event_replay", () => rpc("replay_unmatched_resend_events", { p_limit: 100 }));
+
+  const segmentResults: Array<{ status?: string; [key: string]: unknown }> = [];
   await step(results, "segment_refresh", async () => {
     await rpc("queue_due_segment_refreshes", { p_limit: Math.max(1, Math.min(Number(body.segmentLimit ?? 100), 500)) });
     const claimed = await rpc("claim_segment_refresh_jobs", { p_worker: workerId, p_limit: Math.max(1, Math.min(Number(body.segmentLimit ?? 10), 50)) });
     for (const job of (claimed ?? []) as SegmentJob[]) {
       const { error } = await supabase.rpc("complete_segment_refresh_job", { p_job_id: job.id, p_error: null });
       if (error) {
-        await supabase.rpc("complete_segment_refresh_job", { p_job_id: job.id, p_error: error.message });
+        await rpc("complete_segment_refresh_job", { p_job_id: job.id, p_error: error.message });
         segmentResults.push({ id: job.id, status: "failed", error: error.message });
       } else segmentResults.push({ id: job.id, status: "completed" });
     }
@@ -78,13 +80,13 @@ Deno.serve(async (request) => {
   }));
 
   // Gallring gäller även företag som provar tjänsten, inte bara betalande.
-  const retentionResults: unknown[] = [];
+  const retentionResults: Array<{ status?: string; [key: string]: unknown }> = [];
   await step(results, "retention", async () => {
     const { data: tenants, error: tenantError } = await supabase.from("tenants").select("id").in("status", ["active", "trial"]).limit(500);
     if (tenantError) throw new Error(tenantError.message);
     const retentionBucket = new Date().toISOString().slice(0, 10);
     for (const tenant of tenants ?? []) {
-      await supabase.from("outbox_jobs").upsert({
+      const { error: enqueueError } = await supabase.from("outbox_jobs").upsert({
         tenant_id: tenant.id,
         job_type: "telephony.retention",
         aggregate_type: "tenant",
@@ -93,13 +95,15 @@ Deno.serve(async (request) => {
         idempotency_key: `telephony.retention:${tenant.id}:${retentionBucket}`,
         priority: 90,
       }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true });
+      if (enqueueError) throw enqueueError;
       const { data, error } = await supabase.rpc("run_retention_maintenance", { p_tenant_id: tenant.id, p_limit: Math.max(1, Math.min(Number(body.retentionLimit ?? 1000), 10000)) });
       retentionResults.push(error ? { tenantId: tenant.id, status: "failed", error: error.message } : data);
     }
   });
 
+  const failed = results.filter((item) => item.status === "failed").length + segmentResults.filter((item) => item.status === "failed").length + retentionResults.filter((item) => item?.status === "failed").length;
   return Response.json({
-    workerId, results,
+    workerId, results, failed, status: failed ? "failed" : "completed",
     geographyNormalized: Number(geographyNormalized ?? 0), expiredAllocations, prunedRateLimits: Number(prunedRateLimits ?? 0),
     releasedAttempts, lostSessions, segmentResults, dynamicLists, retentionResults,
   });

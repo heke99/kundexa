@@ -1,5 +1,17 @@
 # Known failures
 
+## 2026-10-15 Auktoriserad produktionsrelease
+
+RELEASE-20261015:001/009 REVOKE på managed PostGISägarskap göringenförändring; effektiva privilégier föranon/authkvar.004 nekadesauto-review eftersomremote-service striderusernativeval; uteslötshelt, ingengenomväg. Ingestiondeploy nekadesinitialtsomunrelated;5radsdiff+livejobbSELECTvisadeendastpausavavstängdlegacyadapter, retrygodkändv18. LegacytableDROP011 fick teknisktinvalidrequestStatetvågånger; säkrare avstängd historikparity appadsuccess. Livegeneratedtyperavslöjade saknadcontract_signing_linkslocalhistory; parity011+exaktregenerationlöste schemafail.
+
+## 2026-10-15 Systemgranskning och uppföljande rättningar
+
+Next16.4:s nya CLI-showConfig-probe misslyckades i sandbox (tom subprocess-output); compiler API via useTypeScriptCli=false gav komplett grönt bygge, obligatorisk tsc kvar. REVIEW-20261015: gröna tester missade B2Bnamn som låstes till bolaget, partiell cancellation, notesedit under save, samma-side PDFoccurrence collapse, mobil signaturecanvas resize,40s/45s workerbudget och felaktigt global webhookreadiness. Dessa rättas/testas på PR55. npm audit hittade kritisk Next16.2.10 och transitiva varningar; kritiskt/övriga säkra patcher åtgärdade. FTP-parserkedjans6high kvarstår som känt beroendelarm. Verifierarens gamla PostCSSpin och naiv secretregex uppdaterades för ny säker version/intern digest, runtime-output fortsätter bara booleans.
+
+## 2026-10-15 Aktuell korrigering: port i Kundexa
+
+Tidigare full upstreambyggning/APK403 gäller borttaget serviceförslag och blockerar inte porten. Ingen hel DocuSeal-installation ska återinföras som rutinfix. Live drift är fortsatt NOT RUN.
+
 ## FAILURE-0001 — Composite FK nollade tenant_id
 
 - Upptäckt: `split_customer_list_to_team` misslyckades med SQLSTATE 23502 när källmedlem raderades.
@@ -1920,3 +1932,24 @@ regressionstest; varje test fallerar utan sin rättelse.
 - **0141** Avbryt/förläng avtal och stoppa påminnelser prövade inte avtalsåtkomsten. Nu avgör avtalets RLS.
 - Kantfall: kön gav en återkomst vars kund saknar listplats tillsammans med ett annat prospekt. Åtgärdat
   i `claim_next_list_member`.
+
+## 2026-10-13 Aktuella öppna fynd
+
+Fyndregistret KX26 01–28 finns i `docs/reviews/2026-10-13/production-audit.md`.
+SIGN 01–03 och UI 01–12 finns i `docs/reviews/2026-10-13/signing-and-seller-review.md`.
+Registren överlappar delvis och ska inte summeras till ett antal unika fel.
+Status: OPEN, belagda genom kod/live DB eller uttryckligen villkorade kodkedjor.
+Ingen rättning eller ny incidentbekräftelse gjordes i dokumentationspasset.
+
+## 2026-10-13 PDF-fältkrav som saknad förmåga
+
+PDF-mallar med kundkortskopplade placerbara fält är inte implementerade. Detta är ett nytt produktkrav, inte ytterligare ett verifierat runtimefel eller en rättning av SIGN 01. Tidigare KX26/SIGN/UI-fynd kvarstår OPEN.
+
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Ingen befintlig defekt rättad genom det nya återanvändningsmandatet eller byggplanen. Fyndstatus kvarstår OPEN. Faktiskt Pro-/speciallevererat källmaterial är ännu inte inspekterat; ingen sådan modul antas redan installerad.
+
+
+## 2026-10-15 — Implementation av plan 53
+
+Plan53 kodrättningar täcker KX26/SIGN/UI-grund enligt implementationsrapporten; historiska fynd förblir OPEN i produktion tills versionen deployats och verifierats. Granskningen fann och stängde också percent-encoded path traversal i PDF-source, NULL/typ-luckor vid direkt mallgodkännande och renderingsoverride via direkt sales-RPC. Browser-QA rättade återuppladdning av samma fil. Ett initialt sidbytesfynd var testets val av alternativ, inte belagt produktfel.

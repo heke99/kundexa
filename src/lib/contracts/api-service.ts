@@ -1,3 +1,6 @@
+import { beginExternalSigning } from "@/lib/signing/orchestration";
+import { freezePdfTemplate, type FrozenPdfTemplate } from "@/lib/contracts/pdf-field-template";
+import { stableJson } from "./document-hash";
 import { z } from "zod";
 import type { ApiIdentity } from "@/lib/api-auth";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -7,7 +10,8 @@ import { normalizePhone } from "@/lib/domain/phone";
 import { acceptanceCode, encryptJson, randomToken, sha256 } from "@/lib/crypto";
 import { canonicalAppBaseUrl, serverEnv } from "@/lib/env";
 import { ensureCanonicalContractDocument } from "@/lib/contracts/canonical-document";
-import { contractDeliveryBlocker } from "@/lib/contracts/delivery-readiness";
+import { loadContractSignatureMethod, planContractDelivery, renderContractDeliverySms } from "./delivery-plan";
+import { contractAcceptanceModes, contractDeliveryBlocker } from "@/lib/contracts/delivery-readiness";
 import { renderContractDeliveryEmail } from "@/lib/email/templates/contract-delivery";
 import { normalizeVariableFees } from "@/lib/contracts/price-terms";
 import { readJsonObject, toJson, toJsonObject } from "@/lib/supabase/json";
@@ -27,6 +31,7 @@ export const apiCreateContractSchema = z.object({
   ends_on: z.iso.date().nullable().optional(),
   language: z.enum(["sv", "en"]).optional(),
   special_terms: z.string().max(4000).optional(),
+  pdf_custom_values: z.record(z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/), z.union([z.string().max(1000), z.number().finite()])).refine(values => Object.keys(values).length <= 50).optional(),
   idempotency_key: z.string().min(8).max(200),
 });
 
@@ -83,15 +88,20 @@ function actor(identity: ApiIdentity) {
   return identity.userId;
 }
 
-async function replay(identity: ApiIdentity, action: string, key: string) {
+function boundKey(resource: string, input: { idempotency_key: string }) {
+  return `v3:${sha256(input.idempotency_key)}:${sha256(stableJson({ resource, input }))}`;
+}
+async function replay(identity: ApiIdentity, action: string, key: string, legacyKey: string) {
   const admin = createAdminClient();
-  const { data, error } = await admin.from("audit_logs").select("entity_id,after_data")
-    .eq("tenant_id", identity.tenantId).eq("action", action).eq("request_id", key).maybeSingle();
-  // An idempotency check that could not be performed must not be read as "no
-  // previous request". PostgREST returns the failure instead of throwing, so an
-  // unchecked error here looks identical to a first attempt — and the retry that
-  // the idempotency key exists to make safe would create a second contract.
+  const { data: legacy, error: legacyError } = await admin.from("audit_logs").select("id")
+    .eq("tenant_id", identity.tenantId).eq("action", action).eq("request_id", legacyKey).maybeSingle();
+  if (legacyError) throw new Error("idempotency_lookup_failed");
+  if (legacy) throw new Error("idempotency_conflict"); // Historical requests have no verifiable payload binding.
+  const prefix = key.slice(0, 68);
+  const { data, error } = await admin.from("audit_logs").select("entity_id,after_data,request_id")
+    .eq("tenant_id", identity.tenantId).eq("action", action).like("request_id", `${prefix}%`).maybeSingle();
   if (error) throw new Error(`idempotency_lookup_failed:${error.code ?? "unknown"}`);
+  if (data && data.request_id !== key) throw new Error("idempotency_conflict");
   return data ?? null;
 }
 
@@ -100,7 +110,8 @@ function contractNumber() {
 }
 
 export async function createContractFromApi(identity: ApiIdentity, input: CreateInput) {
-  const prior = await replay(identity, "contract.api_created", input.idempotency_key);
+  const requestKey = boundKey(input.customer_id, input);
+  const prior = await replay(identity, "contract.api_created", requestKey, input.idempotency_key);
   if (prior?.entity_id) return { contract_id: prior.entity_id, idempotent_replay: true };
 
   const admin = createAdminClient();
@@ -109,7 +120,7 @@ export async function createContractFromApi(identity: ApiIdentity, input: Create
       .eq("tenant_id", identity.tenantId).eq("id", input.customer_id).is("deleted_at", null).single(),
     admin.from("tenant_legal_entities").select("id,legal_name,organization_number,address_line1,postal_code,city,country_code,email,phone_e164,website,branding")
       .eq("tenant_id", identity.tenantId).eq("id", input.legal_entity_id).eq("active", true).single(),
-    admin.from("contract_template_versions").select("id,template_id,status,title_template,body_template,terms_template")
+    admin.from("contract_template_versions").select("id,template_id,status,title_template,body_template,terms_template,signing_configuration")
       .eq("tenant_id", identity.tenantId).eq("id", input.template_version_id).single(),
   ]);
   if (!customer) throw new Error("customer_not_found");
@@ -152,6 +163,7 @@ export async function createContractFromApi(identity: ApiIdentity, input: Create
       ...toJsonObject(price?.terms ?? {}),
       ...(input.special_terms ? { special_conditions: input.special_terms } : {}),
     },
+    pdf_fields: null as FrozenPdfTemplate | null,
   };
   const sellerSnapshot = { ...legalEntity };
   const counterpartySnapshot = { ...customer };
@@ -178,6 +190,7 @@ export async function createContractFromApi(identity: ApiIdentity, input: Create
       special_terms: input.special_terms,
     },
   });
+  commercialTerms.pdf_fields = freezePdfTemplate(templateVersion.signing_configuration, context, identity.tenantId, input.pdf_custom_values ?? {});
   const renderedTitle = renderStrictTemplate(templateVersion.title_template, context);
   const renderedBody = renderStrictTemplate(templateVersion.body_template, context);
   const renderedTerms = renderStrictTemplate(templateVersion.terms_template ?? "", context);
@@ -189,11 +202,11 @@ export async function createContractFromApi(identity: ApiIdentity, input: Create
     p_template_id: template.id, p_template_version_id: templateVersion.id, p_legal_entity_id: legalEntity.id,
     p_title: renderedTitle, p_rendered_body: renderedBody, p_rendered_terms: renderedTerms,
     p_commercial_terms: toJson(commercialTerms), p_document_hash: documentHash, p_seller_snapshot: toJson(sellerSnapshot),
-    p_counterparty_snapshot: toJson(counterpartySnapshot), p_source_call_id: input.source_call_id, p_idempotency_key: input.idempotency_key,
+    p_counterparty_snapshot: toJson(counterpartySnapshot), p_source_call_id: input.source_call_id, p_idempotency_key: requestKey,
   });
   if (error) {
     if (error.code === "23505") {
-      const existing = await replay(identity, "contract.api_created", input.idempotency_key);
+      const existing = await replay(identity, "contract.api_created", requestKey, input.idempotency_key);
       if (existing?.entity_id) return { contract_id: existing.entity_id, idempotent_replay: true };
     }
     throw new Error(error.message);
@@ -202,17 +215,35 @@ export async function createContractFromApi(identity: ApiIdentity, input: Create
 }
 
 export async function sendContractFromApi(identity: ApiIdentity, contractId: string, input: SendInput) {
-  const prior = await replay(identity, "contract.api_sent", input.idempotency_key);
+  const requestKey = boundKey(contractId, input);
+  const prior = await replay(identity, "contract.api_sent", requestKey, input.idempotency_key);
   if (prior) return { ...(prior.after_data as Record<string, unknown>), idempotent_replay: true };
 
   const admin = createAdminClient();
   const [{ data: contract }, { data: tenant }] = await Promise.all([
-    admin.from("contracts").select("id,contract_number,title,customer_id,source_call_id,seller_snapshot,legal_entity_id,customers(display_name,email,phone_e164)")
+    admin.from("contracts").select("id,active_version_id,contract_number,title,customer_id,source_call_id,seller_snapshot,counterparty_snapshot,legal_entity_id,customers(display_name,email,phone_e164)")
       .eq("tenant_id", identity.tenantId).eq("id", contractId).single(),
     admin.from("tenants").select("name,legal_name,timezone").eq("id", identity.tenantId).single(),
   ]);
   if (!contract) throw new Error("contract_not_found");
   if (!contract.source_call_id) throw new Error("source_call_required");
+  const { data: activeSigningVersion, error: signingVersionError } = await admin.from("contract_versions").select("signature_policy_snapshot,template_version_id").eq("tenant_id", identity.tenantId).eq("id", contract.active_version_id!).single();
+  if (signingVersionError || !activeSigningVersion) throw new Error("contract_signature_policy_read_failed");
+  let activePolicy = activeSigningVersion.signature_policy_snapshot as { method?: string } | null;
+  if (!activePolicy && activeSigningVersion.template_version_id) {
+    const { data: templatePolicy, error: policyError } = await admin.from("contract_template_versions").select("signature_policy").eq("tenant_id", identity.tenantId).eq("id", activeSigningVersion.template_version_id).single();
+    if (policyError || !templatePolicy) throw new Error("contract_signature_policy_read_failed");
+    activePolicy = templatePolicy.signature_policy as { method?: string };
+  }
+  if (activePolicy?.method === "external_esign") {
+    if (input.channel !== "email" || input.introduction || input.reply_to || input.phone_e164) throw new Error("external_signing_request_unsupported");
+    const counterparty = (contract.counterparty_snapshot ?? {}) as Record<string, unknown>;
+    const result = await beginExternalSigning(identity.tenantId, actor(identity), { contractId,
+      recipientName: input.recipient_name ?? String(counterparty.display_name ?? ""), email: input.email ?? String(counterparty.email ?? ""),
+      expiresAt: input.expires_at, idempotencyKey: input.idempotency_key });
+    return { envelope_id: result.envelopeId, status: result.status, idempotent_replay: result.replay };
+  }
+
   const customer = Array.isArray(contract.customers) ? contract.customers[0] : contract.customers;
   const recipientName = input.recipient_name ?? customer?.display_name ?? "Kund";
   const email = input.email?.trim().toLowerCase() ?? customer?.email?.trim().toLowerCase() ?? null;
@@ -259,6 +290,7 @@ export async function sendContractFromApi(identity: ApiIdentity, contractId: str
     smsFrom = number.number_e164;
   }
 
+  const plan = planContractDelivery({ channel: input.channel, method: await loadContractSignatureMethod(admin, identity.tenantId, contract.active_version_id!), modes: await contractAcceptanceModes(admin, identity.tenantId) });
   const canonical = await ensureCanonicalContractDocument(admin, { tenantId: identity.tenantId, contractId, actorUserId: actor(identity) });
   const token = randomToken();
   const code = acceptanceCode();
@@ -275,8 +307,8 @@ export async function sendContractFromApi(identity: ApiIdentity, contractId: str
   const contact = [sellerSnapshot.email, sellerSnapshot.phone_e164, sellerSnapshot.website]
     .filter((item): item is string => typeof item === "string" && item.length > 0)
     .join(" · ") || null;
-  const rendered = renderContractDeliveryEmail({ legalName, customerName: recipientName, contractNumber: contract.contract_number, contractTitle: contract.title, acceptUrl, expiresAt: expiryLabel, introduction: input.introduction, contact, logoUrl });
-  const smsBody = `Avtal ${contract.contract_number} från ${legalName}. Granska: ${acceptUrl}. Svara JA ${code} eller NEJ ${code}. Giltigt till ${expiryLabel}.`;
+  const rendered = renderContractDeliveryEmail({ legalName, customerName: recipientName, contractNumber: contract.contract_number, contractTitle: contract.title, acceptUrl, expiresAt: expiryLabel, introduction: input.introduction, contact, logoUrl, webAcceptance: plan.web, acceptanceCode: plan.codeRequired ? code : null });
+  const smsBody = renderContractDeliverySms({ contractNumber: contract.contract_number, legalName, acceptUrl, expiresAt: expiryLabel, code, plan });
   const attachments = [{ document_id: canonical.id, filename: canonical.file_name, mime_type: "application/pdf" }];
   const { data, error } = await admin.rpc("prepare_contract_delivery_api_v2", {
     p_tenant_id: identity.tenantId, p_actor_user_id: actor(identity), p_contract_id: contractId,
@@ -286,11 +318,11 @@ export async function sendContractFromApi(identity: ApiIdentity, contractId: str
     p_expires_at: expiresAt.toISOString(), p_canonical_document_id: canonical.id, p_sms_from: smsFrom,
     p_sms_body: smsBody, p_email_from: emailFrom, p_email_subject: rendered.subject, p_email_text: rendered.text,
     p_email_html: rendered.html, p_email_attachments: attachments, p_reply_to: replyTo,
-    p_personal_message: input.introduction ?? null, p_idempotency_key: input.idempotency_key,
+    p_personal_message: input.introduction ?? null, p_idempotency_key: requestKey,
   });
   if (error) {
     if (error.code === "23505") {
-      const existing = await replay(identity, "contract.api_sent", input.idempotency_key);
+      const existing = await replay(identity, "contract.api_sent", requestKey, input.idempotency_key);
       if (existing) return { ...(existing.after_data as Record<string, unknown>), idempotent_replay: true };
     }
     throw new Error(error.message);
@@ -299,17 +331,18 @@ export async function sendContractFromApi(identity: ApiIdentity, contractId: str
 }
 
 export async function scheduleReminderFromApi(identity: ApiIdentity, contractId: string, input: ReminderInput) {
-  const prior = await replay(identity, "contract.api_reminder_scheduled", input.idempotency_key);
+  const requestKey = boundKey(contractId, input);
+  const prior = await replay(identity, "contract.api_reminder_scheduled", requestKey, input.idempotency_key);
   if (prior) return { ...(prior.after_data as Record<string, unknown>), idempotent_replay: true };
   const admin = createAdminClient();
   const { data, error } = await admin.rpc("schedule_manual_contract_reminder_api_v2", {
     p_tenant_id: identity.tenantId, p_actor_user_id: actor(identity), p_contract_id: contractId,
     p_channel: input.channel, p_personal_message: input.personal_message ?? null,
-    p_attach_pdf: input.attach_pdf, p_idempotency_key: input.idempotency_key,
+    p_attach_pdf: input.attach_pdf, p_idempotency_key: requestKey,
   });
   if (error) {
     if (error.code === "23505") {
-      const existing = await replay(identity, "contract.api_reminder_scheduled", input.idempotency_key);
+      const existing = await replay(identity, "contract.api_reminder_scheduled", requestKey, input.idempotency_key);
       if (existing) return { ...(existing.after_data as Record<string, unknown>), idempotent_replay: true };
     }
     throw new Error(error.message);
@@ -318,16 +351,17 @@ export async function scheduleReminderFromApi(identity: ApiIdentity, contractId:
 }
 
 export async function extendExpiryFromApi(identity: ApiIdentity, contractId: string, input: ExtendInput) {
-  const prior = await replay(identity, "contract.api_expiry_extended", input.idempotency_key);
+  const requestKey = boundKey(contractId, input);
+  const prior = await replay(identity, "contract.api_expiry_extended", requestKey, input.idempotency_key);
   if (prior) return { ...(prior.after_data as Record<string, unknown>), idempotent_replay: true };
   const admin = createAdminClient();
   const { data, error } = await admin.rpc("extend_contract_acceptance_expiry_api_v2", {
     p_tenant_id: identity.tenantId, p_actor_user_id: actor(identity), p_contract_id: contractId,
-    p_expires_at: input.expires_at, p_idempotency_key: input.idempotency_key,
+    p_expires_at: input.expires_at, p_idempotency_key: requestKey,
   });
   if (error) {
     if (error.code === "23505") {
-      const existing = await replay(identity, "contract.api_expiry_extended", input.idempotency_key);
+      const existing = await replay(identity, "contract.api_expiry_extended", requestKey, input.idempotency_key);
       if (existing) return { ...(existing.after_data as Record<string, unknown>), idempotent_replay: true };
     }
     throw new Error(error.message);

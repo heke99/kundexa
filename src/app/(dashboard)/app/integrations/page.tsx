@@ -1,3 +1,4 @@
+import { registerPlatformResendWebhookForm } from "@/app/actions/platform-email";
 import { ok } from "@/lib/supabase/read";
 import { KeyRound, Phone, Plug } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
@@ -9,7 +10,7 @@ import { Field, SelectField } from "@/components/ui/form-field";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
 import { placeTestCall, saveCallerIdDefault, saveTelephonyPolicy } from "@/app/actions/telephony";
-import { getAppContext } from "@/lib/auth";
+import { getAppContext, isPlatformAdmin } from "@/lib/auth";
 import { describeResendSendingDomain } from "@/lib/email/resend-domains";
 
 type Config = Record<string, unknown>;
@@ -20,7 +21,9 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
   // Avsändarnamnet visas, det skrivs inte in. Samma källa som utskicket
   // använder, så det som står här är det som faktiskt hamnar i mottagarens
   // inkorg.
-  const { tenantLegalName } = await getAppContext();
+  const context = await getAppContext();
+  const { tenantLegalName } = context;
+  const mayRegisterWebhook = isPlatformAdmin(context.platformRole) || ["owner", "admin"].includes(context.role);
   // Hämtat från leverantören, inte påstått. Se `describeResendSendingDomain`.
   const sendingDomain = await describeResendSendingDomain();
   const [
@@ -125,6 +128,7 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
           <button className="button button-primary">Spara krypterat som väntande</button>
         </form>
         {resend ? <div className="grid grid-2" style={{ marginTop: 12 }}><form action={testResendIntegration}><input type="hidden" name="integration_id" value={resend.id} /><button className="button button-secondary">Skicka testmeddelande</button><p className="muted" style={{ marginTop: 6 }}>Frivilligt. Går till din egen inloggningsadress — utskick fungerar utan det.</p></form><form action={generateResendWebhookAddress}><input type="hidden" name="integration_id" value={resend.id} /><button className="button button-ghost">Generera ny webhookadress</button></form></div> : null}
+        {resend && mayRegisterWebhook ? <form action={registerPlatformResendWebhookForm} style={{ marginTop: 14 }}><input type="hidden" name="tenant_id" value={context.tenantId} /><input type="hidden" name="integration_id" value={resend.id} /><input type="hidden" name="request_id" value={String((resendConfig.webhook_registration as { request_id?: string } | undefined)?.request_id ?? crypto.randomUUID())} /><button className="button button-secondary">Registrera leveranskvitton automatiskt</button><p className="muted">Använder serverns befintliga Resend-konto och avsändardomän. Ingen testpost skickas. Hemligheten sparas krypterat och visas aldrig.</p></form> : null}
         <div className={`notice ${sendingDomain.kind === "verified" ? "" : "warning"}`} style={{ marginTop: 14 }}>
           <strong>Avsändardomän hos Resend:</strong> {sendingDomain.message}
         </div>

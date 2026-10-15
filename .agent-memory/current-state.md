@@ -1,5 +1,43 @@
 # Current state
 
+## 2026-10-15 Auktoriserad produktionsrelease
+
+Användaren auktoriserade skarpdriftsättning och förtydligade INGENproduktaktivering. Rätt KundexaDB uppdaterad med001002003, atomisk005+006,007008009010011.004uteblev efter automatiskgranskningsspärr, ingetremoteDocuSeal installeras. Edge process-outbox26/ingestion18/maintenance22ACTIVE. Typer exaktgenererade frånlive. Full verify+native-onlySQL PASS. Webb väntar release frånPR55. Inga produkter/mallar/villkor ändrade och inga kundmejl skickade.
+
+## 2026-10-15 Systemgranskning och uppföljande rättningar
+
+Ny systemgranskning 15 oktober: användaren bekräftar separat Resendkonto; live DB visar aktiv Resend med from_address=avtal@kundexa.se. Produktion Vercel READY på main de852fc, inte PR55. /health och gamla /ready200; sju friska workers; inga runtimefel i24h-vyn. DB saknar migration001–009 från15okt och nativeRPC, Resendwebhookar not_configured, aktiv approved simple_click-mall saknar produktkoppling. Branch rättad efter ny granskning; slutlig npm run verify PASS exit0 Node22/npm10.9.2, GitHubuppföljning återstår. Inga produktionsändringar eller kundutskick.
+
+## 2026-10-15 Aktuell korrigering: port i Kundexa
+
+Användaren förtydligade: porta det som behövs direkt till Kundexa. Separat DocuSeal-tjänst, Dockerunderlag, fjärradapter och callback är borttagna. Utvalda källpinnade validerings-/beskärnings-/placeringsfunktioner är portade med licenser. Native signeringsvy, privat PDF/audit och hållbart kvitto använder Kundexas befintliga plattform. Migration006 inför service-only native RPC:er. PR55 uppdateras på samma gren; ingen produktionsdeploy.
+
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Användaren uppger att DocuSeal har godkänt återanvändning av hela sitt projekt som egen lösning efter ett samarbete. Planen utgår från detta. docs/KUNDEXA_BUILD_WITH_DOCUSEAL.md beskriver egen dokumenttjänst, kundkortskoppling, enkel säljarresa, extern signering, dialerrättningar och BankID senare. Standardpaket/köp är inte en arbetsblockerare för den redan auktoriserade återanvändningen. Faktiska källkod/moduler ska inventeras. Ingen runtimekod importerad, ingen rättning eller deploy gjord.
+
+## 2026-10-13 PDF-fält och godkänd GitHub-publicering
+
+Användaren har uttryckligen godkänt publicering till heke99/kundexa. Nytt krav: administratören placerar PDF-fält och kopplar dem till kundkortet; säljaren fyller i kunddata och förhandsgranskar ifyllt avtal. Specifikation: docs/PDF_FIELD_TEMPLATES_AND_DOCUSEAL.md. DocuSeal stöder byggare/förifyllning; inbyggda vyer listas som Pro. Ingen runtimeintegration, installation eller BankID-lösning är ännu genomförd. Publicering görs på dokumentationsgren/PR, utan merge eller produktionsdeploy.
+
+## 2026-10-13 Sparade granskningar och avtalsplan
+
+Aktuell referens är main `de852fcd5bccc6fdffc82d49c7a2611545d09e33` och Kundexas körande databas,
+läst 13 oktober. Detta avsnitt ersätter äldre nulägespåståenden där de motsägs av oktobergranskningen.
+
+- Granskningarna finns i `docs/reviews/2026-10-13/`: 28 produktionsfynd och separat signering/säljarvy.
+- Genomförandeplan: `docs/CONTRACT_PRODUCTION_PLAN_2026-10-13.md`.
+- Sinch är aktuell telefoni. DocuSeal/DocuSign är inte inkopplat; simple_click används.
+- En aktiv produkt och prisversion finns, men den godkända mallen saknar produktkoppling,
+  har ofärdiga villkor och kräver värden som prisversionen saknar.
+- SMS är avstängt/nummer saknar stöd; Resend-webhookar är inte registrerade som klara.
+- Kärnflöden är INTE operativt godkända. Sju friska workers och READY-deploy bevisar inte avtalskedjan.
+- Fynd är OPEN. Ingen produktionsrättning, migration eller leverantörsinstallation gjordes i detta pass.
+- Användaren vill spara fynden och planera fungerande avtal/signering med BankID i framtiden.
+  Rekommenderad modell: gemensam signeringsorchestration med separata provideradaptrar.
+  DocuSeal-drift/Pro/BankID-leverantör är ännu inte valda.
+- Sparad dokumentation ger inte tillstånd att ersätta slutliga avtalsvillkor med gissade värden.
+
 ## 2026-09-24 — Efter första skarpa provet (PR #51 mergad som `95e9899`)
 
 Användaren provringde: kundkortet kom upp. Avtal gick inte att skicka. Mätt i prod: Gridex har 0 produkter,
@@ -733,3 +771,14 @@ källa inte ändrats sedan långt före deployen — svagare, men utan känd mot
 **2026-09-23 09:50:** Sinch-kontot kan ringa PSTN (testsamtal OK). Webbläsarsamtal till PSTN bryts
 fortfarande med GENERALERROR ~1 s efter ICE-svaret; senaste SVAML-förenkling ej provad. ICE kopplas
 nu till försöket (202609230002).
+
+## 2026-10-13 Publicering slutförd
+
+Rapporter, avtalsplan, PDF-fältspecifikation och projektminne är publicerade i [PR #53](https://github.com/heke99/kundexa/pull/53). PR är öppen och inte mergad. Publicerat git-träd matchade exakt det lokala dokumentationsträdet (12 ändrade filer). Vanlig git-push saknade terminalautentisering; GitHub-anslutningen användes med användarens uttryckliga mandat. Ingen produktionsdeploy gjordes.
+
+
+## 2026-10-15 — Implementation av plan 53
+
+Kod för plan53 implementerad på codex/implement-plan-53 från main de852fc. Fem nya framåtmigrationer, PDF-fält/kundkoppling/typade kompletteringar, säkra roller och säljarflöden, telefoni, outbox och separat DocuSeal-orchestration. Se docs/IMPLEMENTATION_PLAN_53_2026-10-15.md. Ingen produktion ändrad. Användaren saknar DocuSeal-server och väljer uttryckligen att förbereda installationen. Första externa produktflödet är en obligatorisk signatär via e-post. BankID är inte live.
+
+Publicerad som utkast [PR #55](https://github.com/heke99/kundexa/pull/55), kodcommit `a1b8840`. Lokal slutverifiering och slutligt typkontrollerat produktionsbygge PASS. Huvudgren och produktion oförändrade.

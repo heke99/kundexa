@@ -54,6 +54,7 @@ function readDeliveryConfiguration(value: unknown) {
     smsProvider: typeof record.smsProvider === "string" ? record.smsProvider : "",
     platformSmsConfigured: record.platformSmsConfigured === true,
     platformEmailConfigured: record.platformEmailConfigured === true,
+    emailConfigurationDigest: typeof record.emailConfigurationDigest === "string" && /^[a-f0-9]{64}$/.test(record.emailConfigurationDigest) ? record.emailConfigurationDigest : null,
   };
 }
 
@@ -116,11 +117,11 @@ export async function invokeScheduledEdgeWorker(worker: ScheduledEdgeWorker) {
       headers: { "x-cron-secret": env.CRON_SECRET, "content-type": "application/json" },
       body: JSON.stringify(payloads[worker]),
       cache: "no-store",
-      // Vercel avbryter hela funktionen efter 60 sekunder (`maxDuration`). Med
-      // 50 här fanns tio sekunder kvar för två hjärtslagsskrivningar, och två
-      // gånger räckte de inte: funktionen dödades mitt i, och raden blev stående
-      // på "running" i stället för att säga "failed". 40 lämnar tjugo.
-      signal: AbortSignal.timeout(40_000),
+      // A worker can start its final job just before the 45-second loop
+      // budget, then await the provider and persist the result. Allow that
+      // work to finish, with 60 seconds left in the 180-second cron caller
+      // for response parsing and the final heartbeat.
+      signal: AbortSignal.timeout(120_000),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "worker_network_failure";

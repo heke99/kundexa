@@ -1,3 +1,5 @@
+import { ContractFrameShell } from "@/components/call-workspace/contract-frame-shell";
+import { isContractWorkspacePath } from "@/lib/call-workspace/frame-policy";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/app-shell/sidebar";
@@ -49,7 +51,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const dueCallbacks = Number(navigationBadges.dueCallbacks ?? 0);
   const activeLists = Number(navigationBadges.activeLists ?? 0);
 
-  return <div className="app-shell">
+  const shell = <div className="app-shell">
     <RealtimeRefresh />
     <Sidebar platformRole={ctx.platformRole} role={ctx.role} dueCallbacks={dueCallbacks} activeLists={activeLists} />
     <main className="app-main">
@@ -62,4 +64,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <div className="page-content">{children}</div>
     </main>
   </div>;
+  if (isContractWorkspacePath(pathname)) {
+    return <ContractFrameShell content={children} initiallyFramed={requestHeaders.get("sec-fetch-dest") === "iframe"}>{shell}</ContractFrameShell>;
+  }
+  return shell;
 }

@@ -2,7 +2,7 @@
 
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { z } from "zod";
+import { acceptanceMethod, loadContractSignatureMethod } from "@/lib/contracts/delivery-plan";
 import { parsePublicContractResponse } from "@/lib/contracts/public-response";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { serverEnv } from "@/lib/env";
@@ -22,7 +22,7 @@ export async function respondPublicContract(formData: FormData) {
   const tokenHash = sha256(token + env.KUNDEXA_WEBHOOK_PEPPER);
   const { data: request } = await admin
     .from("contract_acceptance_requests")
-    .select("id,tenant_id,status,expires_at,require_code,canonical_document_id,canonical_document_sha256")
+    .select("id,tenant_id,contract_version_id,status,expires_at,require_code,canonical_document_id,canonical_document_sha256")
     .eq("public_token_hash", tokenHash)
     .single();
   if (!request) redirect(`/accept/${token}?error=Länken är ogiltig`);
@@ -56,6 +56,7 @@ export async function respondPublicContract(formData: FormData) {
   }
   if (!allowed) redirect(`/accept/${token}?error=För många försök. Försök igen senare.`);
 
+  const method = acceptanceMethod(await loadContractSignatureMethod(admin, request.tenant_id, request.contract_version_id, true), "web");
   const requestHeaders = await headers();
   const ip = requestHeaders.get("x-forwarded-for")?.split(",")[0]?.trim() ?? requestHeaders.get("x-real-ip") ?? null;
   const userAgent = requestHeaders.get("user-agent");
@@ -63,7 +64,7 @@ export async function respondPublicContract(formData: FormData) {
   const acceptanceText = accepted ? ACCEPTANCE_TEXT : DECLINE_TEXT;
   const { error } = await admin.rpc("record_contract_acceptance_v3", {
     p_request_id: request.id,
-    p_method: "web",
+    p_method: method,
     p_status: accepted ? "accepted_via_web" : "declined",
     p_raw_response: accepted ? "WEB_ACCEPT" : "WEB_DECLINE",
     p_normalized_response: accepted ? "WEB_ACCEPT" : "WEB_DECLINE",

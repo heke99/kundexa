@@ -678,13 +678,13 @@ if (/ignoreBuildErrors\s*:\s*true/.test(nextConfig)) {
   assert.equal(packageJson.scripts["build:next"], "next build --webpack", "The internal build command must use the deterministic official Next webpack build");
 }
 
-assert.equal(packageJson.dependencies.next, "16.2.10");
+assert.equal(packageJson.dependencies.next, "16.4.1");
 assert.equal(packageJson.dependencies["@supabase/ssr"], "0.12.3");
 assert.equal(packageJson.dependencies["@supabase/supabase-js"], "2.110.7");
 assert.equal(packageJson.dependencies["pdf-lib"], "1.17.1");
 assert.match(packageJson.scripts.test, /test:contracts/, "Contract delivery unit tests must be part of the canonical test command");
 assert.equal(packageJson.engines.node, "22.x");
-assert.equal(packageJson.overrides.postcss, "8.5.19");
+assert.equal(packageJson.overrides.postcss, "8.5.30");
 assert.equal(packageJson.scripts["functions:deploy"], "node scripts/deploy-functions.mjs");
 assert.equal(packageJson.scripts["geography:import"], "node scripts/import-geography.mjs");
 const deployFunctions = await readFile(join(root, "scripts/deploy-functions.mjs"), "utf8");
@@ -924,7 +924,7 @@ const cspSource = await readFile(join(root, "src/lib/supabase/proxy.ts"), "utf8"
 assert.match(cspSource, /connect-src[^`]*\$\{webphoneConnectSources\.join\(" "\)\}/,
   "The CSP connect-src must admit the webphone provider, or the browser blocks every registration");
 const readinessRoute = await readFile(join(root, "src/app/api/ready/route.ts"), "utf8");
-assert.match(readinessRoute, /webphoneRegistration: await webphoneRegistration\(\)/,
+assert.match(readinessRoute, /const registration = await webphoneRegistration\(\);/,
   "Readiness must report whether the webphone can actually register with the provider");
 const reserveIndex = dialerHook.indexOf('fetch("/api/v1/calls"');
 const readinessIndex = dialerHook.indexOf("webphone.state.phase");
@@ -1253,11 +1253,11 @@ for (const file of ["src/app/actions/contracts.ts", "src/lib/contracts/api-servi
     "The readiness answer must carry the web app's own email configuration, not only the worker's");
   assert.match(readyRoute, /env\.RESEND_API_KEY && env\.DEFAULT_EMAIL_FROM_ADDRESS/,
     "The web app's email configuration must be read from the web app's own environment");
-  // Varje rad som alls nämner nyckeln måste reducera den till ett ja eller nej
-  // på samma rad. Svaret är publikt.
+  // Nyckeln får endast användas till närvarokontroll eller intern SHA-256-jämförelse.
+  // Det publika svaret bär enbart booleans, inte nyckeln eller dess digest.
   for (const line of readyRoute.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "").split("\n")) {
     if (!line.includes("RESEND_API_KEY")) continue;
-    assert.match(line, /Boolean\(/,
+    assert.match(line, /Boolean\(|expectedEmailDigest = sha256\(JSON\.stringify\(\[env\.RESEND_API_KEY, env\.DEFAULT_EMAIL_FROM_ADDRESS\]\)\)/,
       "The readiness answer must report whether the key is set, never the key");
   }
 }
@@ -1302,8 +1302,9 @@ console.log(`Verified ${migrations.length} migrations, monotonic call/Resend pro
   for (const removed of ['name="template_version_id"', 'name="legal_entity_id"']) {
     assert.ok(!wizard.includes(removed), `The new-contract form must not ask the seller for ${removed}; the product decides it`);
   }
-  assert.match(wizard, /<SelectField label="Produkt" name="product_id"[^>]*required>/,
-    "The new-contract form must ask for the product, and require it");
+  assert.match(wizard, /<ContractProductSelect/,
+    "The new-contract form must use the product and approved-field selector");
+  assert.match(await readFile(join(root, "src/components/contract-product-select.tsx"), "utf8"), /<select name="product_id"[^>]*required/, "Product selection remains required");
 
   const actions = await readFile(join(root, "src/app/actions/contracts.ts"), "utf8");
   const create = actions.slice(actions.indexOf("export async function createContract"), actions.indexOf("\nexport async function uploadContractPdf"));

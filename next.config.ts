@@ -13,6 +13,9 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
   experimental: {
+    // TypeScript 5.9 provides the compiler API. Next 16.4 defaults to a CLI
+    // subprocess whose --showConfig output is unavailable in this sandbox.
+    useTypeScriptCli: false,
     // Prevents Next from spawning dozens of workers in small CI/Supabase build
     // environments. This also makes build output deterministic.
     cpus: 1,
@@ -34,6 +37,11 @@ const nextConfig: NextConfig = {
           { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
         ],
       },
+      {
+        source: "/app/contracts/:path*",
+        headers: [{ key: "X-Frame-Options", value: "SAMEORIGIN" }],
+      },
+      { source: "/api/v1/contracts/:id/documents/:documentId", headers: [{ key: "X-Frame-Options", value: "SAMEORIGIN" }] },
     ];
   },
 };

@@ -1,3 +1,4 @@
+import { contractFrameAncestors } from "@/lib/call-workspace/frame-policy";
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { webphoneConnectSources } from "@/lib/telephony/webphone/connect-sources";
@@ -42,7 +43,7 @@ export async function updateSession(request: NextRequest) {
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
-    "frame-ancestors 'none'",
+    contractFrameAncestors(request.nextUrl.pathname),
     ...(process.env.NODE_ENV === "production" ? ["upgrade-insecure-requests"] : []),
   ].join("; ");
   const tenantScoped = isTenantScopedPath(request.nextUrl.pathname);

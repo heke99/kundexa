@@ -1,0 +1,40 @@
+{
+  "date": "2026-10-15",
+  "authorization": "User explicitly requested production readiness and deployment; explicitly no product activation.",
+  "target": {
+    "supabase_project": "lhvifuxcqghtbiulzkrf",
+    "vercel_project": "kundexa",
+    "domain": "https://www.kundexa.se"
+  },
+  "excluded_migrations": [
+    {
+      "file": "202610150004_docuseal_orchestration.sql",
+      "reason": "Automatic approval review rejected reinstating remote DocuSeal functions; native rollout has no dependency. Never install this retired provider bootstrap in this production rollout."
+    }
+  ],
+  "applied_semantic_migrations": [
+    "001",
+    "002",
+    "003",
+    "005+006 (single native-only transaction)",
+    "007",
+    "008",
+    "009",
+    "010",
+    "011"
+  ],
+  "managed_owner_acl_limit": "009 and spatial REVOKE in001 report success but effective PostGIS permissions remain because extension objects are owned by supabase_admin and postgres has no grant option; not verified fixed.",
+  "edge_versions_manually_deployed": {
+    "process-outbox": 26,
+    "ingestion-worker": 18,
+    "maintenance-worker": 22
+  },
+  "verification": {
+    "npm_run_verify": "PASS Node22.17.0/npm10.9.2 after live type generation",
+    "native_only_sql_profile": "PASS without004",
+    "postgis_managed_acl": "NOT FIXED; provider ownership required",
+    "provider_webhook": "NOT VERIFIED; authenticated registration action prepared",
+    "product_activation": "NOT REQUESTED; no product/mall/terms changed"
+  },
+  "web_release": "Pending merge/deployment; follow GitHub PR55 and Vercel actual target state."
+}

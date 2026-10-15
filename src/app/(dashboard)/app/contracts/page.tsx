@@ -86,7 +86,7 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
     p_status: params.status && isContractStatus(params.status) ? params.status : null,
     p_call_missing: params.call === "missing",
     p_attention: params.attention || null,
-    p_owner_user_id: params.owner_user_id || null,
+    p_owner_user_id: isSeller ? ctx.userId : params.owner_user_id || null,
     p_team_id: params.team_id || null,
     p_product_id: params.product_id || null,
     p_date_from: params.date_from || null,
@@ -107,7 +107,7 @@ export default async function ContractsPage({ searchParams }: { searchParams: Pr
     return `/app/contracts?${next.toString()}`;
   };
   return <>
-    <PageHeader title="Avtal" description="Spårbara avtalsversioner med källsamtal, kanonisk PDF, leveransstatus och påminnelser." action={<div className="toolbar-right"><Link href="/app/documents" className="button button-ghost button-sm">PDF-arkiv</Link><Link href="/app/pipeline" className="button button-ghost button-sm">Pipeline</Link>{mayCreate ? <Link href="/app/contracts/new" className="button button-primary"><Plus size={16} /> Nytt avtal</Link> : null}</div>} />
+    <PageHeader title={isSeller ? "Mina avtal" : "Avtal"} description="Se avtalen, skicka till kunden och följ upp svaret." action={<div className="toolbar-right">{!isSeller ? <><Link href="/app/documents" className="button button-ghost button-sm">PDF-arkiv</Link><Link href="/app/pipeline" className="button button-ghost button-sm">Pipeline</Link></> : null}{mayCreate ? <Link href="/app/contracts/new" className="button button-primary"><Plus size={16} /> Nytt avtal</Link> : null}</div>} />
     {params.error ? <p className="form-error">{params.error}</p> : null}
     {params.message ? <p className="notice">{params.message}</p> : null}
     {/* The status dropdown covers all fourteen statuses; these five are the

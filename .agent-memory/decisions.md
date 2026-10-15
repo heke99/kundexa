@@ -1,5 +1,17 @@
 # Decisions
 
+## 2026-10-15 Auktoriserad produktionsrelease
+
+Skarprelease auktoriserad av användaren; ingen produktaktivering ingår. 004historiskremote-migration utesluten efterauto-reviewrejection, native005+006installerades atomisktutan004. 011preserverar live13okt legacy-linktabell med exaktparity, RLS+revokedgrants+blockeradINSERT i ställetförDROP (dropverktyg requestStateexpiredtvågånger). Säkeroperatoraction förautomatiskResendwebhook, ingetad hoc cron/authbakdörr. ManagedACLmigration success ärintebevis förprivilegier: efectiva testerärkanoniska.
+
+## 2026-10-15 Systemgranskning och uppföljande rättningar
+
+Ny review rättar faktisk mänsklig undertecknare separat från låst företag/mottagare, atomisk cancellation i007, fryst credentialfingerprint i008 (även sameaccount keyrotation stoppar okänt försök för avstämning). Readiness jämför web/Edge effective config digest och verifierad webhook per aktiv tenant; gamla metadata ger inte grönt. Next/SWC16.4.1 och kompatibla säkerhetspatchar; ingen obekräftad majoroverride eller nedgradering av Sinch.
+
+## 2026-10-15 Aktuell korrigering: port i Kundexa
+
+Användarens uttryckliga korrigering ersätter tidigare installationsval: valda delar porteras till Kundexa. provider_key=kundexa_native. Historiska migrationer001–005 bevaras;006 är framåtmigration. Första flödet är en e-postmottagare, ritad enkel elektronisk underskrift och uttryckligt samtycke; inga BankID-/PKI-löften.
+
 ## ADR-0001 — Ett kanoniskt CRM
 
 `customers` är kund-/prospektkortet. Listmedlemskap, samtal, återkomster, anteckningar och order hålls i separata kanoniska tabeller; inga parallella kundkopior.
@@ -263,3 +275,24 @@ till `failed`.
 ## ADR-0030 — Plattformsadmin delar ut listor den tilldelat
 - Teamledare och ägare delar ut som förut (`set_customer_list_sharing`). Plattformsadmin saknar medlemskap i företaget
   och får därför egna funktioner som härleder företaget ur tilldelningen och avvisar team från andra företag.
+
+## 2026-10-13 Planeringsinriktning för signering
+
+Användarkrav: fynd ska sparas och avtal ska kunna skickas/signeras; BankID ska kunna införas senare.
+Föreslagen arkitektur: Kundexa äger avtalsversion, produkt, rättigheter, utskick och CRM-status.
+Signering sker genom provideradaptrar; DocuSeal är rekommenderat alternativ, ännu inte beställd drift.
+BankID är separat signeringskapabilitet och får inte likställas med login eller simple_click.
+Befintligt stöd för verkligt manuellt registrerat källsamtal bevaras i planen.
+
+## 2026-10-13 Användarkrav och publiceringsmandat
+
+Användaren godkände uttryckligen GitHub-publiceringen efter tidigare automatisk avvisning. PDF-byggaren hör till behörig administration; säljaren använder kundkortet. Kundexa äger fältkoppling/versioner/policy. DocuSeal föreslås som separat adaptertjänst; val av betalplan/drift är ännu öppet. BankID hålls separat från mall och enkel autentisering.
+
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Arbetsförutsättning från användaren: godkännande till hela DocuSeal-projektets återanvändning som egen lösning. Rekommenderad teknisk gräns är en egen anpassad dokumenttjänst bakom Kundexa, inte omskrivning av hela dokumentmotorn till Next.js. Kundexa äger CRM, pris, rättigheter, status och kundkortskoppling. Inget nytt köpmandat efterfrågas för redan auktoriserad kodåteranvändning.
+
+
+## 2026-10-15 — Implementation av plan 53
+
+Plan53 implementeras med källpinnad separat DocuSeal-tjänst och smalt Rails-overlay för idempotent isolerad PDF-mall. Kundexa äger ifylld PDF, frysta värden, transport och status. Initial submissionclaim sparas före extern effekt; okänt providersvar återhämtas utan ny POST. Final-PDF och separat audit-PDF krävs. En obligatorisk signatär via e-post är första godkända kodvägen. Användaren väljer installationsförberedelse utan serveranskaffning. Inga genererade typer handredigeras; nya server/Edge-RPC-gränser hålls separata tills stagingregenerering.

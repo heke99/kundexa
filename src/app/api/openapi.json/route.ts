@@ -54,7 +54,12 @@ export async function GET() {
       },
       "/contracts": {
         get: { operationId: "listContracts", summary: "Lista avtal", "x-required-scope": "contracts:read", responses: { "200": { description: "Avtalslista" } } },
-        post: { operationId: "createContract", summary: "Skapa avtalsutkast", "x-required-scope": "contracts:write", responses: { "201": { description: "Avtalsutkast skapat" }, "409": { description: "Affärsregel eller idempotenskonflikt" } } },
+        post: { operationId: "createContract", summary: "Skapa avtalsutkast", "x-required-scope": "contracts:write",
+          requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["customer_id", "source_call_id", "template_version_id", "legal_entity_id", "title", "idempotency_key"], properties: {
+            customer_id: { type: "string", format: "uuid" }, source_call_id: { type: "string", format: "uuid" }, template_version_id: { type: "string", format: "uuid" }, legal_entity_id: { type: "string", format: "uuid" }, product_id: { type: ["string", "null"], format: "uuid" },
+            title: { type: "string", minLength: 2, maxLength: 200 }, starts_on: { type: ["string", "null"], format: "date" }, ends_on: { type: ["string", "null"], format: "date" }, language: { type: "string", enum: ["sv", "en"] }, special_terms: { type: "string", maxLength: 4000 },
+            pdf_custom_values: { type: "object", maxProperties: 50, description: "Only custom field IDs from the approved PDF template. Types and required values are checked against that version.", additionalProperties: { oneOf: [{ type: "string", maxLength: 1000 }, { type: "number" }] } }, idempotency_key: { type: "string", minLength: 8, maxLength: 200 },
+          } } } } }, responses: { "201": { description: "Avtalsutkast skapat" }, "409": { description: "Affärsregel eller idempotenskonflikt" } } },
       },
       "/contracts/{id}": {
         get: { operationId: "getContract", summary: "Hämta avtal", "x-required-scope": "contracts:read", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], responses: { "200": { description: "Avtal" }, "404": { description: "Saknas" } } },

@@ -220,6 +220,7 @@ export function buildTemplateRenderContext(input: {
   price: PriceInput;
   contract: ContractInput;
 }): Record<string, unknown> {
+  const now = new Date();
   return {
     seller: input.seller,
     customer: input.customer,
@@ -247,6 +248,8 @@ export function buildTemplateRenderContext(input: {
       language: input.contract.language,
       special_terms: input.contract.special_terms || null,
     },
-    today: new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeZone: "Europe/Stockholm" }).format(new Date()),
+    today: new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeZone: "Europe/Stockholm" }).format(now),
+    // Internal ISO representation for typed PDF date fields; text templates keep the human date.
+    today_iso: new Intl.DateTimeFormat("sv-SE", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "Europe/Stockholm" }).format(now),
   };
 }
