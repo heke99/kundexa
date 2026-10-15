@@ -1,6 +1,6 @@
 # Genomförande av plan 53
 
-Datum: 15 oktober 2026. Referens: [PR #53](https://github.com/heke99/kundexa/pull/53), dokumentationscommit `18858a51f1a4183dd89ecce88fa6d799086bb5bf`. Implementationen utgår från main `de852fcd5bccc6fdffc82d49c7a2611545d09e33` och använder framåtmigrationerna `202610150001`–`202610150005`.
+Datum: 15 oktober 2026. Implementation: [utkast PR #55](https://github.com/heke99/kundexa/pull/55). Referens: [PR #53](https://github.com/heke99/kundexa/pull/53), dokumentationscommit `18858a51f1a4183dd89ecce88fa6d799086bb5bf`. Implementationen utgår från main `de852fcd5bccc6fdffc82d49c7a2611545d09e33` och använder framåtmigrationerna `202610150001`–`202610150005`.
 
 Detta dokument beskriver kod och lokal verifiering. Inga produktionsmigrationer, externa kundutskick, riktiga samtal eller skarpa signeringar har utförts. Användaren har ingen DocuSeal-server och har uttryckligen valt att **förbereda installationen**.
 
