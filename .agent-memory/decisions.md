@@ -1,5 +1,9 @@
 # Decisions
 
+## 2026-10-15 Produktionsrelease verifierad
+
+Release genomförd enligt explicituserklartecken trotsavsaknadstaging; lokal/fullGitHubverify+nativenonlySQL ochread-only liveSQLroles körda. Inga produkter/mallar/villkorändrades. Den säkerhetsstyrda readiness503 behålls eftersomcallbacksaknas; attgöraindikatorngrön utanbevis ärinte en fix. GitHubautodeployinvalidtoken maskerasinte; manuella deployer äraktuella alternativet. Inga inloggningstokens ellercredentials har hämtatstillchatten.
+
 ## 2026-10-15 Auktoriserad produktionsrelease
 
 Skarprelease auktoriserad av användaren; ingen produktaktivering ingår. 004historiskremote-migration utesluten efterauto-reviewrejection, native005+006installerades atomisktutan004. 011preserverar live13okt legacy-linktabell med exaktparity, RLS+revokedgrants+blockeradINSERT i ställetförDROP (dropverktyg requestStateexpiredtvågånger). Säkeroperatoraction förautomatiskResendwebhook, ingetad hoc cron/authbakdörr. ManagedACLmigration success ärintebevis förprivilegier: efectiva testerärkanoniska.

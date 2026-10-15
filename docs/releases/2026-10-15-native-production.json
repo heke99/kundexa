@@ -34,7 +34,29 @@
     "native_only_sql_profile": "PASS without004",
     "postgis_managed_acl": "NOT FIXED; provider ownership required",
     "provider_webhook": "NOT VERIFIED; authenticated registration action prepared",
-    "product_activation": "NOT REQUESTED; no product/mall/terms changed"
+    "product_activation": "NOT REQUESTED; no product/mall/terms changed",
+    "health": "HTTP200",
+    "readiness": "HTTP503: only emailWebhookVerified false; effective web/Edge email configuration aligned true",
+    "workers": "7 core workers healthy plus signing-reconcile healthy12:30UTC",
+    "main_verify_run": "38734397508 PASS",
+    "pr_verify_run": "38734076148 PASS",
+    "automatic_edge_deploy_run": "38734397799 FAIL401Invalid access token; changed functions manually deployed and active",
+    "live_sql_roles": "PASS authenticated tenant isolation, internal signing RPC denied, anonymous customer access denied; transaction rolled back",
+    "public_signing_smoke": "Invalid link page200 with unavailable message, PDFAPI410, no document returned",
+    "runtime_error_scan": "No error/fatal logs in checked release window",
+    "full_live_customer_contract": "NOT RUN; no product activation requested"
   },
-  "web_release": "Pending merge/deployment; follow GitHub PR55 and Vercel actual target state."
+  "web_release": {
+    "functional_commit": "40e0c55e1ba1c00623f2c2853b8df5b16a20ff40",
+    "deployment_id": "dpl_GpovKXiJJXymzSuBgb3ir47DFoJA",
+    "state": "READY",
+    "url": "https://www.kundexa.se",
+    "merged_pr": 55,
+    "verified_at": "2026-10-15T12:30:40Z"
+  },
+  "remaining_operator_actions": [
+    "Authenticated app operator: Integrationer → Registrera leveranskvitton automatiskt; wait for verified signed callback",
+    "Renew GitHub SUPABASE_ACCESS_TOKEN through trusted settings; do not paste tokens in chat",
+    "Provider-owned PostGIS ACL remediation and Auth leaked-password setting; Sinch dependency follow-up"
+  ]
 }

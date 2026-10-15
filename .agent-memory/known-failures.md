@@ -1,5 +1,9 @@
 # Known failures
 
+## 2026-10-15 Produktionsrelease verifierad
+
+PROD-20261015-EDGE-TOKEN: deploy-edge-functions38734397799 stoppadeförstaautomationdeploymed401InvalidaccessToken. Föremergen manuellt deployadeändradearbetare körkorrekt och7workershealthy; repo-tokenmåsteförnyas. PROD-EMAIL-CALLBACK: nya/ready503korrekt eftersomemailWebhookVerifiedfalse, inte pga DB/telefoni/workers/configdigest. Digestfalsevidförstaticköverdeploygränsen rättadesautomatisktvidnästatick12:27; alignedtrueverifierat.
+
 ## 2026-10-15 Auktoriserad produktionsrelease
 
 RELEASE-20261015:001/009 REVOKE på managed PostGISägarskap göringenförändring; effektiva privilégier föranon/authkvar.004 nekadesauto-review eftersomremote-service striderusernativeval; uteslötshelt, ingengenomväg. Ingestiondeploy nekadesinitialtsomunrelated;5radsdiff+livejobbSELECTvisadeendastpausavavstängdlegacyadapter, retrygodkändv18. LegacytableDROP011 fick teknisktinvalidrequestStatetvågånger; säkrare avstängd historikparity appadsuccess. Livegeneratedtyperavslöjade saknadcontract_signing_linkslocalhistory; parity011+exaktregenerationlöste schemafail.

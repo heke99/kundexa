@@ -1,5 +1,9 @@
 # Verification matrix
 
+## 2026-10-15 Produktionsrelease verifierad
+
+Slutligprod12:26–12:30UTC: READY40e0c55;health200;ready503endastcallback;Sinchregistration200;7coreworkershealthy+signingreconcilehealthy12:30:05;0error/fatalloggariskannatfönster. Invalidsignpagetydlig200, PDFAPI410utanPDF. FaktiskaSQLroller authenticated/anon testade läsbehörighet/tilltenantscope ochnekad native-mutRPC irollbacktransaction PASS. DettaärintebrowserJWT/slutavtalstest. PR204 ochmainverify PASS. AutoEdgejob401FAIL, changed3manualACTIVE. Inga produkter/terms ändrade ochinga mejl/samtal skickade.
+
 ## 2026-10-15 Auktoriserad produktionsrelease
 
 Releasecheck: rättDB/projekt,0pendingjobs/0activeenvelopes föreuppdatering. NativeRPC+cancel(jsonb)+fingerprintRPC+PNGbucket+trustedartifacttrigger verifierade i live efterDDL. Pensioneradprepare_docusealRPCauthenticatedexecute=false. Nya EdgeversionsACTIVE. FullnpmverifyPASS medlivegenereradetypes+142migrationer; native-onlySQLPASSutan004; canonicalorigin/collision/hash-tests+remoteparity+ResendoperatorprotocolPASS. 009managedACLFAIL/NOTFIXED. WebSHA/CI+livehealthkontroller följsunderrelease. Riktigtkundutskick/samtal/nyproduktsignering NOTRUN ochproduktaktiveringNOTREQUESTED.

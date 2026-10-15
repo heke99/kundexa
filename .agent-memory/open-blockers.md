@@ -1,5 +1,9 @@
 # Open blockers
 
+## 2026-10-15 Produktionsrelease verifierad
+
+Efterrelease: Resendwebhook måste registreras av behörigt appkonto via nya knappen och signerat callbackbevis behövs. AutomatiskGitHubEdge-deploy kräver förnyad SUPABASE_ACCESS_TOKEN (run38734397799 fail401, kördesinteomblint); aktuellprocess-outbox26/ingestion18/maintenance22 är manuelltACTIVE. ManagedPostGISACL fortfarande olöst pga supabase_admin-ägarskap, Authleakedpasswordskydd avstängt och6Sinchtransitiva highlarm kvar. Dessa är INTE gröna/fixade. Produkter/mallarärmedvetetinteaktiveringsuppgift; kommande kundavtal behöverfärdigmall.
+
 ## 2026-10-15 Auktoriserad produktionsrelease
 
 Kvar: Resendwebhookstatus pending/not_configured tills autentiserad operator registrerar med nya säkra knappen och signerad eventmottagning bevisas. Verktygen har inte behörig Kundexa-appsession eller anslutning till rätt Resendkonto; nycklar ska inte hämtas till chatten. Managed PostGIS-ACL001/009 var NOOP trots migrationssuccess: supabase_admin äger objekten, postgres saknargrantoption. Effektiva anonymaSpatialwrite/extentexecute fortfarande true; kräver provideråtgärd. Authleakedpasswordskydd och SinchFTPberoendelarm kvar. Ingenprodukt skaaktiveras enligtuser.

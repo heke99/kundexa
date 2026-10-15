@@ -1,5 +1,9 @@
 # Next actions
 
+## 2026-10-15 Produktionsrelease verifierad
+
+Första praktiska operatörssteg: logga in www.kundexa.se/app/integrations och välj Registrera leveranskvitton automatiskt (befintligservernyckel, inga secrets visas). Signeradeevent gör webhookactive, healthreadyblirdåomvärderad peraktivtenant. Förnya GitHub SUPABASE_ACCESS_TOKEN via säkraGitHubSettings för framtidaEdgeautomation. ProviderägdaPostGISrättigheter/Authskydd/Sinchpatch hanterasmed rättadminåtkomst. Ingenproduktaktivering förränanvändarenberomdet.
+
 ## 2026-10-15 Auktoriserad produktionsrelease
 
 Slutför PR55 CI, merge och Vercelrelease; verifierahealth/ready/arbetare och rättSHA. Behörig inloggad operator kan på Integrationer välja Registrera leveranskvitton automatiskt; serverns befintliga Resendkey används utan hemlighetsdelning. Aktiveraingenprodukt. Native skickflöde provas först med kontrollerad slutmottagare och färdigmall näranvändaren efterfrågar det. Följ providerbegränsade PostGISACL/Auth/Sinchvarningar separat.
