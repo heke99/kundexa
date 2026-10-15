@@ -1,5 +1,5 @@
-import { decryptJson } from "@/lib/crypto";
-import { evaluateWorkerReadiness } from "@/lib/operational-readiness";
+import { decryptJson, sha256 } from "@/lib/crypto";
+import { evaluateWorkerReadiness, evaluateSigningWorkerReadiness, matchingEmailConfiguration, everyTenantEmailWebhookVerified } from "@/lib/operational-readiness";
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { expectedWebhookUrl, isUsablePublicAppUrl, publicEnv, serverEnv } from "@/lib/env";
@@ -27,6 +27,7 @@ type DeliveryChecks = {
    * Värdet är ett ja eller nej om att variablerna finns, aldrig deras innehåll.
    */
   webEmailConfigured: boolean;
+  emailConfigurationAligned: boolean | null;
   /**
    * Bygger arbetaren sina avtalslänkar mot samma adress som webbappen?
    *
@@ -58,13 +59,14 @@ const UNREPORTED: DeliveryChecks = {
   platformSmsConfigured: null,
   platformEmailConfigured: null,
   webEmailConfigured: false,
+  emailConfigurationAligned: null,
   linkHostAligned: null,
   smsIpAllowlistEnforced: false,
   smsIpAllowlistNetworks: null,
   reportedAt: null,
 };
 
-function readDelivery(metadata: unknown, appBaseUrl: string | null): DeliveryChecks | null {
+function readDelivery(metadata: unknown, appBaseUrl: string | null, expectedEmailDigest: string | null): DeliveryChecks | null {
   if (!metadata || typeof metadata !== "object") return null;
   const delivery = (metadata as Record<string, unknown>).delivery;
   if (!delivery || typeof delivery !== "object") return null;
@@ -78,6 +80,7 @@ function readDelivery(metadata: unknown, appBaseUrl: string | null): DeliveryChe
     // Sätts av anroparen: det här är arbetarens rapport, och den vet ingenting
     // om webbappens egen miljö.
     webEmailConfigured: false,
+    emailConfigurationAligned: matchingEmailConfiguration(record.emailConfigurationDigest, expectedEmailDigest),
     // Utan en av de två adresserna finns inget att jämföra, och `false` vore ett
     // påstående om olikhet som ingen mätning stöder.
     linkHostAligned: workerAppUrl && appBaseUrl ? workerAppUrl === appBaseUrl.replace(/\/$/, "") : null,
@@ -135,6 +138,13 @@ export async function GET() {
     // SMS- och e-postnycklarna bor i Edge-funktionen, inte här. Webbappen kan
     // inte läsa dem, så den enda vägen till ett svar är arbetarens egen
     // rapport. Saknas den säger vi att den saknas -- inte att allt är bra.
+    let webEmailConfigured = false;
+    let expectedEmailDigest: string | null = null;
+    try {
+      const env = serverEnv();
+      webEmailConfigured = Boolean(env.RESEND_API_KEY && env.DEFAULT_EMAIL_FROM_ADDRESS);
+      if (webEmailConfigured) expectedEmailDigest = sha256(JSON.stringify([env.RESEND_API_KEY, env.DEFAULT_EMAIL_FROM_ADDRESS]));
+    } catch { webEmailConfigured = false; }
     let delivery: DeliveryChecks = UNREPORTED;
     const { data: workerRows, error: workerError } = await admin.from("platform_worker_heartbeats")
       .select("worker_key,status,metadata,updated_at");
@@ -142,22 +152,19 @@ export async function GET() {
     const { count: externalTemplates, error: signingPolicyError } = await admin.from("contract_templates")
       .select("id,contract_template_versions!contract_templates_current_version_tenant_fk!inner(signature_policy)", { count: "exact", head: true })
       .eq("active", true).eq("contract_template_versions.signature_policy->>method", "external_esign");
-    const signingRequired = (externalTemplates ?? 0) > 0;
-    const signingHeartbeat = workerRows?.find(row => row.worker_key === "signing-reconcile");
-    const signingWorkerReady = !signingPolicyError && (!signingRequired || Boolean(signingHeartbeat && signingHeartbeat.status === "healthy"
-      && Date.now() - Date.parse(signingHeartbeat.updated_at) <= 15 * 60_000 && Date.parse(signingHeartbeat.updated_at) <= Date.now() + 60_000));
+    const { count: pendingSignatures, error: signingQueueError } = await admin.from("signing_envelopes")
+      .select("id", { count: "exact", head: true }).eq("provider", "kundexa_native")
+      .in("status", ["creating", "sent", "partially_signed"]);
+    const signingHealth = evaluateSigningWorkerReadiness({ templateCount: externalTemplates, pendingCount: pendingSignatures,
+      readFailed: Boolean(signingPolicyError || signingQueueError), heartbeat: workerRows?.find(row => row.worker_key === "signing-reconcile"), now: Date.now() });
+    const signingRequired = signingHealth.required;
+    const signingWorkerReady = signingHealth.ready;
     const heartbeat = workerRows?.find(row => row.worker_key === "process-outbox");
     if (heartbeat) {
-      const read = readDelivery(heartbeat.metadata, appBaseUrl);
+      const read = readDelivery(heartbeat.metadata, appBaseUrl, expectedEmailDigest);
       if (read) delivery = { ...read, reportedAt: heartbeat.updated_at ?? null };
     }
 
-    // Webbappens egen miljö, läst här och ingen annanstans.
-    let webEmailConfigured = false;
-    try {
-      const env = serverEnv();
-      webEmailConfigured = Boolean(env.RESEND_API_KEY && env.DEFAULT_EMAIL_FROM_ADDRESS);
-    } catch { webEmailConfigured = false; }
     delivery = { ...delivery, webEmailConfigured };
 
     let allowlistEnforced = false;
@@ -174,11 +181,15 @@ export async function GET() {
     }
 
     const { data: emailIntegrations, error: webhookReadError } = await admin.from("tenant_integrations")
-      .select("webhook_status,credentials_ciphertext,configuration").eq("provider_type", "email").eq("provider", "resend").eq("status", "active");
-    const emailWebhookVerified = !webhookReadError && Boolean(emailIntegrations?.some(integration => {
-      if (integration.webhook_status !== "active" || !integration.credentials_ciphertext || !(integration.configuration as Record<string, unknown> | null)?.webhook_path_token_hash) return false;
-      try { return Boolean(decryptJson<{ webhookSigningSecret?: string }>(integration.credentials_ciphertext, serverEnv().KUNDEXA_ENCRYPTION_KEY).webhookSigningSecret); }
-      catch { return false; }
+      .select("tenant_id,webhook_status,credentials_ciphertext,configuration,tenants!inner(status)")
+      .eq("provider_type", "email").eq("provider", "resend").eq("status", "active").in("tenants.status", ["trial", "active"]);
+    const emailWebhookVerified = !webhookReadError && everyTenantEmailWebhookVerified((emailIntegrations ?? []).map(integration => {
+      let verified = false;
+      if (integration.webhook_status === "active" && integration.credentials_ciphertext && (integration.configuration as Record<string, unknown> | null)?.webhook_path_token_hash) {
+        try { verified = Boolean(decryptJson<{ webhookSigningSecret?: string }>(integration.credentials_ciphertext, serverEnv().KUNDEXA_ENCRYPTION_KEY).webhookSigningSecret); }
+        catch { verified = false; }
+      }
+      return { tenantId: integration.tenant_id, verified };
     }));
     const registration = await webphoneRegistration();
     // The first operational target is email/web acceptance. SMS has its own
@@ -186,7 +197,7 @@ export async function GET() {
     const ready = configured && appBaseUrlUsable && registration.state === "ok"
       && workers.every(worker => worker.ready) && signingWorkerReady
       && delivery.reported && delivery.platformEmailConfigured === true
-      && delivery.webEmailConfigured && delivery.linkHostAligned === true && emailWebhookVerified;
+      && delivery.webEmailConfigured && delivery.emailConfigurationAligned === true && delivery.linkHostAligned === true && emailWebhookVerified;
     return NextResponse.json({
       status: ready ? "ready" : "not_ready",
       service: "kundexa-web",

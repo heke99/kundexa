@@ -87,6 +87,7 @@ export function DialerPanel({
   const afterCallFormRef = useRef<HTMLFormElement>(null);
   const customerCardRef = useRef<LiveCustomerCardHandle>(null);
   const completingRef = useRef(false);
+  const [completing, setCompleting] = useState(false);
   const dialer = useDialerPanel();
   useEffect(() => {
     if (dialer.activeCallId) setCallId(dialer.activeCallId);
@@ -205,6 +206,7 @@ export function DialerPanel({
     if (!callId || !disposition) return;
     if (completingRef.current) return;
     completingRef.current = true;
+    setCompleting(true);
     setError(null);
     try {
     const response = await saveBeforeTransition(customerCardRef.current, () => fetch("/api/v1/calls/complete", {
@@ -234,7 +236,7 @@ export function DialerPanel({
     setCallbackDueAt("");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Efterarbetet kunde inte sparas.");
-    } finally { completingRef.current = false; }
+    } finally { completingRef.current = false; setCompleting(false); }
   }
 
   if (contractWorkspace) {
@@ -341,9 +343,10 @@ export function DialerPanel({
     {callId && callState.connectionState === "degraded" ? <p className="notice">Anslutningen återställs. Vi fortsätter att kontrollera samtalets status.</p> : null}
     {error ? <p className="form-error">{error}</p> : null}
     {afterCall && callId ? <form className="manual-after-call" onSubmit={complete} ref={afterCallFormRef}>
+      <fieldset className="form-stack" disabled={completing} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
       <h3>Efterarbete</h3>
       <p>Välj utfall med ett klick eller siffertangent 1–9. Enter sparar.</p>
-      <OutcomePicker options={manualOutcomeOptions} value={disposition} onChange={setDisposition} onConfirm={() => afterCallFormRef.current?.requestSubmit()} />
+      <OutcomePicker disabled={completing} options={manualOutcomeOptions} value={disposition} onChange={setDisposition} onConfirm={() => afterCallFormRef.current?.requestSubmit()} />
       {disposition === "nix_listed" ? <p className="notice warning">
         Numret registreras som NIX-spärrat och blockeras permanent för utgående samtal — även om
         kunden läggs upp på nytt senare.
@@ -368,6 +371,7 @@ export function DialerPanel({
           ? <button className="button button-secondary" type="submit" value="create_contract">Spara och skapa avtal</button>
           : null}
       </div>
+      </fieldset>
     </form> : null}
     {/* Kunden i luren: kortet öppnas och uppgifterna sparas utan sidladdning, så
         samtalet i webbläsaren och efterarbetet ligger kvar. */}

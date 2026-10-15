@@ -1,5 +1,9 @@
 # Verification matrix
 
+## 2026-10-15 Systemgranskning och uppföljande rättningar
+
+Systemreview baseline c6f3ca5: full verify PASS igen; GitHub201 PASS. Live11:13–11:19UTC: Supabase ACTIVE_HEALTHY, Vercel READYde852fc, /health200, gamla /ready200 och Sinchregistration200;7healthyworkers; inga Vercelruntimefel24h (begränsat av tillgänglig retention/aktivitet). Private documentbucket är ej publik men saknar ännu PNG-policy006. Nya SQL/runtimeregressioner och browserQA PASS i delkörningar. Sista fulla npm run verify PASS exit0 Node22.17.0/npm10.9.2 med140migrationer, Edge, samtliga tester, OpenAPI, TypeScript och Next16.4.1 produktionsbygge. Nya119servertraces innehåller inga FTP/proxy/PubNubNode-filer. CI på nya commiten följs efterpush. Audit efter säkra uppdateringar:0critical/0moderate/6high från1FTP-parserbrist; faktisk exploatering ej etablerad.
+
 ## 2026-10-15 Aktuell korrigering: port i Kundexa
 
 Native browser-QA: 8 PASS (PDFcanvas, obligatoriska fält, rita/rensa, PNG, samtycke, fryst försök vid nätverksfel, identisk retry, bekräftelse); inga JS-fel. Native engine-/orkestreringstester PASS. Full npm run verify: PASS exit0 Node22/npm10.9.2. Slutliga SQL-replay och produktionsbygge: PASS exit0; fokuserade engine/orchestration/stream-limit-tester PASS. Live JWT/RLS/Storage/mail/telefoni: NOT RUN.

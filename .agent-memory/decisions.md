@@ -1,5 +1,9 @@
 # Decisions
 
+## 2026-10-15 Systemgranskning och uppföljande rättningar
+
+Ny review rättar faktisk mänsklig undertecknare separat från låst företag/mottagare, atomisk cancellation i007, fryst credentialfingerprint i008 (även sameaccount keyrotation stoppar okänt försök för avstämning). Readiness jämför web/Edge effective config digest och verifierad webhook per aktiv tenant; gamla metadata ger inte grönt. Next/SWC16.4.1 och kompatibla säkerhetspatchar; ingen obekräftad majoroverride eller nedgradering av Sinch.
+
 ## 2026-10-15 Aktuell korrigering: port i Kundexa
 
 Användarens uttryckliga korrigering ersätter tidigare installationsval: valda delar porteras till Kundexa. provider_key=kundexa_native. Historiska migrationer001–005 bevaras;006 är framåtmigration. Första flödet är en e-postmottagare, ritad enkel elektronisk underskrift och uttryckligt samtycke; inga BankID-/PKI-löften.

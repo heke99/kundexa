@@ -214,3 +214,17 @@ const responseHeaders = await nextConfigSource.default.headers();
 assert.equal(responseHeaders.find((entry) => entry.source === "/(.*)").headers.find((header) => header.key === "X-Frame-Options").value, "DENY");
 assert.deepEqual(responseHeaders.find((entry) => entry.source === "/app/contracts/:path*").headers, [{ key: "X-Frame-Options", value: "SAMEORIGIN" }]);
 console.log("Call workspace save ordering and same-origin contract frame policy passed");
+
+const signatureViewport = await importSource(await readFile(new URL("../src/lib/signing/signature-viewport.ts", import.meta.url), "utf8"), "signature-viewport.ts");
+const originalStrokes = [{ penColor: "black", points: [{ x: 100, y: 40, pressure: 0.5 }, { x: 600, y: 100, pressure: 0.7 }] }];
+const resizedStrokes = signatureViewport.rescaleSignatureGroups(originalStrokes, 0.5, 1);
+assert.deepEqual(resizedStrokes[0].points, [{ x: 50, y: 40, pressure: 0.5 }, { x: 300, y: 100, pressure: 0.7 }]);
+assert.equal(originalStrokes[0].points[0].x, 100, "Resize must preserve the original frozen intent");
+const placementEdit = await importSource(await readFile(new URL("../src/lib/contracts/pdf-placement-edit.ts", import.meta.url), "utf8"), "pdf-placement-edit.ts");
+const placements = [{ id: "name", placements: [{ page: 0, x: .1, y: .1, width: .2, height: .1 }, { page: 0, x: .5, y: .5, width: .2, height: .1 }, { page: 1, x: .7, y: .7, width: .2, height: .1 }] }];
+const editedPlacements = placementEdit.editPdfPlacement(placements, "name", 1, { x: .6, y: .55 });
+assert.deepEqual(editedPlacements[0].placements[0], placements[0].placements[0]);
+assert.deepEqual(editedPlacements[0].placements[2], placements[0].placements[2]);
+assert.equal(editedPlacements[0].placements[1].x, .6);
+assert.equal(placements[0].placements[1].x, .5, "Editing an occurrence must not mutate other positions or prior state");
+console.log("Responsive signature strokes and individual PDF occurrence edits passed");

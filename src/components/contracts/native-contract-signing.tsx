@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { rescaleSignatureGroups } from "@/lib/signing/signature-viewport";
 import SignaturePad from "signature_pad";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { cropCanvasAndExportToPNG, isCanvasBlocked, isValidSignatureCanvas } from "@/lib/signing/ported/docuseal-signature";
@@ -37,7 +38,7 @@ export function NativeContractSigning({ documentUrl, contractTitle, expectedSign
   const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
   const [documentError, setDocumentError] = useState(false);
   const markDocumentError = useCallback(() => setDocumentError(true), []);
-  const [name, setName] = useState(expectedSignerName);
+  const [name, setName] = useState("");
   const [consent, setConsent] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -71,16 +72,35 @@ export function NativeContractSigning({ documentUrl, contractTitle, expectedSign
     if (!canvas.current) return;
     if (isCanvasBlocked()) { setError("Webbläsaren blockerar ritytan. Tillåt ritning i webbläsaren och ladda om sidan."); return; }
     const element = canvas.current;
-    const ratio = Math.max(window.devicePixelRatio || 1, 1);
-    element.width = Math.round(element.getBoundingClientRect().width * ratio);
-    element.height = Math.round(220 * ratio);
+    let width = element.clientWidth;
+    let height = element.clientHeight;
+    let ratio = Math.max(window.devicePixelRatio || 1, 1);
+    element.width = Math.round(width * ratio);
+    element.height = Math.round(height * ratio);
     element.getContext("2d")?.scale(ratio, ratio);
     const pad = new SignaturePad(element, { penColor: "#17202a", minWidth: 1, maxWidth: 2.5 });
+    const resize = () => {
+      const nextWidth = element.clientWidth;
+      const nextHeight = element.clientHeight;
+      const nextRatio = Math.max(window.devicePixelRatio || 1, 1);
+      if (!nextWidth || !nextHeight || (nextWidth === width && nextHeight === height && nextRatio === ratio)) return;
+      const strokes = rescaleSignatureGroups(pad.toData(), nextWidth / width, nextHeight / height);
+      width = nextWidth; height = nextHeight; ratio = nextRatio;
+      element.width = Math.round(width * ratio);
+      element.height = Math.round(height * ratio);
+      element.getContext("2d")?.scale(ratio, ratio);
+      pad.clear();
+      pad.fromData(strokes);
+      setHasSignature(!pad.isEmpty());
+    };
+    const observer = new ResizeObserver(resize);
+    observer.observe(element);
+    window.addEventListener("resize", resize);
     const update = () => setHasSignature(!pad.isEmpty());
     pad.addEventListener("endStroke", update);
     signaturePad.current = pad;
     setReady(true);
-    return () => { pad.removeEventListener("endStroke", update); pad.off(); signaturePad.current = null; };
+    return () => { observer.disconnect(); window.removeEventListener("resize", resize); pad.removeEventListener("endStroke", update); pad.off(); signaturePad.current = null; };
   }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -125,7 +145,8 @@ export function NativeContractSigning({ documentUrl, contractTitle, expectedSign
 
   return <main className="page-content" style={{ maxWidth: 940, margin: "0 auto" }}>
     <h1>{contractTitle}</h1><h2>Elektronisk underskrift</h2>
-    <p>Läs avtalet och skriv sedan under med din ritade underskrift. Detta är en enkel elektronisk underskrift utan BankID eller kontroll av din identitet.</p>
+    {expectedSignerName ? <p><strong>Mottagare:</strong> {expectedSignerName}</p> : null}
+    <p>Läs avtalet och skriv sedan under med ditt eget fullständiga namn och din ritade underskrift. Samma underskrift placeras i avtalets signaturfält. Detta är en enkel elektronisk underskrift utan BankID eller kontroll av din identitet.</p>
     <section aria-label="Avtal att läsa"><a className="button button-secondary" href={documentUrl} target="_blank" rel="noopener">Öppna avtalets PDF</a>
       {documentError ? <p role="alert">Avtalet kunde inte hämtas. Ladda om sidan och försök igen.</p> : document ? Array.from({ length: document.numPages }, (_, index) => <PdfPage key={index} document={document} pageNumber={index + 1} onError={markDocumentError} />) : <p role="status">Hämtar avtalet…</p>}
     </section>

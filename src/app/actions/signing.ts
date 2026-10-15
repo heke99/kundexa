@@ -41,15 +41,9 @@ export async function resumeNativeContractSigning(form: FormData) {
 }
 export async function cancelNativeContractSigning(form: FormData) {
   const { ctx, envelope } = await ownEnvelope(form, "contracts.write");
-  const admin = createAdminClient();
-  // Updating the envelope first revokes every bearer-token route. A claimed
-  // receipt must be completed rather than silently replaced by cancellation.
-  const { data: cancelled, error } = await admin.from("signing_envelopes").update({ status: "cancelled", cancelled_at: new Date().toISOString() })
-    .eq("tenant_id", ctx.tenantId).eq("id", envelope.id).in("status", ["creating", "sent", "partially_signed"])
-    .is("provider_evidence->native_signature", null).select("id").maybeSingle();
-  if (error || !cancelled) redirect(`/app/contracts/${envelope.contract_id}?error=Signeringen kunde inte avbrytas. Ett registrerat svar måste först färdigställas.`);
-  const { error: restoreError } = await admin.from("contracts").update({ status: "ready" }).eq("tenant_id", ctx.tenantId).eq("id", envelope.contract_id).eq("status", "signing");
-  if (restoreError) redirect(`/app/contracts/${envelope.contract_id}?error=Signeringen är avbruten men avtalsstatus kunde inte uppdateras.`);
+  const admin: import("@supabase/supabase-js").SupabaseClient = createAdminClient();
+  const { error } = await admin.rpc("cancel_native_signing", { p_input: { tenant_id: ctx.tenantId, actor_id: ctx.userId, envelope_id: envelope.id } });
+  if (error) redirect(`/app/contracts/${envelope.contract_id}?error=Signeringen kunde inte avbrytas. Ett registrerat svar måste först färdigställas.`);
   revalidatePath(`/app/contracts/${envelope.contract_id}`);
   redirect(`/app/contracts/${envelope.contract_id}?message=Signeringen har avbrutits`);
 }

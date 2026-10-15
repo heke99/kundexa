@@ -114,6 +114,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
   const afterCallFormRef = useRef<HTMLFormElement>(null);
   const customerCardRef = useRef<LiveCustomerCardHandle>(null);
   const completingRef = useRef(false);
+  const [completing, setCompleting] = useState(false);
   const dialStartedAtRef = useRef(0);
   const quickOutcomesRef = useRef(0);
   const callState = useCallRealtime(callId, (status) => {
@@ -348,6 +349,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
     const completedCallId = callId;
     if (completingRef.current) return;
     completingRef.current = true;
+    setCompleting(true);
     setError(null);
     try {
       await saveBeforeTransition(customerCardRef.current, async () => {
@@ -377,7 +379,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
         if (delay) await new Promise((resolve) => window.setTimeout(resolve, delay * 1000));
         await continueOrPause(sessionId, true);
       } else await continueOrPause(sessionId, false);
-    } catch (caught) { setError(cleanError(caught instanceof Error ? caught.message : "after_call_failed")); setPhase("after_call"); } finally { completingRef.current = false; }
+    } catch (caught) { setError(cleanError(caught instanceof Error ? caught.message : "after_call_failed")); setPhase("after_call"); } finally { completingRef.current = false; setCompleting(false); }
   }
 
   if (contractWorkspace) return <ContractWorkspace {...contractWorkspace} onClose={() => setContractWorkspace(null)} />;
@@ -401,8 +403,9 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
     {/* Efterarbetet står överst: det är nästa sak säljaren gör, och under kortet
         hamnade det nedanför skärmkanten. */}
     {phase === "after_call" && callId ? <form className="after-call-panel" onSubmit={completeAfterCall} ref={afterCallFormRef}>
+      <fieldset className="form-stack" disabled={completing} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
       <div><h2>Efterarbete</h2><p className="muted">{mode === "automatic" ? "Någon svarade. Välj utfallet innan dialern går vidare till nästa prospekt." : "Välj ett utfall innan nästa prospekt kan hämtas."}</p></div>
-      <OutcomePicker options={outcomeOptions} value={dispositionKey} onChange={setDispositionKey} onConfirm={() => afterCallFormRef.current?.requestSubmit()} />
+      <OutcomePicker disabled={completing} options={outcomeOptions} value={dispositionKey} onChange={setDispositionKey} onConfirm={() => afterCallFormRef.current?.requestSubmit()} />
       {selectedDisposition?.requires_callback ? <div className="form-grid"><CallbackTimeField value={callbackDueAt} onChange={setCallbackDueAt} required /><label className="field"><span>Vem ringer tillbaka?</span><select value={callbackScope} onChange={(event) => setCallbackScope(event.target.value as "personal" | "global")}><option value="personal">Jag själv</option><option value="global">Hela teamet</option></select></label></div> : null}
       {selectedDisposition?.requires_order || (selectedDisposition?.outcome_group === "positive" && !selectedDisposition.contract_eligible && products.length > 0) ? <label className="check-row"><input type="checkbox" checked={createOrder} disabled={selectedDisposition?.requires_order} onChange={(event) => setCreateOrder(event.target.checked)} /> Skapa order från samtalet</label> : null}
       {createOrder ? <div className="form-grid"><label className="field"><span>Produkt</span><select required value={productId} onChange={(event) => setProductId(event.target.value)}><option value="">Välj produkt</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></label><label className="field"><span>Antal</span><input type="number" min="0.0001" step="any" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><p className="muted">Priset hämtas från produktens godkända prislista.</p></div> : null}
@@ -412,6 +415,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
         <button className="button button-primary" type="submit" value="continue" disabled={!dispositionKey}>Spara och {mode === "automatic" ? "ring nästa" : "hämta nästa"}</button>
         {selectedDisposition?.contract_eligible && sellableProducts !== 0 ? <button className="button button-secondary" type="submit" value="create_contract" disabled={!dispositionKey}>Spara och skapa avtal</button> : null}
       </div>
+      </fieldset>
     </form> : null}
     {claim?.customer && ["ready", "dialing", "calling", "after_call"].includes(phase) ? <div className="dialer-customer-layout">
       <section className="dialer-customer-card">

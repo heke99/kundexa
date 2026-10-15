@@ -7,6 +7,7 @@ import { signatureImagePlacement } from "./ported/docuseal-geometry";
 
 export type NativeSigningReceipt = {
   receiptId: string; envelopeId: string; tenantId: string; contractId: string; contractVersionId: string;
+  recipientName?: string; recipientEmail?: string;
   generation: number; sourceSha256: string; signatureSha256: string; signerName: string; acceptedAt: string;
   consent: string; requestKey: string; requestHash: string; finalSha256?: string;
 };
@@ -77,6 +78,8 @@ function validateReceipt(receipt: NativeSigningReceipt) {
   if (!receipt || !receipt.receiptId || !receipt.envelopeId || !receipt.tenantId || !receipt.contractId || !receipt.contractVersionId
     || !Number.isInteger(receipt.generation) || receipt.generation < 1 || !receipt.requestKey
     || ![receipt.sourceSha256, receipt.signatureSha256, receipt.requestHash].every(value => /^[a-f0-9]{64}$/.test(value))
+    || (receipt.recipientName !== undefined && (typeof receipt.recipientName !== "string" || receipt.recipientName.length > 300 || /[\u0000-\u001f\u007f]/.test(receipt.recipientName)))
+    || (receipt.recipientEmail !== undefined && (typeof receipt.recipientEmail !== "string" || receipt.recipientEmail.length > 320 || /[\u0000-\u001f\u007f]/.test(receipt.recipientEmail)))
     || (receipt.finalSha256 !== undefined && !/^[a-f0-9]{64}$/.test(receipt.finalSha256))
     || !Number.isFinite(Date.parse(receipt.acceptedAt)) || !receipt.signerName?.trim() || receipt.signerName.length > 200
     || /[\u0000-\u001f\u007f]/.test(receipt.signerName) || !receipt.consent?.trim() || receipt.consent.length > 3000) throw new Error("native_signing_receipt_invalid");
@@ -105,7 +108,9 @@ async function appendReceipt(pdf: PDFDocument, receipt: NativeSigningReceipt, au
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const title = audit ? "Underlag för elektronisk underskrift" : "Elektronisk underskrift";
   const at = new Date(receipt.acceptedAt).toISOString();
-  const rows = [title, `Undertecknare: ${receipt.signerName}`, `Tidpunkt (UTC): ${at}`,
+  const rows = [title, `Undertecknare: ${receipt.signerName}`,
+    ...(receipt.recipientName ? [`Avtalets mottagare: ${receipt.recipientName}`] : []),
+    ...(receipt.recipientEmail ? [`Mottagarens e-post: ${receipt.recipientEmail}`] : []), `Tidpunkt (UTC): ${at}`,
     "Ritad elektronisk namnunderskrift med låg identitetsnivå.",
     "Identiteten har inte verifierats med BankID eller kvalificerat certifikat.",
     `Samtycke: ${receipt.consent}`, `Kvitto: ${receipt.receiptId}`, `Avtal: ${receipt.contractId}`,

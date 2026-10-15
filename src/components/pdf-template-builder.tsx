@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import type { PdfCustomField } from "@/lib/contracts/pdf-field-template";
 import type { PDFDocumentProxy, PDFDocumentLoadingTask } from "pdfjs-dist";
+import { editPdfPlacement } from "@/lib/contracts/pdf-placement-edit";
 import { allTemplatePlaceholders } from "@/lib/contracts/template-context";
 import type { PdfField, PdfFieldTemplate } from "@/lib/contracts/pdf-field-template";
 
@@ -11,13 +12,14 @@ export function PdfTemplateBuilder({ initial }: { initial?: PdfFieldTemplate | n
   const [template, setTemplate] = useState<PdfFieldTemplate | null>(initial ?? null);
   const [pageIndex, setPageIndex] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
+  const [selectedPlacementIndex, setSelectedPlacementIndex] = useState(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [pdfDocument, setPdfDocument] = useState<PDFDocumentProxy | null>(null);
   const previousDestroy = useRef<Promise<void>>(Promise.resolve());
   const previousRender = useRef<Promise<unknown>>(Promise.resolve());
-  const drag = useRef<{ id: string; startX: number; startY: number; x: number; y: number } | null>(null);
+  const drag = useRef<{ id: string; placementIndex: number; startX: number; startY: number; x: number; y: number } | null>(null);
   const selectedField = template?.fields.find(field => field.id === selected);
   const sourceUrl = template ? `/api/v1/contract-templates/pdf?path=${encodeURIComponent(template.storagePath)}` : null;
 
@@ -88,13 +90,16 @@ export function PdfTemplateBuilder({ initial }: { initial?: PdfFieldTemplate | n
   function addField() {
     const id = `field_${crypto.randomUUID().replaceAll("-", "")}`;
     const field: PdfField = { id, label: "Kundnamn", providerName: id, type: "text", source: "customer.display_name", required: true, fontSize: 11, placements: [{ page: pageIndex, x: .1, y: .1, width: .45, height: .045 }] };
-    setTemplate(current => current ? { ...current, fields: [...current.fields, field] } : current); setSelected(id);
+    setTemplate(current => current ? { ...current, fields: [...current.fields, field] } : current); setSelected(id); setSelectedPlacementIndex(0);
   }
   function move(event: PointerEvent<HTMLDivElement>) {
     if (!drag.current || !template) return;
     const bounds = event.currentTarget.getBoundingClientRect();
     const active = drag.current;
-    setTemplate(current => current ? { ...current, fields: current.fields.map(field => field.id !== active.id ? field : { ...field, placements: field.placements.map(area => area.page !== pageIndex ? area : { ...area, x: Math.max(0, Math.min(1 - area.width, active.x + (event.clientX - active.startX) / bounds.width)), y: Math.max(0, Math.min(1 - area.height, active.y + (event.clientY - active.startY) / bounds.height)) }) }) } : current);
+    setTemplate(current => current ? { ...current, fields: editPdfPlacement(current.fields, active.id, active.placementIndex, {
+      x: Math.max(0, Math.min(1 - (current.fields.find(field => field.id === active.id)?.placements[active.placementIndex]?.width ?? 0), active.x + (event.clientX - active.startX) / bounds.width)),
+      y: Math.max(0, Math.min(1 - (current.fields.find(field => field.id === active.id)?.placements[active.placementIndex]?.height ?? 0), active.y + (event.clientY - active.startY) / bounds.height)),
+    }) } : current);
   }
   return <fieldset className="form-stack" disabled={busy}>
     <legend>PDF med kundfält (valfritt)</legend>
@@ -116,22 +121,23 @@ export function PdfTemplateBuilder({ initial }: { initial?: PdfFieldTemplate | n
         </div>
       </details>
       <div className="toolbar-left">
-        <label>Sida <select value={pageIndex} onChange={e => setPageIndex(Number(e.target.value))}>{template.pageSizes.map((_, index) => <option key={index} value={index}>{index + 1}</option>)}</select></label>
+        <label>Sida <select value={pageIndex} onChange={e => { setPageIndex(Number(e.target.value)); setSelected(null); drag.current = null; }}>{template.pageSizes.map((_, index) => <option key={index} value={index}>{index + 1}</option>)}</select></label>
         <button type="button" className="button button-secondary" onClick={addField}>Lägg till fält</button>
         <button type="button" className="button button-ghost" onClick={() => setTemplate(null)}>Använd textmall i stället</button>
       </div>
       <div style={{ position: "relative", width: "100%", touchAction: "none" }} onPointerMove={move} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
         <canvas ref={canvasRef} style={{ width: "100%", height: "auto", display: "block" }} />
-        {template.fields.flatMap(field => field.placements.filter(area => area.page === pageIndex).map((area, index) => <button type="button" key={`${field.id}-${index}`} aria-label={`Flytta ${field.label}`} onPointerDown={event => { setSelected(field.id); drag.current = { id: field.id, startX: event.clientX, startY: event.clientY, x: area.x, y: area.y }; event.currentTarget.setPointerCapture(event.pointerId); }} onClick={() => setSelected(field.id)} style={{ position: "absolute", left: `${area.x * 100}%`, top: `${area.y * 100}%`, width: `${area.width * 100}%`, height: `${area.height * 100}%`, border: `2px solid ${selected === field.id ? "#075e4c" : "#638e83"}`, background: "#dff3e8cc", cursor: "move", fontSize: 11, overflow: "hidden" }}>{field.label}</button>))}
+        {template.fields.flatMap(field => field.placements.map((area, index) => area.page === pageIndex ? <button type="button" key={`${field.id}-${index}`} aria-label={`Flytta ${field.label}`} onPointerDown={event => { setSelected(field.id); setSelectedPlacementIndex(index); drag.current = { id: field.id, placementIndex: index, startX: event.clientX, startY: event.clientY, x: area.x, y: area.y }; event.currentTarget.setPointerCapture(event.pointerId); }} onClick={() => { setSelected(field.id); setSelectedPlacementIndex(index); }} style={{ position: "absolute", left: `${area.x * 100}%`, top: `${area.y * 100}%`, width: `${area.width * 100}%`, height: `${area.height * 100}%`, border: `2px solid ${selected === field.id ? "#075e4c" : "#638e83"}`, background: "#dff3e8cc", cursor: "move", fontSize: 11, overflow: "hidden" }}>{field.label}</button> : null))}
       </div>
-      <label>Redigera fält <select value={selected ?? ""} onChange={e => setSelected(e.target.value)}><option value="">Välj fält</option>{template.fields.map(field => <option key={field.id} value={field.id}>{field.label}</option>)}</select></label>
+      <label>Redigera fält <select value={selected ?? ""} onChange={e => { const field = template.fields.find(item => item.id === e.target.value); setSelected(e.target.value); setSelectedPlacementIndex(0); if (field) setPageIndex(field.placements[0].page); }}><option value="">Välj fält</option>{template.fields.map(field => <option key={field.id} value={field.id}>{field.label}</option>)}</select></label>
       {selectedField ? <div className="form-stack">
+        {selectedField.placements.length > 1 ? <label>Förekomst <select value={selectedPlacementIndex} onChange={event => { const index = Number(event.target.value); setSelectedPlacementIndex(index); setPageIndex(selectedField.placements[index].page); }}>{selectedField.placements.map((area, index) => <option key={index} value={index}>{index + 1} · Sida {area.page + 1}</option>)}</select></label> : null}
         <label>Etikett <input value={selectedField.label} onChange={e => updateField({ label: e.target.value })} /></label>
         <label>Typ <select value={selectedField.type} onChange={e => { const type = e.target.value as PdfField["type"]; updateField({ type, source: type === "signature" ? "" : type === "date" ? "contract.starts_on" : "customer.display_name" }); }}><option value="text">Text</option><option value="date">Datum</option><option value="signature">Kundens underskrift</option></select></label>
         {selectedField.type !== "signature" ? <label>Kund- eller avtalsuppgift <select value={selectedField.source} onChange={e => updateField({ source: e.target.value })}>{allTemplatePlaceholders().filter(source => selectedField.type !== "date" || ["today", "contract.starts_on", "contract.ends_on"].includes(source)).map(source => <option key={source} value={source}>{source}</option>)}{(template.customFields ?? []).filter(field => selectedField.type !== "date" || field.type === "date").map(field => <option key={field.id} value={`custom.${field.id}`}>Avtalsuppgift: {field.label}</option>)}</select></label> : <p>Underskriften fylls av kunden genom en konfigurerad signeringstjänst.</p>}
         <label><input type="checkbox" checked={selectedField.required} onChange={e => updateField({ required: e.target.checked })} /> Obligatoriskt</label>
         <label>Textstorlek <input type="number" min={6} max={30} value={selectedField.fontSize} onChange={e => updateField({ fontSize: Number(e.target.value) })} /></label>
-        {(["x", "y", "width", "height"] as const).map(key => <label key={key}>{({ x: "Vänster (%)", y: "Överkant (%)", width: "Bredd (%)", height: "Höjd (%)" })[key]} <input type="number" min={0} max={100} step={.1} value={Number((selectedField.placements[0][key] * 100).toFixed(2))} onChange={e => updateField({ placements: selectedField.placements.map((area, index) => index === 0 ? { ...area, [key]: Number(e.target.value) / 100 } : area) })} /></label>)}
+        {(["x", "y", "width", "height"] as const).map(key => <label key={key}>{({ x: "Vänster (%)", y: "Överkant (%)", width: "Bredd (%)", height: "Höjd (%)" })[key]} <input type="number" min={0} max={100} step={.1} value={Number((selectedField.placements[selectedPlacementIndex][key] * 100).toFixed(2))} onChange={e => setTemplate(current => current ? { ...current, fields: editPdfPlacement(current.fields, selectedField.id, selectedPlacementIndex, { [key]: Number(e.target.value) / 100 }) } : current)} /></label>)}
         <button type="button" className="button button-ghost" onClick={() => { setTemplate(current => current ? { ...current, fields: current.fields.filter(field => field.id !== selected) } : null); setSelected(null); }}>Ta bort fält</button>
       </div> : null}
     </> : null}

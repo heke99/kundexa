@@ -1,5 +1,9 @@
 # Current state
 
+## 2026-10-15 Systemgranskning och uppföljande rättningar
+
+Ny systemgranskning 15 oktober: användaren bekräftar separat Resendkonto; live DB visar aktiv Resend med from_address=avtal@kundexa.se. Produktion Vercel READY på main de852fc, inte PR55. /health och gamla /ready200; sju friska workers; inga runtimefel i24h-vyn. DB saknar migration001–009 från15okt och nativeRPC, Resendwebhookar not_configured, aktiv approved simple_click-mall saknar produktkoppling. Branch rättad efter ny granskning; slutlig npm run verify PASS exit0 Node22/npm10.9.2, GitHubuppföljning återstår. Inga produktionsändringar eller kundutskick.
+
 ## 2026-10-15 Aktuell korrigering: port i Kundexa
 
 Användaren förtydligade: porta det som behövs direkt till Kundexa. Separat DocuSeal-tjänst, Dockerunderlag, fjärradapter och callback är borttagna. Utvalda källpinnade validerings-/beskärnings-/placeringsfunktioner är portade med licenser. Native signeringsvy, privat PDF/audit och hållbart kvitto använder Kundexas befintliga plattform. Migration006 inför service-only native RPC:er. PR55 uppdateras på samma gren; ingen produktionsdeploy.

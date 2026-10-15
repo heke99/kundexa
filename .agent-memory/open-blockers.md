@@ -1,5 +1,9 @@
 # Open blockers
 
+## 2026-10-15 Systemgranskning och uppföljande rättningar
+
+Drift är inte helt grön: PR55/migrationer/Edge ännu ej driftsatta; ingen staging; båda aktiva Resendintegrationerna saknar registrerad verifierad webhook; godkänd aktiv mall saknar produktkoppling. Live spatial_ref_sys anon/authINSERT tillåtet (001 tar bort), anonyma PostGISdefinerfunktioner (009). Läckta-lösenordsskydd är avstängt. Sex npm high-larm från en och samma FTP-parserbrist i Sinch→PubNub→Nodeproxy-kedjan kvarstår; browserSDK använder inte Nodevägen, leverantörsuppdatering krävs. Inget liveJWT/RLS/Storage/underskriftstest utfört.
+
 ## 2026-10-15 Aktuell korrigering: port i Kundexa
 
 Separat server/DocuSeal-installation och tidigare APK403 är inte längre blockerare för vald arkitektur. Före drift återstår identifierad staging, migration/typegen/deploy, riktig JWT/RLS/Storage-verifiering med två tenants, slutlig produkt/avtalstext och egen testmottagare samt verkligt e-post-/säljar-/telefoniprov. BankID är ej implementerat.

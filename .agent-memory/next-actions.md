@@ -1,5 +1,9 @@
 # Next actions
 
+## 2026-10-15 Systemgranskning och uppföljande rättningar
+
+Granska senaste PR55-rättningar. Välj/etablera testmiljö före release; applicera framåtmigrationer, regenerera typer, deploya webb och uppdaterade Edge tillsammans. Konfigurera och verifiera Resendwebhook i rätt konto för varje aktiv tenant, koppla slutlig produkt+pris+PDF-mall och kör kontrollerad fullresa. Utred Sinch-uppdatering för ren dependency-audit; aktivera lösenordsskydd enligt driftbeslut. Skicka inga kunderutskick innan dessa verifieringar.
+
 ## 2026-10-15 Aktuell korrigering: port i Kundexa
 
 Efter lokal verifiering: uppdatera befintlig utkast-PR55. Applicera endast senare på identifierad staging, regenerera schema, deploya webb/Edge och verifiera hela inbyggda flödet med riktiga testidentiteter. Ingen ny server eller DocuSeal-nyckel behövs.

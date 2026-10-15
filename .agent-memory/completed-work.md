@@ -1,5 +1,9 @@
 # Completed work
 
+## 2026-10-15 Systemgranskning och uppföljande rättningar
+
+Ny granskningsomgång: human signer/companyrecipient separerade; atomisk/idempotent cancellation007; credentialscope binding för email008; workerbudgetfix; strängare per-tenantwebhook/digest/inflightsigningreadiness; mobilen ritar rätt efterresize; anteckningar låses underasyncsave; separat PDFoccurrence edit; Next16.4.1+kompatibla säkerhetspatchar. Driftinspektion read-only, avtal@kundexa.se bekräftad i DB. Ingen release eller kundpost.
+
 ## 2026-10-15 Aktuell korrigering: port i Kundexa
 
 Portad utvald DocuSeal-kod med proveniens och licenser; signature_pad pinnad; faktisk PDF-signaturbild + deterministiskt kvitto/audit; tokenbunden publik vy/preview/submit; lokal cronåterhämtning; separat service borttagen; tidigare plan53-säkerhets-,PDF-,outbox-,säljar- och telefonirättningar bevarade.

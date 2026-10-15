@@ -27,7 +27,7 @@ const admin={
     if(name==='claim_native_signature'){
       if(claimError)return{error:new Error('idempotency_conflict')};
       const p=args.p_input;
-      if(!envelope.provider_evidence.native_signature)envelope.provider_evidence.native_signature={...p,receipt_id:randomUUID(),accepted_at:'2026-10-15T10:00:00.000Z',acceptance_text:'Locked consent',ip_address:'192.0.2.1',user_agent:'First receipt agent'};
+      if(!envelope.provider_evidence.native_signature)envelope.provider_evidence.native_signature={...p,recipient_name:envelope.provider_evidence.recipient_name,recipient_email:envelope.provider_evidence.email,receipt_id:randomUUID(),accepted_at:'2026-10-15T10:00:00.000Z',acceptance_text:'Locked consent',ip_address:'192.0.2.1',user_agent:'First receipt agent'};
       return{data:structuredClone(envelope),error:null};
     }
     if(name==='finalize_native_signature')return finalError?{error:new Error('DB interrupted')}:{data:{status:'signed'},error:null};
@@ -54,10 +54,11 @@ await assert.rejects(exports.submitNativeSignature(token,input,{ipAddress:'192.0
 assert.ok(envelope.provider_evidence.native_signature,'First receipt remains after finalization failure');
 const firstReceipt=structuredClone(envelope.provider_evidence.native_signature);
 assert.equal(calls.findIndex(([name])=>name==='claim_native_signature')<calls.findIndex(([name])=>name==='finalize_native_signature'),true);
-finalError=false;
+finalError=false; envelope.provider_evidence.recipient_name='Changed live label';
 assert.deepEqual(await exports.submitNativeSignature(token,input,{ipAddress:'192.0.2.99',userAgent:'Retry agent'}),{status:'signed'});
 assert.deepEqual(rendered[0],rendered[1],'Retry derives bytes only from the first persisted receipt');
 assert.equal(rendered[1].acceptedAt,firstReceipt.accepted_at);
+assert.equal(rendered[1].recipientName,firstReceipt.recipient_name,'The locked organization remains the one captured with the first receipt');
 const finalizeCalls=calls.filter(([name])=>name==='finalize_native_signature');
 assert.deepEqual(finalizeCalls[0][1],finalizeCalls[1][1],'Identical signed and audit hashes and receipt binding on retry');
 const finalInput=finalizeCalls[1][1].p_input;
@@ -69,8 +70,12 @@ claimError=true;const before=rendered.length;
 await assert.rejects(exports.submitNativeSignature(token,input,{ipAddress:null,userAgent:null}),/idempotency_conflict/);
 assert.equal(rendered.length,before,'No document may be rendered after an unaccepted receipt');
 await assert.rejects(exports.submitNativeSignature(token,{...input,consent:false},{ipAddress:null,userAgent:null}));
-await assert.rejects(exports.submitNativeSignature(token,{...input,signerName:'Changed signer'},{ipAddress:null,userAgent:null}),/name_mismatch/);
-console.log('Native orchestration: first receipt before finalization, interruption recovery, identical final/audit hashes, source/token/receipt paths and rejected consent/name/idempotency PASS');
+claimError=false; delete envelope.provider_evidence.native_signature;
+envelope.provider_evidence.recipient_name='Exempel AB';
+await exports.submitNativeSignature(token,{...input,signerName:'Anna Andersson',idempotencyKey:randomUUID()},{ipAddress:null,userAgent:null});
+assert.equal(rendered.at(-1).signerName,'Anna Andersson','The actual human signer is distinct from the organization recipient');
+assert.equal(rendered.at(-1).recipientName,'Exempel AB');
+console.log('Native orchestration: first receipt before finalization, interruption recovery, identical final/audit hashes, source/token/receipt paths and actual human signer, organization recipient and rejected consent/idempotency PASS');
 
 const submitRouteSource=ts.transpile(await readFile(new URL('../src/app/api/sign/[token]/submit/route.ts',import.meta.url),'utf8'),{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022});
 const routeExports={};const routeCalls=[];

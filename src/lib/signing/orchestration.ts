@@ -137,13 +137,12 @@ export async function submitNativeSignature(token: string, raw: unknown, metadat
   const admin: SupabaseClient = createAdminClient();
   const { data: allowed, error: rateError } = await admin.rpc("consume_rate_limit", { p_tenant_id: session.envelope.tenant_id, p_bucket: `native-sign:${session.envelope.id}`, p_limit: 10, p_window_seconds: 60 });
   if (rateError || !allowed) throw new Error("signing_rate_limited");
-  if (input.signerName !== session.recipientName) throw new Error("signing_recipient_name_mismatch");
   const match = /^data:image\/png;base64,([A-Za-z0-9+/]+={0,2})$/.exec(input.signaturePng);
   if (!match) throw new Error("signature_png_required");
   const png = new Uint8Array(Buffer.from(match[1], "base64"));
   if (png.length < 60 || png.length > 512 * 1024 || Buffer.from(png).toString("base64") !== match[1]) throw new Error("signature_png_invalid");
   inspectNativeSignaturePng(png);
-  await validateNativeSignerText(input.signerName, NATIVE_SIGNING_CONSENT);
+  await validateNativeSignerText(input.signerName, `${NATIVE_SIGNING_CONSENT}\n${session.recipientName}\n${String(session.envelope.provider_evidence.email ?? "")}`);
   const envelope = session.envelope;
   const signatureHash = hashPdfBytes(png);
   const signaturePath = `${envelope.tenant_id}/${envelope.contract_id}/${envelope.contract_version_id}/signatures/${signatureHash}.png`;
@@ -171,6 +170,7 @@ export async function finalizeNativeReceipt(envelope: NativeEnvelope) {
   const renderedReceipt: NativeSigningReceipt = { receiptId: String(receipt.receipt_id), envelopeId: envelope.id, tenantId: envelope.tenant_id,
     contractId: envelope.contract_id, contractVersionId: envelope.contract_version_id, generation: envelope.generation,
     sourceSha256: String(receipt.source_sha256), signatureSha256: String(receipt.signature_sha256), signerName: String(receipt.signer_name),
+    recipientName: String(receipt.recipient_name ?? envelope.provider_evidence.recipient_name ?? ""), recipientEmail: String(receipt.recipient_email ?? envelope.provider_evidence.email ?? ""),
     acceptedAt: String(receipt.accepted_at), consent: String(receipt.acceptance_text), requestKey: String(receipt.request_key), requestHash: String(receipt.request_hash) };
   const signedBytes = await renderNativeSignedPdf({ sourceBytes, signaturePngBytes: signatureBytes, receipt: renderedReceipt, template });
   const signedHash = hashPdfBytes(signedBytes);

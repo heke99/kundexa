@@ -40,7 +40,7 @@ const signaturePngBytes = encodePng(pixels, 120, 60);
 assert.deepEqual(engine.inspectNativeSignaturePng(signaturePngBytes), { width: 120, height: 60 });
 const original = await PDFDocument.create({ updateMetadata: false }); original.addPage([600, 800]); original.addPage([600, 800]);
 const sourceBytes = await original.save({ useObjectStreams: false });
-const receipt = { receiptId: "receipt", envelopeId: "env", tenantId: "tenant", contractId: "contract", contractVersionId: "v1", generation: 1,
+const receipt = { receiptId: "receipt", envelopeId: "env", tenantId: "tenant", contractId: "contract", contractVersionId: "v1", generation: 1, recipientName: "Östergårds Företag AB", recipientEmail: "asa@example.test",
   sourceSha256: hash(sourceBytes), signatureSha256: hash(signaturePngBytes), signerName: "Åsa Östergård", acceptedAt: "2026-10-15T12:34:56Z",
   consent: "Jag godkänner avtalet och vill underteckna med min ritade underskrift.", requestKey: "stable-request", requestHash: "a".repeat(64) };
 const placement = { page: 0, x: 0.1, y: 0.2, width: 0.4, height: 0.1 };
@@ -68,6 +68,11 @@ const audit = await engine.renderNativeAuditPdf(auditReceipt);
 assert.deepEqual(audit, await engine.renderNativeAuditPdf(auditReceipt));
 assert.equal((await PDFDocument.load(audit)).getPageCount(), 1);
 assert.notEqual(hash(audit), hash(signed));
+const auditPdf = await PDFDocument.load(audit);
+const auditOperators = auditPdf.getPages().flatMap(page => page.node.Contents().asArray().map(ref => Buffer.from(decodePDFRawStream(auditPdf.context.lookup(ref)).decode()).toString())).join("\n");
+assert.ok(auditOperators.includes(Buffer.from("Undertecknare: ", "latin1").toString("hex").toUpperCase()), "audit labels the actual human signer");
+assert.ok(auditOperators.includes(Buffer.from("Avtalets mottagare: ", "latin1").toString("hex").toUpperCase()), "audit labels the frozen contractual recipient separately");
+assert.notDeepEqual(audit, await engine.renderNativeAuditPdf({ ...auditReceipt, recipientName: "Annat Företag AB" }), "audit bytes bind frozen recipient identity");
 await assert.rejects(engine.renderNativeSignedPdf({ ...input, receipt: { ...receipt, sourceSha256: "0".repeat(64) } }), /binding_invalid/);
 await assert.rejects(engine.renderNativeSignedPdf({ ...input, template: { ...template, pageSizes: [{ width: 1, height: 2 }] } }), /snapshot_mismatch/);
 await assert.rejects(engine.renderNativeSignedPdf({ ...input, template: { ...template, fields: [] } }), /fields_missing/);

@@ -678,13 +678,13 @@ if (/ignoreBuildErrors\s*:\s*true/.test(nextConfig)) {
   assert.equal(packageJson.scripts["build:next"], "next build --webpack", "The internal build command must use the deterministic official Next webpack build");
 }
 
-assert.equal(packageJson.dependencies.next, "16.2.10");
+assert.equal(packageJson.dependencies.next, "16.4.1");
 assert.equal(packageJson.dependencies["@supabase/ssr"], "0.12.3");
 assert.equal(packageJson.dependencies["@supabase/supabase-js"], "2.110.7");
 assert.equal(packageJson.dependencies["pdf-lib"], "1.17.1");
 assert.match(packageJson.scripts.test, /test:contracts/, "Contract delivery unit tests must be part of the canonical test command");
 assert.equal(packageJson.engines.node, "22.x");
-assert.equal(packageJson.overrides.postcss, "8.5.19");
+assert.equal(packageJson.overrides.postcss, "8.5.30");
 assert.equal(packageJson.scripts["functions:deploy"], "node scripts/deploy-functions.mjs");
 assert.equal(packageJson.scripts["geography:import"], "node scripts/import-geography.mjs");
 const deployFunctions = await readFile(join(root, "scripts/deploy-functions.mjs"), "utf8");
@@ -1253,11 +1253,11 @@ for (const file of ["src/app/actions/contracts.ts", "src/lib/contracts/api-servi
     "The readiness answer must carry the web app's own email configuration, not only the worker's");
   assert.match(readyRoute, /env\.RESEND_API_KEY && env\.DEFAULT_EMAIL_FROM_ADDRESS/,
     "The web app's email configuration must be read from the web app's own environment");
-  // Varje rad som alls nämner nyckeln måste reducera den till ett ja eller nej
-  // på samma rad. Svaret är publikt.
+  // Nyckeln får endast användas till närvarokontroll eller intern SHA-256-jämförelse.
+  // Det publika svaret bär enbart booleans, inte nyckeln eller dess digest.
   for (const line of readyRoute.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "").split("\n")) {
     if (!line.includes("RESEND_API_KEY")) continue;
-    assert.match(line, /Boolean\(/,
+    assert.match(line, /Boolean\(|expectedEmailDigest = sha256\(JSON\.stringify\(\[env\.RESEND_API_KEY, env\.DEFAULT_EMAIL_FROM_ADDRESS\]\)\)/,
       "The readiness answer must report whether the key is set, never the key");
   }
 }

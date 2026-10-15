@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 export async function verifyNativeSigningSql(db) {
   const id = n => `56000000-0000-0000-0000-${String(n).padStart(12,'0')}`;
@@ -34,7 +35,7 @@ export async function verifyNativeSigningSql(db) {
     const document = (await db.query(`insert into public.contract_documents(tenant_id,contract_id,contract_version_id,document_type,file_name,storage_path,mime_type,size_bytes,sha256,metadata) select tenant_id,id,active_version_id,'generated_pdf','source.pdf',tenant_id||'/'||id||'/source.pdf','application/pdf',1000,'${'a'.repeat(64)}','{"canonical":true}' from public.contracts where id=$1 returning id`,[contract])).rows[0].id;
     const input = { tenant_id:tenant,actor_id:actor,contract_id:contract,recipient_name:'Signing customer',email:'signer@example.test',expires_at:new Date(Date.now()+86400000).toISOString(),request_key:'same-key',request_hash:'b'.repeat(64),source_document_id:document,source_sha256:'a'.repeat(64),public_token_hash:'c'.repeat(64),public_token_ciphertext:'cipher' };
     // Public/normal authenticated transports cannot reach any signing mutation.
-    for (const name of ['reserve_native_signing','commit_native_invitation','claim_native_signature','finalize_native_signature']) {
+    for (const name of ['reserve_native_signing','commit_native_invitation','claim_native_signature','finalize_native_signature','cancel_native_signing']) {
       await db.exec('savepoint native_role; set local role authenticated');
       await refuse(`select public.${name}($1::jsonb)`, [{}], 'permission denied');
       await db.exec('rollback to native_role; release native_role');
@@ -63,11 +64,43 @@ export async function verifyNativeSigningSql(db) {
     await refuse(`select public.commit_native_invitation($1::jsonb)`,[{...commit,subject:'Changed'}],'native_invitation_conflict');
     assert.equal((await db.query(`select count(*)::int as n from public.email_messages where tenant_id=$1`,[tenant])).rows[0].n,1);
     assert.equal((await db.query(`select count(*)::int as n from public.outbox_jobs where tenant_id=$1 and job_type='email.send'`,[tenant])).rows[0].n,1);
+    const cancellation={tenant_id:tenant,actor_id:actor,envelope_id:first.id};
+    await refuse(`select public.cancel_native_signing($1::jsonb)`,[{...cancellation,tenant_id:other}],'active_membership_required');
+    await db.exec('savepoint cancel_reader');
+    await db.query(`update public.tenant_memberships set role='viewer' where tenant_id=$1 and user_id=$2`,[tenant,actor]);
+    await refuse(`select public.cancel_native_signing($1::jsonb)`,[cancellation],'contract_write_permission_required');
+    await db.exec('rollback to cancel_reader; release cancel_reader');
+    await db.exec('savepoint cancellation_atomic_failure');
+    await db.exec(`create function pg_temp.reject_native_restore() returns trigger language plpgsql as $block$
+      begin if new.id='${contract}' and new.status='ready' and old.status='signing' then raise exception 'injected_native_restore_failure'; end if; return new; end $block$;
+      create trigger verify_atomic_native_cancel before update on public.contracts for each row execute function pg_temp.reject_native_restore();`);
+    await refuse(`select public.cancel_native_signing($1::jsonb)`,[cancellation],'injected_native_restore_failure');
+    assert.equal((await db.query(`select status from public.signing_envelopes where id=$1`,[first.id])).rows[0].status,'sent');
+    assert.equal((await db.query(`select status from public.contracts where id=$1`,[contract])).rows[0].status,'signing');
+    await db.exec('rollback to cancellation_atomic_failure; release cancellation_atomic_failure');
+    await db.exec('savepoint cancellation_success');
+    assert.equal((await rpc('cancel_native_signing',cancellation)).idempotent_replay,false);
+    assert.equal((await db.query(`select status from public.contracts where id=$1`,[contract])).rows[0].status,'ready');
+    assert.equal((await db.query(`select status from public.signing_envelopes where id=$1`,[first.id])).rows[0].status,'cancelled');
+    assert.equal((await rpc('cancel_native_signing',cancellation)).idempotent_replay,true);
+    assert.equal((await db.query(`select count(*)::int as n from public.contract_events where contract_id=$1 and event_type='signing.native_cancelled'`,[contract])).rows[0].n,1);
+    await db.exec('rollback to cancellation_success; release cancellation_success');
+    await db.exec('savepoint cancellation_legacy_partial');
+    await db.query(`update public.signing_envelopes set status='cancelled' where id=$1`,[first.id]);
+    assert.equal((await rpc('cancel_native_signing',cancellation)).idempotent_replay,true);
+    assert.equal((await db.query(`select status from public.contracts where id=$1`,[contract])).rows[0].status,'ready');
+    await db.exec('rollback to cancellation_legacy_partial; release cancellation_legacy_partial');
+    await db.exec('savepoint cancellation_old_generation');
+    await db.query(`update public.signing_envelopes set status='cancelled' where id=$1`,[first.id]);
+    await db.query(`update public.contracts set acceptance_generation=acceptance_generation+1 where id=$1`,[contract]);
+    assert.equal((await rpc('cancel_native_signing',cancellation)).idempotent_replay,true);
+    assert.equal((await db.query(`select status from public.contracts where id=$1`,[contract])).rows[0].status,'signing');
+    await db.exec('rollback to cancellation_old_generation; release cancellation_old_generation');
     const claim={envelope_id:first.id,public_token_hash:input.public_token_hash,request_key:'sign-once',request_hash:'d'.repeat(64),source_sha256:input.source_sha256,
-      signature_sha256:'e'.repeat(64),signature_storage_path:`${tenant}/${contract}/${first.contract_version_id}/signatures/${'e'.repeat(64)}.png`,signer_name:'Signing customer',consent:true,ip_address:'192.0.2.1',user_agent:'SQL runtime'};
+      signature_sha256:'e'.repeat(64),signature_storage_path:`${tenant}/${contract}/${first.contract_version_id}/signatures/${'e'.repeat(64)}.png`,signer_name:'Anna Företrädare',consent:true,ip_address:'192.0.2.1',user_agent:'SQL runtime'};
     await refuse(`select public.claim_native_signature($1::jsonb)`,[{...claim,public_token_hash:'f'.repeat(64)}],'native_signing_token_invalid');
     await refuse(`select public.claim_native_signature($1::jsonb)`,[{...claim,consent:false}],'native_signature_payload_invalid');
-    await refuse(`select public.claim_native_signature($1::jsonb)`,[{...claim,signer_name:'Someone else'}],'native_signature_payload_invalid');
+    await refuse(`select public.claim_native_signature($1::jsonb)`,[{...claim,signer_name:'\n'}],'native_signature_payload_invalid');
     await refuse(`select public.claim_native_signature($1::jsonb)`,[{...claim,signature_storage_path:`${other}/signature.png`}],'native_signature_payload_invalid');
     await db.exec('savepoint old_generation');
     await db.query(`update public.contracts set acceptance_generation=acceptance_generation+1 where id=$1`,[contract]);
@@ -84,9 +117,26 @@ export async function verifyNativeSigningSql(db) {
     await db.query(`update public.tenants set status='suspended' where id=$1`,[tenant]);
     await refuse(`select public.claim_native_signature($1::jsonb)`,[claim],'native_signing_actor_inactive');
     await db.exec('rollback to suspended_signing; release suspended_signing');
+    // Receipts accepted by delivered006 must remain exactly replayable after007.
+    await db.exec('savepoint legacy_native_receipt');
+    const currentClaim=(await db.query(`select pg_get_functiondef('public.claim_native_signature(jsonb)'::regprocedure) as definition`)).rows[0].definition;
+    const legacyMigration=await readFile(new URL('../supabase/migrations/202610150006_native_document_signing.sql',import.meta.url),'utf8');
+    const legacyStart=legacyMigration.indexOf('create or replace function public.claim_native_signature');
+    const legacyEnd=legacyMigration.indexOf('revoke all on function public.claim_native_signature',legacyStart);
+    await db.exec(legacyMigration.slice(legacyStart,legacyEnd));
+    const legacyInput={...claim,signer_name:'Signing customer'};
+    const legacyReceipt=(await rpc('claim_native_signature',legacyInput)).native_signature;
+    assert.equal(legacyReceipt.recipient_name,undefined);
+    await db.exec(currentClaim);
+    const legacyReplay=await rpc('claim_native_signature',legacyInput);
+    assert.equal(legacyReplay.initial,false); assert.deepEqual(legacyReplay.native_signature,legacyReceipt);
+    await db.exec('rollback to legacy_native_receipt; release legacy_native_receipt');
     const claimed=await rpc('claim_native_signature',claim);
     const receipt=claimed.native_signature;
-    assert.ok(receipt.receipt_id); assert.equal(receipt.signer_name,'Signing customer'); assert.equal(receipt.consent,true);
+    assert.ok(receipt.receipt_id); assert.equal(receipt.signer_name,'Anna Företrädare'); assert.equal(receipt.recipient_name,'Signing customer'); assert.equal(receipt.recipient_email,'signer@example.test'); assert.equal(receipt.consent,true);
+    const verifiedIdentity=(await db.query(`select verified_identity from public.signing_attempts where envelope_id=$1`,[first.id])).rows[0].verified_identity;
+    assert.equal(verifiedIdentity.signer_name,'Anna Företrädare'); assert.equal(verifiedIdentity.recipient_name,'Signing customer');
+    assert.equal(verifiedIdentity.recipient_email,'signer@example.test'); assert.equal(verifiedIdentity.identity_assurance_level,'low');
     assert.equal(receipt.source_sha256,input.source_sha256); assert.ok(receipt.accepted_at); assert.equal(receipt.generation,first.generation);
     await db.exec('savepoint claimed_expiry');
     await db.query(`update public.signing_envelopes set provider_evidence=jsonb_set(provider_evidence,'{expires_at}',to_jsonb(now()-interval '1 minute')) where id=$1`,[first.id]);
@@ -95,6 +145,7 @@ export async function verifyNativeSigningSql(db) {
     const replay=await rpc('claim_native_signature',{...claim,ip_address:'192.0.2.2',user_agent:'retry'});
     assert.deepEqual(replay.native_signature,receipt); assert.equal(replay.initial,false);
     await refuse(`select public.claim_native_signature($1::jsonb)`,[{...claim,request_hash:'f'.repeat(64)}],'native_signature_idempotency_conflict');
+    await refuse(`select public.cancel_native_signing($1::jsonb)`,[cancellation],'native_signature_already_claimed');
     await refuse(`update public.signing_envelopes set status='cancelled' where id=$1`,[first.id],'native_signature_already_claimed');
     await refuse(`update public.signing_envelopes set provider_evidence=provider_evidence-'native_signature' where id=$1`,[first.id],'native_signature_already_claimed');
     const prefix=`${tenant}/${contract}/${first.contract_version_id}/native/${receipt.receipt_id}`;
@@ -120,6 +171,6 @@ export async function verifyNativeSigningSql(db) {
     // Historical approved DocuSeal versions can still be read/left unchanged;
     // newly authored templates must use the native provider now.
     await refuse(`insert into public.contract_template_versions(tenant_id,template_id,version,title_template,body_template,terms_template,signing_configuration) values($1,$2,2,'T','B','Terms',$3::jsonb)`,[tenant,template,{pdf_template:pdf,signature_policy:policy,provider_key:'docuseal'}],'external_signing_policy_invalid');
-    console.log('Native signing SQL PASS: permission/two-tenant/actor/token/expiry/generation/consent/source validation, immutable receipt, one invitation/finalization/evidence, locked identity and current native template policy.');
+    console.log('Native signing SQL PASS: permission/two-tenant/actor/token/expiry/generation/consent/source validation, human signer separate from locked organisation, atomic/idempotent cancellation with injected failure and legacy repair, immutable receipt, one invitation/finalization/evidence, locked identity and current native template policy.');
   } finally { await db.exec('rollback'); }
 }

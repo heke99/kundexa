@@ -48,12 +48,15 @@ function requireAppUrl() {
  * adressen kunden ser i sin länk, och hela poängen är att kunna jämföra den med
  * webbappens egen.
  */
-function deliveryConfiguration() {
+async function deliveryConfiguration() {
+  const emailConfigurationDigest = globalResendKey && globalEmailFromAddress
+    ? await sha256Text(JSON.stringify([globalResendKey, globalEmailFromAddress])) : null;
   return {
     appUrl,
     smsProvider: globalSmsProvider,
     platformSmsConfigured: Boolean(globalSmsServicePlanId && globalSmsApiToken),
     platformEmailConfigured: Boolean(globalResendKey && globalEmailFromAddress),
+    emailConfigurationDigest,
   };
 }
 
@@ -331,7 +334,13 @@ async function processEmail(job: Job) {
       subject: email.subject, text: email.body_text, html: email.body_html || undefined, attachments: attachments.length ? attachments : undefined,
       tags: [{ name: "category", value: String(email.purpose ?? "transactional").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 50) }],
   };
-  const { data: attempt, error: attemptError } = await supabase.rpc("prepare_email_submission", { p_tenant_id: job.tenant_id, p_message_id: email.id, p_job_id: job.id, p_worker: job.locked_by, p_payload: preparedPayload });
+  // A new provider account has a separate idempotency namespace, even when the
+  // payload and key are unchanged. Persist only this one-way credential binding.
+  const credentialFingerprint = await sha256Text(`resend-api-key/v1\u0000${config.apiKey}`);
+  const { data: attempt, error: attemptError } = await supabase.rpc("prepare_email_submission", {
+    p_tenant_id: job.tenant_id, p_message_id: email.id, p_job_id: job.id, p_worker: job.locked_by,
+    p_payload: preparedPayload, p_credential_fingerprint: credentialFingerprint,
+  });
   if (attemptError) throw attemptError;
   const response = await fetch("https://api.resend.com/emails", {
     signal: AbortSignal.timeout(30_000),
@@ -1123,5 +1132,5 @@ Deno.serve(async (request) => {
       clearInterval(heartbeat);
     }
   }
-  return Response.json({ worker, reminders_enqueued: remindersEnqueued ?? 0, claimed: results.length, results, delivery: deliveryConfiguration() });
+  return Response.json({ worker, reminders_enqueued: remindersEnqueued ?? 0, claimed: results.length, results, delivery: await deliveryConfiguration() });
 });
