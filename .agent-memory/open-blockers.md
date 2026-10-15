@@ -1,5 +1,9 @@
 # Open blockers
 
+## 2026-10-15 Auktoriserad produktionsrelease
+
+Kvar: Resendwebhookstatus pending/not_configured tills autentiserad operator registrerar med nya säkra knappen och signerad eventmottagning bevisas. Verktygen har inte behörig Kundexa-appsession eller anslutning till rätt Resendkonto; nycklar ska inte hämtas till chatten. Managed PostGIS-ACL001/009 var NOOP trots migrationssuccess: supabase_admin äger objekten, postgres saknargrantoption. Effektiva anonymaSpatialwrite/extentexecute fortfarande true; kräver provideråtgärd. Authleakedpasswordskydd och SinchFTPberoendelarm kvar. Ingenprodukt skaaktiveras enligtuser.
+
 ## 2026-10-15 Systemgranskning och uppföljande rättningar
 
 Drift är inte helt grön: PR55/migrationer/Edge ännu ej driftsatta; ingen staging; båda aktiva Resendintegrationerna saknar registrerad verifierad webhook; godkänd aktiv mall saknar produktkoppling. Live spatial_ref_sys anon/authINSERT tillåtet (001 tar bort), anonyma PostGISdefinerfunktioner (009). Läckta-lösenordsskydd är avstängt. Sex npm high-larm från en och samma FTP-parserbrist i Sinch→PubNub→Nodeproxy-kedjan kvarstår; browserSDK använder inte Nodevägen, leverantörsuppdatering krävs. Inget liveJWT/RLS/Storage/underskriftstest utfört.

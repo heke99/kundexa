@@ -1,5 +1,9 @@
 # Completed work
 
+## 2026-10-15 Auktoriserad produktionsrelease
+
+SkarpDBrollout utförd enligt docs/releases/2026-10-15-native-production.json utanremote004. Canonicalartifactorigin säkerhetsfix010; originalsnapshot+hash verifieras, uploadpoisoning avvisas. Legacyparity011 bevarar schema/historik men blockerarnya länkar. Exaktpublictypes regenererade frånKundexa. Process-outbox26, ingestion18, maintenance22 deployade. Nya behöriga webhookregistreringsknappen+runtimeprotokolltest+native-only SQLtestprofil färdiga.
+
 ## 2026-10-15 Systemgranskning och uppföljande rättningar
 
 Ny granskningsomgång: human signer/companyrecipient separerade; atomisk/idempotent cancellation007; credentialscope binding för email008; workerbudgetfix; strängare per-tenantwebhook/digest/inflightsigningreadiness; mobilen ritar rätt efterresize; anteckningar låses underasyncsave; separat PDFoccurrence edit; Next16.4.1+kompatibla säkerhetspatchar. Driftinspektion read-only, avtal@kundexa.se bekräftad i DB. Ingen release eller kundpost.

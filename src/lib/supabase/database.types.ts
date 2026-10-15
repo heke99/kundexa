@@ -2413,6 +2413,64 @@ export type Database = {
           },
         ]
       }
+      contract_signing_links: {
+        Row: {
+          created_at: string
+          envelope_id: string
+          expires_at: string
+          id: string
+          recipient_id: string
+          revoked_at: string | null
+          tenant_id: string
+          token_ciphertext: string
+          token_hash: string
+        }
+        Insert: {
+          created_at?: string
+          envelope_id: string
+          expires_at: string
+          id?: string
+          recipient_id: string
+          revoked_at?: string | null
+          tenant_id: string
+          token_ciphertext: string
+          token_hash: string
+        }
+        Update: {
+          created_at?: string
+          envelope_id?: string
+          expires_at?: string
+          id?: string
+          recipient_id?: string
+          revoked_at?: string | null
+          tenant_id?: string
+          token_ciphertext?: string
+          token_hash?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contract_signing_links_tenant_id_envelope_id_fkey"
+            columns: ["tenant_id", "envelope_id"]
+            isOneToOne: false
+            referencedRelation: "signing_envelopes"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "contract_signing_links_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contract_signing_links_tenant_id_recipient_id_fkey"
+            columns: ["tenant_id", "recipient_id"]
+            isOneToOne: false
+            referencedRelation: "contract_recipients"
+            referencedColumns: ["tenant_id", "id"]
+          },
+        ]
+      }
       contract_template_versions: {
         Row: {
           approved_at: string | null
@@ -12053,6 +12111,7 @@ export type Database = {
         Args: { p_acceptance_request_id: string; p_reason: string }
         Returns: number
       }
+      cancel_native_signing: { Args: { p_input: Json }; Returns: Json }
       claim_automation_runs: {
         Args: { p_limit?: number; p_worker: string }
         Returns: {
@@ -12163,6 +12222,7 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      claim_native_signature: { Args: { p_input: Json }; Returns: Json }
       claim_next_list_member: {
         Args: { p_list_id: string; p_session_id: string }
         Returns: Json
@@ -12290,6 +12350,7 @@ export type Database = {
         Args: { p_reason: string; p_session_id: string; p_status: string }
         Returns: number
       }
+      commit_native_invitation: { Args: { p_input: Json }; Returns: Json }
       complete_customer_callback: {
         Args: { p_activity_id: string; p_notes?: string }
         Returns: undefined
@@ -12520,6 +12581,10 @@ export type Database = {
           p_tenant_id: string
           p_title: string
         }
+        Returns: string
+      }
+      create_contract_draft_for_actor: {
+        Args: { p_actor_user_id: string; p_input: Json; p_tenant_id: string }
         Returns: string
       }
       create_contract_draft_v2: {
@@ -12998,6 +13063,10 @@ export type Database = {
         Args: never
         Returns: number
       }
+      expire_native_signing: {
+        Args: { p_envelope_id: string }
+        Returns: boolean
+      }
       extend_contract_acceptance_expiry_api_v2: {
         Args: {
           p_actor_user_id: string
@@ -13053,6 +13122,7 @@ export type Database = {
         }
         Returns: Json
       }
+      finalize_native_signature: { Args: { p_input: Json }; Returns: Json }
       finalize_signing_envelope: {
         Args: {
           p_envelope_id: string
@@ -13064,6 +13134,20 @@ export type Database = {
       finalize_tenant_invitation: {
         Args: { p_invitation_id: string; p_invited_user_id: string }
         Returns: string
+      }
+      finish_outbox_job: {
+        Args: {
+          p_delay_seconds?: number
+          p_error?: string
+          p_job_id: string
+          p_outcome: string
+          p_worker: string
+        }
+        Returns: undefined
+      }
+      freeze_outbox_artifact: {
+        Args: { p_artifact: Json; p_job_id: string; p_worker: string }
+        Returns: Json
       }
       geometry: { Args: { "": string }; Returns: unknown }
       geometry_above: {
@@ -13315,6 +13399,18 @@ export type Database = {
         Args: { p_provider: string; p_user_agent?: string }
         Returns: Json
       }
+      platform_list_distribution: {
+        Args: { p_allocation_id: string }
+        Returns: Json
+      }
+      platform_share_allocated_list: {
+        Args: {
+          p_active: boolean
+          p_allocation_id: string
+          p_team_ids: string[]
+        }
+        Returns: Json
+      }
       populate_geometry_columns:
         | { Args: { tbl_oid: unknown; use_typmod?: boolean }; Returns: number }
         | { Args: { use_typmod?: boolean }; Returns: string }
@@ -13426,10 +13522,57 @@ export type Database = {
         }
         Returns: Json
       }
+      prepare_docuseal_signing: {
+        Args: {
+          p_actor_user_id?: string
+          p_contract_id: string
+          p_document_id: string
+          p_email: string
+          p_expires_at: string
+          p_idempotency_key: string
+          p_recipient_name: string
+          p_request_hash: string
+          p_tenant_id?: string
+          p_token_ciphertext: string
+          p_token_hash: string
+        }
+        Returns: Json
+      }
+      prepare_email_submission:
+        | {
+            Args: {
+              p_job_id: string
+              p_message_id: string
+              p_payload: Json
+              p_tenant_id: string
+              p_worker: string
+            }
+            Returns: Json
+          }
+        | {
+            Args: {
+              p_credential_fingerprint: string
+              p_job_id: string
+              p_message_id: string
+              p_payload: Json
+              p_tenant_id: string
+              p_worker: string
+            }
+            Returns: Json
+          }
       process_import_run: { Args: { p_import_run_id: string }; Returns: Json }
       process_parsehub_import_run: {
         Args: { p_parsehub_run_id: string }
         Returns: Json
+      }
+      project_docuseal_terminal: {
+        Args: {
+          p_envelope_id: string
+          p_provider_id: string
+          p_status: string
+          p_tenant_id: string
+        }
+        Returns: boolean
       }
       provision_user_security_state: {
         Args: { p_provisioned_by: string; p_user_id: string }
@@ -13458,6 +13601,16 @@ export type Database = {
           p_tenant_id: string
         }
         Returns: number
+      }
+      queue_docuseal_invitation: {
+        Args: {
+          p_body: string
+          p_envelope_id: string
+          p_from_address: string
+          p_subject: string
+          p_tenant_id: string
+        }
+        Returns: boolean
       }
       queue_due_nix_checks: { Args: { p_limit?: number }; Returns: number }
       queue_due_segment_refreshes: {
@@ -13585,6 +13738,10 @@ export type Database = {
         Args: { p_entity_id: string }
         Returns: number
       }
+      reconcile_resend_delivery_events: {
+        Args: { p_limit?: number }
+        Returns: number
+      }
       record_contract_acceptance: {
         Args: {
           p_acceptance_code?: string
@@ -13668,6 +13825,19 @@ export type Database = {
         }
         Returns: undefined
       }
+      record_sms_submission: {
+        Args: {
+          p_cost?: number
+          p_delivered_at?: string
+          p_message_id: string
+          p_parts?: number
+          p_provider_message_id: string
+          p_sent_at: string
+          p_status: string
+          p_tenant_id: string
+        }
+        Returns: undefined
+      }
       record_webphone_leg_event: {
         Args: {
           p_call_id: string
@@ -13742,6 +13912,18 @@ export type Database = {
         Args: { p_team_id: string; p_user_id: string }
         Returns: undefined
       }
+      renew_outbox_lease: {
+        Args: { p_job_id: string; p_worker: string }
+        Returns: undefined
+      }
+      repair_outbound_delivery: {
+        Args: { p_channel: string; p_message_id: string; p_tenant_id: string }
+        Returns: undefined
+      }
+      replay_unmatched_resend_events: {
+        Args: { p_limit?: number }
+        Returns: number
+      }
       report_customer_nix_listing: {
         Args: { p_customer_id: string; p_notes?: string }
         Returns: Json
@@ -13756,6 +13938,7 @@ export type Database = {
         }
         Returns: number
       }
+      reserve_native_signing: { Args: { p_input: Json }; Returns: Json }
       reserve_outbound_call: {
         Args: {
           p_callback_activity_id: string
@@ -13864,6 +14047,10 @@ export type Database = {
           p_worksheet_name: string
         }
         Returns: string
+      }
+      save_pdf_template_configuration: {
+        Args: { p_configuration: Json; p_version_id: string }
+        Returns: undefined
       }
       schedule_customer_callback: {
         Args: {
@@ -13986,6 +14173,16 @@ export type Database = {
       set_tenant_platform_status: {
         Args: { p_reason: string; p_status: string; p_tenant_id: string }
         Returns: undefined
+      }
+      settle_outbox_job: {
+        Args: {
+          p_delay_seconds?: number
+          p_error?: string
+          p_job_id: string
+          p_permanent?: boolean
+          p_worker: string
+        }
+        Returns: boolean
       }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }

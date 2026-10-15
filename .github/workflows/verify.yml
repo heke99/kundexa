@@ -66,6 +66,8 @@ jobs:
           node scripts/native-orchestration-tests.mjs
           node scripts/readiness-tests.mjs
           node scripts/signing-reconcile-tests.mjs
+          node scripts/resend-webhook-admin-tests.mjs
+          node scripts/remote-signing-parity-tests.mjs
 
       - name: Run telephony tests
         run: npm run test:telephony

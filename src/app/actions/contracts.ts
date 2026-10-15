@@ -12,12 +12,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { acceptanceCode, encryptJson, randomToken, sha256, sha256Bytes } from "@/lib/crypto";
 import { canonicalAppBaseUrl, serverEnv } from "@/lib/env";
 import { normalizePhone } from "@/lib/domain/phone";
+import { toJson } from "@/lib/supabase/json";
 import { can, assertPermission, assertContractAuthor, assertContractFromProduct } from "@/lib/permissions";
 import { renderStrictTemplate } from "@/lib/domain/template";
 import { buildTemplateRenderContext } from "@/lib/contracts/template-context";
 import { zonedLocalDateTimeToIso } from "@/lib/domain/time";
 import { assertContractCallEligibility } from "@/lib/contracts/call-eligibility";
-import { ensureCanonicalContractDocument } from "@/lib/contracts/canonical-document";
+import { ensureCanonicalContractDocument, loadCanonicalContractSnapshot } from "@/lib/contracts/canonical-document";
 import { contractAcceptanceModes, contractDeliveryBlocker, NO_ANSWER_PATH_MESSAGE } from "@/lib/contracts/delivery-readiness";
 import { renderContractDeliveryEmail } from "@/lib/email/templates/contract-delivery";
 import { loadContractSignatureMethod, planContractDelivery, renderContractDeliverySms } from "@/lib/contracts/delivery-plan";
@@ -373,6 +374,17 @@ export async function uploadContractPdf(form: FormData) {
   if (new TextDecoder().decode(bytes.slice(0, 5)) !== "%PDF-") {
     redirect(`/app/contracts/${contractId}?error=Filen har inte ett giltigt PDF-huvud`);
   }
+  const canonical = value(form, "document_mode") === "canonical";
+  let trustedMetadata: Record<string, unknown> = { canonical: false, upload_mode: "attachment" };
+  if (canonical) {
+    try {
+      const { snapshot, snapshotHash } = await loadCanonicalContractSnapshot(createAdminClient(), {
+        tenantId: ctx.tenantId, contractId, actorUserId: ctx.userId,
+      });
+      trustedMetadata = { canonical: true, canonical_origin: "kundexa_author_upload_v1", upload_mode: "canonical",
+        snapshot_hash: snapshotHash, locked_parties: { seller: snapshot.seller, counterparty: snapshot.counterparty } };
+    } catch { redirect(`/app/contracts/${contractId}?error=${encodeURIComponent("Avtalets uppgifter och källsamtal måste vara klara innan en avtals-PDF kan laddas upp.")}`); }
+  }
   const hash = sha256Bytes(bytes);
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
   const path = `${ctx.tenantId}/${contractId}/${crypto.randomUUID()}-${safeName}`;
@@ -382,7 +394,7 @@ export async function uploadContractPdf(form: FormData) {
   });
   if (uploadError) redirect(`/app/contracts/${contractId}?error=${encodeURIComponent(uploadError.message)}`);
 
-  const { error: insertError } = await supabase.from("contract_documents").insert({
+  const { error: insertError } = await (canonical ? createAdminClient() : supabase).from("contract_documents").insert({
     tenant_id: ctx.tenantId,
     contract_id: contractId,
     contract_version_id: contract.active_version_id,
@@ -392,7 +404,7 @@ export async function uploadContractPdf(form: FormData) {
     mime_type: file.type,
     size_bytes: file.size,
     sha256: hash,
-    metadata: { canonical: value(form, "document_mode") === "canonical", upload_mode: value(form, "document_mode") || "attachment" },
+    metadata: toJson(trustedMetadata),
   });
   if (insertError) {
     await supabase.storage.from("contract-documents").remove([path]);

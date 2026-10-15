@@ -1,5 +1,9 @@
 # Current state
 
+## 2026-10-15 Auktoriserad produktionsrelease
+
+Användaren auktoriserade skarpdriftsättning och förtydligade INGENproduktaktivering. Rätt KundexaDB uppdaterad med001002003, atomisk005+006,007008009010011.004uteblev efter automatiskgranskningsspärr, ingetremoteDocuSeal installeras. Edge process-outbox26/ingestion18/maintenance22ACTIVE. Typer exaktgenererade frånlive. Full verify+native-onlySQL PASS. Webb väntar release frånPR55. Inga produkter/mallar/villkor ändrade och inga kundmejl skickade.
+
 ## 2026-10-15 Systemgranskning och uppföljande rättningar
 
 Ny systemgranskning 15 oktober: användaren bekräftar separat Resendkonto; live DB visar aktiv Resend med from_address=avtal@kundexa.se. Produktion Vercel READY på main de852fc, inte PR55. /health och gamla /ready200; sju friska workers; inga runtimefel i24h-vyn. DB saknar migration001–009 från15okt och nativeRPC, Resendwebhookar not_configured, aktiv approved simple_click-mall saknar produktkoppling. Branch rättad efter ny granskning; slutlig npm run verify PASS exit0 Node22/npm10.9.2, GitHubuppföljning återstår. Inga produktionsändringar eller kundutskick.

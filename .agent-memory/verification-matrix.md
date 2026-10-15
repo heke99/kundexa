@@ -1,5 +1,9 @@
 # Verification matrix
 
+## 2026-10-15 Auktoriserad produktionsrelease
+
+Releasecheck: rättDB/projekt,0pendingjobs/0activeenvelopes föreuppdatering. NativeRPC+cancel(jsonb)+fingerprintRPC+PNGbucket+trustedartifacttrigger verifierade i live efterDDL. Pensioneradprepare_docusealRPCauthenticatedexecute=false. Nya EdgeversionsACTIVE. FullnpmverifyPASS medlivegenereradetypes+142migrationer; native-onlySQLPASSutan004; canonicalorigin/collision/hash-tests+remoteparity+ResendoperatorprotocolPASS. 009managedACLFAIL/NOTFIXED. WebSHA/CI+livehealthkontroller följsunderrelease. Riktigtkundutskick/samtal/nyproduktsignering NOTRUN ochproduktaktiveringNOTREQUESTED.
+
 ## 2026-10-15 Systemgranskning och uppföljande rättningar
 
 Systemreview baseline c6f3ca5: full verify PASS igen; GitHub201 PASS. Live11:13–11:19UTC: Supabase ACTIVE_HEALTHY, Vercel READYde852fc, /health200, gamla /ready200 och Sinchregistration200;7healthyworkers; inga Vercelruntimefel24h (begränsat av tillgänglig retention/aktivitet). Private documentbucket är ej publik men saknar ännu PNG-policy006. Nya SQL/runtimeregressioner och browserQA PASS i delkörningar. Sista fulla npm run verify PASS exit0 Node22.17.0/npm10.9.2 med140migrationer, Edge, samtliga tester, OpenAPI, TypeScript och Next16.4.1 produktionsbygge. Nya119servertraces innehåller inga FTP/proxy/PubNubNode-filer. CI på nya commiten följs efterpush. Audit efter säkra uppdateringar:0critical/0moderate/6high från1FTP-parserbrist; faktisk exploatering ej etablerad.

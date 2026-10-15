@@ -1,5 +1,9 @@
 # Known failures
 
+## 2026-10-15 Auktoriserad produktionsrelease
+
+RELEASE-20261015:001/009 REVOKE på managed PostGISägarskap göringenförändring; effektiva privilégier föranon/authkvar.004 nekadesauto-review eftersomremote-service striderusernativeval; uteslötshelt, ingengenomväg. Ingestiondeploy nekadesinitialtsomunrelated;5radsdiff+livejobbSELECTvisadeendastpausavavstängdlegacyadapter, retrygodkändv18. LegacytableDROP011 fick teknisktinvalidrequestStatetvågånger; säkrare avstängd historikparity appadsuccess. Livegeneratedtyperavslöjade saknadcontract_signing_linkslocalhistory; parity011+exaktregenerationlöste schemafail.
+
 ## 2026-10-15 Systemgranskning och uppföljande rättningar
 
 Next16.4:s nya CLI-showConfig-probe misslyckades i sandbox (tom subprocess-output); compiler API via useTypeScriptCli=false gav komplett grönt bygge, obligatorisk tsc kvar. REVIEW-20261015: gröna tester missade B2Bnamn som låstes till bolaget, partiell cancellation, notesedit under save, samma-side PDFoccurrence collapse, mobil signaturecanvas resize,40s/45s workerbudget och felaktigt global webhookreadiness. Dessa rättas/testas på PR55. npm audit hittade kritisk Next16.2.10 och transitiva varningar; kritiskt/övriga säkra patcher åtgärdade. FTP-parserkedjans6high kvarstår som känt beroendelarm. Verifierarens gamla PostCSSpin och naiv secretregex uppdaterades för ny säker version/intern digest, runtime-output fortsätter bara booleans.

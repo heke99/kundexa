@@ -54,7 +54,9 @@ await db.exec(`
 `);
 
 const migrationDir = join(root, "supabase/migrations");
-const migrations = (await readdir(migrationDir)).filter((name) => name.endsWith(".sql")).sort();
+const nativeOnly = process.env.KUNDEXA_NATIVE_ONLY_MIGRATIONS === "1";
+const migrations = (await readdir(migrationDir)).filter((name) => name.endsWith(".sql")
+  && !(nativeOnly && name === "202610150004_docuseal_orchestration.sql")).sort();
 const migrationVersions = migrations.map((name) => name.match(/^(\d+)_/)?.[1] ?? "");
 if (migrationVersions.some((version) => !version)) throw new Error("Every migration filename must start with a numeric version");
 if (new Set(migrationVersions).size !== migrationVersions.length) {
@@ -3599,7 +3601,8 @@ if (phantomTables.length > 0) {
   throw new Error(`database.types.ts declares tables no migration creates: ${phantomTables.join(", ")}`);
 }
 await (await import("./contract-security-sql-tests.mjs")).verifyContractSecurity(db);
-await (await import("./docuseal-sql-tests.mjs")).verifyDocusealSql(db);
+if (!nativeOnly) await (await import("./docuseal-sql-tests.mjs")).verifyDocusealSql(db);
+else console.log("Native-only production profile: retired remote DocuSeal bootstrap excluded; native role/token/document tests still run.");
 await (await import("./native-signing-sql-tests.mjs")).verifyNativeSigningSql(db);
 await (await import("./postgis-privilege-sql-tests.mjs")).verifyPostgisExtentPrivileges(db);
 

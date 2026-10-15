@@ -1,5 +1,9 @@
 # Decisions
 
+## 2026-10-15 Auktoriserad produktionsrelease
+
+Skarprelease auktoriserad av användaren; ingen produktaktivering ingår. 004historiskremote-migration utesluten efterauto-reviewrejection, native005+006installerades atomisktutan004. 011preserverar live13okt legacy-linktabell med exaktparity, RLS+revokedgrants+blockeradINSERT i ställetförDROP (dropverktyg requestStateexpiredtvågånger). Säkeroperatoraction förautomatiskResendwebhook, ingetad hoc cron/authbakdörr. ManagedACLmigration success ärintebevis förprivilegier: efectiva testerärkanoniska.
+
 ## 2026-10-15 Systemgranskning och uppföljande rättningar
 
 Ny review rättar faktisk mänsklig undertecknare separat från låst företag/mottagare, atomisk cancellation i007, fryst credentialfingerprint i008 (även sameaccount keyrotation stoppar okänt försök för avstämning). Readiness jämför web/Edge effective config digest och verifierad webhook per aktiv tenant; gamla metadata ger inte grönt. Next/SWC16.4.1 och kompatibla säkerhetspatchar; ingen obekräftad majoroverride eller nedgradering av Sinch.

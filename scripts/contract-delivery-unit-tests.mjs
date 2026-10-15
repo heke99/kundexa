@@ -228,3 +228,5 @@ assert.deepEqual(editedPlacements[0].placements[2], placements[0].placements[2])
 assert.equal(editedPlacements[0].placements[1].x, .6);
 assert.equal(placements[0].placements[1].x, .5, "Editing an occurrence must not mutate other positions or prior state");
 console.log("Responsive signature strokes and individual PDF occurrence edits passed");
+
+await import('./canonical-origin-unit-tests.mjs');

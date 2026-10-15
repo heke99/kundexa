@@ -88,6 +88,34 @@ export async function verifyContractSecurity(db) {
     await db.exec(`reset role; select set_config('request.jwt.claim.role','authenticated',true);`);
     const saved = (await db.query(`select status,owner_user_id from public.contracts where id=$1`, [created])).rows[0];
     if (saved.status !== 'ready' || saved.owner_user_id !== actor) throw new Error('Trusted seller wrapper lost the actor or draft transition');
+    // A normal seller can upload its own attachment bytes, but cannot turn
+    // those bytes into an approved canonical/signature/evidence artifact.
+    await db.exec(`grant usage on schema storage to authenticated;
+      grant select,insert on storage.objects to authenticated;
+      grant select,insert,update on public.contract_documents to authenticated;`);
+    const forgedPath=`${t}/${created}/forged.pdf`;
+    await db.exec('set local role authenticated');
+    await db.query(`insert into storage.objects(bucket_id,name,metadata) values('contract-documents',$1,'{"mimetype":"application/pdf"}'::jsonb)`,[forgedPath]);
+    await db.exec('reset role');
+    const activeVersion=(await db.query(`select active_version_id from public.contracts where id=$1`,[created])).rows[0].active_version_id;
+    for (const [documentType,metadata] of [
+      ['source_pdf',{canonical:true}], ['generated_pdf',{}], ['signed_pdf',{}], ['evidence_pdf',{}], ['manifest',{}],
+      ['attachment',{canonical_origin:'kundexa_renderer_v1'}],
+    ]) {
+      await refused(`insert into public.contract_documents(tenant_id,contract_id,contract_version_id,document_type,file_name,storage_path,mime_type,size_bytes,sha256,metadata)
+        values('${t}','${created}','${activeVersion}','${documentType}','forged.pdf','${forgedPath}','application/pdf',100,'${'a'.repeat(64)}','${JSON.stringify(metadata)}'::jsonb)`, 'trusted_contract_artifact_service_required');
+    }
+    await db.exec('set local role authenticated');
+    const attachment=(await db.query(`insert into public.contract_documents(tenant_id,contract_id,contract_version_id,document_type,file_name,storage_path,mime_type,size_bytes,sha256,metadata)
+      values($1,$2,$3,'attachment','attachment.pdf',$4,'application/pdf',100,$5,'{}'::jsonb) returning id`,[t,created,activeVersion,forgedPath,'a'.repeat(64)])).rows[0].id;
+    await db.exec('reset role');
+    await db.exec('set local role authenticated');
+    const upgraded=await db.query(`update public.contract_documents set metadata='{"canonical":true}'::jsonb where id=$1 returning id`,[attachment]);
+    await db.exec('reset role');
+    if (upgraded.rows.length) throw new Error('A seller upgraded attachment metadata to canonical');
+    const trusted=(await db.query(`insert into public.contract_documents(tenant_id,contract_id,contract_version_id,document_type,file_name,storage_path,mime_type,size_bytes,sha256,metadata)
+      values($1,$2,$3,'generated_pdf','trusted.pdf',$4,'application/pdf',100,$5,$6::jsonb) returning id`,[t,created,activeVersion,`${t}/${created}/trusted.pdf`,'b'.repeat(64),{canonical:true,canonical_origin:'kundexa_renderer_v1',snapshot_hash:'c'.repeat(64)}])).rows[0].id;
+    if (!trusted) throw new Error('Trusted service canonical generation was blocked');
     await db.exec(`insert into public.signing_envelopes(tenant_id,contract_id,contract_version_id,provider,signature_policy,status)
       select tenant_id,id,active_version_id,'docuseal','{"method":"external_esign"}'::jsonb,'creating' from public.contracts where id='${created}';`);
     await db.exec('savepoint cancel_external;');

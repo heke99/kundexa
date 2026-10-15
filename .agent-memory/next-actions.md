@@ -1,5 +1,9 @@
 # Next actions
 
+## 2026-10-15 Auktoriserad produktionsrelease
+
+Slutför PR55 CI, merge och Vercelrelease; verifierahealth/ready/arbetare och rättSHA. Behörig inloggad operator kan på Integrationer välja Registrera leveranskvitton automatiskt; serverns befintliga Resendkey används utan hemlighetsdelning. Aktiveraingenprodukt. Native skickflöde provas först med kontrollerad slutmottagare och färdigmall näranvändaren efterfrågar det. Följ providerbegränsade PostGISACL/Auth/Sinchvarningar separat.
+
 ## 2026-10-15 Systemgranskning och uppföljande rättningar
 
 Granska senaste PR55-rättningar. Välj/etablera testmiljö före release; applicera framåtmigrationer, regenerera typer, deploya webb och uppdaterade Edge tillsammans. Konfigurera och verifiera Resendwebhook i rätt konto för varje aktiv tenant, koppla slutlig produkt+pris+PDF-mall och kör kontrollerad fullresa. Utred Sinch-uppdatering för ren dependency-audit; aktivera lösenordsskydd enligt driftbeslut. Skicka inga kunderutskick innan dessa verifieringar.
