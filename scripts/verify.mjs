@@ -924,7 +924,7 @@ const cspSource = await readFile(join(root, "src/lib/supabase/proxy.ts"), "utf8"
 assert.match(cspSource, /connect-src[^`]*\$\{webphoneConnectSources\.join\(" "\)\}/,
   "The CSP connect-src must admit the webphone provider, or the browser blocks every registration");
 const readinessRoute = await readFile(join(root, "src/app/api/ready/route.ts"), "utf8");
-assert.match(readinessRoute, /webphoneRegistration: await webphoneRegistration\(\)/,
+assert.match(readinessRoute, /const registration = await webphoneRegistration\(\);/,
   "Readiness must report whether the webphone can actually register with the provider");
 const reserveIndex = dialerHook.indexOf('fetch("/api/v1/calls"');
 const readinessIndex = dialerHook.indexOf("webphone.state.phase");
@@ -1302,8 +1302,9 @@ console.log(`Verified ${migrations.length} migrations, monotonic call/Resend pro
   for (const removed of ['name="template_version_id"', 'name="legal_entity_id"']) {
     assert.ok(!wizard.includes(removed), `The new-contract form must not ask the seller for ${removed}; the product decides it`);
   }
-  assert.match(wizard, /<SelectField label="Produkt" name="product_id"[^>]*required>/,
-    "The new-contract form must ask for the product, and require it");
+  assert.match(wizard, /<ContractProductSelect/,
+    "The new-contract form must use the product and approved-field selector");
+  assert.match(await readFile(join(root, "src/components/contract-product-select.tsx"), "utf8"), /<select name="product_id"[^>]*required/, "Product selection remains required");
 
   const actions = await readFile(join(root, "src/app/actions/contracts.ts"), "utf8");
   const create = actions.slice(actions.indexOf("export async function createContract"), actions.indexOf("\nexport async function uploadContractPdf"));

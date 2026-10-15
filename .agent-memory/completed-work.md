@@ -203,3 +203,27 @@
   - RLS-delen av `202609240002` applicerad.
   - 40 repoversioner registrerade (128/128).
   - Funktioner, policyer och triggrar avstämda mot PGlite.
+
+## 2026-10-13 Granskningar och plan sparade
+
+Två oktobergranskningar sparade i `docs/reviews/2026-10-13/`.
+`docs/CONTRACT_PRODUCTION_PLAN_2026-10-13.md` beskriver sju genomförandesteg och godkännandekriterier.
+Projektets minne pekar på denna baslinje och skiljer föreslagen arkitektur från levererade rättningar.
+Runtime och produktionsdata är oförändrade.
+
+## 2026-10-13 PDF-krav dokumenterat
+
+Sparat användarens PDF-fält/kundkortsresa i docs/PDF_FIELD_TEMPLATES_AND_DOCUSEAL.md och länkat från genomförandeplanen. Genomförandesteg, snapshot/versioner, säljarbehörighet, DocuSeal-förifyllning och framtida BankID beskrivna. Ingen produktionsrättning genomförd.
+
+## 2026-10-13 Publicering slutförd
+
+Rapporter, avtalsplan, PDF-fältspecifikation och projektminne är publicerade i [PR #53](https://github.com/heke99/kundexa/pull/53). PR är öppen och inte mergad. Publicerat git-träd matchade exakt det lokala dokumentationsträdet (12 ändrade filer). Vanlig git-push saknade terminalautentisering; GitHub-anslutningen användes med användarens uttryckliga mandat. Ingen produktionsdeploy gjordes.
+
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Tillagt docs/KUNDEXA_BUILD_WITH_DOCUSEAL.md och uppdaterat PDF-/avtalsplan med användarens uppgivna fullständiga återanvändningsgodkännande. Rekommenderad gräns och sex konkreta leveranser dokumenterade. Ingen runtimeimplementation.
+
+
+## 2026-10-15 — Implementation av plan 53
+
+Plan53 kodimplementation och installationspaket förberett. Auth/RLS, säljarens sparordning/inline avtal, PDF-mallredigering/fältkoppling/kompletteringar/preview, gemensam leveranspolicy/OTP/idempotens, leases/replay/bevis, Sinch-ljud/enheter/start och DocuSeal-adapter/orchestration/audit implementerade. Se full avgränsning i docs/IMPLEMENTATION_PLAN_53_2026-10-15.md. Ingen liveinstallation eller produktionsdatamutation.

@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.110.7";
+import { permanentResendFailure } from "../_shared/outbox-policy.ts";
 import { decryptJson } from "../_shared/crypto.ts";
 import { inQuietHours } from "../_shared/reminder-time.ts";
 import { DEFAULT_SMS_PROVIDER, smsProviderFor, type SmsProviderCredentials } from "../_shared/sms-provider.ts";
@@ -66,7 +67,23 @@ type Job = {
   aggregate_id: string | null;
   payload: Record<string, unknown>;
   attempts: number;
+  locked_by: string;
 };
+async function checked<T extends { error?: { message: string } | null }>(operation: PromiseLike<T>): Promise<T> {
+  const result = await operation;
+  if (result.error) throw new Error(result.error.message);
+  return result;
+}
+
+/** Replays must preserve provider identity and terminal delivery status. */
+async function stableMessage(table: "email_messages" | "sms_messages", row: Record<string, unknown>) {
+  const existing = await supabase.from(table).select("id").eq("tenant_id", row.tenant_id).eq("idempotency_key", row.idempotency_key).maybeSingle();
+  if (existing.error || existing.data) return existing;
+  const inserted = await supabase.from(table).upsert(row, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true }).select("id").maybeSingle();
+  if (inserted.error || inserted.data) return inserted;
+  return await supabase.from(table).select("id").eq("tenant_id", row.tenant_id).eq("idempotency_key", row.idempotency_key).single();
+}
+
 type EmailCredentials = { apiKey?: string; from?: string; webhookSigningSecret?: string; webhookPathToken?: string };
 type EmailAttachmentRef = { document_id: string; filename?: string; mime_type?: string };
 
@@ -178,7 +195,10 @@ async function processSms(job: Job) {
   const { data: sms, error } = await supabase.from("sms_messages").select("*")
     .eq("tenant_id", job.tenant_id).eq("id", job.aggregate_id).single();
   if (error || !sms) throw new Error("sms_not_found");
-  if (sms.provider_message_id || ["created", "sent", "delivered"].includes(sms.status)) return;
+  if (sms.provider_message_id) {
+    await checked(supabase.rpc("repair_outbound_delivery", { p_tenant_id: job.tenant_id, p_message_id: sms.id, p_channel: "sms" }));
+    return;
+  }
   const [{ data: outboundSms, error: outboundSmsError }, { data: contractSms, error: contractSmsError }] = await Promise.all([
     supabase.from("tenant_features").select("enabled").eq("tenant_id", job.tenant_id).eq("feature_key", "outbound_sms").maybeSingle(),
     supabase.from("tenant_features").select("enabled").eq("tenant_id", job.tenant_id).eq("feature_key", "contract_delivery_sms").maybeSingle(),
@@ -198,23 +218,11 @@ async function processSms(job: Job) {
   if (sms.status === "submitting") {
     const reconciled = await provider.findSubmitted(String(sms.id));
     if (reconciled) {
-      const sentAt = reconciled.sentAt ?? sms.sent_at ?? new Date().toISOString();
-      const { error: reconcileError } = await supabase.from("sms_messages").update({
-        provider_message_id: reconciled.providerMessageId,
-        status: reconciled.status,
-        sent_at: sentAt,
-        delivered_at: reconciled.deliveredAt ?? sms.delivered_at,
-        parts: reconciled.parts,
-        cost: reconciled.cost ?? sms.cost,
-      }).eq("tenant_id", job.tenant_id).eq("id", sms.id);
-      if (reconcileError) throw reconcileError;
-      await supabase.from("contract_deliveries").update({
-        status: reconciled.status === "delivered" ? "delivered" : "sent",
-        provider_status: `reconciled_${reconciled.status}`,
-        sent_at: sentAt,
-      }).eq("tenant_id", job.tenant_id).eq("sms_message_id", sms.id);
-      await supabase.from("contract_reminders").update({ status: "sent", sent_at: sentAt })
-        .eq("tenant_id", job.tenant_id).eq("sms_message_id", sms.id).in("status", ["queued", "scheduled"]);
+      await checked(supabase.rpc("record_sms_submission", {
+        p_tenant_id: job.tenant_id, p_message_id: sms.id, p_provider_message_id: reconciled.providerMessageId,
+        p_status: reconciled.status, p_sent_at: reconciled.sentAt ?? sms.sent_at,
+        p_delivered_at: reconciled.deliveredAt ?? sms.delivered_at, p_parts: reconciled.parts, p_cost: reconciled.cost ?? sms.cost,
+      }));
       return;
     }
     const submittingAgeMs = Date.now() - new Date(sms.updated_at).getTime();
@@ -223,8 +231,9 @@ async function processSms(job: Job) {
     if (resetError) throw resetError;
   }
 
-  const { data: number } = await supabase.from("phone_numbers").select("webhook_token_ciphertext")
+  const { data: number, error: numberError } = await supabase.from("phone_numbers").select("webhook_token_ciphertext")
     .eq("tenant_id", job.tenant_id).eq("number_e164", sms.from_number).single();
+  if (numberError) throw numberError;
   if (!number?.webhook_token_ciphertext) throw new Error("sms_number_token_missing");
   const token = await decryptJson<{ token: string }>(number.webhook_token_ciphertext, encryptionKey);
 
@@ -233,7 +242,7 @@ async function processSms(job: Job) {
   // leverantören", och det tar en kvarts avstämning att ta sig ur -- för ett fel
   // som aldrig rörde leverantören.
   const deliveryCallbackUrl = `${requireAppUrl()}/api/webhooks/sms/delivery?token=${encodeURIComponent(token.token)}&message_id=${encodeURIComponent(sms.id)}&from_number=${encodeURIComponent(sms.from_number)}`;
-  await supabase.from("sms_messages").update({ status: "submitting" }).eq("id", sms.id);
+  await checked(supabase.from("sms_messages").update({ status: "submitting" }).eq("id", sms.id));
   const submission = await provider.send({
     from: sms.from_number,
     to: sms.to_number,
@@ -241,21 +250,11 @@ async function processSms(job: Job) {
     clientReference: String(sms.id),
     deliveryCallbackUrl,
   });
-  const sentAt = submission.sentAt;
-  await supabase.from("sms_messages").update({
-    provider_message_id: submission.providerMessageId,
-    sent_at: sentAt,
-    parts: submission.parts,
-    cost: submission.cost,
-  }).eq("id", sms.id);
-  // Statusen skrivs bara om leveransrapporten inte redan hunnit före. Annars
-  // skrev den här raden tillbaka "levererat" eller "misslyckat" till "skickat",
-  // samma fel som e-postens väg rättades för.
-  await supabase.from("sms_messages").update({ status: submission.status })
-    .eq("id", sms.id).in("status", ["queued", "submitting", "created"]);
-  await supabase.from("contract_deliveries").update({ status: "sent", provider_status: "submitted", sent_at: sentAt })
-    .eq("sms_message_id", sms.id).in("status", ["draft", "queued", "submitting", "created"]);
-  await supabase.from("contract_reminders").update({ status: "sent", sent_at: sentAt }).eq("tenant_id", job.tenant_id).eq("sms_message_id", sms.id).in("status", ["queued", "scheduled"]);
+  await checked(supabase.rpc("record_sms_submission", {
+    p_tenant_id: job.tenant_id, p_message_id: sms.id, p_provider_message_id: submission.providerMessageId,
+    p_status: submission.status, p_sent_at: submission.sentAt, p_delivered_at: submission.deliveredAt ?? null,
+    p_parts: submission.parts, p_cost: submission.cost ?? null,
+  }));
 }
 
 function bytesToBase64(bytes: Uint8Array) {
@@ -275,7 +274,8 @@ async function resolveEmailAttachments(email: Record<string, unknown>, tenantId:
     const { data: document, error } = await supabase.from("contract_documents")
       .select("id,tenant_id,contract_id,contract_version_id,file_name,storage_path,mime_type,size_bytes,sha256")
       .eq("tenant_id", tenantId).eq("id", reference.document_id).single();
-    if (error || !document) throw new Error("permanent_email_attachment_document_not_found");
+    if (error) throw error;
+    if (!document) throw new Error("permanent_email_attachment_document_not_found");
     if (email.contract_id && document.contract_id !== email.contract_id) throw new Error("permanent_email_attachment_contract_mismatch");
     if (document.mime_type !== "application/pdf" || Number(document.size_bytes ?? 0) <= 0 || Number(document.size_bytes ?? 0) > 20 * 1024 * 1024) {
       throw new Error("permanent_email_attachment_size_or_type_invalid");
@@ -294,7 +294,15 @@ async function processEmail(job: Job) {
   const { data: email, error } = await supabase.from("email_messages").select("*")
     .eq("tenant_id", job.tenant_id).eq("id", job.aggregate_id).single();
   if (error || !email) throw new Error("email_not_found");
-  if (email.provider_message_id || ["sent", "delivered", "opened", "clicked"].includes(email.status)) return;
+  if (email.provider_message_id) {
+    await checked(supabase.rpc("repair_outbound_delivery", { p_tenant_id: job.tenant_id, p_message_id: email.id, p_channel: "email" }));
+    return;
+  }
+  // Resend retains idempotency keys for 24 hours. Unknown outcomes beyond that
+  // window need operator/provider reconciliation, never a fresh blind send.
+  if ((job.payload.submission as { started_at?: string } | undefined)?.started_at && Date.now() - new Date(String((job.payload.submission as { started_at: string }).started_at)).getTime() >= 23 * 3600_000) {
+    throw new Error("email_submission_requires_provider_reconciliation");
+  }
 
   const [{ data: outboundEmail, error: outboundEmailError }, { data: contractEmail, error: contractEmailError }] = await Promise.all([
     supabase.from("tenant_features").select("enabled").eq("tenant_id", job.tenant_id).eq("feature_key", "outbound_email").maybeSingle(),
@@ -315,42 +323,35 @@ async function processEmail(job: Job) {
   const issuerName = await contractIssuerName(job.tenant_id, email.contract_id ?? null, config.fromName);
   const senderIdentity = `${cleanHeaderName(issuerName)} <${config.address}>`;
   const attachments = await resolveEmailAttachments(email as Record<string, unknown>, job.tenant_id);
-  await supabase.from("email_messages").update({ status: "submitting", provider_status: "submitting" }).eq("id", email.id);
+  const preparedPayload = {
+      from: senderIdentity,
+      to: email.to_addresses,
+      cc: email.cc_addresses?.length ? email.cc_addresses : undefined,
+      bcc: email.bcc_addresses?.length ? email.bcc_addresses : undefined, reply_to: email.reply_to_addresses?.[0] || config.replyTo || undefined,
+      subject: email.subject, text: email.body_text, html: email.body_html || undefined, attachments: attachments.length ? attachments : undefined,
+      tags: [{ name: "category", value: String(email.purpose ?? "transactional").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 50) }],
+  };
+  const { data: attempt, error: attemptError } = await supabase.rpc("prepare_email_submission", { p_tenant_id: job.tenant_id, p_message_id: email.id, p_job_id: job.id, p_worker: job.locked_by, p_payload: preparedPayload });
+  if (attemptError) throw attemptError;
   const response = await fetch("https://api.resend.com/emails", {
+    signal: AbortSignal.timeout(30_000),
     method: "POST",
     headers: {
       Authorization: `Bearer ${config.apiKey}`,
       "content-type": "application/json",
       "Idempotency-Key": email.idempotency_key || `kundexa-email-${email.id}`,
     },
-    body: JSON.stringify({
-      // Alltid namnet plus Kundexas adress. Tidigare gällde det bara när raden
-      // bar platshållaren `pending@kundexa.local`, och avtalsutskicket bär den
-      // inte: `sendContract` slår upp plattformsadressen direkt och sparar den.
-      // Följden var att bekräftelsen kom från "Gridex El AB" medan avtalet
-      // självt kom från en naken adress utan avsändarnamn -- och avtalet är det
-      // utskick där bolaget måste synas. Adressen kan inte längre vara
-      // tenantens egen, så raden är en anteckning om avsikt, inte ett val.
-      from: senderIdentity,
-      to: email.to_addresses,
-      cc: email.cc_addresses?.length ? email.cc_addresses : undefined,
-      bcc: email.bcc_addresses?.length ? email.bcc_addresses : undefined,
-      reply_to: email.reply_to_addresses?.[0] || config.replyTo || undefined,
-      subject: email.subject,
-      text: email.body_text,
-      html: email.body_html || undefined,
-      attachments: attachments.length ? attachments : undefined,
-      tags: [{ name: "category", value: String(email.purpose ?? "transactional").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 50) }],
-    }),
+    body: JSON.stringify(attempt),
   });
   const result = await response.json() as Record<string, unknown>;
   if (!response.ok) {
     const message = String(result.message ?? result.name ?? `http_${response.status}`).slice(0, 500);
-    const permanent = [400, 401, 403, 404, 409, 422].includes(response.status);
-    await supabase.from("email_messages").update({ status: "failed", provider_status: `http_${response.status}`, failure_code: permanent ? "permanent_provider_error" : "temporary_provider_error", error_message: message }).eq("id", email.id);
-    await supabase.from("contract_deliveries").update({ status: "failed", provider_status: `http_${response.status}`, failure_code: permanent ? "permanent_provider_error" : "temporary_provider_error", failure_message: message }).eq("email_message_id", email.id);
+    const permanent = permanentResendFailure(response.status, result.name);
+    await checked(supabase.from("email_messages").update({ status: "failed", provider_status: `http_${response.status}`, failure_code: permanent ? "permanent_provider_error" : "temporary_provider_error", error_message: message }).eq("id", email.id));
+    await checked(supabase.from("contract_deliveries").update({ status: "failed", provider_status: `http_${response.status}`, failure_code: permanent ? "permanent_provider_error" : "temporary_provider_error", failure_message: message }).eq("email_message_id", email.id));
     throw new Error(`${permanent ? "permanent_" : ""}email_${response.status}:${message}`);
   }
+  if (typeof result.id !== "string" || !result.id) throw new Error("email_provider_response_without_id");
   const sentAt = new Date().toISOString();
   // The mail has left. If recording that fails, the row keeps `submitting` and no
   // provider_message_id, so the delivery webhook has nothing to match and the
@@ -366,11 +367,11 @@ async function processEmail(job: Job) {
   if (sentError) throw new Error(`email_sent_state_write_failed:${sentError.code ?? "unknown"}`);
   // Statusen "skickat" skrivs bara om leverantörens webhook inte redan hunnit
   // före. Annars skrev den här raden tillbaka "levererat" till "skickat".
-  await supabase.from("email_messages").update({ status: "sent", provider_status: "email.sent" })
-    .eq("id", email.id).is("provider_status_at", null);
-  await supabase.from("contract_deliveries").update({ status: "sent", provider_status: "email.sent", sent_at: sentAt })
-    .eq("email_message_id", email.id).is("provider_status_at", null);
-  await supabase.from("contract_reminders").update({ status: "sent", sent_at: sentAt }).eq("tenant_id", job.tenant_id).eq("email_message_id", email.id).in("status", ["queued", "scheduled"]);
+  await checked(supabase.from("email_messages").update({ status: "sent", provider_status: "email.sent" })
+    .eq("id", email.id).is("provider_status_at", null));
+  await checked(supabase.from("contract_deliveries").update({ status: "sent", provider_status: "email.sent", sent_at: sentAt })
+    .eq("email_message_id", email.id).is("provider_status_at", null));
+  await checked(supabase.rpc("repair_outbound_delivery", { p_tenant_id: job.tenant_id, p_message_id: email.id, p_channel: "email" }));
 }
 
 function escapeHtml(value: string) {
@@ -384,14 +385,14 @@ async function processContractReminder(job: Job) {
   if (error || !reminder) throw new Error("reminder_not_found");
   if (["sent", "cancelled", "failed", "skipped"].includes(reminder.status)) return;
   const [{ data: request }, { data: contract }, { data: recipient }, { data: policy }] = await Promise.all([
-    supabase.from("contract_acceptance_requests").select("id,status,expires_at,public_token_ciphertext,canonical_document_id,canonical_document_sha256,contract_version_id,require_code,acceptance_code").eq("tenant_id", job.tenant_id).eq("id", reminder.acceptance_request_id).single(),
-    supabase.from("contracts").select("id,contract_number,title,customer_id,first_sent_at").eq("tenant_id", job.tenant_id).eq("id", reminder.contract_id).single(),
-    supabase.from("contract_recipients").select("id,full_name,email,phone_e164").eq("tenant_id", job.tenant_id).eq("id", reminder.recipient_id).single(),
-    supabase.from("contract_reminder_policies").select("timezone,quiet_hours_start,quiet_hours_end").eq("tenant_id", job.tenant_id).maybeSingle(),
+    checked(supabase.from("contract_acceptance_requests").select("id,status,expires_at,public_token_ciphertext,canonical_document_id,canonical_document_sha256,contract_version_id,require_code,acceptance_code").eq("tenant_id", job.tenant_id).eq("id", reminder.acceptance_request_id).single()),
+    checked(supabase.from("contracts").select("id,contract_number,title,customer_id,first_sent_at").eq("tenant_id", job.tenant_id).eq("id", reminder.contract_id).single()),
+    checked(supabase.from("contract_recipients").select("id,full_name,email,phone_e164").eq("tenant_id", job.tenant_id).eq("id", reminder.recipient_id).single()),
+    checked(supabase.from("contract_reminder_policies").select("timezone,quiet_hours_start,quiet_hours_end").eq("tenant_id", job.tenant_id).maybeSingle()),
   ]);
   if (!request || !contract || !recipient) throw new Error("reminder_data_missing");
   if (request.status !== "pending" || new Date(request.expires_at) <= new Date()) {
-    await supabase.from("contract_reminders").update({ status: "cancelled", cancelled_at: new Date().toISOString(), cancel_reason: request.status === "pending" ? "expired" : request.status }).eq("id", reminder.id);
+    await checked(supabase.from("contract_reminders").update({ status: "cancelled", cancelled_at: new Date().toISOString(), cancel_reason: request.status === "pending" ? "expired" : request.status }).eq("id", reminder.id));
     return;
   }
   const timezone = policy?.timezone ?? "Europe/Stockholm";
@@ -436,23 +437,23 @@ async function processContractReminder(job: Job) {
       const html = `<!doctype html><html><body style="margin:0;background:#f3f6f5;font-family:Arial,sans-serif;color:#17202a"><table role="presentation" width="100%"><tr><td align="center" style="padding:28px 12px"><table role="presentation" width="100%" style="max-width:640px;background:#fff;border:1px solid #dfe7e5"><tr><td style="padding:26px 30px;background:#102b26;color:#fff"><strong>${escapeHtml(issuerLegalName)}</strong></td></tr><tr><td style="padding:32px 30px"><h1>Påminnelse om avtal</h1><p>Hej ${escapeHtml(recipient.full_name)},</p><p>Avtal <strong>${escapeHtml(contract.contract_number)}</strong> väntar på ditt besked.</p>${personal}<p style="margin:28px 0"><a href="${escapeHtml(acceptUrl)}" style="background:#0d7d65;color:#fff;text-decoration:none;padding:13px 20px;border-radius:9px;font-weight:bold">Öppna avtalet</a></p>${acceptanceCode ? `<p>Din acceptanskod: <strong style="font-size:18px;letter-spacing:.12em">${escapeHtml(acceptanceCode)}</strong></p>` : ""}<p>Ursprungligt utskick: ${escapeHtml(firstSentLabel)}<br>Sista svarsdatum: ${escapeHtml(expiresLabel)}</p><p style="word-break:break-all">${escapeHtml(acceptUrl)}</p></td></tr></table></td></tr></table></body></html>`;
       const text = `Hej ${recipient.full_name},\n\nPåminnelse om avtal ${contract.contract_number} – ${contract.title}.\n${acceptUrl}\n${acceptanceCode ? `Din acceptanskod: ${acceptanceCode}\n` : ""}Sista svarsdatum: ${expiresLabel}.\n\n${issuerLegalName}`;
       const idempotencyKey = `${baseKey}/email`;
-      const { data: email, error: emailError } = await supabase.from("email_messages").upsert({
+      const { data: email, error: emailError } = await stableMessage("email_messages", {
         tenant_id: job.tenant_id, customer_id: contract.customer_id, contract_id: contract.id, direction: "outbound",
         from_address: "pending@kundexa.local", to_addresses: [recipient.email], subject, body_text: text, body_html: html,
         status: "queued", attachments: reminder.attach_pdf ? [{ document_id: request.canonical_document_id, filename: `${contract.contract_number}.pdf`, mime_type: "application/pdf" }] : [],
         idempotency_key: idempotencyKey, purpose: "contract_reminder",
-      }, { onConflict: "tenant_id,idempotency_key" }).select("id").single();
+      });
       if (emailError || !email) throw new Error(emailError?.message ?? "reminder_email_create_failed");
       emailMessageId = email.id;
-      await supabase.from("contract_deliveries").upsert({
+      await checked(supabase.from("contract_deliveries").upsert({
         tenant_id: job.tenant_id, contract_id: contract.id, contract_version_id: request.contract_version_id, recipient_id: recipient.id,
         acceptance_request_id: request.id, channel: "email", status: "queued", email_message_id: email.id,
         delivery_kind: deliveryKind, attempt_number: 1, canonical_document_id: request.canonical_document_id,
         canonical_document_sha256: request.canonical_document_sha256, idempotency_key: idempotencyKey, scheduled_at: new Date().toISOString(),
-      }, { onConflict: "tenant_id,idempotency_key" });
-      await supabase.from("outbox_jobs").upsert({ tenant_id: job.tenant_id, job_type: "email.send", aggregate_type: "email_message", aggregate_id: email.id, payload: { email_message_id: email.id, acceptance_request_id: request.id, reminder_id: reminder.id }, idempotency_key: idempotencyKey, priority: 25 }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true });
+      }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true }));
+      await checked(supabase.from("outbox_jobs").upsert({ tenant_id: job.tenant_id, job_type: "email.send", aggregate_type: "email_message", aggregate_id: email.id, payload: { email_message_id: email.id, acceptance_request_id: request.id, reminder_id: reminder.id }, idempotency_key: idempotencyKey, priority: 25 }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true }));
     } else if (channel === "email") {
-      await supabase.from("contract_reminders").update({ status: "cancelled", cancelled_at: new Date().toISOString(), cancel_reason: permanentFailure ? "permanent_email_failure" : "recipient_email_missing" }).eq("id", reminder.id);
+      await checked(supabase.from("contract_reminders").update({ status: "cancelled", cancelled_at: new Date().toISOString(), cancel_reason: permanentFailure ? "permanent_email_failure" : "recipient_email_missing" }).eq("id", reminder.id));
       return;
     }
   }
@@ -467,18 +468,18 @@ async function processContractReminder(job: Job) {
       if (number) {
         const idempotencyKey = `${baseKey}/sms`;
         const body = `Påminnelse om avtal ${contract.contract_number} från ${issuerLegalName}. Granska: ${acceptUrl}. Giltigt till ${expiresLabel}.`;
-        const { data: sms, error: smsError } = await supabase.from("sms_messages").upsert({ tenant_id: job.tenant_id, customer_id: contract.customer_id, contract_id: contract.id, direction: "outbound", from_number: number.number_e164, to_number: recipient.phone_e164, body, status: "queued", idempotency_key: idempotencyKey, purpose: "contract_reminder" }, { onConflict: "tenant_id,idempotency_key" }).select("id").single();
+        const { data: sms, error: smsError } = await stableMessage("sms_messages", { tenant_id: job.tenant_id, customer_id: contract.customer_id, contract_id: contract.id, direction: "outbound", from_number: number.number_e164, to_number: recipient.phone_e164, body, status: "queued", idempotency_key: idempotencyKey, purpose: "contract_reminder" });
         if (smsError || !sms) throw new Error(smsError?.message ?? "reminder_sms_create_failed");
         smsMessageId = sms.id;
-        await supabase.from("contract_deliveries").upsert({ tenant_id: job.tenant_id, contract_id: contract.id, contract_version_id: request.contract_version_id, recipient_id: recipient.id, acceptance_request_id: request.id, channel: "sms", status: "queued", sms_message_id: sms.id, delivery_kind: deliveryKind, attempt_number: 1, canonical_document_id: request.canonical_document_id, canonical_document_sha256: request.canonical_document_sha256, idempotency_key: idempotencyKey, scheduled_at: new Date().toISOString() }, { onConflict: "tenant_id,idempotency_key" });
-        await supabase.from("outbox_jobs").upsert({ tenant_id: job.tenant_id, job_type: "sms.send", aggregate_type: "sms_message", aggregate_id: sms.id, payload: { sms_message_id: sms.id, acceptance_request_id: request.id, reminder_id: reminder.id }, idempotency_key: idempotencyKey, priority: 25 }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true });
+        await checked(supabase.from("contract_deliveries").upsert({ tenant_id: job.tenant_id, contract_id: contract.id, contract_version_id: request.contract_version_id, recipient_id: recipient.id, acceptance_request_id: request.id, channel: "sms", status: "queued", sms_message_id: sms.id, delivery_kind: deliveryKind, attempt_number: 1, canonical_document_id: request.canonical_document_id, canonical_document_sha256: request.canonical_document_sha256, idempotency_key: idempotencyKey, scheduled_at: new Date().toISOString() }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true }));
+        await checked(supabase.from("outbox_jobs").upsert({ tenant_id: job.tenant_id, job_type: "sms.send", aggregate_type: "sms_message", aggregate_id: sms.id, payload: { sms_message_id: sms.id, acceptance_request_id: request.id, reminder_id: reminder.id }, idempotency_key: idempotencyKey, priority: 25 }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true }));
       } else if (channel === "sms") throw new Error("permanent_reminder_sms_number_missing");
     } else if (channel === "sms") throw new Error("permanent_reminder_recipient_phone_missing");
   }
 
   if (!emailMessageId && !smsMessageId) throw new Error("permanent_reminder_no_valid_channel");
-  await supabase.from("contract_reminders").update({ status: "queued", email_message_id: emailMessageId, sms_message_id: smsMessageId }).eq("id", reminder.id);
-  await supabase.from("contract_events").insert({ tenant_id: job.tenant_id, contract_id: contract.id, event_type: "contract.reminder_queued", payload: { reminder_id: reminder.id, channel, acceptance_request_id: request.id } });
+  await checked(supabase.from("contract_reminders").update({ status: "queued", email_message_id: emailMessageId, sms_message_id: smsMessageId }).eq("id", reminder.id).in("status", ["scheduled", "queued"]));
+  await checked(supabase.from("contract_events").insert({ tenant_id: job.tenant_id, contract_id: contract.id, event_type: "contract.reminder_queued", payload: { reminder_id: reminder.id, channel, acceptance_request_id: request.id } }));
 }
 
 function escapePdfText(value: string) {
@@ -529,10 +530,6 @@ async function sha256Bytes(bytes: Uint8Array) {
   return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function singleRelation<T>(value: T | T[] | null | undefined): T | null {
-  return Array.isArray(value) ? (value[0] ?? null) : (value ?? null);
-}
-
 async function processEvidence(job: Job) {
   const contractId = String(job.payload.contract_id ?? job.aggregate_id ?? "");
   const acceptanceId = String(job.payload.acceptance_id ?? "");
@@ -546,7 +543,7 @@ async function processEvidence(job: Job) {
     supabase.from("contract_versions").select("*").eq("tenant_id", job.tenant_id).eq("contract_id", contractId).order("version"),
     supabase.from("contract_acceptances").select("*").eq("tenant_id", job.tenant_id).eq("contract_id", contractId),
     supabase.from("contract_events").select("*").eq("tenant_id", job.tenant_id).eq("contract_id", contractId).order("occurred_at"),
-    supabase.from("contract_documents").select("id,document_type,file_name,storage_path,mime_type,size_bytes,sha256,metadata,created_at").eq("tenant_id", job.tenant_id).eq("contract_id", contractId),
+    supabase.from("contract_documents").select("id,contract_version_id,document_type,file_name,storage_path,mime_type,size_bytes,sha256,metadata,created_at").eq("tenant_id", job.tenant_id).eq("contract_id", contractId),
     supabase.from("contract_deliveries").select("*").eq("tenant_id", job.tenant_id).eq("contract_id", contractId).order("created_at"),
     supabase.from("email_messages").select("id,provider_message_id,status,provider_status,sent_at,delivered_at,failure_code,error_message,created_at").eq("tenant_id", job.tenant_id).eq("contract_id", contractId).order("created_at"),
     supabase.from("sms_messages").select("id,provider_message_id,status,sent_at,delivered_at,error_code,error_message,created_at").eq("tenant_id", job.tenant_id).eq("contract_id", contractId).order("created_at"),
@@ -560,16 +557,20 @@ async function processEvidence(job: Job) {
   }
   const [{ data: contract }, { data: versions }, { data: acceptances }, { data: events }, { data: documents }, { data: deliveries }, { data: emails }, { data: sms }, { data: request }] = evidenceReads;
   if (!contract) throw new Error("contract_not_found");
-  const { data: sourceCall } = contract.source_call_id
+  const { data: sourceCall, error: sourceCallError } = contract.source_call_id
     ? await supabase.from("calls").select("id,started_at,answered_at,ended_at,duration_seconds,direction,disposition,user_id,metadata").eq("tenant_id", job.tenant_id).eq("id", contract.source_call_id).maybeSingle()
-    : { data: null };
-  const activeVersion = (versions ?? []).find((version) => version.id === contract.active_version_id) ?? versions?.[versions.length - 1];
-  const acceptance = (acceptances ?? []).find((item) => item.id === acceptanceId) ?? acceptances?.[acceptances.length - 1];
+    : { data: null, error: null };
+  if (sourceCallError) throw sourceCallError;
+  if (!acceptanceId || !requestId) throw new Error("evidence_acceptance_binding_missing");
+  const acceptance = (acceptances ?? []).find((item) => item.id === acceptanceId);
+  const activeVersion = (versions ?? []).find((version) => version.id === acceptance?.contract_version_id);
+  if (!request || request.contract_id !== contractId || request.contract_version_id !== acceptance?.contract_version_id || request.id !== acceptance?.request_id || (job.payload.generation != null && Number(job.payload.generation) !== Number(request.generation))) throw new Error("evidence_acceptance_binding_mismatch");
   if (!activeVersion || !acceptance) throw new Error("evidence_version_or_acceptance_missing");
+  if (["external_esign", "bankid"].includes(String(activeVersion.signature_policy_snapshot?.method)) || ["electronic_signature", "bankid"].includes(String(acceptance.method))) throw new Error("permanent_external_signing_requires_provider_evidence");
   const canonicalDocumentId = acceptance.canonical_document_id ?? request?.canonical_document_id;
   const canonicalHash = acceptance.canonical_document_sha256 ?? request?.canonical_document_sha256;
   const canonicalDocument = (documents ?? []).find((document) => document.id === canonicalDocumentId);
-  if (!canonicalDocument || canonicalDocument.sha256 !== canonicalHash || canonicalDocument.mime_type !== "application/pdf") {
+  if (!canonicalDocument || canonicalDocument.contract_version_id !== activeVersion.id || canonicalDocument.sha256 !== canonicalHash || canonicalDocument.mime_type !== "application/pdf") {
     throw new Error("canonical_document_binding_invalid_for_evidence");
   }
   const { data: canonicalBlob, error: canonicalDownloadError } = await supabase.storage.from("contract-documents").download(canonicalDocument.storage_path);
@@ -577,9 +578,11 @@ async function processEvidence(job: Job) {
   const canonicalBytes = new Uint8Array(await canonicalBlob.arrayBuffer());
   if (await sha256Bytes(canonicalBytes) !== canonicalHash) throw new Error("canonical_document_hash_mismatch_for_evidence");
 
-  const tenant = singleRelation(contract.tenants);
-  const customer = singleRelation(contract.customers);
-  const generation = Number(request?.generation ?? contract.acceptance_generation ?? 0);
+  const parties = (canonicalDocument.metadata as Record<string, unknown> | null)?.locked_parties as { seller?: Record<string, unknown>; counterparty?: Record<string, unknown> } | undefined;
+  const seller = parties?.seller;
+  const customer = parties?.counterparty;
+  if (!seller?.legal_name || !customer?.display_name) throw new Error("evidence_locked_parties_missing");
+  const generation = Number(request.generation);
   const manifestBase = {
     schema: "kundexa.evidence.v3",
     generated_at: new Date().toISOString(),
@@ -595,6 +598,7 @@ async function processEvidence(job: Job) {
     source_call_eligibility_snapshot: contract.source_call_eligibility_snapshot ?? null,
     source_call_eligibility_locked_at: contract.source_call_eligibility_locked_at ?? null,
     source_call_live_projection: sourceCall,
+    locked_parties: parties,
     canonical_document: { id: canonicalDocument.id, sha256: canonicalHash, file_name: canonicalDocument.file_name, size_bytes: canonicalBytes.length },
     acceptance,
     deliveries,
@@ -605,7 +609,9 @@ async function processEvidence(job: Job) {
   };
   const manifestWithoutHash = new TextEncoder().encode(JSON.stringify(manifestBase, null, 2));
   const manifestHash = await sha256Bytes(manifestWithoutHash);
-  const manifest = { ...manifestBase, manifest_hash: manifestHash };
+  const { data: frozenManifest, error: freezeError } = await supabase.rpc("freeze_outbox_artifact", { p_job_id: job.id, p_worker: job.locked_by, p_artifact: { ...manifestBase, manifest_hash: manifestHash } });
+  if (freezeError) throw freezeError;
+  const manifest = frozenManifest as typeof manifestBase & { manifest_hash: string };
   const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest, null, 2));
   const finalManifestHash = await sha256Bytes(manifestBytes);
   const key = acceptanceId || acceptance.id || requestId || job.id;
@@ -619,7 +625,7 @@ async function processEvidence(job: Job) {
   if (acceptedUploadError) throw acceptedUploadError;
 
   const evidencePdf = createTextPdf(`Kundexa bevispaket ${contract.contract_number}`, [
-    { heading: "Avtalsparter", text: `${tenant?.legal_name ?? "Tenant"} och ${customer?.display_name ?? "Kund"}` },
+    { heading: "Avtalsparter", text: `${seller.legal_name} och ${customer.display_name}` },
     { heading: "Avtal", text: `${contract.contract_number} · version ${activeVersion.version}` },
     { heading: "Snapshot SHA-256", text: activeVersion.snapshot_hash ?? activeVersion.document_hash ?? "saknas" },
     { heading: "Kanonisk PDF SHA-256", text: canonicalHash },
@@ -627,7 +633,7 @@ async function processEvidence(job: Job) {
     { heading: "Acceptans", text: JSON.stringify({ id: acceptance.id, generation, method: acceptance.method, status: acceptance.status, accepted_at: acceptance.accepted_at, name: acceptance.acceptance_phrase, ip: acceptance.ip_address, user_agent: acceptance.user_agent }) },
     { heading: "Källsamtal – låst eligibility", text: JSON.stringify(contract.source_call_eligibility_snapshot ?? null) },
     { heading: "Signaturpolicy", text: JSON.stringify(activeVersion.signature_policy_snapshot ?? null) },
-    { heading: "Kommunikation", text: `${deliveries?.length ?? 0} leveranser, ${emails?.length ?? 0} e-postmeddelanden och ${sms?.length ?? 0} SMS ingår i manifestet.` },
+    { heading: "Kommunikation", text: `${manifest.deliveries?.length ?? 0} leveranser, ${manifest.emails?.length ?? 0} e-postmeddelanden och ${manifest.sms?.length ?? 0} SMS ingår i manifestet.` },
     { heading: "Manifest SHA-256", text: finalManifestHash },
   ]);
   const evidenceHash = await sha256Bytes(evidencePdf);
@@ -639,7 +645,7 @@ async function processEvidence(job: Job) {
     { document_type: "manifest", file_name: `evidence-${key}.json`, storage_path: manifestPath, mime_type: "application/json", size_bytes: manifestBytes.length, sha256: finalManifestHash },
     { document_type: "signed_pdf", file_name: `accepted-${contract.contract_number}.pdf`, storage_path: acceptedPath, mime_type: "application/pdf", size_bytes: canonicalBytes.length, sha256: canonicalHash },
     { document_type: "evidence_pdf", file_name: `evidence-${contract.contract_number}.pdf`, storage_path: evidencePath, mime_type: "application/pdf", size_bytes: evidencePdf.length, sha256: evidenceHash },
-  ].map((row) => ({ ...row, tenant_id: job.tenant_id, contract_id: contractId, contract_version_id: contract.active_version_id, metadata: { acceptance_id: acceptance.id, request_id: requestId || request?.id || null, generation, canonical_document_id: canonicalDocument.id, canonical_document_sha256: canonicalHash, manifest_hash: finalManifestHash, immutable: true } }));
+  ].map((row) => ({ ...row, tenant_id: job.tenant_id, contract_id: contractId, contract_version_id: activeVersion.id, metadata: { acceptance_id: acceptance.id, request_id: requestId || request?.id || null, generation, canonical_document_id: canonicalDocument.id, canonical_document_sha256: canonicalHash, manifest_hash: finalManifestHash, locked_parties: parties, immutable: true } }));
   const insertedDocuments: Record<string, string> = {};
   for (const row of documentRows) {
     const { data, error } = await supabase.from("contract_documents").upsert(row, { onConflict: "tenant_id,storage_path" }).select("id,document_type").single();
@@ -650,7 +656,7 @@ async function processEvidence(job: Job) {
   const evidenceRow = {
     tenant_id: job.tenant_id,
     contract_id: contractId,
-    contract_version_id: contract.active_version_id,
+    contract_version_id: activeVersion.id,
     acceptance_id: acceptance.id,
     status: "completed",
     manifest,
@@ -658,34 +664,39 @@ async function processEvidence(job: Job) {
     storage_path: manifestPath,
     canonical_document_id: canonicalDocument.id,
     canonical_document_sha256: canonicalHash,
-    generated_at: new Date().toISOString(),
+    generated_at: manifest.generated_at,
   };
   const { error: evidenceError } = await supabase.from("evidence_packages").upsert(evidenceRow, { onConflict: "tenant_id,acceptance_id" });
   if (evidenceError) throw evidenceError;
-  await supabase.from("contract_events").insert({ tenant_id: job.tenant_id, contract_id: contractId, event_type: "evidence.completed", payload: { acceptance_id: acceptance.id, generation, manifest_hash: finalManifestHash, signed_pdf_id: insertedDocuments.signed_pdf, evidence_pdf_id: insertedDocuments.evidence_pdf, canonical_document_id: canonicalDocument.id } });
+  await checked(supabase.from("contract_events").insert({ tenant_id: job.tenant_id, contract_id: contractId, event_type: "evidence.completed", payload: { acceptance_id: acceptance.id, generation, manifest_hash: finalManifestHash, signed_pdf_id: insertedDocuments.signed_pdf, evidence_pdf_id: insertedDocuments.evidence_pdf, canonical_document_id: canonicalDocument.id } }));
 }
 
 async function processContractConfirmation(job: Job) {
   const requestId = String(job.payload.request_id ?? "");
   const acceptanceId = String(job.payload.acceptance_id ?? "");
-  if (!requestId) throw new Error("confirmation_request_missing");
+  if (!requestId || !acceptanceId) throw new Error("confirmation_acceptance_binding_missing");
   const { data: request, error } = await supabase.from("contract_acceptance_requests")
-    .select("id,tenant_id,contract_id,contract_version_id,recipient_id,canonical_document_sha256,accepted_at")
+    .select("id,tenant_id,contract_id,contract_version_id,recipient_id,canonical_document_sha256,accepted_at,generation")
     .eq("tenant_id", job.tenant_id).eq("id", requestId).single();
   if (error || !request) throw new Error("confirmation_request_not_found");
   const [{ data: contract }, { data: recipient }, { data: tenant }, { data: acceptedDocument }, { data: evidenceDocument }, { data: acceptance }] = await Promise.all([
-    supabase.from("contracts").select("contract_number,title,customer_id").eq("tenant_id", job.tenant_id).eq("id", request.contract_id).single(),
-    supabase.from("contract_recipients").select("id,full_name,email,phone_e164").eq("tenant_id", job.tenant_id).eq("id", request.recipient_id).single(),
-    supabase.from("tenants").select("legal_name").eq("id", job.tenant_id).single(),
-    supabase.from("contract_documents").select("id,file_name,sha256").eq("tenant_id", job.tenant_id).eq("contract_id", request.contract_id).eq("document_type", "signed_pdf").order("created_at", { ascending: false }).limit(1).maybeSingle(),
-    supabase.from("contract_documents").select("id,file_name,sha256").eq("tenant_id", job.tenant_id).eq("contract_id", request.contract_id).eq("document_type", "evidence_pdf").order("created_at", { ascending: false }).limit(1).maybeSingle(),
-    acceptanceId ? supabase.from("contract_acceptances").select("accepted_at,acceptance_phrase").eq("tenant_id", job.tenant_id).eq("id", acceptanceId).maybeSingle() : Promise.resolve({ data: null }),
+    checked(supabase.from("contracts").select("contract_number,title,customer_id").eq("tenant_id", job.tenant_id).eq("id", request.contract_id).single()),
+    checked(supabase.from("contract_recipients").select("id,full_name,email,phone_e164").eq("tenant_id", job.tenant_id).eq("id", request.recipient_id).single()),
+    checked(supabase.from("tenants").select("legal_name").eq("id", job.tenant_id).single()),
+    checked(supabase.from("contract_documents").select("id,file_name,sha256,metadata").eq("tenant_id", job.tenant_id).eq("contract_id", request.contract_id).eq("document_type", "signed_pdf").eq("contract_version_id", request.contract_version_id).contains("metadata", { acceptance_id: acceptanceId, request_id: request.id, generation: request.generation }).order("created_at", { ascending: false }).limit(1).maybeSingle()),
+    checked(supabase.from("contract_documents").select("id,file_name,sha256,metadata").eq("tenant_id", job.tenant_id).eq("contract_id", request.contract_id).eq("document_type", "evidence_pdf").eq("contract_version_id", request.contract_version_id).contains("metadata", { acceptance_id: acceptanceId, request_id: request.id, generation: request.generation }).order("created_at", { ascending: false }).limit(1).maybeSingle()),
+    checked(supabase.from("contract_acceptances").select("accepted_at,acceptance_phrase").eq("tenant_id", job.tenant_id).eq("contract_id", request.contract_id).eq("contract_version_id", request.contract_version_id).eq("request_id", request.id).eq("id", acceptanceId).maybeSingle()),
   ]);
   if (!contract || !recipient || !tenant) throw new Error("confirmation_data_missing");
   // Same rule as the reminder: the customer sees the company that issued the
   // contract, not the tenant it belongs to.
-  const issuerLegalName = await contractIssuerName(job.tenant_id, request.contract_id, tenant.legal_name);
-  if (!acceptedDocument) throw new Error("confirmation_waiting_for_signed_document");
+  const lockedParties = (acceptedDocument?.metadata as { locked_parties?: { seller?: { legal_name?: string } } } | null)?.locked_parties;
+  const issuerLegalName = String(lockedParties?.seller?.legal_name ?? "");
+  if (!issuerLegalName) throw new Error("confirmation_locked_seller_missing");
+  if (!acceptedDocument || !evidenceDocument || !acceptance) throw new Error("confirmation_waiting_for_own_evidence_package");
+  const { data: evidencePackage, error: packageError } = await supabase.from("evidence_packages").select("id").eq("tenant_id", job.tenant_id).eq("acceptance_id", acceptanceId).eq("contract_version_id", request.contract_version_id).eq("status", "completed").maybeSingle();
+  if (packageError) throw packageError;
+  if (!evidencePackage) throw new Error("confirmation_waiting_for_own_evidence_package");
   const acceptedAt = acceptance?.accepted_at ?? request.accepted_at ?? new Date().toISOString();
   const acceptedLabel = new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeStyle: "short", timeZone: "Europe/Stockholm" }).format(new Date(acceptedAt));
   const text = `Hej ${recipient.full_name},\n\nDitt besked för avtal ${contract.contract_number} (${contract.title}) hos ${issuerLegalName} registrerades ${acceptedLabel}. Den accepterade avtalskopian finns bifogad. Detta är en dokumenterad acceptans.\n\n${issuerLegalName}`;
@@ -697,19 +708,19 @@ async function processContractConfirmation(job: Job) {
       { document_id: acceptedDocument.id, filename: acceptedDocument.file_name, mime_type: "application/pdf" },
       ...(evidenceDocument ? [{ document_id: evidenceDocument.id, filename: evidenceDocument.file_name, mime_type: "application/pdf" }] : []),
     ];
-    const { data: email, error: emailError } = await supabase.from("email_messages").upsert({
+    const { data: email, error: emailError } = await stableMessage("email_messages", {
       tenant_id: job.tenant_id, customer_id: contract.customer_id, contract_id: request.contract_id, direction: "outbound",
       from_address: "pending@kundexa.local", to_addresses: [recipient.email], subject: `Bekräftelse på avtal ${contract.contract_number}`,
       body_text: text, body_html: html, status: "queued", attachments, idempotency_key: idempotencyKey, purpose: "contract_confirmation",
-    }, { onConflict: "tenant_id,idempotency_key" }).select("id").single();
+    });
     if (emailError || !email) throw emailError ?? new Error("confirmation_email_create_failed");
-    await supabase.from("contract_deliveries").upsert({
+    await checked(supabase.from("contract_deliveries").upsert({
       tenant_id: job.tenant_id, contract_id: request.contract_id, contract_version_id: request.contract_version_id, recipient_id: recipient.id,
       acceptance_request_id: request.id, channel: "email", status: "queued", email_message_id: email.id,
       delivery_kind: "acceptance_confirmation", attempt_number: 1, canonical_document_id: acceptedDocument.id,
       canonical_document_sha256: acceptedDocument.sha256, idempotency_key: idempotencyKey, scheduled_at: new Date().toISOString(),
-    }, { onConflict: "tenant_id,idempotency_key" });
-    await supabase.from("outbox_jobs").upsert({ tenant_id: job.tenant_id, job_type: "email.send", aggregate_type: "email_message", aggregate_id: email.id, payload: { email_message_id: email.id, acceptance_request_id: request.id, acceptance_id: acceptanceId || null }, idempotency_key: idempotencyKey, priority: 30 }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true });
+    }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true }));
+    await checked(supabase.from("outbox_jobs").upsert({ tenant_id: job.tenant_id, job_type: "email.send", aggregate_type: "email_message", aggregate_id: email.id, payload: { email_message_id: email.id, acceptance_request_id: request.id, acceptance_id: acceptanceId || null }, idempotency_key: idempotencyKey, priority: 30 }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true }));
   }
 
   if (recipient.phone_e164) {
@@ -718,20 +729,21 @@ async function processContractConfirmation(job: Job) {
     if (number) {
       const idempotencyKey = `contract-confirmation/${acceptanceId || request.id}/sms`;
       const smsBody = `Bekräftelse: ditt besked för avtal ${contract.contract_number} hos ${issuerLegalName} registrerades ${acceptedLabel}.`;
-      const { data: sms, error: smsError } = await supabase.from("sms_messages").upsert({ tenant_id: job.tenant_id, customer_id: contract.customer_id, contract_id: request.contract_id, direction: "outbound", from_number: number.number_e164, to_number: recipient.phone_e164, body: smsBody, status: "queued", idempotency_key: idempotencyKey, purpose: "contract_confirmation" }, { onConflict: "tenant_id,idempotency_key" }).select("id").single();
+      const { data: sms, error: smsError } = await stableMessage("sms_messages", { tenant_id: job.tenant_id, customer_id: contract.customer_id, contract_id: request.contract_id, direction: "outbound", from_number: number.number_e164, to_number: recipient.phone_e164, body: smsBody, status: "queued", idempotency_key: idempotencyKey, purpose: "contract_confirmation" });
       if (smsError || !sms) throw smsError ?? new Error("confirmation_sms_create_failed");
-      await supabase.from("contract_deliveries").upsert({ tenant_id: job.tenant_id, contract_id: request.contract_id, contract_version_id: request.contract_version_id, recipient_id: recipient.id, acceptance_request_id: request.id, channel: "sms", status: "queued", sms_message_id: sms.id, delivery_kind: "acceptance_confirmation", attempt_number: 1, canonical_document_id: acceptedDocument.id, canonical_document_sha256: acceptedDocument.sha256, idempotency_key: idempotencyKey, scheduled_at: new Date().toISOString() }, { onConflict: "tenant_id,idempotency_key" });
-      await supabase.from("outbox_jobs").upsert({ tenant_id: job.tenant_id, job_type: "sms.send", aggregate_type: "sms_message", aggregate_id: sms.id, payload: { sms_message_id: sms.id, acceptance_request_id: request.id, acceptance_id: acceptanceId || null }, idempotency_key: idempotencyKey, priority: 30 }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true });
+      await checked(supabase.from("contract_deliveries").upsert({ tenant_id: job.tenant_id, contract_id: request.contract_id, contract_version_id: request.contract_version_id, recipient_id: recipient.id, acceptance_request_id: request.id, channel: "sms", status: "queued", sms_message_id: sms.id, delivery_kind: "acceptance_confirmation", attempt_number: 1, canonical_document_id: acceptedDocument.id, canonical_document_sha256: acceptedDocument.sha256, idempotency_key: idempotencyKey, scheduled_at: new Date().toISOString() }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true }));
+      await checked(supabase.from("outbox_jobs").upsert({ tenant_id: job.tenant_id, job_type: "sms.send", aggregate_type: "sms_message", aggregate_id: sms.id, payload: { sms_message_id: sms.id, acceptance_request_id: request.id, acceptance_id: acceptanceId || null }, idempotency_key: idempotencyKey, priority: 30 }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true }));
     }
   }
-  await supabase.from("contract_events").insert({ tenant_id: job.tenant_id, contract_id: request.contract_id, event_type: "contract.confirmation_queued", payload: { acceptance_request_id: request.id, acceptance_id: acceptanceId || null, signed_document_id: acceptedDocument.id, evidence_document_id: evidenceDocument?.id ?? null } });
+  await checked(supabase.from("contract_events").insert({ tenant_id: job.tenant_id, contract_id: request.contract_id, event_type: "contract.confirmation_queued", payload: { acceptance_request_id: request.id, acceptance_id: acceptanceId || null, signed_document_id: acceptedDocument.id, evidence_document_id: evidenceDocument?.id ?? null } }));
 }
 
 
 async function processSignedContractConfirmation(job: Job) {
   const contractId = String(job.aggregate_id ?? job.payload.contract_id ?? "");
   const finalDocumentId = String(job.payload.final_document_id ?? "");
-  if (!contractId || !finalDocumentId) throw new Error("signed_confirmation_payload_missing");
+  const envelopeId = String(job.payload.envelope_id ?? "");
+  if (!contractId || !finalDocumentId || !envelopeId) throw new Error("signed_confirmation_payload_missing");
 
   const { data: contract, error: contractError } = await supabase.from("contracts")
     .select("id,tenant_id,contract_number,title,customer_id,active_version_id,signed_at,acceptance_generation")
@@ -740,13 +752,35 @@ async function processSignedContractConfirmation(job: Job) {
   const generation = Number(job.payload.generation ?? contract.acceptance_generation ?? 0);
   if (generation !== Number(contract.acceptance_generation ?? 0)) throw new Error("signed_confirmation_generation_superseded");
   const [{ data: tenant }, { data: document, error: documentError }, { data: recipients, error: recipientsError }] = await Promise.all([
-    supabase.from("tenants").select("legal_name").eq("id", job.tenant_id).single(),
-    supabase.from("contract_documents").select("id,contract_version_id,file_name,sha256").eq("tenant_id", job.tenant_id).eq("id", finalDocumentId).eq("contract_id", contractId).eq("document_type", "signed_pdf").single(),
-    supabase.from("contract_recipients").select("id,full_name,email,status,required,generation").eq("tenant_id", job.tenant_id).eq("contract_id", contractId).eq("generation", generation).eq("status", "signed"),
+    checked(supabase.from("tenants").select("legal_name").eq("id", job.tenant_id).single()),
+    checked(supabase.from("contract_documents").select("id,contract_version_id,file_name,sha256,metadata").eq("tenant_id", job.tenant_id).eq("id", finalDocumentId).eq("contract_id", contractId).eq("document_type", "signed_pdf").single()),
+    checked(supabase.from("contract_recipients").select("id,full_name,email,status,required,generation").eq("tenant_id", job.tenant_id).eq("contract_id", contractId).eq("generation", generation).eq("status", "signed")),
   ]);
   if (documentError || !document) throw new Error("signed_confirmation_document_not_found");
   if (recipientsError) throw new Error(recipientsError.message);
   if (!tenant) throw new Error("signed_confirmation_tenant_not_found");
+
+  const { data: envelope, error: envelopeError } = await supabase.from("signing_envelopes")
+    .select("id,status,contract_version_id,generation,final_document_id,provider,provider_evidence")
+    .eq("tenant_id", job.tenant_id).eq("contract_id", contractId).eq("id", envelopeId).single();
+  if (envelopeError) throw envelopeError;
+  if (!envelope || envelope.status !== "completed" || envelope.final_document_id !== document.id || envelope.contract_version_id !== contract.active_version_id || document.contract_version_id !== envelope.contract_version_id || Number(envelope.generation) !== generation) throw new Error("signed_confirmation_envelope_binding_mismatch");
+  const { data: ownPackage, error: packageError } = await supabase.from("evidence_packages").select("id")
+    .eq("tenant_id", job.tenant_id).eq("contract_id", contractId).eq("contract_version_id", envelope.contract_version_id).eq("status", "completed")
+    .contains("manifest", { generation, signing_envelope: { id: envelopeId }, final_document: { id: document.id, sha256: document.sha256 } }).maybeSingle();
+  if (packageError) throw packageError;
+  if (!ownPackage) throw new Error("signed_confirmation_waiting_for_provider_evidence");
+  const auditId = String(envelope.provider_evidence?.provider_audit_document_id ?? "");
+  const { data: audit, error: auditError } = auditId
+    ? await supabase.from("contract_documents").select("id,file_name,sha256").eq("tenant_id", job.tenant_id).eq("contract_id", contractId)
+      .eq("contract_version_id", envelope.contract_version_id).eq("id", auditId).eq("document_type", "evidence_pdf")
+      .contains("metadata", { provider_audit: true, envelope_id: envelopeId, generation }).single()
+    : { data: null, error: null };
+  if (auditError) throw auditError;
+  if (envelope.provider === "docuseal" && (!audit || audit.sha256 !== envelope.provider_evidence?.provider_audit_sha256)) throw new Error("signed_confirmation_waiting_for_provider_audit");
+  const lockedParties = (document.metadata as { locked_parties?: { seller?: { legal_name?: string } } } | null)?.locked_parties;
+  const lockedIssuerName = lockedParties?.seller?.legal_name;
+  if (envelope.provider === "docuseal" && !lockedIssuerName) throw new Error("signed_confirmation_locked_parties_missing");
 
   const signedAt = contract.signed_at ?? new Date().toISOString();
   const signedLabel = new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeStyle: "short", timeZone: "Europe/Stockholm" }).format(new Date(signedAt));
@@ -755,14 +789,14 @@ async function processSignedContractConfirmation(job: Job) {
     const idempotencyKey = `contract-signed/${contract.id}/${generation}/${recipient.id}/email`;
     // Same rule again: the company that issued the contract is the one that
     // tells the customer it is signed.
-    const issuerLegalName = await contractIssuerName(job.tenant_id, contract.id, tenant.legal_name);
+    const issuerLegalName = lockedIssuerName || await contractIssuerName(job.tenant_id, contract.id, tenant.legal_name);
     const text = `Hej ${recipient.full_name},
 
 Avtal ${contract.contract_number} (${contract.title}) hos ${issuerLegalName} är fullständigt signerat sedan ${signedLabel}. Det slutligt signerade dokumentet finns bifogat.
 
 ${issuerLegalName}`;
     const html = `<!doctype html><html><body style="margin:0;background:#f3f6f5;font-family:Arial,sans-serif;color:#17202a"><table role="presentation" width="100%"><tr><td align="center" style="padding:28px 12px"><table role="presentation" width="100%" style="max-width:640px;background:#fff;border:1px solid #dfe7e5"><tr><td style="padding:26px 30px;background:#102b26;color:#fff"><strong>${escapeHtml(issuerLegalName)}</strong></td></tr><tr><td style="padding:32px 30px"><h1>Avtalet är fullständigt signerat</h1><p>Hej ${escapeHtml(recipient.full_name)},</p><p>Avtal <strong>${escapeHtml(contract.contract_number)}</strong> är fullständigt signerat sedan ${escapeHtml(signedLabel)}.</p><p>Det slutligt signerade dokumentet finns bifogat.</p></td></tr></table></td></tr></table></body></html>`;
-    const { data: email, error: emailError } = await supabase.from("email_messages").upsert({
+    const { data: email, error: emailError } = await stableMessage("email_messages", {
       tenant_id: job.tenant_id,
       customer_id: contract.customer_id,
       contract_id: contract.id,
@@ -773,10 +807,10 @@ ${issuerLegalName}`;
       body_text: text,
       body_html: html,
       status: "queued",
-      attachments: [{ document_id: document.id, filename: document.file_name, mime_type: "application/pdf" }],
+      attachments: [{ document_id: document.id, filename: document.file_name, mime_type: "application/pdf" }, ...(audit ? [{ document_id: audit.id, filename: audit.file_name, mime_type: "application/pdf" }] : [])],
       idempotency_key: idempotencyKey,
       purpose: "contract_confirmation",
-    }, { onConflict: "tenant_id,idempotency_key" }).select("id").single();
+    });
     if (emailError || !email) throw emailError ?? new Error("signed_confirmation_email_create_failed");
 
     const { error: deliveryError } = await supabase.from("contract_deliveries").upsert({
@@ -793,7 +827,7 @@ ${issuerLegalName}`;
       canonical_document_sha256: document.sha256,
       idempotency_key: idempotencyKey,
       scheduled_at: new Date().toISOString(),
-    }, { onConflict: "tenant_id,idempotency_key" });
+    }, { onConflict: "tenant_id,idempotency_key", ignoreDuplicates: true });
     if (deliveryError) throw new Error(deliveryError.message);
 
     const { error: outboxError } = await supabase.from("outbox_jobs").upsert({
@@ -830,8 +864,9 @@ async function processWebhook(job: Job) {
     .eq("tenant_id", job.tenant_id).eq("id", job.aggregate_id).single();
   if (error || !delivery) throw new Error("webhook_delivery_not_found");
   if (delivery.status === "completed") return;
-  const { data: endpoint } = await supabase.from("webhook_endpoints").select("url,secret_ciphertext,active")
+  const { data: endpoint, error: endpointError } = await supabase.from("webhook_endpoints").select("url,secret_ciphertext,active")
     .eq("tenant_id", job.tenant_id).eq("id", delivery.endpoint_id).single();
+  if (endpointError) throw endpointError;
   if (!endpoint?.active) throw new Error("webhook_endpoint_inactive");
   const url = assertSafeWebhookUrl(endpoint.url);
   const secret = await decryptJson<{ secret: string }>(endpoint.secret_ciphertext, encryptionKey);
@@ -844,13 +879,13 @@ async function processWebhook(job: Job) {
     redirect: "error",
   });
   const responseBody = (await response.text()).slice(0, 4000);
-  await supabase.from("webhook_deliveries").update({
+  await checked(supabase.from("webhook_deliveries").update({
     status: response.ok ? "completed" : "failed",
     response_status: response.status,
     response_body: responseBody,
     attempts: delivery.attempts + 1,
     next_attempt_at: response.ok ? null : new Date(Date.now() + 60_000).toISOString(),
-  }).eq("id", delivery.id);
+  }).eq("id", delivery.id));
   if (!response.ok) throw new Error(`webhook_http_${response.status}`);
 }
 
@@ -1001,7 +1036,7 @@ async function processTelephonyRetention(job: Job) {
     if (error) throw error;
   }
 
-  await supabase.from("audit_logs").insert({
+  await checked(supabase.from("audit_logs").insert({
     tenant_id: job.tenant_id,
     actor_user_id: null,
     action: "telephony.retention_executed",
@@ -1015,7 +1050,7 @@ async function processTelephonyRetention(job: Job) {
       raw_events_scrubbed: legacyEventIds.length,
       raw_cutoff: rawCutoff,
     },
-  });
+  }));
 }
 
 async function processJob(job: Job) {
@@ -1045,37 +1080,48 @@ Deno.serve(async (request) => {
   const worker = `edge-${crypto.randomUUID()}`;
   const { data: remindersEnqueued, error: reminderError } = await supabase.rpc("enqueue_due_contract_reminders", { p_limit: 100 });
   if (reminderError) return Response.json({ error: reminderError.message }, { status: 500 });
-  const { data: jobs, error } = await supabase.rpc("claim_outbox_jobs", { p_worker: worker, p_limit: 25 });
-  if (error) return Response.json({ error: error.message }, { status: 500 });
   const results = [];
-  for (const job of (jobs ?? []) as Job[]) {
+  const startedAt = Date.now();
+  for (let count = 0; count < 25 && Date.now() - startedAt < 45_000; count++) {
+    const { data: jobs, error } = await supabase.rpc("claim_outbox_jobs", { p_worker: worker, p_limit: 1 });
+    if (error) return Response.json({ error: error.message, results }, { status: 500 });
+    const job = jobs?.[0] as Job | undefined;
+    if (!job) break;
+    let leaseError: Error | null = null;
+    const heartbeat = setInterval(() => {
+      void checked(supabase.rpc("renew_outbox_lease", { p_job_id: job.id, p_worker: worker })).catch((error) => { leaseError = error instanceof Error ? error : new Error(String(error)); });
+    }, 30_000);
     try {
+      await checked(supabase.rpc("renew_outbox_lease", { p_job_id: job.id, p_worker: worker }));
       await processJob(job);
-      await supabase.rpc("complete_outbox_job", { p_job_id: job.id });
+      if (leaseError) throw leaseError;
+      await checked(supabase.rpc("finish_outbox_job", { p_job_id: job.id, p_worker: worker, p_outcome: "completed" }));
       results.push({ id: job.id, status: "completed" });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const permanent = message.startsWith("permanent_");
       if (permanent) {
-        await supabase.rpc("dead_letter_outbox_job", { p_job_id: job.id, p_error: message });
         if (job.job_type === "email.send") {
-          await supabase.from("email_messages").update({ status: "dead_letter", provider_status: "dead_letter", error_message: message.slice(0, 500) }).eq("tenant_id", job.tenant_id).eq("id", job.aggregate_id);
-          await supabase.from("contract_deliveries").update({ status: "dead_letter", provider_status: "dead_letter", failure_code: "permanent_error", failure_message: message.slice(0, 500) }).eq("tenant_id", job.tenant_id).eq("email_message_id", job.aggregate_id);
+          await checked(supabase.from("email_messages").update({ status: "dead_letter", provider_status: "dead_letter", error_message: message.slice(0, 500) }).eq("tenant_id", job.tenant_id).eq("id", job.aggregate_id));
+          await checked(supabase.from("contract_deliveries").update({ status: "dead_letter", provider_status: "dead_letter", failure_code: "permanent_error", failure_message: message.slice(0, 500) }).eq("tenant_id", job.tenant_id).eq("email_message_id", job.aggregate_id));
         }
         if (job.job_type === "sms.send") {
-          await supabase.from("sms_messages").update({ status: "dead_letter", error_message: message.slice(0, 500) }).eq("tenant_id", job.tenant_id).eq("id", job.aggregate_id);
-          await supabase.from("contract_deliveries").update({ status: "dead_letter", provider_status: "dead_letter", failure_code: "permanent_error", failure_message: message.slice(0, 500) }).eq("tenant_id", job.tenant_id).eq("sms_message_id", job.aggregate_id);
+          await checked(supabase.from("sms_messages").update({ status: "dead_letter", error_message: message.slice(0, 500) }).eq("tenant_id", job.tenant_id).eq("id", job.aggregate_id));
+          await checked(supabase.from("contract_deliveries").update({ status: "dead_letter", provider_status: "dead_letter", failure_code: "permanent_error", failure_message: message.slice(0, 500) }).eq("tenant_id", job.tenant_id).eq("sms_message_id", job.aggregate_id));
         }
-        if (job.job_type === "contract.reminder.dispatch") await supabase.from("contract_reminders").update({ status: "failed", cancel_reason: message.slice(0, 200) }).eq("tenant_id", job.tenant_id).eq("id", job.aggregate_id);
+        if (job.job_type === "contract.reminder.dispatch") await checked(supabase.from("contract_reminders").update({ status: "failed", cancel_reason: message.slice(0, 200) }).eq("tenant_id", job.tenant_id).eq("id", job.aggregate_id));
+        await checked(supabase.rpc("finish_outbox_job", { p_job_id: job.id, p_worker: worker, p_outcome: "dead_letter", p_error: message }));
       } else {
-        await supabase.rpc("fail_outbox_job", {
-          p_job_id: job.id,
+        await checked(supabase.rpc("finish_outbox_job", {
+          p_job_id: job.id, p_worker: worker, p_outcome: "failed",
           p_error: message,
           p_delay_seconds: message === "reminder_quiet_hours_retry" ? 3600 : Math.min(3600, 2 ** Math.min(job.attempts, 10) * 15),
-        });
+        }));
       }
       results.push({ id: job.id, status: permanent ? "dead_letter" : "failed", error: message });
+    } finally {
+      clearInterval(heartbeat);
     }
   }
-  return Response.json({ worker, reminders_enqueued: remindersEnqueued ?? 0, claimed: jobs?.length ?? 0, results, delivery: deliveryConfiguration() });
+  return Response.json({ worker, reminders_enqueued: remindersEnqueued ?? 0, claimed: results.length, results, delivery: deliveryConfiguration() });
 });

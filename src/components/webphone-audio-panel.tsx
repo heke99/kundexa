@@ -16,12 +16,16 @@ import type { CallAudioCapabilities } from "@/hooks/use-webphone";
  * något till kollegan bredvid rakt in i kundens öra.
  */
 export function WebphoneAudioPanel({
+  audioError,
+  onResumeAudio,
   inCall,
   muted,
   capabilities,
   onToggleMute,
   onSendDtmf,
 }: {
+  audioError?: string | null;
+  onResumeAudio?: () => void;
   inCall: boolean;
   muted: boolean;
   capabilities: CallAudioCapabilities;
@@ -46,6 +50,7 @@ export function WebphoneAudioPanel({
     {audio.permission === "unsupported"
       ? <div className="notice warning">Den här webbläsaren kan inte använda mikrofonen. Använd Chrome, Edge eller Firefox.</div>
       : null}
+    {audioError ? <div className="notice warning" role="alert">{audioError} <button type="button" onClick={onResumeAudio}>Aktivera samtalsljud</button></div> : null}
     {audio.error ? <div className="notice warning">{audio.error}</div> : null}
     {notice ? <div className="notice warning">{notice}</div> : null}
 
@@ -66,7 +71,7 @@ export function WebphoneAudioPanel({
     {audio.permission === "granted" ? <>
       <label className="field">
         <span>Mikrofon</span>
-        <select value={audio.inputId} onChange={(event) => audio.selectInput(event.target.value)}>
+        <select disabled={inCall} value={audio.inputId} onChange={(event) => audio.selectInput(event.target.value)}>
           {audio.inputs.map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label}</option>)}
         </select>
       </label>

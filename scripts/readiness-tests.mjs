@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import ts from 'typescript';
+const source = ts.transpile(readFileSync('src/lib/operational-readiness.ts', 'utf8'), { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 });
+const exports = {}; new Function('exports', source)(exports);
+const now = Date.parse('2026-10-15T10:00:00Z');
+const workers = exports.REQUIRED_WORKERS.map(worker_key => ({ worker_key, status: 'healthy', updated_at: new Date(now - 60_000).toISOString() }));
+assert.equal(exports.evaluateWorkerReadiness(workers, now).every(x => x.ready), true);
+for (const bad of [[], workers.map(w => ({ ...w, updated_at: new Date(now - 16*60_000).toISOString() })), workers.map(w => ({ ...w, status: 'degraded' })), workers.map(w => ({ ...w, updated_at: 'invalid' })), workers.map(w => ({ ...w, updated_at: new Date(now+120_000).toISOString() }))]) assert.equal(exports.evaluateWorkerReadiness(bad, now).every(x => x.ready), false);
+console.log('Readiness freshness and failure tests PASS.');

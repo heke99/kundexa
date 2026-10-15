@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { ok } from "@/lib/supabase/read";
 import { Activity, FileSignature, PhoneCall, Target, TrendingUp, Users } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
@@ -18,6 +19,7 @@ type DashboardOverview = {
 
 export default async function DashboardPage() {
   const [supabase, context] = await Promise.all([createClient(), getAppContext()]);
+  if (context.role === "sales") redirect("/app/dialer");
   const dashboardCopy: Record<string, { title: string; description: string; customerLabel: string }> = {
     sales: { title: "Min dashboard", description: "Dina kunder, samtal, aktiviteter och avtal inom ditt aktuella access-scope.", customerLabel: "Mina kunder och prospekt" },
     team_lead: { title: "Teamdashboard", description: "Resultat och arbetsläge för de team du faktiskt leder.", customerLabel: "Teamets kunder och prospekt" },
@@ -67,7 +69,7 @@ export default async function DashboardPage() {
           <DataTable headers={["Avtal", "Kund", "Status", "Värde", "Skapat"]}>
             {(recentContracts.data ?? []).map((c) => {
               const customer = Array.isArray(c.customers) ? c.customers[0] : c.customers;
-              return <tr key={c.id}><td><strong>{c.contract_number}</strong><br /><span className="muted">{c.title}</span></td><td>{customer?.display_name ?? "—"}</td><td><Badge className={contractStatusTone(c.status)}>{contractStatusLabel(c.status)}</Badge></td><td>{formatCurrency(Number(c.value), c.currency)}</td><td>{formatDate(c.created_at)}</td></tr>;
+              return <tr key={c.id}><td><Link href={`/app/contracts/${c.id}`}><strong>{c.contract_number}</strong></Link><br /><span className="muted">{c.title}</span></td><td>{customer?.display_name ?? "—"}</td><td><Badge className={contractStatusTone(c.status)}>{contractStatusLabel(c.status)}</Badge></td><td>{formatCurrency(Number(c.value), c.currency)}</td><td>{formatDate(c.created_at)}</td></tr>;
             })}
           </DataTable>
         </CardContent>

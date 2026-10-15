@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useWebphone } from "./use-webphone";
 
 export type EndCallResult = {
@@ -71,9 +71,12 @@ function telephonyStatusMessage(data: StatusResponse) {
 
 export function useDialerPanel() {
   const webphone = useWebphone();
+  const pendingRequest = useRef<Record<string, unknown> | null>(null);
+  const sdkStarted = useRef(new Set<string>());
   const { start: startWebphone } = webphone;
   const [registered, setRegistered] = useState(false);
   const [automaticReady, setAutomaticReady] = useState(false);
+  const [activeCallId, setActiveCallId] = useState<string | null>(null);
   const [calling, setCalling] = useState(false);
   const [ending, setEnding] = useState(false);
   const [status, setStatus] = useState("Kontrollerar telefoni…");
@@ -127,49 +130,38 @@ export function useDialerPanel() {
 
     setCalling(true);
     setStatus("Kopplar upp samtalet i webbtelefonen…");
-    const body = {
+    const body = pendingRequest.current ?? {
       ...payload,
       webphoneSessionId: payload.webphoneSessionId ?? webphone.currentSessionId(),
       clientRequestId: payload.clientRequestId ?? crypto.randomUUID(),
       idempotencyKey: payload.idempotencyKey ?? `call:${crypto.randomUUID()}`,
     };
-    let response: Response;
-    try {
-      response = await fetch("/api/v1/calls", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-    } catch {
-      setCalling(true);
-      setStatus("Svaret från samtalsstarten saknas – inväntar webhook eller CDR-avstämning");
-      const uncertain = new Error("Samtalsstartens utfall är oklart. Starta inte ett nytt samtal.") as Error & { outcomeUnknown: boolean };
-      uncertain.outcomeUnknown = true;
-      throw uncertain;
-    }
+    pendingRequest.current = body;
+    let response: Response | undefined;
     let data: {
-      callId?: string;
-      error?: string;
-      message?: string;
-      status?: string;
-      attemptStatus?: string;
-      providerStatus?: string;
-      callActive?: boolean;
-      idempotentReplay?: boolean;
-      attemptId?: string;
-      to?: string;
-      correlationId?: string;
-    };
-    try {
-      data = await response.json() as typeof data;
-    } catch {
+      callId?: string; error?: string; message?: string; status?: string;
+      attemptStatus?: string; providerStatus?: string; callActive?: boolean;
+      idempotentReplay?: boolean; attemptId?: string; to?: string; correlationId?: string;
+      sdkStartAllowed?: boolean;
+    } | undefined;
+    // This endpoint reserves only. Retrying the exact identity cannot place a PSTN call.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        response = await fetch("/api/v1/calls", {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+        });
+        data = await response.json() as NonNullable<typeof data>;
+        break;
+      } catch { /* Recover the same reservation, never generate a new identity. */ }
+    }
+    if (!response || !data) {
       setCalling(true);
-      setStatus("Samtalsstartens svar kunde inte tolkas – inväntar säker avstämning");
-      const uncertain = new Error("Samtalsstartens utfall är oklart. Starta inte ett nytt samtal.") as Error & { outcomeUnknown: boolean };
-      uncertain.outcomeUnknown = true;
+      setStatus("Reservationens svar saknas. Starta inte ett nytt samtal innan den har stämts av.");
+      const uncertain = Object.assign(new Error("Samtalsreservationens utfall är oklart. Starta inte ett nytt samtal."), { outcomeUnknown: true });
       throw uncertain;
     }
     if (!response.ok && response.status !== 202) {
+      pendingRequest.current = null;
       setCalling(false);
       const reference = data.correlationId ? ` Referens: ${data.correlationId}.` : "";
       const message = `${publicTelephonyMessage(data.message ?? data.error ?? "Samtalet kunde inte startas")}${reference}`;
@@ -180,6 +172,8 @@ export function useDialerPanel() {
       setCalling(false);
       throw new Error("call_id_missing");
     }
+    setActiveCallId(data.callId);
+    pendingRequest.current = null;
     const uncertain = data.status === "provider_outcome_unknown"
       || data.attemptStatus === "provider_outcome_unknown"
       || data.attemptStatus === "reconciliation_required";
@@ -193,7 +187,7 @@ export function useDialerPanel() {
       setStatus("Samtalsresultatet är oklart – inväntar säker avstämning");
       return data.callId;
     }
-    if (data.idempotentReplay) {
+    if (data.idempotentReplay && (!data.sdkStartAllowed || sdkStarted.current.has(data.callId))) {
       // Reservationen återanvändes, så samtalet är redan uppkopplat. Att ringa
       // en gång till hade gett mottagaren två samtal för ett tryck.
       setCalling(true);
@@ -210,8 +204,15 @@ export function useDialerPanel() {
       throw new Error("reservation_contract_invalid");
     }
     try {
+      sdkStarted.current.add(data.callId);
       await webphone.placeCall({ callId: data.callId, attemptId: data.attemptId, to: data.to });
     } catch (error) {
+      if (error && typeof error === "object" && "outcomeUnknown" in error) {
+        setCalling(true);
+        setStatus("Samtalsstarten måste stämmas av innan ett nytt försök. Du kan avsluta reservationen.");
+        return data.callId;
+      }
+      pendingRequest.current = null;
       setCalling(false);
       const message = error instanceof Error && error.message === "webphone_not_ready"
         ? "Webbtelefonen är inte klar ännu. Vänta någon sekund och försök igen."
@@ -220,11 +221,14 @@ export function useDialerPanel() {
       throw new Error(message);
     }
     setCalling(true);
+    pendingRequest.current = null;
     setStatus("Webbtelefonen ringer upp");
     return data.callId;
   }, [webphone]);
 
   const markEnded = useCallback(() => {
+    pendingRequest.current = null;
+    setActiveCallId(null);
     setCalling(false);
     setStatus("Telefoni redo");
   }, []);
@@ -247,6 +251,7 @@ export function useDialerPanel() {
         throw new Error(payload?.message ?? "Samtalet kunde inte avslutas");
       }
       setCalling(false);
+      setActiveCallId(null);
       setStatus(payload.message ?? "Telefoni redo");
       return payload;
     } finally {
@@ -255,11 +260,12 @@ export function useDialerPanel() {
   }, []);
 
   return {
-    registered, automaticReady, calling, ending, status,
+    activeCallId, registered, automaticReady, calling, ending, status,
     startCall, markEnded, endCall,
     webphone: webphone.state, startWebphone: webphone.start, hangupWebphone: webphone.hangup,
     // Ljudkontrollerna kommer från webbtelefonen och inte härifrån: det är den
     // som håller samtalet, och bara den vet vad det går att göra med det.
+    audioError: webphone.audioError, resumeAudio: webphone.resumeAudio,
     muted: webphone.muted, audioCapabilities: webphone.capabilities,
     toggleMute: webphone.toggleMute, sendDtmf: webphone.sendDtmf,
   };

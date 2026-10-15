@@ -35,6 +35,10 @@ export async function authenticateRequest(request: Request, requiredScope?: stri
     if (!key || key.revoked_at || (key.expires_at && new Date(key.expires_at) < new Date())) {
       throw jsonError("invalid_api_key", 401);
     }
+    const { data: tenant, error: tenantError } = await admin.from("tenants")
+      .select("status").eq("id", key.tenant_id).maybeSingle();
+    if (tenantError) throw jsonError("tenant_state_unavailable", 503);
+    if (!tenant || !["trial", "active"].includes(tenant.status)) throw jsonError("tenant_inactive", 403);
     if (requiredScope && !key.scopes.includes(requiredScope) && !key.scopes.includes("*")) {
       throw jsonError("insufficient_scope", 403);
     }

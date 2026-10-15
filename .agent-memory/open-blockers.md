@@ -1,5 +1,26 @@
 # Open blockers
 
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Användarens uppgivna fullständiga återanvändningsgodkännande ersätter tidigare standardlicens-/paketval som blockerare. Källinventering, dokumenttjänstens drift, integration, slutvillkor och samtliga ofixade oktoberfynd återstår. Återanvändningsmandat gör inte befintliga utskick operativa.
+
+## 2026-10-13 PDF-mallkrav
+
+PDF-placering, fältkoppling och ifylld förhandsgranskning saknas som levererat flöde. Ny specifikation kompletterar oktoberfynden. Drift/licens för DocuSeal måste väljas; liveintegration och BankID-stöd är fortfarande ej verifierade.
+
+## 2026-10-13 Aktuella blockerare
+
+Oktobergranskningen och avtalsplanen är nu kanoniska för fortsättningsarbetet:
+`docs/reviews/2026-10-13/` och `docs/CONTRACT_PRODUCTION_PLAN_2026-10-13.md`.
+
+Prioritet: kund-RLS/avtalsstatus/API-status, slutlig produktmall/pris, osparade säljaruppgifter,
+fjärrljud och samtalsåterhämtning, OTP/UI/API-policy, outboxlease/databasfel,
+leveranswebhookar och acceptansbundna slutdokument. Alla är OPEN tills rättning verifierats.
+
+DocuSeal saknar adapter. BankID är framtida signering och får inte erbjudas som live.
+Faktiska slutvillkor, kontrollerade mottagare och providerdrift måste fastställas innan liveaktivering.
+Historiska Rinkel-device-krav och gamla mergepåståenden nedan är inte aktuell driftsinstruktion.
+
 Uppdaterad 2026-08-07.
 
 ## Löst sedan förra passet
@@ -179,3 +200,8 @@ samtal — ring, svara, lägg på, och se om `answered_at` fylls i.
 - **Ingen produkt finns.** Mallen "Gridex hemsida · Mina sidor" måste kopplas till en produkt innan ett
   avtal kan skapas (ADR-0019).
 - Leaked password protection är avstängd i Supabase Auth (rådgivaren varnar).
+
+
+## 2026-10-15 — Implementation av plan 53
+
+Ingen DocuSeal-server/domän/konfiguration vald. Användaren har valt installationsförberedelse. Full källpinnad containerbuild blockerad av APK HTTP403 via korrekt proxy/CA; Rails-boot NOT RUN. Verkliga slutvillkor/produkt/testmottagare saknas. Riktiga JWT/Storage/provider- och samtalsprov NOT RUN. Stagingmigration/typregenerering återstår. Gamla canonical-dokument utan verifierade låsta partsnapshots får inte användas för nya bevis utan separat granskning.

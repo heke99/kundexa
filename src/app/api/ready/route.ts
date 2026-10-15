@@ -1,3 +1,6 @@
+import { docusealConfigured } from "@/lib/signing/orchestration";
+import { decryptJson } from "@/lib/crypto";
+import { evaluateWorkerReadiness } from "@/lib/operational-readiness";
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { expectedWebhookUrl, isUsablePublicAppUrl, publicEnv, serverEnv } from "@/lib/env";
@@ -134,10 +137,17 @@ export async function GET() {
     // inte läsa dem, så den enda vägen till ett svar är arbetarens egen
     // rapport. Saknas den säger vi att den saknas -- inte att allt är bra.
     let delivery: DeliveryChecks = UNREPORTED;
-    const { data: heartbeat } = await admin.from("platform_worker_heartbeats")
-      .select("metadata,updated_at")
-      .eq("worker_key", "process-outbox")
-      .maybeSingle();
+    const { data: workerRows, error: workerError } = await admin.from("platform_worker_heartbeats")
+      .select("worker_key,status,metadata,updated_at");
+    const workers = evaluateWorkerReadiness(workerError ? [] : workerRows ?? [], Date.now());
+    const { count: externalTemplates, error: signingPolicyError } = await admin.from("contract_templates")
+      .select("id,contract_template_versions!contract_templates_current_version_tenant_fk!inner(signature_policy)", { count: "exact", head: true })
+      .eq("active", true).eq("contract_template_versions.signature_policy->>method", "external_esign");
+    const signingRequired = (externalTemplates ?? 0) > 0;
+    const signingHeartbeat = workerRows?.find(row => row.worker_key === "signing-reconcile");
+    const signingWorkerReady = !signingPolicyError && (!signingRequired || Boolean(docusealConfigured() && signingHeartbeat && signingHeartbeat.status === "healthy"
+      && Date.now() - Date.parse(signingHeartbeat.updated_at) <= 15 * 60_000 && Date.parse(signingHeartbeat.updated_at) <= Date.now() + 60_000));
+    const heartbeat = workerRows?.find(row => row.worker_key === "process-outbox");
     if (heartbeat) {
       const read = readDelivery(heartbeat.metadata, appBaseUrl);
       if (read) delivery = { ...read, reportedAt: heartbeat.updated_at ?? null };
@@ -164,12 +174,26 @@ export async function GET() {
       delivery = { ...delivery, smsIpAllowlistNetworks: allowlistError ? null : count ?? 0 };
     }
 
+    const { data: emailIntegrations, error: webhookReadError } = await admin.from("tenant_integrations")
+      .select("webhook_status,credentials_ciphertext,configuration").eq("provider_type", "email").eq("provider", "resend").eq("status", "active");
+    const emailWebhookVerified = !webhookReadError && Boolean(emailIntegrations?.some(integration => {
+      if (integration.webhook_status !== "active" || !integration.credentials_ciphertext || !(integration.configuration as Record<string, unknown> | null)?.webhook_path_token_hash) return false;
+      try { return Boolean(decryptJson<{ webhookSigningSecret?: string }>(integration.credentials_ciphertext, serverEnv().KUNDEXA_ENCRYPTION_KEY).webhookSigningSecret); }
+      catch { return false; }
+    }));
+    const registration = await webphoneRegistration();
+    // The first operational target is email/web acceptance. SMS has its own
+    // readiness checks and does not make an email-only installation unhealthy.
+    const ready = configured && appBaseUrlUsable && registration.state === "ok"
+      && workers.every(worker => worker.ready) && signingWorkerReady
+      && delivery.reported && delivery.platformEmailConfigured === true
+      && delivery.webEmailConfigured && delivery.linkHostAligned === true && emailWebhookVerified;
     return NextResponse.json({
-      status: "ready",
+      status: ready ? "ready" : "not_ready",
       service: "kundexa-web",
-      checks: { database: true, telephonyConfigured: configured, appBaseUrl, appBaseUrlUsable, webhookUrl, delivery, webphoneRegistration: await webphoneRegistration() },
+      checks: { database: true, telephonyConfigured: configured, appBaseUrl, appBaseUrlUsable, webhookUrl, delivery, emailWebhookVerified, workers, signingRequired, signingWorkerReady, webphoneRegistration: registration },
       durationMs: Date.now() - startedAt,
-    }, { headers: { "cache-control": "no-store" } });
+    }, { status: ready ? 200 : 503, headers: { "cache-control": "no-store" } });
   } catch {
     return NextResponse.json({
       status: "not_ready",

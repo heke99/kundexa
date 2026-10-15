@@ -34,6 +34,11 @@ const nextConfig: NextConfig = {
           { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
         ],
       },
+      {
+        source: "/app/contracts/:path*",
+        headers: [{ key: "X-Frame-Options", value: "SAMEORIGIN" }],
+      },
+      { source: "/api/v1/contracts/:id/documents/:documentId", headers: [{ key: "X-Frame-Options", value: "SAMEORIGIN" }] },
     ];
   },
 };

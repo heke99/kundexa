@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition, useImperativeHandle, useRef, type Ref } from "react";
 import Link from "next/link";
 import { CheckCircle2, FileSignature } from "@/components/icons";
 import { loadCallCustomer, saveCallCustomer, type CallCustomer, type CallCustomerPatch } from "@/app/actions/call-workspace";
@@ -26,20 +26,10 @@ function toDraft(customer: CallCustomer): Draft {
   };
 }
 
-/**
- * Det avtalet hämtar från kundkortet. Visas som en checklista medan säljaren
- * har kunden i luren, så att det som saknas kan frågas efter direkt i stället
- * för att upptäckas på avtalssidan efter att samtalet är slut.
- */
-function contractReadiness(draft: Draft, type: CallCustomer["customerType"]) {
-  return [
-    { label: type === "person" ? "Personnummer" : "Organisationsnummer", done: Boolean(type === "person" ? draft.personalIdentityNumber : draft.organizationNumber) },
-    { label: "E-post", done: Boolean(draft.email) },
-    { label: "Adress", done: Boolean(draft.addressLine1 && draft.postalCode && draft.city) },
-  ];
-}
+export type LiveCustomerCardHandle = { save: () => Promise<void> };
 
-export function LiveCustomerCard({ customerId, heading = "Kunduppgifter", contractHref, fullCardLink = false }: {
+export function LiveCustomerCard({ customerId, heading = "Kunduppgifter", contractHref, fullCardLink = false, ref }: {
+  ref?: Ref<LiveCustomerCardHandle>;
   customerId: string;
   heading?: string;
   /** Länk till hela kundkortet i ny flik; sidbyte i samma flik lägger på samtalet. */
@@ -52,6 +42,10 @@ export function LiveCustomerCard({ customerId, heading = "Kunduppgifter", contra
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [pending, startTransition] = useTransition();
+  const [saving, setSaving] = useState(false);
+  const saveInFlight = useRef<Promise<void> | null>(null);
+
+  useImperativeHandle(ref, () => ({ save: persist }));
 
   useEffect(() => {
     let cancelled = false;
@@ -72,6 +66,28 @@ export function LiveCustomerCard({ customerId, heading = "Kunduppgifter", contra
   }, [customer, draft]);
   const dirty = Object.keys(changed).length > 0;
 
+  async function persist(): Promise<void> {
+    if (saveInFlight.current) return saveInFlight.current;
+    if (!customer || !draft) throw new Error("Kundkortet är inte färdigläst. Försök igen.");
+    if (!dirty || !customer.canEdit) return;
+    const operation = (async () => {
+      setError(null);
+      setSaving(true);
+      try {
+        const result = await saveCallCustomer(customerId, changed);
+        if (!result.ok) throw new Error(result.error);
+        setCustomer(result.customer);
+        setDraft(toDraft(result.customer));
+        setSavedAt(Date.now());
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : "Kunduppgifterna kunde inte sparas.");
+        throw caught;
+      } finally { setSaving(false); }
+    })();
+    saveInFlight.current = operation;
+    try { await operation; } finally { saveInFlight.current = null; }
+  }
+
   if (error && !customer) return <section className="live-card"><p className="form-error">{error}</p></section>;
   if (!customer || !draft) return <section className="live-card"><p className="muted">Hämtar kundkortet…</p></section>;
 
@@ -82,19 +98,11 @@ export function LiveCustomerCard({ customerId, heading = "Kunduppgifter", contra
     setSavedAt(null);
   };
   const input = (key: keyof Draft, label: string, props: React.InputHTMLAttributes<HTMLInputElement> = {}) =>
-    <label className="field live-field"><span>{label}</span><input value={draft[key]} onChange={set(key)} readOnly={readOnly} {...props} /></label>;
+    <label className="field live-field"><span>{label}</span><input value={draft[key]} onChange={set(key)} readOnly={readOnly || pending || saving} {...props} /></label>;
 
   function save(event: React.FormEvent) {
     event.preventDefault();
-    if (!dirty || readOnly) return;
-    setError(null);
-    startTransition(async () => {
-      const result = await saveCallCustomer(customerId, changed);
-      if (!result.ok) { setError(result.error); return; }
-      setCustomer(result.customer);
-      setDraft(toDraft(result.customer));
-      setSavedAt(Date.now());
-    });
+    startTransition(async () => { try { await persist(); } catch { /* Felet visas på kortet. */ } });
   }
 
   const type = draft.customerType as CustomerType;
@@ -105,7 +113,7 @@ export function LiveCustomerCard({ customerId, heading = "Kunduppgifter", contra
     setDraft((current) => current ? { ...current, customerType: next, personalIdentityNumber: next === "company" ? "" : current.personalIdentityNumber } : current);
     setSavedAt(null);
   };
-  const readiness = contractReadiness(draft, type);
+
   return <form className="live-card" onSubmit={save}>
     <div className="live-card-header">
       <div><span className="eyebrow">{heading}</span><h3>{customer.displayName}</h3></div>
@@ -113,7 +121,7 @@ export function LiveCustomerCard({ customerId, heading = "Kunduppgifter", contra
     </div>
     <div className="segmented" role="radiogroup" aria-label="Kundtyp">
       {(["company", "person"] as const).map((option) => <button key={option} type="button" role="radio" aria-checked={type === option}
-        className={type === option ? "selected" : ""} disabled={readOnly} onClick={() => setType(option)}>
+        className={type === option ? "selected" : ""} disabled={readOnly || pending || saving} onClick={() => setType(option)}>
         {option === "company" ? "Företag" : "Privatperson"}
       </button>)}
     </div>
@@ -133,16 +141,14 @@ export function LiveCustomerCard({ customerId, heading = "Kunduppgifter", contra
       {input("postalCode", "Postnummer", { autoComplete: "off", inputMode: "numeric" })}
       {input("city", "Ort", { autoComplete: "off" })}
     </div>
-    <ul className="readiness" aria-label="Underlag för avtal">
-      {readiness.map((item) => <li key={item.label} className={item.done ? "done" : ""}><CheckCircle2 size={13} /> {item.label}</li>)}
-    </ul>
+    <p className="muted">Vilka uppgifter avtalet behöver kontrolleras när du väljer produkt och leveranssätt. Ifyllda uppgifter sparas innan du går vidare.</p>
     {error ? <p className="form-error">{error}</p> : null}
     <div className="live-card-actions">
       {readOnly ? <span className="muted">Din roll kan inte ändra uppgifterna.</span>
-        : <button className="button button-primary button-sm" disabled={!dirty || pending}>{pending ? "Sparar…" : "Spara uppgifter"}</button>}
+        : <button className="button button-primary button-sm" disabled={!dirty || pending || saving}>{pending ? "Sparar…" : "Spara uppgifter"}</button>}
       {savedAt && !dirty ? <span className="live-saved"><CheckCircle2 size={14} /> Sparat</span> : null}
       {dirty && !pending ? <span className="muted">Ändringar som inte är sparade</span> : null}
-      {contractHref ? <Link className="button button-secondary button-sm" href={contractHref} target="_blank" rel="noopener"><FileSignature size={14} /> Skapa avtal</Link> : null}
+      {contractHref ? <button type="button" className="button button-secondary button-sm" disabled={pending || saving} onClick={() => startTransition(async () => { try { await persist(); window.location.assign(contractHref); } catch { /* Felet visas på kortet. */ } })}><FileSignature size={14} /> Skapa avtal</button> : null}
     </div>
   </form>;
 }

@@ -31,24 +31,33 @@ export type AudioDevicesState = {
   error: string | null;
 };
 
+export const AUDIO_DEVICE_EVENT = "kundexa:audio-devices";
+
 const INPUT_KEY = "kundexa.webphone.inputDeviceId";
 const OUTPUT_KEY = "kundexa.webphone.outputDeviceId";
+
+const volatileSelections = new Map<string, string>();
 
 /** localStorage kan kasta i privat läge. En bekvämlighet får inte fälla telefonin. */
 function readStored(key: string) {
   try {
-    return window.localStorage.getItem(key) ?? "";
+    return window.localStorage.getItem(key) ?? volatileSelections.get(key) ?? "";
   } catch {
-    return "";
+    return volatileSelections.get(key) ?? "";
   }
 }
 
 function store(key: string, value: string) {
+  volatileSelections.set(key, value);
   try {
     window.localStorage.setItem(key, value);
   } catch {
     // Valet gäller den här fliken i stället. Inget att rapportera.
   }
+}
+
+export function readAudioSelection() {
+  return { inputId: readStored(INPUT_KEY), outputId: readStored(OUTPUT_KEY) };
 }
 
 export function useAudioDevices() {
@@ -92,6 +101,20 @@ export function useAudioDevices() {
       .map((device, index) => ({ deviceId: device.deviceId, label: device.label || `Mikrofon ${index + 1}` }));
     const outputs = devices.filter((device) => device.kind === "audiooutput")
       .map((device, index) => ({ deviceId: device.deviceId, label: device.label || `Högtalare ${index + 1}` }));
+
+    // Repair persisted choices too; otherwise the UI shows a fallback while the SDK
+    // still requests the disconnected device. Labels prove permission was granted.
+    const selected = readAudioSelection();
+    let changed = false;
+    if (devices.some((device) => device.label)) {
+      if (selected.inputId && !inputs.some((device) => device.deviceId === selected.inputId)) {
+        store(INPUT_KEY, inputs[0]?.deviceId ?? ""); changed = true;
+      }
+      if (selected.outputId && !outputs.some((device) => device.deviceId === selected.outputId)) {
+        store(OUTPUT_KEY, outputs[0]?.deviceId ?? ""); changed = true;
+      }
+    }
+    if (changed) window.dispatchEvent(new Event(AUDIO_DEVICE_EVENT));
 
     setState((previous) => {
       // Ett sparat val som inte längre finns -- headsetet är urdraget -- får
@@ -153,11 +176,13 @@ export function useAudioDevices() {
 
   const selectInput = useCallback((deviceId: string) => {
     store(INPUT_KEY, deviceId);
+    window.dispatchEvent(new Event(AUDIO_DEVICE_EVENT));
     setState((previous) => ({ ...previous, inputId: deviceId }));
   }, []);
 
   const selectOutput = useCallback((deviceId: string) => {
     store(OUTPUT_KEY, deviceId);
+    window.dispatchEvent(new Event(AUDIO_DEVICE_EVENT));
     setState((previous) => ({ ...previous, outputId: deviceId }));
   }, []);
 
@@ -233,9 +258,9 @@ export function useAudioDevices() {
       element.srcObject = destination.stream;
       const sinkCapable = element as HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> };
       if (state.outputId && sinkCapable.setSinkId) {
-        await sinkCapable.setSinkId(state.outputId).catch(() => null);
+        await sinkCapable.setSinkId(state.outputId);
       }
-      await element.play().catch(() => null);
+      await element.play();
       oscillator.start();
 
       window.setTimeout(() => {

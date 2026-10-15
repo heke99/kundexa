@@ -1,3 +1,4 @@
+import { acceptanceMethod, loadContractSignatureMethod } from "@/lib/contracts/delivery-plan";
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { authenticateSmsNumber, smsWebhookAdapter, verifySmsCallbackNetwork } from "@/lib/messaging/provider";
@@ -136,6 +137,7 @@ export async function POST(request: Request) {
         .select("id,tenant_id,contract_id,contract_version_id,recipient_id,acceptance_code,allowed_phrases,decline_phrases,require_code,call_ended_at,contracts(audience)")
         .eq("tenant_id", number.tenant_id)
         .in("recipient_id", recipients.map((recipient) => recipient.id))
+        .in("method", ["sms", "sms_otp"])
         .eq("status", "pending")
         .gt("expires_at", new Date().toISOString())
         .order("created_at", { ascending: false });
@@ -161,10 +163,12 @@ export async function POST(request: Request) {
           status = "manual_review_required";
         }
 
+        const method = await loadContractSignatureMethod(admin, number.tenant_id, acceptanceRequest.contract_version_id, true);
+        if (method === "email_otp") continue;
         const normalized = normalizeAcceptanceText(message);
         const { error } = await admin.rpc("record_contract_acceptance_v3", {
           p_request_id: acceptanceRequest.id,
-          p_method: "sms",
+          p_method: acceptanceMethod(method, "sms"),
           p_status: status,
           p_raw_response: message,
           p_normalized_response: normalized,

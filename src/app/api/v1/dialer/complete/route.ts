@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getAppContext } from "@/lib/auth";
-import { assertPermission } from "@/lib/permissions";
+import { assertPermission, can } from "@/lib/permissions";
 import { zonedLocalDateTimeToIso } from "@/lib/domain/time";
 import { createClient } from "@/lib/supabase/server";
 
@@ -23,6 +23,9 @@ export async function POST(request: Request) {
     const context = await getAppContext();
     assertPermission(context.role, "calls.create");
     const body = bodySchema.parse(await request.json());
+    if (body.unitPrice != null && !can(context.role, "contracts.override_commercial")) {
+      return NextResponse.json({ error: "Du får inte ändra produktens godkända pris." }, { status: 403 });
+    }
     const supabase = await createClient();
     const { data, error } = await supabase.rpc("complete_dialer_work_v2", {
       p_call_id: body.callId,

@@ -220,7 +220,8 @@ assert.match(contractsNewPage, /isoToZonedLocalDateTime\(date\.toISOString\(\), 
 assert.match(contractsNewPage, /isoToZonedDateOnly\(date\.toISOString\(\), ctx\.tenantTimezone\)/);
 assert.match(contractDetailPage, /isoToZonedLocalDateTime\(value \?\? null, ctx\.tenantTimezone\)/);
 assert.match(contracts, /timeZone: ctx\.tenantTimezone/);
-assert.match(contracts, /från \$\{sellerLegalName\}/);
+assert.match(contracts, /renderContractDeliverySms\(\{ contractNumber: contract.contract_number, legalName: sellerLegalName/);
+assert.match(await read("src/lib/contracts/delivery-plan.ts"), /från \$\{input.legalName\}/);
 assert.match(apiContracts, /select\("name,legal_name,timezone"\)/);
 assert.match(apiContracts, /timeZone: tenant\?\.timezone/);
 
@@ -434,7 +435,7 @@ console.log("Remediation regression tests passed.");
 // every contract, SMS and reminder was the one whose total silence was
 // indistinguishable from health.
 {
-  const scheduledPaths = JSON.parse(vercelConfig).crons.map((entry) => entry.path);
+  const scheduledPaths = JSON.parse(vercelConfig).crons.map((entry) => entry.path).filter((path) => path !== "/api/cron/signing-reconcile");
   const scheduledWorkers = scheduledPaths
     .map((path) => path.replace("/api/cron/edge-workers/", "").replace("/api/cron/", ""))
     .sort();
@@ -858,3 +859,5 @@ console.log("A database blip cannot sign a user out, and no redirect drops a ref
     "cancelContract must read the contract through the user's client so its RLS decides access");
 }
 console.log("A redelivered inbound SMS is processed unless the first attempt finished, and contract actions respect contract access.");
+
+assert.match(await read("src/app/api/cron/signing-reconcile/route.ts"), /record_platform_worker_heartbeat/);

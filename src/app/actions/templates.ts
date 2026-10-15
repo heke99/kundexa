@@ -6,6 +6,10 @@ import { z } from "zod";
 import { getAppContext } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { parseSignaturePolicy } from "@/lib/signing/policy";
+import { validatePdfTemplate } from "@/lib/contracts/pdf-field-template";
+import { inspectTemplatePdf } from "@/lib/contracts/render-pdf-fields";
+import { hashPdfBytes } from "@/lib/contracts/document-hash";
 import { can } from "@/lib/permissions";
 import { requiredTemplateVariableNames, templateVariableNames } from "@/lib/domain/template";
 import { validateTemplateVariables, describeTemplateVariableProblem } from "@/lib/contracts/template-context";
@@ -63,6 +67,23 @@ export async function createContractTemplateVersion(form: FormData) {
     redirect(`${back}${back.includes("?") ? "&" : "?"}error=${encodeURIComponent(message + more)}`);
   }
 
+  let pdfTemplate = null;
+  if (value(form, "pdf_template")) {
+    try {
+      pdfTemplate = validatePdfTemplate(JSON.parse(value(form, "pdf_template")), ctx.tenantId);
+      const { data, error } = await createAdminClient().storage.from("contract-documents").download(pdfTemplate.storagePath);
+      if (error || !data) throw new Error("pdf_template_source_missing");
+      const bytes = new Uint8Array(await data.arrayBuffer());
+      if (hashPdfBytes(bytes) !== pdfTemplate.sha256 || JSON.stringify(await inspectTemplatePdf(bytes)) !== JSON.stringify(pdfTemplate.pageSizes)) throw new Error("pdf_template_source_changed");
+    } catch (error) {
+      redirect(`/app/templates?error=${encodeURIComponent(error instanceof Error ? error.message : "PDF-mallen är ogiltig.")}`);
+    }
+  }
+  const method = value(form, "signature_method") || "simple_click";
+  if (!["simple_click", "external_esign"].includes(method)) redirect("/app/templates?error=Signeringsmetoden är inte tillgänglig.");
+  const signaturePolicy = parseSignaturePolicy({ method, identityAssuranceLevel: "low", orderedSigning: false, requireFinalProviderDocument: method === "external_esign" });
+  if (pdfTemplate?.fields.some(field => field.type === "signature") && method !== "external_esign") redirect("/app/templates?error=En PDF med underskriftsfält behöver extern signering.");
+  if (method === "external_esign" && !pdfTemplate?.fields.some(field => field.type === "signature")) redirect("/app/templates?error=Lägg till kundens underskriftsfält i PDF-mallen.");
   const supabase = await createClient();
   // Versionen och produktkopplingen i samma transaktion: ett avtal som skapas
   // men inte hinner kopplas är en mall ingen säljare kan välja.
@@ -82,7 +103,7 @@ export async function createContractTemplateVersion(form: FormData) {
     // unread. A field is required only when the template asks for it without the
     // `?` marker, and now the stored schema says so.
     p_variables_schema: Object.fromEntries(variables.map((name) => [name, { type: "string", required: required.includes(name) }])),
-    p_signing_configuration: { methods: ["web", "sms"], require_explicit_acceptance: true },
+    p_signing_configuration: { methods: ["web", "sms"], require_explicit_acceptance: true, signature_policy: signaturePolicy, provider_key: method === "external_esign" ? "docuseal" : null, ...(pdfTemplate ? { pdf_template: pdfTemplate } : {}) },
   });
   // Tillbaka dit man kom ifrån. Den som redigerar en mall står inne i den och
   // vill se resultatet, inte kastas ut i listan.

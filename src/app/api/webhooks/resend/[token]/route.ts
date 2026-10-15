@@ -54,6 +54,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
 
   let payload: ResendPayload;
   try { payload = JSON.parse(rawBody) as ResendPayload; } catch { return Response.json({ error: "invalid_json" }, { status: 400 }); }
+  const { error: verifiedError } = await admin.from("tenant_integrations").update({ webhook_status: "active" })
+    .eq("id", integration.id).eq("credentials_ciphertext", integration.credentials_ciphertext);
+  if (verifiedError) return Response.json({ error: "webhook_verification_store_failed" }, { status: 500 });
   const eventType = String(payload.type ?? "unknown");
   const providerEmailId = String(payload.data?.email_id ?? payload.data?.id ?? "");
   const safeHeaders = { "svix-id": svixId, "svix-timestamp": svixTimestamp, "svix-signature-present": true };

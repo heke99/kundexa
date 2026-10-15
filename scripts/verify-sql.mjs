@@ -3598,6 +3598,11 @@ const phantomTables = [...typedTables.keys()].filter((table) => !schemaTables.ha
 if (phantomTables.length > 0) {
   throw new Error(`database.types.ts declares tables no migration creates: ${phantomTables.join(", ")}`);
 }
+await (await import("./contract-security-sql-tests.mjs")).verifyContractSecurity(db);
+await (await import("./docuseal-sql-tests.mjs")).verifyDocusealSql(db);
+
+await (await import("./outbox-sql-tests.mjs")).verifyOutboxRecovery(db);
+
 const columnDrift = [];
 for (const [table, columns] of schemaTables) {
   const typed = typedTables.get(table);

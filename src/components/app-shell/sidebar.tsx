@@ -95,9 +95,9 @@ export function Sidebar({
 
   const nav = <nav>
     {!platformMode && role ? <div className="nav-group">
-      <Link href="/app" className={cn("nav-link", pathname === "/app" && "active")}>
+      {role !== "sales" ? <Link href="/app" className={cn("nav-link", pathname === "/app" && "active")}>
         <Gauge size={17} /><span>Dashboard</span>
-      </Link>
+      </Link> : null}
     </div> : null}
 
     {visibleSections.map((section) => {

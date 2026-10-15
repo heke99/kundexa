@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { z } from "zod";
+import { can } from "../src/lib/permissions";
 import { buildIlikeOrFilter, sanitizeFilterTerm } from "../src/lib/postgrest-filter";
 import { expectedWebhookUrl } from "../src/lib/env";
 import { isoToZonedDateOnly, isoToZonedLocalDateTime, zonedLocalDateTimeToIso } from "../src/lib/domain/time";
@@ -24,6 +25,13 @@ function withEnv(values: Record<string, string | undefined>, run: () => void) {
 }
 
 async function main() {
+for (const role of ["sales", "team_lead", "backoffice", "viewer", "quality", "finance"]) {
+  assert.equal(can(role, "contracts.override_commercial"), false, `${role} cannot override approved commercial terms`);
+}
+for (const role of ["owner", "admin", "contract_manager"]) {
+  assert.equal(can(role, "contracts.override_commercial"), true, `${role} has explicit commercial override permission`);
+}
+
 // Callback-URL:en härleds ur app-URL:en och ingenting annat. Att räkna fram de
 // två oberoende av varandra var det som lät produktionen servera länkar för
 // www.kundexa.se medan varje webhook-prenumeration pekade på den omdirigerande

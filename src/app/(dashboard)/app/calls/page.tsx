@@ -23,7 +23,7 @@ export default async function CallsPage({ searchParams }: { searchParams: Promis
   // saw a form the server action would always refuse.
   const mayLog = can(context.role, "calls.create");
   const [{ data }, { data: eligibleRows }] = await Promise.all([
-    ok(supabase.from("calls").select("*,customers(display_name)").order("created_at", { ascending: false }).limit(100)),
+    ok(supabase.from("calls").select("*,customers(display_name)").eq("user_id", context.userId).order("created_at", { ascending: false }).limit(100)),
     ok(supabase.from("list_dispositions").select("list_id,key").eq("active", true).eq("contract_eligible", true)),
   ]);
   // Samma regel som `is_contract_call_eligible`: ett listsamtal följer sin egen

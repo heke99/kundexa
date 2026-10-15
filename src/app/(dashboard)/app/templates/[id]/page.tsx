@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { PdfTemplateBuilder } from "@/components/pdf-template-builder";
+import type { PdfFieldTemplate } from "@/lib/contracts/pdf-field-template";
 import { notFound } from "next/navigation";
 import { ok } from "@/lib/supabase/read";
 import { ArrowLeft, ScrollText } from "@/components/icons";
@@ -16,7 +18,7 @@ import { formatDate } from "@/lib/utils";
 
 type Version = {
   id: string; version: number; status: string; approved_at: string | null; created_at: string;
-  title_template: string; body_template: string; terms_template: string;
+  title_template: string; body_template: string; terms_template: string; signing_configuration: { pdf_template?: PdfFieldTemplate; signature_policy?: { method: string } } | null;
 };
 
 /**
@@ -43,7 +45,7 @@ export default async function TemplateDetailPage({
   const [ctx, supabase] = await Promise.all([getAppContext(), createClient()]);
   const [{ data: template }, { data: legalEntities }, { data: products }, { data: linked }] = await Promise.all([
     ok(supabase.from("contract_templates")
-      .select("id,name,contract_type,audience,description,active,current_version_id,legal_entity_id,product_id,contract_template_versions!contract_template_versions_tenant_id_template_id_fkey(id,version,status,approved_at,created_at,title_template,body_template,terms_template)")
+      .select("id,name,contract_type,audience,description,active,current_version_id,legal_entity_id,product_id,contract_template_versions!contract_template_versions_tenant_id_template_id_fkey(id,version,status,approved_at,created_at,title_template,body_template,terms_template,signing_configuration)")
       .eq("id", id).maybeSingle()),
     ok(supabase.from("tenant_legal_entities").select("id,legal_name,organization_number,is_default").eq("active", true).order("is_default", { ascending: false }).order("legal_name")),
     ok(supabase.from("products").select("id,name").eq("active", true).order("name")),
@@ -104,6 +106,7 @@ export default async function TemplateDetailPage({
                     : null}
                 </div>
               : null}
+            {shown.signing_configuration?.pdf_template ? <p>PDF med {shown.signing_configuration.pdf_template.fields.length} kopplade fält. Öppna redigeringen för att granska placeringarna innan godkännande.</p> : null}
             <h3>Avtalstitel</h3>
             <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.7 }}>{shown.title_template}</p>
             <h3 style={{ marginTop: 16 }}>Avtalstext</h3>
@@ -156,6 +159,8 @@ export default async function TemplateDetailPage({
               <TextareaField label="Avtalstext" name="body_template" defaultValue={shown.body_template} required />
               <ContractTemplateDocumentUpload target="terms_template" label="Ersätt villkoren från .docx" />
               <TextareaField label="Fullständiga villkor" name="terms_template" defaultValue={shown.terms_template} required />
+              <SelectField label="Signering" name="signature_method" defaultValue={shown.signing_configuration?.signature_policy?.method ?? "simple_click"}><option value="simple_click">Enkel webbacceptans</option><option value="external_esign">Underskrift i PDF (DocuSeal)</option></SelectField>
+              <PdfTemplateBuilder key={shown.id} initial={shown.signing_configuration?.pdf_template} />
               <TemplateFieldButtons />
               <TemplateFieldReference />
               <button className="button button-secondary">Spara som ny version</button>

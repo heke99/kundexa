@@ -234,6 +234,11 @@ async function executeRun(run: Run) {
   const context = await loadContext(run);
   const adapter: ScraperAdapter | null = getScraperAdapter(context.job.adapter_key);
   if (adapter && ["allabolag", "merinfo"].includes(adapter.key) && Deno.env.get("ENABLE_LEGACY_DIRECT_SCRAPERS") !== "true") {
+    // This adapter is intentionally unavailable. Leave one visible failed run,
+    // then stop rescheduling it until an administrator selects the replacement.
+    const { error: pauseError } = await supabase.from("ingestion_jobs").update({ status: "paused", next_run_at: null })
+      .eq("tenant_id", run.tenant_id).eq("id", context.job.id);
+    if (pauseError) throw new WorkerError("legacy_scraper_pause_failed", true);
     throw new WorkerError("legacy_direct_scraper_disabled_use_parsehub", false);
   }
   const adapterDefaults: Partial<AdapterConfig> = adapter ? {

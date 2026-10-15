@@ -160,3 +160,57 @@ console.log("Contract delivery channel gate passed: disabled channels are refuse
   }
   console.log("SMS opt-out tests passed: a bare STOPP-style reply opts out, a word inside a sentence does not.");
 }
+
+// Customer edits must reach storage before after-work or the next customer.
+const workspaceSave = await importSource(await readFile(new URL("../src/lib/call-workspace/save-before-transition.ts", import.meta.url), "utf8"), "save-before-transition.ts");
+{
+  const sequence = [];
+  let release;
+  const saved = new Promise((resolve) => { release = resolve; });
+  const operation = workspaceSave.saveBeforeTransition({ save: async () => { sequence.push("saving"); await saved; sequence.push("saved"); } }, async () => { sequence.push("after-work"); return "next"; });
+  await Promise.resolve();
+  assert.deepEqual(sequence, ["saving"], "After-work must wait for durable customer save");
+  release();
+  assert.equal(await operation, "next");
+  assert.deepEqual(sequence, ["saving", "saved", "after-work"]);
+  await assert.rejects(workspaceSave.saveBeforeTransition({ save: async () => { throw new Error("invalid email"); } }, async () => { assert.fail("Must keep current customer on save failure"); }), /invalid email/);
+  await assert.rejects(workspaceSave.saveBeforeTransition(null, async () => { assert.fail("Must wait for customer card"); }), /färdigläst/);
+}
+
+const deliveryPlanSource = await readFile(new URL("../src/lib/contracts/delivery-plan.ts", import.meta.url), "utf8");
+const deliveryPlan = await importSource(deliveryPlanSource, "delivery-plan.ts");
+for (const method of ["simple_click", "sms_otp", "email_otp"]) {
+  for (const channel of ["email", "sms", "both"]) {
+    for (const web of [false, true]) for (const sms of [false, true]) {
+      const impossible = (method === "sms_otp" && channel === "email") || (method === "email_otp" && channel === "sms") || (!web && !(sms && channel !== "email" && method !== "email_otp"));
+      const build = () => deliveryPlan.planContractDelivery({ method, channel, modes: { web, sms } });
+      if (impossible) assert.throws(build);
+      else {
+        const plan = build();
+        assert.equal(plan.codeRequired, channel !== "email" || method !== "simple_click");
+        const body = deliveryPlan.renderContractDeliverySms({ contractNumber: "KX-1", legalName: "AB", acceptUrl: "https://example.test", expiresAt: "imorgon", code: "123456", plan });
+        assert.equal(body.includes("Svara JA"), plan.sms);
+        if (plan.codeRequired) assert.ok(body.includes("123456"));
+      }
+    }
+  }
+}
+assert.equal(deliveryPlan.acceptanceMethod("sms_otp", "web"), "sms_otp");
+assert.equal(deliveryPlan.acceptanceMethod("email_otp", "web"), "email_otp");
+assert.throws(() => deliveryPlan.acceptanceMethod("email_otp", "sms"));
+assert.throws(() => deliveryPlan.signatureMethod({ method: "bankid" }));
+assert.throws(() => deliveryPlan.signatureMethod({ method: "simple_click", requireFinalProviderDocument: true }));
+console.log("Delivery policy matrix passed");
+
+const framePolicy = await importSource(await readFile(new URL("../src/lib/call-workspace/frame-policy.ts", import.meta.url), "utf8"), "frame-policy.ts");
+for (const path of ["/app/contracts", "/app/contracts/new", "/app/contracts/123"]) {
+  assert.equal(framePolicy.contractFrameAncestors(path), "frame-ancestors 'self'");
+}
+for (const path of ["/app", "/app/contracts-evil", "/app/admin", "/accept/token", "/api/public/contracts"]) {
+  assert.equal(framePolicy.contractFrameAncestors(path), "frame-ancestors 'none'");
+}
+const nextConfigSource = await importSource(await readFile(new URL("../next.config.ts", import.meta.url), "utf8"), "next.config.ts");
+const responseHeaders = await nextConfigSource.default.headers();
+assert.equal(responseHeaders.find((entry) => entry.source === "/(.*)").headers.find((header) => header.key === "X-Frame-Options").value, "DENY");
+assert.deepEqual(responseHeaders.find((entry) => entry.source === "/app/contracts/:path*").headers, [{ key: "X-Frame-Options", value: "SAMEORIGIN" }]);
+console.log("Call workspace save ordering and same-origin contract frame policy passed");

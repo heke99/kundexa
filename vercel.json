@@ -30,6 +30,10 @@
     {
       "path": "/api/cron/edge-workers/maintenance-worker",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/signing-reconcile",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

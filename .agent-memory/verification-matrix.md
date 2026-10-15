@@ -263,3 +263,32 @@ för `npm run verify`, som kör mot PGlite. Den kontrollen är manuell.
 | `test:api` utfallsgrupper/återkomstsnabbval | PASS |
 | Visuell kontroll i webbläsare | NOT RUN |
 | Skarpt samtal: redigera kort under samtal, efterarbete, avtal i ny flik | NOT RUN |
+
+## 2026-10-13 Granskning och dokumentationspass
+
+| Kontroll | Status | Avgränsning |
+|---|---|---|
+| GitHub main mot lokal referens | CONFIRMED | de852fcd5bccc6fdffc82d49c7a2611545d09e33 |
+| Produktion/databas/workerbaslinje | READ ONLY REVIEW | Rapporterna anger datum och detaljer |
+| DocuSeal/DocuSign inkopplat | NOT IMPLEMENTED | Tomt providerregister, inga signing_envelopes |
+| Säljarvy | CODE REVIEW | Inget visuellt inloggat säljarprov |
+| Kodrättningar och migrationsändringar | NOT DONE | Detta pass sparar dokumentation |
+| npm verify/build/tests i detta pass | NOT RUN | Ingen runtimekod ändrad |
+| Riktigt avtal/providerflöde efter rättning | NOT RUN | Planerat, inte utfört |
+
+## 2026-10-13 PDF-fältspecifikation
+
+Källkod: SigningProvider, template-context och PDF-generator granskade. Officiella DocuSeal-källor: visuell byggare, förifyllning, readonly, Pro/AGPL kontrollerade. git diff --check: PASS för dokumentationsändringen. Applikationstester, live DB-skrivningar, PDF-rendering/signering och providerinstallation: NOT RUN; ingen runtimekod ändrad.
+
+## 2026-10-13 Publicering slutförd
+
+Rapporter, avtalsplan, PDF-fältspecifikation och projektminne är publicerade i [PR #53](https://github.com/heke99/kundexa/pull/53). PR är öppen och inte mergad. Publicerat git-träd matchade exakt det lokala dokumentationsträdet (12 ändrade filer). Vanlig git-push saknade terminalautentisering; GitHub-anslutningen användes med användarens uttryckliga mandat. Ingen produktionsdeploy gjordes.
+
+## 2026-10-13 Full återanvändning av DocuSeal och byggordning
+
+Dokumentationspass om återanvändningsmandat och byggordning. Relevant tidigare källgranskning används; ingen ny live DB-/providerkontroll. git diff --check: PASS för dokumentationsändringarna. Applikationstester, samtal, signering, kodimport och deployment: NOT RUN.
+
+
+## 2026-10-15 — Implementation av plan 53
+
+Slutlig npm run verify PASS (exit0), Node22.17.0/npm10.9.2: genererat schema, Edge, samtliga tester inklusive SQL-runtime, OpenAPI, TypeScript och Next produktionsbygge. SQL-runtime inklusive positiva/negativa DocuSeal/audit-, PDF-schema-, roll- och tvåtenantfall PASS i delkörningar. PDF/adapter/orkestrering/telefoni/kanalmatris PASS i delkörningar. Chromium komponent-QA och Ruby-/Compose-/shellsyntax PASS. Full Dockerbuild BLOCKED (APK403); Rails/liveleverans/samtal/JWT/Storage/staging NOT RUN.

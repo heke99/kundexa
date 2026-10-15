@@ -16,6 +16,8 @@ export type SigningRecipientInput = {
   role: string;
   required: boolean;
   signingOrder: number;
+  fieldValues?: Record<string, string | number | boolean>;
+  readonlyFields?: string[];
 };
 
 export type CreateEnvelopeInput = {
@@ -27,6 +29,10 @@ export type CreateEnvelopeInput = {
   policy: SignaturePolicy;
   recipients: SigningRecipientInput[];
   callbackUrl: string;
+  providerTemplateId?: string;
+  expiresAt?: string;
+  /** Persist initial attempt before POST. Unknown results must use reconcile_only. */
+  createMode?: "initial" | "reconcile_only";
 };
 
 export type CreateEnvelopeResult = {
@@ -44,7 +50,7 @@ export type SignerSessionInput = {
 
 export type SignerSessionResult = {
   url: string;
-  expiresAt: string;
+  expiresAt: string | null;
   providerTransactionId?: string;
 };
 
@@ -67,11 +73,15 @@ export type VerifiedSigningEvent = {
 
 export interface SigningProvider {
   readonly name: string;
+  readonly capabilities?: { methods: readonly SignatureMethod[]; orderedSigning: boolean; finalDocument: boolean; providerInvitations: boolean; createIdempotency: boolean };
+  reconcileEnvelope?(input: CreateEnvelopeInput): Promise<CreateEnvelopeResult | null>;
   createEnvelope(input: CreateEnvelopeInput): Promise<CreateEnvelopeResult>;
   createSignerSession(input: SignerSessionInput): Promise<SignerSessionResult>;
   cancelEnvelope(providerEnvelopeId: string): Promise<void>;
   fetchEnvelope(providerEnvelopeId: string): Promise<ProviderEnvelope>;
   fetchFinalDocument(providerEnvelopeId: string): Promise<Uint8Array>;
+  /** Original provider audit artifact, separate from Kundexa-generated evidence. */
+  fetchAuditDocument?(providerEnvelopeId: string): Promise<Uint8Array>;
   verifyWebhook(rawBody: Uint8Array, headers: Headers): VerifiedSigningEvent;
 }
 
