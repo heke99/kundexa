@@ -1,115 +1,42 @@
-# Bygg Kundexa med återanvänd DocuSeal-kod
+# Porta valda DocuSeal-delar till Kundexa
 
-Datum: 13 oktober 2026. Genomförandeplan, inte implementerad kod.
+Uppdaterad 15 oktober 2026 efter användarens förtydligande: **vi ska inte installera hela DocuSeal; vi ska porta det vi behöver**. Detta ersätter den tidigare rekommendationen om en separat dokumenttjänst. Användarens uppgivna tillstånd att återanvända DocuSeal-kod gäller fortsatt.
 
-Användaren uppger att DocuSeal godkänt återanvändning av hela projektet och relevanta delar
-som egen lösning efter ett samarbete. Detta är arbetsförutsättningen. Inventering av den
-faktiska källkodsversionen och modulerna återstår; ingen standardprenumeration antas behövas
-enbart för redan godkänd kodåteranvändning. Drift, meddelandeleverans och BankID kan ha egna kostnader.
+## Arkitektur
 
-## En produkt, tydliga ansvar
+Kundexa behåller sin befintliga Next.js-applikation, autentisering, tenantmodell, Supabase-databas, privata dokumentlagring och transactional outbox. Kunden öppnar en tids- och generationsbunden signeringslänk i Kundexa. Ingen separat DocuSeal-app, Rails-server, databas, API-nyckel eller inloggning behövs.
 
-Kundexa är användarens CRM, dialer och avtalsarbetsyta. Återanvänd DocuSeals mallbyggare,
-fältplacering, dokumentberedning, kundsignering och slutmaterial i en egen anpassad
-dokumenttjänst bakom Kundexa. Behåll en avgränsad tjänst så beroenden inte måste skrivas om
-till Next.js och så dokumentarbetet kan uppdateras utan att telefonen bryts.
-Det är ett implementationsval, inte ett krav på att köpa DocuSeals molntjänst.
-
-| Ansvar | Ägare |
+| Del | Genomförande |
 |---|---|
-| Tenant, användare, team och rättigheter | Kundexa |
-| Kunden, ringlistan, samtalet och efterarbetet | Kundexa |
-| Produkt, pris, godkänd mallversion och fältkopplingar | Kundexa |
-| Visuell PDF-byggare och signeringspresentation | Återanvänd dokumenttjänst |
-| Frysta avtalsuppgifter, utskickskö och affärsstatus | Kundexa |
-| Signeringsoperation och signerad PDF | Dokumenttjänst; importeras till Kundexa |
-| BankID-signering senare | Separat adapter/tjänst, kopplad till samma frysta avtal |
+| PDF-byggare och kopplingar | Kundexas befintliga PDF-byggare, godkänd fältkatalog och typade avtalskompletteringar |
+| Signaturinmatning | Relevant DocuSeal-logik för ritad underskrift portas till TypeScript/React med samma underliggande signature_pad-bibliotek |
+| Validering och beskärning | Utvalda upstreamfunktioner portas med källreferens, ändringsbeskrivning och bibehållna licenstexter |
+| Dokumentberedning | Kundexa fyller låsta uppgifter och placerar underskriften i exakt den granskade PDF-versionens fältrutor |
+| Signeringssession | Kundexas befintliga signing_envelopes/recipients, kompletterade med kontrollerade lokala övergångar |
+| Slutdokument och audit | Produceras och hashbinds i Kundexa från ett hållbart signeringskvitto, sparas privat och finaliseras atomiskt |
+| Utskick | Kundexas outbox och befintliga e-posttransport; samma inbjudan/bekräftelse skapas högst en gång |
+| BankID senare | Separat verifierad metod som ska kunna använda samma frysta avtal |
 
-Ingen dubbel kunddatabas som kan bli två olika sanningar. Dokumenttjänsten får de frysta
-uppgifter som behövs för avtalet. Lokala och externa operationer mappas till rätt tenant,
-mallversion, avtal, mottagare och generation. Provider-ID från browsern räcker inte som behörighet.
+Den första porten stöder en obligatorisk kundsignatär med ritad elektronisk underskrift och uttryckligt godkännande. Namn, uppgiven underskrift, dokumenthash, tidpunkt, version/generation och händelsebevis binds till samma kvitto. Detta är låg identitetsnivå. Det är inte BankID, en kvalificerad/avancerad signatur eller ett påstående om certifikatbaserad PDF-signering.
 
-## Leveranser i ordning
+## Funktioner som portas
 
-### 1. Fungerande och skyddad grund
+Utgångspunkt är `docusealco/docuseal` på commit `3c65b0e4ba872fe71d5566c0d09c3ace59a7fb8a`. Portade filer identifierar originalet och avvikelser i sina källhuvuden. Ursprung och licenstexter finns i `third_party/docuseal/`.
 
-Rätta kundskrivning, kommersiella överstyrningar, direkt avtalsaktivering och API-tenantstatus
-enligt oktoberfynden. Samordna kundkortssparande och efterarbete innan nytt avtal/lead.
-Koppla verklig produkt till färdig godkänd mall och prisversion; hitta inte på slutvillkor.
+Vi återanvänder bara funktioner som behövs för Kundexas avtalsresa. DocuSeals användarhantering, organisationer, malladministration, databas, jobbsystem, inbjudningar, externa API och hela Rails-applikation införs inte. De befintliga kundkorten är fortfarande enda CRM-källa.
 
-Första delmålet: säljaren kan spara rätt uppgifter och skapa ett korrekt utkast inom sina rättigheter.
+## Skydd som ska gälla även efter porten
 
-### 2. Ta in och avgränsa dokumentkoden
+- Godkänd PDF-källa, fältplaceringar, kopplingar och policy är versionslåsta.
+- Kunden ser samma ifyllda dokument som säljaren granskar; redan låsta avtalsuppgifter går inte att ändra under signering.
+- Publika tokens kontrolleras mot tenantstatus, rätt mottagare, aktiv version/generation och utgångstid. Äldre eller avbrutna länkar nekas.
+- Ett accepterat signeringsunderlag sparas före slutdokumentframställningen. Retry använder samma kvitto och frysta uppgifter, inte klientens senare ändringar.
+- Den ritade signaturen valideras, placeras med bibehållna proportioner och får aldrig automatiskt ersätta en kundhandling.
+- Signerat dokument och separat audit har egna hashar. Kontrollerad finalisering kräver rätt kvitto, dokument och generation.
+- Aktivering och bekräftelse följer Kundexas behörigheter, RLS och outbox.
 
-Inventera den auktoriserade källan, lås en upstreamreferens och kartlägg byggare, PDF-beredning,
-signeringsflöde, databasschema, jobb, certifikathantering och externa beroenden.
-Behåll ursprung/proveniens så uppdateringar och felrättningar går att följa.
-Inför egen konfiguration, privat lagring, drift/hälsa och en begränsad serverintegration.
-Ingen runtimekod får markeras införd bara genom en kopierad komponent eller en plan.
+## Leverans och drift
 
-Första delmålet: en isolerad dokumenttjänst kan skapa en mall och producera ett granskningsdokument.
+PR #55 uppdateras till denna inriktning. Den tidigare `services/docuseal/`-installationen och den externa HTTP-adaptern tas bort. Blockeringen i Alpines paketkälla är därför inte en blockerare för den valda lösningen.
 
-### 3. Mallbyggare och kundkortskoppling
-
-Administratören laddar upp PDF, drar fält till rätt platser, kopplar datakällor och godkänner
-en version. Använd befintlig tillåten fältkatalog; definiera typade avtalsfält för kompletteringar.
-Återanvänd byggaren, lägg Kundexas produkt-/datakoppling runt den.
-Lås original, placeringar, fältregler och godkänd version. Senare ändring skapar ny version.
-
-Första delmålet: sparat kundnamn/adress och godkänt pris visas korrekt i den ifyllda PDF:en.
-
-### 4. Enkel säljarresa
-
-Fyra huvudval: Ringa, Återkomster, Kunder och Avtal. Ringlistor/historik ligger under Ringa.
-Under samtal: kundkort, kort anteckning, återkomst och produktval. Därefter samma arbetsyta
-för komplettering, ifylld förhandsgranskning, synlig mottagare och utskick. Bevara köposition.
-Mallbyggare, integrationer och avancerad kommersiell överstyrning hör till behörig administration.
-UI, server actions, publikt API och databasanrop ska följa samma rättigheter.
-
-Första delmålet: säljaren behöver inte lämna samtalsarbetsytan eller öppna dokumentadministrationen.
-
-### 5. Verkligt utskick, kundsignering och slutdokument
-
-Bygg extern orchestration via SigningProvider; den nuvarande utskicks-RPC:n avvisar extern
-signering. Lås avtalsuppgifter och granskningsdokument före utskick. Återanvänd Kundexas
-outbox efter rättning av leases, databasfel och leveransavstämning. Börja med kontrollerad e-post.
-Kundexa äger inbjudningar/påminnelser; motsvarande automatisk sändning i dokumenttjänsten stängs av.
-
-Kunden granskar och signerar rätt avtal. Verifiera händelser och stäm av status server-side.
-Hämta slut-PDF och bevis för rätt generation; slutdokument får egen hash. Finalisera genom
-kontrollerad övergång först när alla obligatoriska mottagare är klara. Aktivera högst en gång.
-Skickat, levererat, accepterat, signerat och aktivt hålls isär.
-
-Första delmålet: en kontrollerad mottagare får, signerar och återfår exakt rätt avtal; säljaren ser status.
-
-### 6. Dialer och produktionsgodkännande
-
-Rätta fjärrljud, verkliga mic-/speaker-val, DTMF, startfel och återhämtning vid nätverksavbrott.
-Inför kontroll av arbetarnas färskhet och verkliga blockerare i readiness.
-Verifiera kundkort → samtal → efterarbete → avtal → signering → slutdokument som sammanhängande resa.
-Behåll befintligt stöd för verkliga manuella källsamtal, utan nytt generellt provider-svarskrav.
-
-SMS kommer när befintliga kanal-/nummerblockerare är lösta. BankID kommer som separat metod
-med verifierad signeringsorder, dokumentbindning och resultat; det är inte en inloggningsknapp.
-
-Första produktionsmål: kontrollerad e-postsignering och en fungerande säljarresa med samtal,
-rätt innehåll, tenantisolering och återhämtning. Resterande oktoberfynd måste hanteras enligt
-sin påverkan innan hela systemet kallas grönt.
-
-## Vad som krävs utöver återanvänd kod
-
-- Kundexas fältkoppling, behörighet, versioner, integration och felrättningar.
-- Drift för dokumenttjänsten med databas, privat dokumentlagring, backup och övervakning.
-- Fungerande e-post-/SMS-transport; återanvänd befintliga leverantörer där de passar.
-- Färdiga avtalstexter/produktvillkor och kontrollerade mottagare för verifiering.
-- Separat BankID-anslutning senare; stöd och avtal hos vald tjänst måste fastställas då.
-
-Ingen ytterligare generell e-signleverantör antas behövas för det första DocuSeal-baserade PDF-flödet.
-
-## Koppling till sparad granskning
-
-Denna byggordning konkretiserar, och ersätter inte, fyndregistret eller
-[avtalsplanens PR 1–7](CONTRACT_PRODUCTION_PLAN_2026-10-13.md).
-Detaljer om PDF-fält finns i [PDF-specifikationen](PDF_FIELD_TEMPLATES_AND_DOCUSEAL.md).
-Alla tidigare fynd kvarstår OPEN tills faktisk rättning verifierats.
-I detta pass ändras endast dokumentation; ingen DocuSeal-kod importerad eller produktionsändring gjord.
+Driftsättning använder Kundexas vanliga webb-, migrations- och Edge-flöde. Innan produktion återstår identifierad staging, riktiga JWT/Storage-tester, slutliga produktvillkor och ett kontrollerat komplett utskick/signering/återhämtningsprov. Kod- och komponenttest ersätter inte dessa driftprov.

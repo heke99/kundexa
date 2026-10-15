@@ -1,5 +1,9 @@
 # Completed work
 
+## 2026-10-15 Aktuell korrigering: port i Kundexa
+
+Portad utvald DocuSeal-kod med proveniens och licenser; signature_pad pinnad; faktisk PDF-signaturbild + deterministiskt kvitto/audit; tokenbunden publik vy/preview/submit; lokal cronåterhämtning; separat service borttagen; tidigare plan53-säkerhets-,PDF-,outbox-,säljar- och telefonirättningar bevarade.
+
 ## 2026-09-24 samtalsarbetsyta
 - `LiveCustomerCard` + `saveCallCustomer`/`loadCallCustomer` (`src/app/actions/call-workspace.ts`).
 - `OutcomePicker`/`CallbackTimeField` och `src/lib/dialer/outcomes.ts` (gruppering, tangenter, snabbval) med test i `test:api`.

@@ -1,5 +1,9 @@
 # Current state
 
+## 2026-10-15 Aktuell korrigering: port i Kundexa
+
+Användaren förtydligade: porta det som behövs direkt till Kundexa. Separat DocuSeal-tjänst, Dockerunderlag, fjärradapter och callback är borttagna. Utvalda källpinnade validerings-/beskärnings-/placeringsfunktioner är portade med licenser. Native signeringsvy, privat PDF/audit och hållbart kvitto använder Kundexas befintliga plattform. Migration006 inför service-only native RPC:er. PR55 uppdateras på samma gren; ingen produktionsdeploy.
+
 ## 2026-10-13 Full återanvändning av DocuSeal och byggordning
 
 Användaren uppger att DocuSeal har godkänt återanvändning av hela sitt projekt som egen lösning efter ett samarbete. Planen utgår från detta. docs/KUNDEXA_BUILD_WITH_DOCUSEAL.md beskriver egen dokumenttjänst, kundkortskoppling, enkel säljarresa, extern signering, dialerrättningar och BankID senare. Standardpaket/köp är inte en arbetsblockerare för den redan auktoriserade återanvändningen. Faktiska källkod/moduler ska inventeras. Ingen runtimekod importerad, ingen rättning eller deploy gjord.

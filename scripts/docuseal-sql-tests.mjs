@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 export async function verifyDocusealSql(db) {
   const id = n => `54000000-0000-0000-0000-${String(n).padStart(12,'0')}`;
   const [tenant,other,actor,customer,product,entity,template,templateVersion] = [1,2,3,4,5,6,7,8].map(id);
@@ -11,6 +12,12 @@ export async function verifyDocusealSql(db) {
     assert.ok(message.includes(marker), `Expected ${marker}, got ${message || 'success'}`);
   };
   await db.exec('begin');
+  // This fixture represents an approved legacy operation created before006.
+  // Seed it under the delivered005 policy, then restore the current policy.
+  const currentPolicy = (await db.query(`select pg_get_functiondef('public.validate_pdf_template_policy()'::regprocedure) as definition`)).rows[0].definition;
+  const legacyMigration = await readFile(new URL('../supabase/migrations/202610150005_pdf_template_policy.sql', import.meta.url), 'utf8');
+  await db.exec(legacyMigration.slice(legacyMigration.indexOf('create or replace function'), legacyMigration.indexOf('revoke all on function')));
+
   try {
     await db.exec(`insert into auth.users(id,email) values('${actor}','docuseal-sql@example.test');
       insert into public.tenants(id,name,slug,legal_name) values('${tenant}','Signing A','signing-a','Signing A AB'),('${other}','Signing B','signing-b','Signing B AB');
@@ -24,6 +31,7 @@ export async function verifyDocusealSql(db) {
       insert into public.contract_templates(id,tenant_id,name,contract_type,audience,product_id,legal_entity_id) values('${template}','${tenant}','Signing template','service','B2B','${product}','${entity}');`);
     await db.query(`insert into public.contract_template_versions(id,tenant_id,template_id,version,title_template,body_template,terms_template,signing_configuration) values($1,$2,$3,1,'Title','Body','Terms',$4::jsonb)`,[templateVersion,tenant,template,{pdf_template:pdf,signature_policy:policy,provider_key:'docuseal'}]);
     await db.query(`select public.approve_contract_template_version($1)`,[templateVersion]);
+    await db.exec(currentPolicy);
     await db.exec(`insert into public.tenant_features(tenant_id,feature_key,enabled) values('${tenant}','outbound_email',true),('${tenant}','contract_delivery_email',true) on conflict(tenant_id,feature_key) do update set enabled=true;
       insert into public.tenant_integrations(tenant_id,name,provider_type,provider,status,configuration) values('${tenant}','Resend','email','resend','active','{}');`);
     const price = (await db.query(`select id from public.product_price_versions where tenant_id=$1 and product_id=$2`,[tenant,product])).rows[0].id;

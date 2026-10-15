@@ -99,7 +99,7 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Pr
             <TextareaField label="Avtalstext" name="body_template" defaultValue={"Avtal mellan {{seller.legal_name}} och {{customer.display_name}}.\n\nAvtalet avser {{product.name}}. Månadspris: {{price.recurring_fee?}} {{price.currency?}}."} required />
             <ContractTemplateDocumentUpload target="terms_template" label="Ladda upp villkoren (.docx)" />
             <TextareaField label="Fullständiga villkor" name="terms_template" defaultValue={"Bindningstid: {{price.binding_months?ingen}}. Uppsägningstid: {{price.notice_months?ingen}}. Avtalet upprättades {{today}}.\n\nHär ska era juridiskt granskade fullständiga villkor anges."} required />
-            <SelectField label="Signering" name="signature_method" defaultValue={"simple_click"}><option value="simple_click">Enkel webbacceptans</option><option value="external_esign">Underskrift i PDF (DocuSeal)</option></SelectField>
+            <SelectField label="Signering" name="signature_method" defaultValue={"simple_click"}><option value="simple_click">Enkel webbacceptans</option><option value="external_esign">Elektronisk underskrift i PDF</option></SelectField>
               <PdfTemplateBuilder />
               <TemplateFieldButtons />
             <TemplateFieldReference />

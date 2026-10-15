@@ -103,7 +103,7 @@ export async function createContractTemplateVersion(form: FormData) {
     // unread. A field is required only when the template asks for it without the
     // `?` marker, and now the stored schema says so.
     p_variables_schema: Object.fromEntries(variables.map((name) => [name, { type: "string", required: required.includes(name) }])),
-    p_signing_configuration: { methods: ["web", "sms"], require_explicit_acceptance: true, signature_policy: signaturePolicy, provider_key: method === "external_esign" ? "docuseal" : null, ...(pdfTemplate ? { pdf_template: pdfTemplate } : {}) },
+    p_signing_configuration: { methods: ["web", "sms"], require_explicit_acceptance: true, signature_policy: signaturePolicy, provider_key: method === "external_esign" ? "kundexa_native" : null, ...(pdfTemplate ? { pdf_template: pdfTemplate } : {}) },
   });
   // Tillbaka dit man kom ifrån. Den som redigerar en mall står inne i den och
   // vill se resultatet, inte kastas ut i listan.

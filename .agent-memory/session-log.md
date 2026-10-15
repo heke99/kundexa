@@ -1,5 +1,9 @@
 # Session log
 
+## 2026-10-15 Aktuell korrigering: port i Kundexa
+
+Fortsättning efter användarens korrigering: flera agenter byggde native SQL, inbyggd orkestrering, källport och browser-QA. Root tog bort separat driftberoende och uppdaterade plan/CI/testkoppling. Inga externa kundutskick eller produktionsändringar.
+
 ## 2026-09-24 (UI-städning)
 
 - Genomförde förslagen från UI-genomgången: tidslinje, färre kort på kundkortet, ett sökfält i dialern,

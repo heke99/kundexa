@@ -1,5 +1,9 @@
 # Decisions
 
+## 2026-10-15 Aktuell korrigering: port i Kundexa
+
+Användarens uttryckliga korrigering ersätter tidigare installationsval: valda delar porteras till Kundexa. provider_key=kundexa_native. Historiska migrationer001–005 bevaras;006 är framåtmigration. Första flödet är en e-postmottagare, ritad enkel elektronisk underskrift och uttryckligt samtycke; inga BankID-/PKI-löften.
+
 ## ADR-0001 — Ett kanoniskt CRM
 
 `customers` är kund-/prospektkortet. Listmedlemskap, samtal, återkomster, anteckningar och order hålls i separata kanoniska tabeller; inga parallella kundkopior.

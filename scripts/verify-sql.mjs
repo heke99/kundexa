@@ -3600,6 +3600,7 @@ if (phantomTables.length > 0) {
 }
 await (await import("./contract-security-sql-tests.mjs")).verifyContractSecurity(db);
 await (await import("./docuseal-sql-tests.mjs")).verifyDocusealSql(db);
+await (await import("./native-signing-sql-tests.mjs")).verifyNativeSigningSql(db);
 
 await (await import("./outbox-sql-tests.mjs")).verifyOutboxRecovery(db);
 

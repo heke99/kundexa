@@ -1,5 +1,9 @@
 # Verification matrix
 
+## 2026-10-15 Aktuell korrigering: port i Kundexa
+
+Native browser-QA: 8 PASS (PDFcanvas, obligatoriska fält, rita/rensa, PNG, samtycke, fryst försök vid nätverksfel, identisk retry, bekräftelse); inga JS-fel. Native engine-/orkestreringstester PASS. Full npm run verify: PASS exit0 Node22/npm10.9.2. Slutliga SQL-replay och produktionsbygge: PASS exit0; fokuserade engine/orchestration/stream-limit-tester PASS. Live JWT/RLS/Storage/mail/telefoni: NOT RUN.
+
 | Område | Kontroll | Status 2026-08-07 |
 |---|---|---|
 | Dependencyinstallation | `npm ci` | PASS (150 paket, Node 22.22.2/npm 10.9.7) |

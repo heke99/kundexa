@@ -1,5 +1,9 @@
 # Open blockers
 
+## 2026-10-15 Aktuell korrigering: port i Kundexa
+
+Separat server/DocuSeal-installation och tidigare APK403 är inte längre blockerare för vald arkitektur. Före drift återstår identifierad staging, migration/typegen/deploy, riktig JWT/RLS/Storage-verifiering med två tenants, slutlig produkt/avtalstext och egen testmottagare samt verkligt e-post-/säljar-/telefoniprov. BankID är ej implementerat.
+
 ## 2026-10-13 Full återanvändning av DocuSeal och byggordning
 
 Användarens uppgivna fullständiga återanvändningsgodkännande ersätter tidigare standardlicens-/paketval som blockerare. Källinventering, dokumenttjänstens drift, integration, slutvillkor och samtliga ofixade oktoberfynd återstår. Återanvändningsmandat gör inte befintliga utskick operativa.

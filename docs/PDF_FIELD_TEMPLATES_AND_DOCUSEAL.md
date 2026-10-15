@@ -1,5 +1,8 @@
 # PDF-mallar med kundkortsfält och DocuSeal
 
+> **Inriktning ändrad 15 oktober 2026:** användaren förtydligar att endast behövda DocuSeal-delar ska portas direkt till Kundexa. En separat installation av hela DocuSeal är inte önskad. Den aktuella arkitekturen finns i [portningsplanen](KUNDEXA_BUILD_WITH_DOCUSEAL.md). Äldre förslag om separat tjänst nedan är historik.
+
+
 Datum: 13 oktober 2026. Status: användarkrav och genomförandespecifikation; inte implementerat.
 
 **Uppdaterad förutsättning:** Användaren uppger uttryckligt godkännande från DocuSeal att

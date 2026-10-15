@@ -1,4 +1,3 @@
-import { docusealConfigured } from "@/lib/signing/orchestration";
 import { decryptJson } from "@/lib/crypto";
 import { evaluateWorkerReadiness } from "@/lib/operational-readiness";
 import { NextResponse } from "next/server";
@@ -145,7 +144,7 @@ export async function GET() {
       .eq("active", true).eq("contract_template_versions.signature_policy->>method", "external_esign");
     const signingRequired = (externalTemplates ?? 0) > 0;
     const signingHeartbeat = workerRows?.find(row => row.worker_key === "signing-reconcile");
-    const signingWorkerReady = !signingPolicyError && (!signingRequired || Boolean(docusealConfigured() && signingHeartbeat && signingHeartbeat.status === "healthy"
+    const signingWorkerReady = !signingPolicyError && (!signingRequired || Boolean(signingHeartbeat && signingHeartbeat.status === "healthy"
       && Date.now() - Date.parse(signingHeartbeat.updated_at) <= 15 * 60_000 && Date.parse(signingHeartbeat.updated_at) <= Date.now() + 60_000));
     const heartbeat = workerRows?.find(row => row.worker_key === "process-outbox");
     if (heartbeat) {

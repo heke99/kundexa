@@ -1,5 +1,9 @@
 # Known failures
 
+## 2026-10-15 Aktuell korrigering: port i Kundexa
+
+Tidigare full upstreambyggning/APK403 gäller borttaget serviceförslag och blockerar inte porten. Ingen hel DocuSeal-installation ska återinföras som rutinfix. Live drift är fortsatt NOT RUN.
+
 ## FAILURE-0001 — Composite FK nollade tenant_id
 
 - Upptäckt: `split_customer_list_to_team` misslyckades med SQLSTATE 23502 när källmedlem raderades.

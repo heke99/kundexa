@@ -159,7 +159,7 @@ export default async function TemplateDetailPage({
               <TextareaField label="Avtalstext" name="body_template" defaultValue={shown.body_template} required />
               <ContractTemplateDocumentUpload target="terms_template" label="Ersätt villkoren från .docx" />
               <TextareaField label="Fullständiga villkor" name="terms_template" defaultValue={shown.terms_template} required />
-              <SelectField label="Signering" name="signature_method" defaultValue={shown.signing_configuration?.signature_policy?.method ?? "simple_click"}><option value="simple_click">Enkel webbacceptans</option><option value="external_esign">Underskrift i PDF (DocuSeal)</option></SelectField>
+              <SelectField label="Signering" name="signature_method" defaultValue={shown.signing_configuration?.signature_policy?.method ?? "simple_click"}><option value="simple_click">Enkel webbacceptans</option><option value="external_esign">Elektronisk underskrift i PDF</option></SelectField>
               <PdfTemplateBuilder key={shown.id} initial={shown.signing_configuration?.pdf_template} />
               <TemplateFieldButtons />
               <TemplateFieldReference />

@@ -777,10 +777,10 @@ async function processSignedContractConfirmation(job: Job) {
       .contains("metadata", { provider_audit: true, envelope_id: envelopeId, generation }).single()
     : { data: null, error: null };
   if (auditError) throw auditError;
-  if (envelope.provider === "docuseal" && (!audit || audit.sha256 !== envelope.provider_evidence?.provider_audit_sha256)) throw new Error("signed_confirmation_waiting_for_provider_audit");
+  if (["docuseal", "kundexa_native"].includes(envelope.provider) && (!audit || audit.sha256 !== envelope.provider_evidence?.provider_audit_sha256)) throw new Error("signed_confirmation_waiting_for_provider_audit");
   const lockedParties = (document.metadata as { locked_parties?: { seller?: { legal_name?: string } } } | null)?.locked_parties;
   const lockedIssuerName = lockedParties?.seller?.legal_name;
-  if (envelope.provider === "docuseal" && !lockedIssuerName) throw new Error("signed_confirmation_locked_parties_missing");
+  if (["docuseal", "kundexa_native"].includes(envelope.provider) && !lockedIssuerName) throw new Error("signed_confirmation_locked_parties_missing");
 
   const signedAt = contract.signed_at ?? new Date().toISOString();
   const signedLabel = new Intl.DateTimeFormat("sv-SE", { dateStyle: "long", timeStyle: "short", timeZone: "Europe/Stockholm" }).format(new Date(signedAt));

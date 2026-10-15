@@ -1,5 +1,9 @@
 # Next actions
 
+## 2026-10-15 Aktuell korrigering: port i Kundexa
+
+Efter lokal verifiering: uppdatera befintlig utkast-PR55. Applicera endast senare på identifierad staging, regenerera schema, deploya webb/Edge och verifiera hela inbyggda flödet med riktiga testidentiteter. Ingen ny server eller DocuSeal-nyckel behövs.
+
 ## 2026-10-13 Full återanvändning av DocuSeal och byggordning
 
 Följ docs/KUNDEXA_BUILD_WITH_DOCUSEAL.md: skydda avtals-/kundgrund och sparande; inventera och avgränsa auktoriserad dokumentkod; inför PDF-fältkoppling/versioner; bygg enkel säljarresa och riktig extern signeringskedja; rätta telefoni och verifiera drift. BankID är senare separat adapter.
