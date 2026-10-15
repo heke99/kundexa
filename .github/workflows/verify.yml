@@ -59,6 +59,14 @@ jobs:
       - name: Run contract template tests
         run: npm run test:contract-templates
 
+      - name: Run PDF and signing integration tests
+        run: |
+          npm run test:pdf-fields
+          node scripts/docuseal-unit-tests.mjs
+          node scripts/docuseal-orchestration-tests.mjs
+          node scripts/readiness-tests.mjs
+          node scripts/signing-reconcile-tests.mjs
+
       - name: Run telephony tests
         run: npm run test:telephony
 
