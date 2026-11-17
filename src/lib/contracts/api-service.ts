@@ -1,5 +1,5 @@
 import { beginExternalSigning } from "@/lib/signing/orchestration";
-import { freezePdfTemplate, type FrozenPdfTemplate } from "@/lib/contracts/pdf-field-template";
+import { freezePdfTemplate, freezeContractCustomFields, type FrozenContractFields, type FrozenPdfTemplate } from "@/lib/contracts/pdf-field-template";
 import { stableJson } from "./document-hash";
 import { z } from "zod";
 import type { ApiIdentity } from "@/lib/api-auth";
@@ -31,6 +31,7 @@ export const apiCreateContractSchema = z.object({
   ends_on: z.iso.date().nullable().optional(),
   language: z.enum(["sv", "en"]).optional(),
   special_terms: z.string().max(4000).optional(),
+  custom_values: z.record(z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/), z.union([z.string().max(1000), z.number().finite()])).refine(values => Object.keys(values).length <= 50).optional(),
   pdf_custom_values: z.record(z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/), z.union([z.string().max(1000), z.number().finite()])).refine(values => Object.keys(values).length <= 50).optional(),
   idempotency_key: z.string().min(8).max(200),
 });
@@ -116,7 +117,7 @@ export async function createContractFromApi(identity: ApiIdentity, input: Create
 
   const admin = createAdminClient();
   const [{ data: customer }, { data: legalEntity }, { data: templateVersion }] = await Promise.all([
-    admin.from("customers").select("id,display_name,customer_type,first_name,last_name,company_name,personal_identity_number,organization_number,email,phone_e164,address_line1,postal_code,city,country_code")
+    admin.from("customers").select("id,display_name,customer_type,first_name,last_name,company_name,personal_identity_number,organization_number,custom_fields,email,phone_e164,address_line1,postal_code,city,country_code")
       .eq("tenant_id", identity.tenantId).eq("id", input.customer_id).is("deleted_at", null).single(),
     admin.from("tenant_legal_entities").select("id,legal_name,organization_number,address_line1,postal_code,city,country_code,email,phone_e164,website,branding")
       .eq("tenant_id", identity.tenantId).eq("id", input.legal_entity_id).eq("active", true).single(),
@@ -142,7 +143,7 @@ export async function createContractFromApi(identity: ApiIdentity, input: Create
     const [{ data: productData }, { data: priceData }] = await Promise.all([
       admin.from("products").select("id,name,sku,description").eq("tenant_id", identity.tenantId).eq("id", input.product_id).eq("active", true).single(),
       admin.from("product_price_versions").select("id,version,setup_fee,recurring_fee,variable_fees,currency,binding_months,notice_months,payment_terms_days,terms")
-        .eq("tenant_id", identity.tenantId).eq("product_id", input.product_id).eq("active", true).order("version", { ascending: false }).limit(1).maybeSingle(),
+        .eq("tenant_id", identity.tenantId).eq("product_id", input.product_id).eq("active", true).lte("valid_from", new Date().toISOString().slice(0, 10)).or(`valid_to.is.null,valid_to.gte.${new Date().toISOString().slice(0, 10)}`).order("version", { ascending: false }).limit(1).maybeSingle(),
     ]);
     if (!productData) throw new Error("active_product_not_found");
     if (!priceData) throw new Error("active_price_version_not_found");
@@ -164,9 +165,10 @@ export async function createContractFromApi(identity: ApiIdentity, input: Create
       ...(input.special_terms ? { special_conditions: input.special_terms } : {}),
     },
     pdf_fields: null as FrozenPdfTemplate | null,
+    custom_fields: null as FrozenContractFields | null,
   };
   const sellerSnapshot = { ...legalEntity };
-  const counterpartySnapshot = { ...customer };
+  const { custom_fields: customerDefaults, ...counterpartySnapshot } = customer;
   const context = buildTemplateRenderContext({
     seller: sellerSnapshot,
     customer: counterpartySnapshot,
@@ -190,7 +192,10 @@ export async function createContractFromApi(identity: ApiIdentity, input: Create
       special_terms: input.special_terms,
     },
   });
-  commercialTerms.pdf_fields = freezePdfTemplate(templateVersion.signing_configuration, context, identity.tenantId, input.pdf_custom_values ?? {});
+  if (input.custom_values && input.pdf_custom_values) throw new Error("custom_values_ambiguous");
+  commercialTerms.custom_fields = freezeContractCustomFields(templateVersion.signing_configuration, input.custom_values ?? input.pdf_custom_values ?? {}, customerDefaults);
+  Object.assign(context, { custom: commercialTerms.custom_fields.values });
+  commercialTerms.pdf_fields = freezePdfTemplate(templateVersion.signing_configuration, context, identity.tenantId, commercialTerms.custom_fields.values);
   const renderedTitle = renderStrictTemplate(templateVersion.title_template, context);
   const renderedBody = renderStrictTemplate(templateVersion.body_template, context);
   const renderedTerms = renderStrictTemplate(templateVersion.terms_template ?? "", context);

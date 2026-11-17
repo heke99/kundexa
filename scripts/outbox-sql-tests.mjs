@@ -13,7 +13,7 @@ export async function verifyOutboxRecovery(db) {
     let claimed = (await db.query("select id from public.claim_outbox_jobs('worker-original',1)")).rows;
     assert.equal(claimed[0].id, job);
     assert.equal((await db.query("select count(*)::int n from public.claim_outbox_jobs('worker-other',1)")).rows[0].n, 0);
-    await db.query("update public.outbox_jobs set locked_at=now()-interval '6 minutes',attempts=max_attempts where id=$1", [job]);
+    await db.query("update public.outbox_jobs set locked_at=now()-interval '6 minutes',attempts=max_attempts-1 where id=$1", [job]);
     claimed = (await db.query("select id from public.claim_outbox_jobs('worker-recovered',1)")).rows;
     assert.equal(claimed[0].id, job);
     await db.exec("savepoint stale_worker");

@@ -138,9 +138,17 @@ export async function invokeScheduledEdgeWorker(worker: ScheduledEdgeWorker) {
     throw new Error("edge_worker_network_failure");
   }
 
-  const text = await response.text();
+  let text: string;
+  try { text = await response.text(); } catch {
+    await heartbeat({ worker, workerId, status: "failed", startedAt, finishedAt: new Date().toISOString(), errorCode: "EDGE_WORKER_BODY_FAILURE" });
+    throw new Error("edge_worker_body_failure");
+  }
   let parsed: unknown = null;
   try { parsed = text ? JSON.parse(text) : null; } catch { parsed = null; }
+  if (response.ok && (!parsed || typeof parsed !== "object" || Array.isArray(parsed))) {
+    await heartbeat({ worker, workerId, status: "failed", startedAt, finishedAt: new Date().toISOString(), errorCode: "EDGE_WORKER_INVALID_RESPONSE" });
+    throw new Error("edge_worker_invalid_response");
+  }
   const counts = summarizeWorkerResult(parsed);
   const finishedAt = new Date().toISOString();
   if (!response.ok) {

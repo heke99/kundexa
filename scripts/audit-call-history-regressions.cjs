@@ -1,0 +1,14 @@
+const fs=require('node:fs'),ts=require('typescript'),assert=require('node:assert/strict'),React=require('react'),{renderToStaticMarkup}=require('react-dom/server');
+function load(file,mocks={}){const exp={};new Function('exports','require',ts.transpileModule(fs.readFileSync(file,'utf8'),{fileName:file,compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText)(exp,id=>id in mocks?mocks[id]:require(id));return exp;}
+const time=load('src/lib/domain/time.ts'),search=load('src/lib/calls/history-search.ts',{'@/lib/domain/time':time});
+const f=search.historyFilters({q:'  Alice  ',from:'2026-11-17T10:00',to:'2026-11-17T11:00',page:'2'},'Europe/Stockholm');
+assert.equal(f.since,'2026-11-17T09:00:00.000Z');assert.equal(f.until,'2026-11-17T10:01:00.000Z');assert.equal(f.offset,50);assert.equal(f.query,'Alice');
+for(const params of [{page:'NaN'},{page:'0'},{q:'x'},{from:'2026-03-29T02:30',to:'2026-03-29T03:30'},{from:'2025-01-01T00:00',to:'2026-11-01T00:00'}])assert.throws(()=>search.historyFilters(params,'Europe/Stockholm'));
+let requests=[];
+const rows=[{id:'call',tenant_name:'Tenant',customer_name:'Alice',contact_name:'Contact',seller_name:'Seller',seller_id:'seller-id',team_name:'Team',from_number:'+46811111111',to_number:'+46701111111',direction:'outbound',status:'completed',disposition:null,started_at:'2026-11-17T09:30:00Z',answered_at:'2026-11-17T09:30:05Z',ended_at:'2026-11-17T09:30:30Z',duration_seconds:25}];
+const component=load('src/components/call-history-search.tsx',{'next/link':{default:props=>React.createElement('a',props,props.children)},'@/lib/supabase/server':{createClient:async()=>({rpc:async(name,args)=>{requests.push({name,args});return {data:{data:rows,total:1},error:null};}})},'@/components/ui/form-field':{Field:props=>React.createElement('input',{name:props.name,type:props.type,defaultValue:props.defaultValue})},'@/lib/ui/labels':{callStatusLabel:s=>s,dispositionLabel:s=>s??''},'@/lib/calls/history-search':search}).CallHistorySearch;
+(async()=>{
+ let html=renderToStaticMarkup(await component({params:{from:'2026-11-17T10:00',to:'2026-11-17T11:00'},timeZone:'Europe/Stockholm'}));assert(html.includes('Alice'));assert(html.includes('Seller'));assert(html.includes('10:30:00'));assert(html.includes('25 s'));assert.equal(requests[0].args.p_platform,false);
+ requests=[];html=renderToStaticMarkup(await component({params:{q:'x'},timeZone:'Europe/Stockholm'}));assert(html.includes('Sök samtal'));assert(html.includes('Kontrollera'));assert.equal(requests.length,0,'Invalid filters must keep a correction form and perform no DB read');
+ console.log('PASS: actual history filters handle time zones/minute boundaries/invalid DST and paging; SSR shows caller/seller/time/outcome and permits correction without querying on invalid filters.');
+})().catch(e=>{console.error(e);process.exitCode=1;});

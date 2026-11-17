@@ -21,16 +21,16 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22.16.0'
           cache: npm
 
       - name: Setup Deno
-        uses: denoland/setup-deno@v2
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: v2.x
 
@@ -48,6 +48,35 @@ jobs:
 
       - name: Verify migrations and database invariants
         run: node scripts/verify-sql.mjs
+
+      - name: Audit fixes and deployed migration profile
+        env:
+          KUNDEXA_NATIVE_ONLY_MIGRATIONS: '1'
+        run: |
+          node scripts/audit-call-history-regressions.cjs
+          node scripts/audit-context-read-regressions.cjs
+          node scripts/audit-recording-boundary.cjs
+          node scripts/audit-incoming-regressions.cjs
+          node scripts/audit-customer-field-regressions.cjs
+          node scripts/audit-product-terms-regressions.cjs
+          node scripts/audit-invitation-regressions.cjs
+          node scripts/deployment-schema-tests.mjs
+          node scripts/audit-approval-readiness.cjs
+          node scripts/audit-mfa-regressions.cjs
+          node scripts/audit-raw-deletion-regressions.cjs
+          node scripts/audit-ftp-compatibility.cjs
+          node scripts/audit-native-http-regressions.cjs
+          node scripts/audit-network-regressions.cjs
+          node scripts/audit-deno-tls-regressions.cjs
+          node scripts/audit-password-regressions.cjs
+          node scripts/audit-remapping-regressions.cjs
+          node scripts/audit-platform-import-regressions.cjs
+          node scripts/audit-deploy-regressions.cjs
+          node scripts/audit-delivery-regressions.cjs
+          node scripts/audit-lifecycle-regressions.cjs
+          node scripts/audit-contract-regressions.cjs
+          node scripts/audit-runtime-regressions.cjs
+          node scripts/audit-access-regressions.mjs
 
       - name: Run regression suite
         run: node scripts/remediation-regression-tests.mjs

@@ -15,7 +15,16 @@ function text(value: unknown) {
 function wrap(value: string, font: PDFFont, size: number, width: number) {
   const lines: string[] = [];
   for (const paragraph of value.replace(/\r/g, "").split("\n")) {
-    const words = paragraph.trim().split(/\s+/).filter(Boolean);
+    const words = paragraph.trim().split(/\s+/).filter(Boolean).flatMap(word => {
+      if (font.widthOfTextAtSize(word, size) <= width) return [word];
+      const pieces: string[] = []; let piece = "";
+      for (const character of word) {
+        if (piece && font.widthOfTextAtSize(piece + character, size) > width) { pieces.push(piece); piece = ""; }
+        piece += character;
+      }
+      if (piece) pieces.push(piece);
+      return pieces;
+    });
     if (!words.length) { lines.push(""); continue; }
     let line = "";
     for (const word of words) {
@@ -57,8 +66,9 @@ export async function generateContractPdf(snapshot: CanonicalContractSnapshot, s
     const size = options?.size ?? BODY_SIZE;
     const font = options?.font ?? regular;
     const lines = wrap(value, font, size, PAGE_WIDTH - MARGIN * 2);
-    ensure(Math.max(1, lines.length) * LINE_HEIGHT + (options?.gapAfter ?? 0));
+    ensure(LINE_HEIGHT);
     for (const line of lines) {
+      ensure(LINE_HEIGHT);
       page.drawText(line || " ", { x: MARGIN, y, size, font, color: options?.color ?? rgb(0.08, 0.12, 0.14) });
       y -= LINE_HEIGHT;
     }
@@ -66,12 +76,15 @@ export async function generateContractPdf(snapshot: CanonicalContractSnapshot, s
   };
   const heading = (value: string) => { ensure(28); y -= 3; drawLines(value, { size: 13, font: bold, gapAfter: 6, color: rgb(0.04, 0.35, 0.28) }); };
   const row = (label: string, value: unknown) => {
-    ensure(18);
-    page.drawText(label, { x: MARGIN, y, size: 9, font: bold, color: rgb(0.25, 0.3, 0.32) });
-    const rendered = text(value);
-    const lines = wrap(rendered, regular, 9, PAGE_WIDTH - MARGIN * 2 - 145);
-    lines.forEach((line, index) => page.drawText(line, { x: MARGIN + 145, y: y - index * 13, size: 9, font: regular }));
-    y -= Math.max(16, lines.length * 13);
+    const labels = wrap(label, bold, 9, 130);
+    const lines = wrap(text(value), regular, 9, PAGE_WIDTH - MARGIN * 2 - 145);
+    for (let index = 0; index < Math.max(labels.length, lines.length); index++) {
+      ensure(16);
+      if (labels[index]) page.drawText(labels[index], { x: MARGIN, y, size: 9, font: bold, color: rgb(0.25, 0.3, 0.32) });
+      if (lines[index]) page.drawText(lines[index], { x: MARGIN + 145, y, size: 9, font: regular });
+      y -= 13;
+    }
+    y -= 3;
   };
 
   drawLines(text(snapshot.seller.legal_name ?? "Avtal"), { size: 10, font: bold, color: rgb(0.04, 0.35, 0.28) });
@@ -95,11 +108,16 @@ export async function generateContractPdf(snapshot: CanonicalContractSnapshot, s
   row("Slutdatum", snapshot.contract.ends_on);
   row("Bindningstid", snapshot.contract.binding_months === null ? "Ingen angiven" : `${snapshot.contract.binding_months} månader`);
   row("Uppsägningstid", snapshot.contract.notice_months === null ? "Ej angiven" : `${snapshot.contract.notice_months} månader`);
-  row("Betalningsvillkor", snapshot.version.commercial_terms.payment_terms_days ? `${snapshot.version.commercial_terms.payment_terms_days} dagar` : "Ej angivet");
+  row("Betalningsvillkor", snapshot.version.commercial_terms.payment_terms_days != null ? `${snapshot.version.commercial_terms.payment_terms_days} dagar` : "Ej angivet");
   row("Uppläggningsavgift", `${text(snapshot.version.commercial_terms.setup_fee)} ${snapshot.contract.currency}`);
   row("Återkommande avgift", `${text(snapshot.version.commercial_terms.recurring_fee)} ${snapshot.contract.currency}`);
   row("Rörlig avgift", `${text(snapshot.version.commercial_terms.variable_fee)} ${snapshot.contract.currency}`);
 
+  const customFields = snapshot.version.commercial_terms.custom_fields as { definitions?: Array<{ id: string; label: string }>; values?: Record<string, unknown> } | null;
+  if (customFields?.definitions?.length) {
+    heading("Kundens avtalsuppgifter");
+    for (const field of customFields.definitions) row(field.label, customFields.values?.[field.id]);
+  }
   heading("Avtalstext");
   drawLines(snapshot.version.body, { gapAfter: 8 });
   heading("Villkor");

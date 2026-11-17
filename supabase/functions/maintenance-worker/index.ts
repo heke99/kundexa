@@ -47,6 +47,7 @@ Deno.serve(async (request) => {
   }));
   // En stängd flik slår inga hjärtslag. Efter fem minuters tystnad släpps
   // sessionen och dess plats; med körning var femte minut tar det högst tio.
+  await step(results, "expire_inbound_calls", () => rpc("expire_inbound_calls", {p_limit:200}));
   const lostSessions = await step(results, "release_lost_webphone_sessions", () => rpc("release_lost_webphone_sessions", {
     p_max_silence: "00:05:00",
     p_limit: Math.max(1, Math.min(Number(body.lostWebphoneSessionLimit ?? 200), 1000)),

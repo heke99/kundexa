@@ -8,6 +8,16 @@ const root = new URL("../", import.meta.url).pathname;
 const db = new PGlite({ extensions: { citext, pg_trgm } });
 await db.waitReady;
 
+// Provider reducers run with the webhook service claim, never a seller claim.
+// Restore the fixture actor immediately so subsequent browser tests stay honest.
+async function providerCallback(sql, params = []) {
+  const previous = (await db.query("select current_setting('request.jwt.claim.role',true) as role")).rows[0].role ?? '';
+  await db.query("select set_config('request.jwt.claim.role','service_role',false)");
+  try { return await db.query(sql, params); }
+  finally { await db.query("select set_config('request.jwt.claim.role',$1,false)",[previous]); }
+}
+
+
 // Minimal Supabase-owned schemas used by the migrations. pgcrypto is present in
 // hosted/local Supabase; PGlite already provides gen_random_uuid but not the
 // extension control file, so only that CREATE EXTENSION line is omitted here.
@@ -25,6 +35,7 @@ await db.exec(`
   $$;
   create function auth.jwt() returns jsonb language sql stable as $$
     select jsonb_build_object(
+      'aal', coalesce(nullif(current_setting('request.jwt.claim.aal', true),''),'aal2'),
       'sub', nullif(current_setting('request.jwt.claim.sub', true),''),
       'role', coalesce(nullif(current_setting('request.jwt.claim.role', true),''), 'authenticated')
     )
@@ -1654,6 +1665,10 @@ await db.exec(`
     '{"method":"external_esign","identityAssuranceLevel":"high","orderedSigning":true,"requireFinalProviderDocument":true}',
     '00000000-0000-0000-0000-000000000002'
   );
+  insert into public.products(id,tenant_id,name) values('00000000-0000-0000-0000-0000000000c9','00000000-0000-0000-0000-000000000001','Signing fixture product');
+  insert into public.product_price_versions(id,tenant_id,product_id,version) values('00000000-0000-0000-0000-0000000000ca','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-0000000000c9',1);
+  update public.contract_templates set product_id='00000000-0000-0000-0000-0000000000c9' where id='00000000-0000-0000-0000-000000000084';
+  update public.contract_template_versions set terms_template='Fixture final terms',status='approved',approved_by='00000000-0000-0000-0000-000000000002',approved_at=now() where id='00000000-0000-0000-0000-000000000085';
   insert into public.contracts(
     id,tenant_id,contract_number,customer_id,template_id,owner_user_id,audience,status,title
   ) values(
@@ -1668,7 +1683,8 @@ await db.exec(`
     '00000000-0000-0000-0000-000000000086',1,'00000000-0000-0000-0000-000000000085',
     'Signing verify contract','Rendered body','source-sha-256','00000000-0000-0000-0000-000000000002'
   );
-  update public.contracts set active_version_id='00000000-0000-0000-0000-000000000087'
+  update public.contract_versions set price_version_id='00000000-0000-0000-0000-0000000000ca' where id='00000000-0000-0000-0000-000000000087';
+  update public.contracts set product_id='00000000-0000-0000-0000-0000000000c9',active_version_id='00000000-0000-0000-0000-000000000087'
     where id='00000000-0000-0000-0000-000000000086';
   insert into public.contract_documents(
     id,tenant_id,contract_id,contract_version_id,document_type,file_name,storage_path,mime_type,sha256,size_bytes
@@ -2244,8 +2260,10 @@ await db.exec(`
   insert into public.tenant_legal_entities(id,tenant_id,legal_name,organization_number,address_line1,postal_code,city,country_code,email,phone_e164,active)
   values('00000000-0000-0000-0000-0000000000c2','${JT}','Kundexa Journey AB','5560160680','Gatan 1','21115','Malmö','SE','avtal@example.test','+46401234567',true)
   on conflict(id) do nothing;
-  insert into public.contract_templates(id,tenant_id,name,contract_type,audience,active,legal_entity_id)
-  values('00000000-0000-0000-0000-0000000000c3','${JT}','Journey-mall','service','B2B',true,'00000000-0000-0000-0000-0000000000c2')
+  insert into public.products(id,tenant_id,name) values('00000000-0000-0000-0000-0000000000c5','${JT}','Journey-produkt');
+  insert into public.product_price_versions(id,tenant_id,product_id,version) values('00000000-0000-0000-0000-0000000000c6','${JT}','00000000-0000-0000-0000-0000000000c5',1);
+  insert into public.contract_templates(id,tenant_id,name,contract_type,audience,active,legal_entity_id,product_id)
+  values('00000000-0000-0000-0000-0000000000c3','${JT}','Journey-mall','service','B2B',true,'00000000-0000-0000-0000-0000000000c2','00000000-0000-0000-0000-0000000000c5')
   on conflict(id) do nothing;
   insert into public.contract_template_versions(id,tenant_id,template_id,version,status,title_template,body_template,terms_template,created_by)
   values('00000000-0000-0000-0000-0000000000c4','${JT}','00000000-0000-0000-0000-0000000000c3',1,'draft','Journeyavtal','Brödtext','Villkor','${JOWNER}')
@@ -2274,7 +2292,7 @@ const journeyCall = await db.query(`select public.register_external_manual_call(
 const journeyCallId = String(journeyCall.rows[0].id);
 
 const journeyContract = await db.query(`select public.create_contract_draft_v3(
-  'KX-JOURNEY-1','${JCUSTOMER}',null,null,'00000000-0000-0000-0000-0000000000c3','00000000-0000-0000-0000-0000000000c4',
+  'KX-JOURNEY-1','${JCUSTOMER}','00000000-0000-0000-0000-0000000000c5','00000000-0000-0000-0000-0000000000c6','00000000-0000-0000-0000-0000000000c3','00000000-0000-0000-0000-0000000000c4',
   '00000000-0000-0000-0000-0000000000c2','Journeyavtal','Brödtext','Villkor','{"currency":"SEK"}'::jsonb,'journey-doc-hash',
   'telephone','{"legal_name":"Kundexa Journey AB"}'::jsonb,'{"display_name":"Journey Kund AB"}'::jsonb,
   '${JOWNER}',null,null,null,null,null,1000,'SEK',now()+interval '7 days') as id`);
@@ -2377,7 +2395,7 @@ const expiringCall = await db.query(`select public.register_external_manual_call
   '${JEXPIRE}','+46705550009','outbound',now()-interval '20 minutes',now()-interval '10 minutes',
   'interested','Utgångssamtal',null) as id`);
 const expiringContract = await db.query(`select public.create_contract_draft_v3(
-  'KX-JOURNEY-EXPIRE','${JEXPIRE}',null,null,'00000000-0000-0000-0000-0000000000c3','00000000-0000-0000-0000-0000000000c4',
+  'KX-JOURNEY-EXPIRE','${JEXPIRE}','00000000-0000-0000-0000-0000000000c5','00000000-0000-0000-0000-0000000000c6','00000000-0000-0000-0000-0000000000c3','00000000-0000-0000-0000-0000000000c4',
   '00000000-0000-0000-0000-0000000000c2','Utgångsavtal','Brödtext','Villkor','{"currency":"SEK"}'::jsonb,'expire-doc-hash',
   'telephone','{"legal_name":"Kundexa Journey AB"}'::jsonb,'{"display_name":"Utgången Kund AB"}'::jsonb,
   '${JOWNER}',null,null,null,null,null,1000,'SEK',now()+interval '7 days') as id`);
@@ -2481,7 +2499,7 @@ const smsCall = await db.query(`select public.register_external_manual_call(
   '${JSMS}','+46705550010','outbound',now()-interval '20 minutes',now()-interval '10 minutes',
   'interested','SMS-samtal',null) as id`);
 const smsContract = await db.query(`select public.create_contract_draft_v3(
-  'KX-JOURNEY-SMS','${JSMS}',null,null,'00000000-0000-0000-0000-0000000000c3','00000000-0000-0000-0000-0000000000c4',
+  'KX-JOURNEY-SMS','${JSMS}','00000000-0000-0000-0000-0000000000c5','00000000-0000-0000-0000-0000000000c6','00000000-0000-0000-0000-0000000000c3','00000000-0000-0000-0000-0000000000c4',
   '00000000-0000-0000-0000-0000000000c2','SMS-avtal','Brödtext','Villkor','{"currency":"SEK"}'::jsonb,'sms-doc-hash',
   'telephone','{"legal_name":"Kundexa Journey AB"}'::jsonb,'{"display_name":"SMS Kund AB"}'::jsonb,
   '${JOWNER}',null,null,null,null,null,1000,'SEK',now()+interval '7 days') as id`);
@@ -3161,6 +3179,9 @@ if (!approvalRefused) throw new Error("A team leader was able to approve their o
 
 // The owner releases it, and only then is it selectable for a new contract.
 await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',false);`);
+await db.exec(`insert into public.products(id,tenant_id,name) values('00000000-0000-0000-0000-0000000000c7','${JT}','Teamledarprodukt');
+  insert into public.product_price_versions(tenant_id,product_id,version,binding_months) values('${JT}','00000000-0000-0000-0000-0000000000c7',1,12);`);
+await db.query(`update public.contract_templates set product_id='00000000-0000-0000-0000-0000000000c7' where id=(select template_id from public.contract_template_versions where id=$1)`,[versionId]);
 await db.query(`select public.approve_contract_template_version($1)`, [versionId]);
 const approved = await db.query(
   `select v.status, t.current_version_id = v.id as is_current
@@ -3815,6 +3836,8 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   const draftVersion = (await db.query(
     `select id from public.contract_template_versions where template_id=$1 and status='draft' order by created_at desc limit 1`,
     [linkedTemplate.id])).rows[0].id;
+  const fixturePrice = (await db.query(`insert into public.product_price_versions(tenant_id,product_id,version)
+    select $1,$2,coalesce(max(version),0)+1 from public.product_price_versions where product_id=$2 returning id`,[T,PRODUCT])).rows[0].id;
   await db.query(`select public.approve_contract_template_version($1)`, [draftVersion]);
   await db.exec(`
     insert into public.customers(id,tenant_id,customer_type,display_name,email,lifecycle,created_by)
@@ -3826,10 +3849,10 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
     update public.profiles set active_tenant_id='${T}' where id='00000000-0000-0000-0000-0000000000e4';
   `);
   const draftFromProduct = (number, productId, templateId) => refusal(() => db.query(
-    `select public.create_contract_draft_v3($1,'00000000-0000-0000-0000-0000000000e3',$2,null,$3,$4,$5,
+    `select public.create_contract_draft_v3($1,'00000000-0000-0000-0000-0000000000e3',$2,$6,$3,$4,$5,
        'Elavtal rörligt','Brödtext','Villkor','{"currency":"SEK"}'::jsonb,'product-doc-hash','telephone',
        '{"legal_name":"Kundexa Verify AB"}'::jsonb,'{"display_name":"Produktkund"}'::jsonb) as id`,
-    [number, productId, templateId, draftVersion, entity]));
+    [number, productId, templateId, draftVersion, entity, fixturePrice]));
   const fromProduct = await draftFromProduct("VERIFY-PROD-4", PRODUCT, linkedTemplate.id);
   if (fromProduct !== "allowed") throw new Error(`A contract could not be created from its product: ${fromProduct}`);
   const stored = (await db.query(`select product_id,template_id from public.contracts where contract_number='VERIFY-PROD-4'`)).rows[0];
@@ -3837,7 +3860,7 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
     throw new Error(`The contract did not keep its product and template: ${JSON.stringify(stored)}`);
   }
   const otherProduct = await draftFromProduct("VERIFY-PROD-5", "00000000-0000-0000-0000-0000000000e2", linkedTemplate.id);
-  if (!otherProduct.includes("contract_template_belongs_to_other_product")) {
+  if (!/contract_template_belongs_to_other_product|price_version_not_found/.test(otherProduct)) {
     throw new Error(`The RPC path let a product's contract be sold with another product: ${otherProduct}`);
   }
   await db.exec(`select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-0000000000e4',false);`);
@@ -3883,14 +3906,17 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
     values('00000000-0000-0000-0000-000000000001',$1,'00000000-0000-0000-0000-000000000002','sinch','+46401234567','+46702222277',
       gen_random_uuid(),'ice-match','dial_requested',now()+interval '5 minutes')
     returning id`, [call])).rows[0].id;
-  const ice = (user, callid) => db.query(`select public.ingest_sinch_voice_event('ice',$1,$2,$3::jsonb,now()) as result`, [
+  const exactSession = (await db.query(`select public.open_webphone_session('sinch','exact-session fixture') as result`)).rows[0].result.sessionId;
+  await db.query(`select public.heartbeat_webphone_session($1,$2)`,[exactSession,exactSession]);
+  await db.query(`update public.dial_attempts set webphone_session_id=$1 where id=$2`,[exactSession,attempt]);
+  const ice = (user, callid) => providerCallback(`select public.ingest_sinch_voice_event('ice',$1,$2,$3::jsonb,now()) as result`, [
     callid, `ice:${callid}`,
     JSON.stringify({ event: "ice", callid, user, cli: "46401234567", to: { type: "number", endpoint: "+46702222277" }, originationType: "MXP" }),
   ]);
 
   const foreign = (await ice("00000000-0000-0000-0000-000000000050", "ice-foreign")).rows[0].result;
   if (foreign.matched !== false) throw new Error(`An ICE from another tenant's seller matched this tenant's attempt: ${JSON.stringify(foreign)}`);
-  const own = (await ice("00000000-0000-0000-0000-000000000002", "ice-own")).rows[0].result;
+  const own = (await ice(exactSession, "ice-own")).rows[0].result;
   const row = (await db.query(`select external_call_id from public.dial_attempts where id=$1`, [attempt])).rows[0];
   const event = (await db.query(`select status,tenant_id from public.provider_webhook_events where provider_event_id='ice:ice-own'`)).rows[0];
   if (own.matched !== true || row.external_call_id !== "ice-own" || event.status !== "processed" || event.tenant_id !== "00000000-0000-0000-0000-000000000001") {
@@ -3902,11 +3928,11 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   if (own.connect !== true || own.destination !== "+46702222277" || own.callerId !== "+46401234567") {
     throw new Error(`A reserved call was not cleared with its own number and caller ID: ${JSON.stringify(own)}`);
   }
-  const redelivered = (await ice("00000000-0000-0000-0000-000000000002", "ice-own")).rows[0].result;
+  const redelivered = (await ice(exactSession, "ice-own")).rows[0].result;
   if (redelivered.duplicate !== true || redelivered.connect !== true || redelivered.callerId !== "+46401234567") {
     throw new Error(`A redelivered ICE lost its clearance and would hang up a cleared call: ${JSON.stringify(redelivered)}`);
   }
-  const dice = (await db.query(`select public.ingest_sinch_voice_event('dice','ice-own','dice:ice-own',$1::jsonb,now()) as result`, [
+  const dice = (await providerCallback(`select public.ingest_sinch_voice_event('dice','ice-own','dice:ice-own',$1::jsonb,now()) as result`, [
     JSON.stringify({ event: "dice", callid: "ice-own", reason: "GENERALERROR", result: "FAILED" }),
   ])).rows[0].result;
   const reason = (await db.query(`select payload->>'reason' as reason from public.call_events where call_id=$1 and event_type='sinch.call_ended'`, [call])).rows[0];
@@ -3914,7 +3940,7 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
     throw new Error(`The provider's end reason did not reach the call after ICE matched: ${JSON.stringify({ dice, reason })}`);
   }
   // Ett avslutat försök ger inget nytt klartecken, inte ens för samma samtals-id.
-  const afterEnd = (await db.query(`select public.ingest_sinch_voice_event('ice','ice-own','ice:ice-own:again',$1::jsonb,now()) as result`, [
+  const afterEnd = (await providerCallback(`select public.ingest_sinch_voice_event('ice','ice-own','ice:ice-own:again',$1::jsonb,now()) as result`, [
     JSON.stringify({ event: "ice", callid: "ice-own", user: "00000000-0000-0000-0000-000000000002", to: { type: "number", endpoint: "+46702222277" }, originationType: "MXP" }),
   ])).rows[0].result;
   if (afterEnd.connect === true) throw new Error(`A finished attempt was cleared to connect again: ${JSON.stringify(afterEnd)}`);
@@ -3934,7 +3960,7 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
     insert into public.dial_attempts(tenant_id,call_id,seller_user_id,provider,source_number_e164,destination_number_e164,client_request_id,idempotency_key,status,expires_at,external_call_id)
     values($1,$2,'00000000-0000-0000-0000-000000000002','sinch','+46401234567','+46702222288',gen_random_uuid(),gen_random_uuid()::text,$3,now()+interval '5 minutes',$4)
     returning id`, [T, callId, status, externalId])).rows[0].id;
-  const dice = (callid, reason, duration) => db.query(`select public.ingest_sinch_voice_event('dice',$1,$2,$3::jsonb,now()) as result`,
+  const dice = (callid, reason, duration) => providerCallback(`select public.ingest_sinch_voice_event('dice',$1,$2,$3::jsonb,now()) as result`,
     [callid, `dice:${callid}:${reason}`, JSON.stringify({ event: "dice", callid, reason, result: reason === "GENERALERROR" ? "FAILED" : "ANSWERED", duration })]);
 
   // 1. Webbläsaren sa "inget svar", leverantören säger att samtalet bröts.
@@ -4358,7 +4384,7 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
     insert into public.dial_attempts(tenant_id,call_id,seller_user_id,provider,source_number_e164,destination_number_e164,client_request_id,idempotency_key,status,expires_at,external_call_id)
     values($1,$2,'00000000-0000-0000-0000-000000000002','sinch','+46401234567','+46702222266',gen_random_uuid(),'busy-call','dial_requested',now()+interval '5 minutes','busy-ext')`, [T, busyCall]);
   await db.query(`update public.calls set status='unanswered',ended_at=now(),end_cause='webphone_leg_ended' where id=$1`, [busyCall]);
-  await db.query(`select public.ingest_sinch_voice_event('dice','busy-ext','dice:busy-ext',$1::jsonb,now())`,
+  await providerCallback(`select public.ingest_sinch_voice_event('dice','busy-ext','dice:busy-ext',$1::jsonb,now())`,
     [JSON.stringify({ event: "dice", callid: "busy-ext", reason: "CALLEEHANGUP", result: "BUSY" })]);
   const busy = (await db.query(`select status from public.calls where id=$1`, [busyCall])).rows[0].status;
   if (busy !== "busy") throw new Error(`A busy call was recorded as ${busy}.`);
@@ -4490,7 +4516,7 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
   async function dice(externalId, result, reason) {
     await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
     const payload = JSON.stringify({ event: 'dice', callid: externalId, result, reason, duration: result === 'ANSWERED' ? 30 : 0 });
-    await db.query(`select public.ingest_sinch_voice_event('dice',$1,$2,$3::jsonb,now())`, [externalId, `dice:${externalId}`, payload]);
+    await providerCallback(`select public.ingest_sinch_voice_event('dice',$1,$2,$3::jsonb,now())`, [externalId, `dice:${externalId}`, payload]);
     await db.exec(`select set_config('request.jwt.claim.role','authenticated',false); select set_config('request.jwt.claim.sub','${admin}',false)`);
   }
   const overruled = await clientAnsweredCall('review-client-answer', 'review-ext-1');
@@ -4504,7 +4530,7 @@ console.log(`Schema relationships are unambiguous, and all ${profileEmbeds.size}
 
   const confirmed = await clientAnsweredCall('review-ace-answer', 'review-ext-2');
   await db.exec(`select set_config('request.jwt.claim.role','service_role',false)`);
-  await db.query(`select public.ingest_sinch_voice_event('ace','review-ext-2','ace:review-ext-2','{"event":"ace","callid":"review-ext-2"}'::jsonb,now())`);
+  await providerCallback(`select public.ingest_sinch_voice_event('ace','review-ext-2','ace:review-ext-2','{"event":"ace","callid":"review-ext-2"}'::jsonb,now())`);
   await dice('review-ext-2', 'NOANSWER', 'CALLEEHANGUP');
   const confirmedRow = (await db.query(`select status,answered_at is not null answered from public.calls where id=$1`, [confirmed])).rows[0];
   if (confirmedRow.status !== 'completed' || !confirmedRow.answered) throw new Error(`DiCE overruled an answer ACE had confirmed: ${JSON.stringify(confirmedRow)}`);

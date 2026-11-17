@@ -207,6 +207,13 @@ type MissingFunctionName =
 type FunctionOverrides = {
   [Name in MissingFunctionName]: FunctionOrFallback<Name>;
 } & {
+  revise_product_contract_terms: { Args: { p_product_id: string; p_expected_price_id: string; p_binding_months: number | null; p_notice_months: number | null; p_payment_terms_days: number; p_request_key: string }; Returns: string };
+  renew_tenant_invitation: { Args: { p_invitation_id: string }; Returns: string };
+  set_customer_custom_field: { Args: { p_customer_id: string; p_key: string; p_value: Json }; Returns: undefined };
+  inbound_call_command: { Args: {p_session_id:string;p_external_call_id:string;p_action:string}; Returns: Json };
+  configure_inbound_number: { Args: {p_number_id:string;p_user_id:string|null;p_team_id:string|null;p_enabled:boolean}; Returns: undefined };
+  search_call_history: {Args:{p_query?:string;p_from?:string;p_to?:string;p_limit?:number;p_offset?:number;p_platform?:boolean};Returns:Json};
+  current_user_mfa_required: { Args: Record<string, never>; Returns: boolean };
 };
 
 /**

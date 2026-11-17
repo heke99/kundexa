@@ -1,4 +1,5 @@
 "use server";
+import { validateCustomValues } from "@/lib/contracts/pdf-field-template";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
@@ -128,7 +129,7 @@ export async function updateCustomerDetails(fd: FormData) {
 export async function addNote(fd:FormData){const ctx=await getAppContext(); assertPermission(ctx.role,"customers.write"); const customerId=value(fd,'customer_id'); const body=value(fd,'body'); if(!body)return; const visibility=value(fd,'visibility')||'team'; const noteType=value(fd,'note_type')||'general'; const supabase=await createClient(); const {error}=await supabase.from('notes').insert({tenant_id:ctx.tenantId,customer_id:customerId,body,visibility,note_type:noteType,is_pinned:fd.get('is_pinned')==='on',created_by:ctx.userId}); if(error)redirect(`/app/customers/${customerId}?error=${encodeURIComponent(error.message)}`); revalidatePath(`/app/customers/${customerId}`)}
 export async function updateNote(fd:FormData){const ctx=await getAppContext();assertPermission(ctx.role,"customers.write");const customerId=value(fd,"customer_id");const noteId=value(fd,"note_id");const body=value(fd,"body");if(!body)redirect(`/app/customers/${customerId}?error=Anteckningen får inte vara tom`);const supabase=await createClient();const {error}=await supabase.from("notes").update({body,visibility:value(fd,"visibility")||"team",is_pinned:fd.get("is_pinned")==="on"}).eq("id",noteId).eq("customer_id",customerId);if(error)redirect(`/app/customers/${customerId}?error=${encodeURIComponent(error.message)}`);revalidatePath(`/app/customers/${customerId}`);redirect(`/app/customers/${customerId}?note=updated`)}
 export async function archiveNote(fd:FormData){const ctx=await getAppContext();assertPermission(ctx.role,"customers.write");const customerId=value(fd,"customer_id");const noteId=value(fd,"note_id");const supabase=await createClient();const {error}=await supabase.from("notes").update({archived_at:new Date().toISOString()}).eq("id",noteId).eq("customer_id",customerId);if(error)redirect(`/app/customers/${customerId}?error=${encodeURIComponent(error.message)}`);revalidatePath(`/app/customers/${customerId}`);redirect(`/app/customers/${customerId}?note=archived`)}
-export async function addActivity(fd:FormData){const ctx=await getAppContext();assertPermission(ctx.role,"customers.write");const customerId=value(fd,'customer_id');const title=value(fd,'title');const due=value(fd,'due_at');if(!title)return;const supabase=await createClient();await supabase.from('activities').insert({tenant_id:ctx.tenantId,customer_id:customerId,type:'task',title,assigned_user_id:ctx.userId,due_at:due||null,created_by:ctx.userId});revalidatePath(`/app/customers/${customerId}`)}
+export async function addActivity(fd:FormData){const ctx=await getAppContext();assertPermission(ctx.role,"customers.write");const customerId=value(fd,'customer_id');const title=value(fd,'title');const due=value(fd,'due_at');if(!title)return;const supabase=await createClient();const {error}=await supabase.from('activities').insert({tenant_id:ctx.tenantId,customer_id:customerId,type:'task',title,assigned_user_id:ctx.userId,due_at:due?zonedLocalDateTimeToIso(due,ctx.tenantTimezone):null,created_by:ctx.userId});if(error)redirect(`/app/customers/${customerId}?error=${encodeURIComponent('Aktiviteten kunde inte sparas')}`);revalidatePath(`/app/customers/${customerId}`)}
 export async function blockCustomer(fd:FormData){const ctx=await getAppContext();assertPermission(ctx.role,"customers.write");const customerId=value(fd,'customer_id');const reason=value(fd,'reason')||'Kundens invändning';const supabase=await createClient();const {error}=await supabase.from('compliance_blocks').insert({tenant_id:ctx.tenantId,customer_id:customerId,channels:['call','sms','email'],reason,source:'manual_customer_block',active:true,created_by:ctx.userId});if(error)redirect(`/app/customers/${customerId}?error=${encodeURIComponent(error.message)}`);const {error:auditError}=await supabase.from('audit_logs').insert({tenant_id:ctx.tenantId,actor_user_id:ctx.userId,action:'customer.blocked',entity_type:'customer',entity_id:customerId,after_data:{reason}});if(auditError)console.error('customer_block_audit_failed',{customerId});revalidatePath(`/app/customers/${customerId}`)}
 
 export async function scheduleCallback(fd:FormData){const ctx=await getAppContext();assertPermission(ctx.role,"callbacks.create");const customerId=value(fd,'customer_id');const due=value(fd,'due_at');const scope=value(fd,'scope');if(!customerId||!due)redirect(`/app/customers/${customerId}?error=Tid för återkomst krävs`);let iso:string;try{iso=zonedLocalDateTimeToIso(due,ctx.tenantTimezone)}catch{redirect(`/app/customers/${customerId}?error=Ogiltig tid för tenantens tidszon`)}const supabase=await createClient();const {error}=await supabase.rpc('schedule_customer_callback',{p_customer_id:customerId,p_list_id:value(fd,'list_id')||null,p_scope:scope,p_due_at:iso,p_title:value(fd,'title')||'Återkomst',p_description:value(fd,'description')});if(error)redirect(`/app/customers/${customerId}?error=${encodeURIComponent(error.message)}`);revalidatePath(`/app/customers/${customerId}`);revalidatePath('/app/callbacks');redirect(`/app/customers/${customerId}?callback=created`)}
@@ -167,4 +168,19 @@ export async function reportCustomerNix(fd: FormData) {
       ? "Numret är redan registrerat som NIX-spärrat."
       : `Numret är registrerat som NIX och ${result.blockedNumbers ?? 1} nummer är spärrade för utgående samtal.`,
   )}`);
+}
+
+export async function updateCustomerCustomField(form: FormData) {
+  const ctx = await getAppContext();
+  assertPermission(ctx.role, "customers.write");
+  const parsed = z.object({ customerId: z.uuid(), key: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/), type: z.enum(["text", "number", "date"]), raw: z.string().max(1000) }).safeParse({customerId:value(form,"customer_id"),key:value(form,"field_key"),type:value(form,"field_type"),raw:value(form,"field_value")});
+  if (!parsed.success) redirect("/app/customers?error=Kontrollera kunduppgiften");
+  let normalized: string | number;
+  try { normalized=validateCustomValues([{id:"value",label:"Kunduppgiften",type:parsed.data.type,required:false}],{value:parsed.data.raw}).value; }
+  catch { redirect(`/app/customers/${parsed.data.customerId}?error=Kontrollera kunduppgiftens typ och värde`); }
+  const db=await createClient();
+  const {error}=await db.rpc("set_customer_custom_field",{p_customer_id:parsed.data.customerId,p_key:parsed.data.key,p_value:normalized});
+  if(error)redirect(`/app/customers/${parsed.data.customerId}?error=Kunduppgiften kunde inte sparas`);
+  revalidatePath(`/app/customers/${parsed.data.customerId}`);
+  redirect(`/app/customers/${parsed.data.customerId}?message=Kunduppgiften är sparad. Befintliga avtal ändras inte.`);
 }

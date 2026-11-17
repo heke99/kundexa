@@ -1,3 +1,5 @@
+> Historiskt leveransunderlag. Aktuell rättningsstatus och verifieringsbegränsning finns i [remediation-status](reviews/2026-11-16/remediation-status.md). Den här texten är inte ett aktuellt driftgodkännande.
+
 # Implementerad omfattning
 
 ## Verifierat i denna leverans

@@ -60,7 +60,6 @@ export async function POST(request: Request) {
     const providerMessageId = typeof result.id === "string" ? result.id : null;
     const success = Boolean(response?.ok && providerMessageId);
     await admin.from("tenant_integrations").update({
-      status: success ? "active" : "error",
       last_verified_at: success ? testedAt : null,
       configuration: toJsonObject({ ...configuration, last_test_status: success ? "success" : "error", last_tested_at: testedAt, last_error: success ? null : safeError, last_test_provider_message_id: success ? providerMessageId : null }),
     }).eq("tenant_id", identity.tenantId).eq("id", integration.id);

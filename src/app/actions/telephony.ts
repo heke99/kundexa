@@ -224,3 +224,18 @@ export async function placeTestCall(form: FormData) {
   if (result.ok) go("message", `Testsamtalet är lagt från ${cli} till ${destination}. Det ska ringa inom några sekunder och läsa upp en mening.`);
   go("error", `Telefonitjänsten avvisade testsamtalet (${result.status || "nätverk"}): ${result.message}`);
 }
+
+
+export async function configureInboundNumber(form: FormData) {
+  await adminContext();
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const number = value(form, "number_id");
+  const user = value(form, "user_id");
+  const team = value(form, "team_id");
+  if (!uuid.test(number) || (user && !uuid.test(user)) || (team && !uuid.test(team))) go("error", "Välj ett giltigt nummer och en mottagare.");
+  const db = await createClient();
+  const result = await db.rpc("configure_inbound_number", {p_number_id:number,p_user_id:user || null,p_team_id:team || null,p_enabled:form.get("enabled") === "on"});
+  if (result.error) go("error", "Inställningen kunde inte sparas. Kontrollera att mottagaren och teamet är aktiva och hör ihop.");
+  revalidatePath("/app/integrations");
+  go("message", "Inställningen för inkommande samtal är sparad.");
+}

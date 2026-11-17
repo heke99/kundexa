@@ -1,5 +1,7 @@
 "use server";
 
+import { contractApprovalProblems } from "@/lib/contracts/approval-readiness";
+
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
@@ -7,7 +9,7 @@ import { getAppContext } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { parseSignaturePolicy } from "@/lib/signing/policy";
-import { validatePdfTemplate } from "@/lib/contracts/pdf-field-template";
+import { validatePdfTemplate, parseContractCustomFields } from "@/lib/contracts/pdf-field-template";
 import { inspectTemplatePdf } from "@/lib/contracts/render-pdf-fields";
 import { hashPdfBytes } from "@/lib/contracts/document-hash";
 import { can } from "@/lib/permissions";
@@ -59,7 +61,15 @@ export async function createContractTemplateVersion(form: FormData) {
   // guess for a field actually called `address_line1`; accepting it here means
   // the mistake surfaces weeks later, for every customer, in front of a seller
   // rather than the person who wrote the template.
-  const problems = validateTemplateVariables(variables);
+  let customFields: ReturnType<typeof parseContractCustomFields>;
+  let declaredCustomIds: string[];
+  try {
+    customFields = parseContractCustomFields(JSON.parse(value(form, "custom_fields") || "[]"));
+    const pdfDeclarations = value(form,"pdf_template") ? parseContractCustomFields(JSON.parse(value(form,"pdf_template")).customFields) : [];
+    declaredCustomIds = [...new Set([...customFields, ...pdfDeclarations].map(field => field.id))];
+  }
+  catch { redirect("/app/templates?error=Kontrollera kundfältens namn, typer och variabelnamn"); }
+  const problems = validateTemplateVariables(variables, declaredCustomIds);
   if (problems.length) {
     const message = problems.slice(0, 4).map(describeTemplateVariableProblem).join(" ");
     const more = problems.length > 4 ? ` (och ${problems.length - 4} till)` : "";
@@ -70,13 +80,13 @@ export async function createContractTemplateVersion(form: FormData) {
   let pdfTemplate = null;
   if (value(form, "pdf_template")) {
     try {
-      pdfTemplate = validatePdfTemplate(JSON.parse(value(form, "pdf_template")), ctx.tenantId);
+      pdfTemplate = validatePdfTemplate(JSON.parse(value(form, "pdf_template")), ctx.tenantId, customFields);
       const { data, error } = await createAdminClient().storage.from("contract-documents").download(pdfTemplate.storagePath);
       if (error || !data) throw new Error("pdf_template_source_missing");
       const bytes = new Uint8Array(await data.arrayBuffer());
       if (hashPdfBytes(bytes) !== pdfTemplate.sha256 || JSON.stringify(await inspectTemplatePdf(bytes)) !== JSON.stringify(pdfTemplate.pageSizes)) throw new Error("pdf_template_source_changed");
     } catch (error) {
-      redirect(`/app/templates?error=${encodeURIComponent(error instanceof Error ? error.message : "PDF-mallen är ogiltig.")}`);
+      redirect(`/app/templates?error=${encodeURIComponent(error instanceof Error ? error.message.replace("pdf_template_custom_field_not_placed:","Placera kundfältet i PDF-mallen: ") : "PDF-mallen är ogiltig.")}`);
     }
   }
   const method = value(form, "signature_method") || "simple_click";
@@ -103,7 +113,7 @@ export async function createContractTemplateVersion(form: FormData) {
     // unread. A field is required only when the template asks for it without the
     // `?` marker, and now the stored schema says so.
     p_variables_schema: Object.fromEntries(variables.map((name) => [name, { type: "string", required: required.includes(name) }])),
-    p_signing_configuration: { methods: ["web", "sms"], require_explicit_acceptance: true, signature_policy: signaturePolicy, provider_key: method === "external_esign" ? "kundexa_native" : null, ...(pdfTemplate ? { pdf_template: pdfTemplate } : {}) },
+    p_signing_configuration: { custom_fields: customFields, methods: ["web", "sms"], require_explicit_acceptance: true, signature_policy: signaturePolicy, provider_key: method === "external_esign" ? "kundexa_native" : null, ...(pdfTemplate ? { pdf_template: pdfTemplate } : {}) },
   });
   // Tillbaka dit man kom ifrån. Den som redigerar en mall står inne i den och
   // vill se resultatet, inte kastas ut i listan.
@@ -121,6 +131,7 @@ export async function createContractTemplateVersion(form: FormData) {
 }
 
 function describeTemplateSaveError(message: string) {
+  if (message.includes("contract_template_approval") || message.includes("template_current_version")) return "En ägare eller administratör behöver ändra produktkopplingen för en redan godkänd mall. En ny version måste sedan godkännas.";
   if (message.includes("product_already_has_contract")) return "Produkten har redan ett avtal. Öppna det avtalet och spara en ny version i stället.";
   if (message.includes("product_not_found")) return "Produkten finns inte.";
   if (message.includes("contract_template_permission_required")) return "Din roll kan inte skriva avtal.";
@@ -138,8 +149,18 @@ export async function approveContractTemplateVersion(form: FormData) {
   // sida man stod på. Ett läsfel här är inte ett skäl att avbryta godkännandet
   // -- då hamnar man i listan i stället, och det är en sämre plats, inte ett fel.
   const { data: version } = await supabase.from("contract_template_versions")
-    .select("template_id").eq("id", versionId).maybeSingle();
+    .select("template_id,title_template,body_template,terms_template").eq("id", versionId).maybeSingle();
   const origin = version?.template_id ? `/app/templates/${version.template_id}` : "/app/templates";
+  if (!version) redirect(`${origin}?error=Mallversionen kunde inte verifieras`);
+  const parent = await supabase.from("contract_templates").select("product_id").eq("id",version.template_id).maybeSingle();
+  if(parent.error)redirect(`${origin}?error=Produktkopplingen kunde inte verifieras`);
+  const productId=parent.data?.product_id ?? null;
+  const today=new Date().toISOString().slice(0,10);
+  const product=productId ? await supabase.from("products").select("active").eq("id",productId).maybeSingle() : null;
+  const price=productId ? await supabase.from("product_price_versions").select("*").eq("product_id",productId).eq("active",true).lte("valid_from",today).or(`valid_to.is.null,valid_to.gte.${today}`).order("version",{ascending:false}).limit(1).maybeSingle() : null;
+  if(product?.error || price?.error)redirect(`${origin}?error=Produktens prisdata kunde inte verifieras`);
+  const problems=contractApprovalProblems({productId,productActive:Boolean(product?.data?.active),title:version.title_template ?? "",body:version.body_template ?? "",terms:version.terms_template ?? "",price:price?.data ?? null});
+  if(problems.length)redirect(`${origin}?error=${encodeURIComponent(problems.join(" "))}`);
   const { error } = await supabase.rpc("approve_contract_template_version", { p_version_id: versionId });
   if (error) redirect(`${origin}?error=${encodeURIComponent(error.message)}`);
   revalidatePath("/app/templates");

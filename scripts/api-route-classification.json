@@ -158,5 +158,13 @@
   "/contract-templates/pdf": {
     "classification": "internal",
     "reason": "Session-authenticated tenant-bound PDF authoring upload and private source preview."
+  },
+  "/compliance/exports/{id}": {
+    "classification": "internal",
+    "reason": "Session-only tenant administrator privacy export download"
+  },
+  "/telephony/webphone/incoming": {
+    "classification": "internal",
+    "reason": "Session-only inbound webphone offer authorization and user controls"
   }
 }

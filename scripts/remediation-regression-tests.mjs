@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import ts from "typescript";
 import { readFile } from "node:fs/promises";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
@@ -190,7 +191,10 @@ assert.match(appLayout, /platformMode = pathname === "\/app\/platform"/);
 assert.match(appLayout, /const platform = await getPlatformContext\(\)/);
 
 assert.match(organizationActions, /export async function switchTenant[\s\S]*supabase\.auth\.getUser\(\)/);
-assert.doesNotMatch(organizationActions.match(/export async function switchTenant[\s\S]*$/)?.[0] ?? "", /await getAppContext\(\)/);
+const organizationAst = ts.createSourceFile("organization.ts", organizationActions, ts.ScriptTarget.Latest, true);
+const switchTenantNode = organizationAst.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "switchTenant");
+assert(switchTenantNode?.body, "switchTenant action must exist");
+assert.doesNotMatch(switchTenantNode.body.getText(organizationAst), /await getAppContext\(\)/);
 assert.match(topbar, /platformMode && tenants\.length > 0 && !activeTenant/);
 assert.match(onboarding, /if \(platformMembership\) redirect\(["\']\/app\/platform["\']\)/);
 assert.doesNotMatch(bootstrapPlatformOwner, /Slutför tenant-onboarding innan \/app\/platform\/telephony/);
@@ -242,7 +246,7 @@ assert.match(resendRoute, /\["processed", "ignored"\]\.includes\(existingEvent\.
 
 assert.match(outbox, /provider\.findSubmitted/);
 assert.match(outbox, /message_id=\$\{encodeURIComponent\(sms\.id\)\}/);
-assert.match(outbox, /sms_submission_reconciliation_pending/);
+assert.match(outbox, /sms_submission_requires_provider_reconciliation/);
 assert.ok(outbox.indexOf("permanent_sms_outbound_feature_disabled") < outbox.indexOf("const provider = await getSmsProvider(job.tenant_id)"), "SMS feature gate must run before provider credentials/reconciliation");
 assert.match(smsDelivery, /message_id/);
 assert.match(smsDelivery, /provider_message_id: report\.providerMessageId/);
@@ -315,7 +319,7 @@ assert.match(permissions, /routeAccessMap/);
 assert.match(permissions, /resourcePermissionMap/);
 assert.match(sidebar, /canAccessRoute/);
 assert.match(appLayout, /canAccessRoute/);
-assert.match(verifyWorkflow, /denoland\/setup-deno@v2/);
+assert.match(verifyWorkflow, /denoland\/setup-deno@[a-f0-9]{40}/);
 assert.match(verifyWorkflow, /npm run openapi:verify/);
 assert.match(openapiVerifier, /unclassified route/);
 assert.match(openapiVerifier, /public route missing from OpenAPI/);

@@ -8,7 +8,7 @@ import { allTemplatePlaceholders } from "@/lib/contracts/template-context";
 import type { PdfField, PdfFieldTemplate } from "@/lib/contracts/pdf-field-template";
 
 // PDF.js paints the actual page; pointer coordinates refer to this same viewport.
-export function PdfTemplateBuilder({ initial }: { initial?: PdfFieldTemplate | null }) {
+export function PdfTemplateBuilder({ initial, customFields = [], managedCustomFields = false }: { initial?: PdfFieldTemplate | null; customFields?: PdfCustomField[]; managedCustomFields?: boolean }) {
   const [template, setTemplate] = useState<PdfFieldTemplate | null>(initial ?? null);
   const [pageIndex, setPageIndex] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
@@ -108,7 +108,7 @@ export function PdfTemplateBuilder({ initial }: { initial?: PdfFieldTemplate | n
     <input aria-label="Ladda upp PDF-mall" type="file" accept="application/pdf,.pdf" onChange={e => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (file) void upload(file); }} />
     {error ? <p role="alert" className="form-error">{error}</p> : null}
     {template ? <>
-      <details><summary>Uppgifter som säljaren fyller i för varje avtal</summary>
+      {!managedCustomFields ? <details><summary>Uppgifter som säljaren fyller i för varje avtal</summary>
         <div className="form-stack">
           <p className="muted">Definiera kompletteringar som bara gäller avtalet. Koppla dem sedan till placerade PDF-fält nedanför.</p>
           {(template.customFields ?? []).map(field => <fieldset key={field.id} className="form-stack"><legend>{field.label}</legend>
@@ -119,7 +119,7 @@ export function PdfTemplateBuilder({ initial }: { initial?: PdfFieldTemplate | n
           </fieldset>)}
           <button type="button" className="button button-secondary" onClick={addCustomField}>Lägg till avtalsuppgift</button>
         </div>
-      </details>
+      </details> : null}
       <div className="toolbar-left">
         <label>Sida <select value={pageIndex} onChange={e => { setPageIndex(Number(e.target.value)); setSelected(null); drag.current = null; }}>{template.pageSizes.map((_, index) => <option key={index} value={index}>{index + 1}</option>)}</select></label>
         <button type="button" className="button button-secondary" onClick={addField}>Lägg till fält</button>
@@ -134,7 +134,7 @@ export function PdfTemplateBuilder({ initial }: { initial?: PdfFieldTemplate | n
         {selectedField.placements.length > 1 ? <label>Förekomst <select value={selectedPlacementIndex} onChange={event => { const index = Number(event.target.value); setSelectedPlacementIndex(index); setPageIndex(selectedField.placements[index].page); }}>{selectedField.placements.map((area, index) => <option key={index} value={index}>{index + 1} · Sida {area.page + 1}</option>)}</select></label> : null}
         <label>Etikett <input value={selectedField.label} onChange={e => updateField({ label: e.target.value })} /></label>
         <label>Typ <select value={selectedField.type} onChange={e => { const type = e.target.value as PdfField["type"]; updateField({ type, source: type === "signature" ? "" : type === "date" ? "contract.starts_on" : "customer.display_name" }); }}><option value="text">Text</option><option value="date">Datum</option><option value="signature">Kundens underskrift</option></select></label>
-        {selectedField.type !== "signature" ? <label>Kund- eller avtalsuppgift <select value={selectedField.source} onChange={e => updateField({ source: e.target.value })}>{allTemplatePlaceholders().filter(source => selectedField.type !== "date" || ["today", "contract.starts_on", "contract.ends_on"].includes(source)).map(source => <option key={source} value={source}>{source}</option>)}{(template.customFields ?? []).filter(field => selectedField.type !== "date" || field.type === "date").map(field => <option key={field.id} value={`custom.${field.id}`}>Avtalsuppgift: {field.label}</option>)}</select></label> : <p>Underskriften fylls av kunden genom en konfigurerad signeringstjänst.</p>}
+        {selectedField.type !== "signature" ? <label>Kund- eller avtalsuppgift <select value={selectedField.source} onChange={e => updateField({ source: e.target.value })}>{![...allTemplatePlaceholders(), ...[...customFields, ...(template.customFields ?? [])].filter(field => selectedField.type !== "date" || field.type === "date").map(field => `custom.${field.id}`)].includes(selectedField.source) ? <option value={selectedField.source} disabled>Fältet finns inte längre – välj en annan koppling</option> : null}{allTemplatePlaceholders().filter(source => selectedField.type !== "date" || ["today", "contract.starts_on", "contract.ends_on"].includes(source)).map(source => <option key={source} value={source}>{source}</option>)}{[...customFields, ...(template.customFields ?? [])].filter(field => selectedField.type !== "date" || field.type === "date").map(field => <option key={field.id} value={`custom.${field.id}`}>Avtalsuppgift: {field.label}</option>)}</select></label> : <p>Underskriften fylls av kunden genom en konfigurerad signeringstjänst.</p>}
         <label><input type="checkbox" checked={selectedField.required} onChange={e => updateField({ required: e.target.checked })} /> Obligatoriskt</label>
         <label>Textstorlek <input type="number" min={6} max={30} value={selectedField.fontSize} onChange={e => updateField({ fontSize: Number(e.target.value) })} /></label>
         {(["x", "y", "width", "height"] as const).map(key => <label key={key}>{({ x: "Vänster (%)", y: "Överkant (%)", width: "Bredd (%)", height: "Höjd (%)" })[key]} <input type="number" min={0} max={100} step={.1} value={Number((selectedField.placements[selectedPlacementIndex][key] * 100).toFixed(2))} onChange={e => setTemplate(current => current ? { ...current, fields: editPdfPlacement(current.fields, selectedField.id, selectedPlacementIndex, { [key]: Number(e.target.value) / 100 }) } : current)} /></label>)}

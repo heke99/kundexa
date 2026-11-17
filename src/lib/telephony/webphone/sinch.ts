@@ -11,7 +11,7 @@ import type { WebphoneProvider, WebphoneProvisionResult } from "./provider";
  *
  * Säljaren behöver inget konto hos leverantören och
  * ingen registrerad enhet. Klienten identifierar sig med Kundexas eget
- * användar-ID, och servern intygar det med en kortlivad JWT. Ingen
+ * sessions-ID, och servern intygar det med en kortlivad JWT. Ingen
  * provisionering, ingen enhetsmappning, ingen seat-policy.
  *
  * Applikationshemligheten lämnar aldrig servern. Sinch är själva tydliga med
@@ -61,10 +61,10 @@ export const sinchWebphoneProvider: WebphoneProvider = {
       minted = mintSinchRegistrationToken({
         applicationKey,
         applicationSecret,
-        // Kundexas användar-ID, inte ett konto hos leverantören. Det är det som
+        // Kundexas sessions-ID, inte ett konto hos leverantören. Det är det som
         // gör att en ny säljare kan ringa direkt utan att registreras någon
         // annanstans först.
-        userId: input.sellerUserId,
+        userId: input.sessionId,
         ttlSeconds: SINCH_DEFAULT_TOKEN_TTL_SECONDS,
       });
     } catch (error) {
@@ -87,7 +87,7 @@ export const sinchWebphoneProvider: WebphoneProvider = {
         kind: "sinch_rtc",
         provider: "sinch",
         applicationKey,
-        userId: input.sellerUserId,
+        userId: input.sessionId,
         environmentHost: env.SINCH_RTC_ENVIRONMENT_HOST,
         token: minted.token,
         callerIdentifier: input.callerIdentifier,

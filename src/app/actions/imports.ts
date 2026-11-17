@@ -78,7 +78,7 @@ export async function updateImportMapping(form: FormData) {
   if (!importRunId || !rawMapping) throw new Error("Import och mappning krävs");
   const mapping = importFieldMappingSchema.parse(JSON.parse(rawMapping));
   const supabase = await createClient();
-  const runResult = await supabase.from("import_runs").select("id,status,total_rows").eq("id", importRunId).single();
+  const runResult = await supabase.from("import_runs").select("id,status,total_rows,updated_at,validation_report").eq("id", importRunId).single();
   if (runResult.error || !runResult.data) redirect(`/app/imports/${importRunId}?error=${encodeURIComponent(runResult.error?.message ?? "Importen hittades inte")}`);
   if (!["mapping_required", "preview_ready", "validated", "failed"].includes(runResult.data.status)) redirect(`/app/imports/${importRunId}?error=${encodeURIComponent("Importen kan inte mappas i nuvarande status")}`);
   // En misslyckad körning kan ha alla rader (verkställandet föll, och en ny
@@ -92,52 +92,65 @@ export async function updateImportMapping(form: FormData) {
     }
   }
 
-  let valid = 0;
-  let warnings = 0;
-  let errors = 0;
-  const pageSize = 500;
-  for (let offset = 0; offset < runResult.data.total_rows; offset += pageSize) {
-    const page = await supabase.from("import_rows").select("id,raw_data").eq("import_run_id", importRunId).order("row_number").range(offset, offset + pageSize - 1);
-    if (page.error) redirect(`/app/imports/${importRunId}?error=${encodeURIComponent(page.error.message)}`);
-    const updates = (page.data ?? []).map((row) => {
-      const result = normalizeImportedRow(row.raw_data as ImportedRow, mapping);
-      if (result.errors.length) errors += 1;
-      else if (result.warnings.length) warnings += 1;
-      else valid += 1;
-      return {
-        id: row.id,
-        normalized_data: jsonValue(result.normalized),
-        decision: result.errors.length ? "error" : result.warnings.length ? "warning" : "ready",
-        row_status: result.errors.length ? "invalid" : result.warnings.length ? "warning" : "valid",
-        error_code: result.errors[0] ?? null,
-        errors: jsonValue(result.issues.filter((issue) => result.errors.includes(issue.code))),
-        warning_codes: jsonValue(result.warnings),
-        source_external_id: typeof result.normalized.source_external_id === "string" ? result.normalized.source_external_id : null,
-      };
-    });
-    if (updates.length) {
-      const updateResult = await supabase.rpc("apply_import_row_normalization", {
-        p_import_run_id: importRunId,
-        p_rows: jsonValue(updates),
+  const normalizationToken = crypto.randomUUID();
+  const guard = await createAdminClient().from("import_runs")
+    .update({ status: "validating", validation_report: jsonValue({ normalization_token: normalizationToken }) }).eq("tenant_id",context.tenantId).eq("id",importRunId)
+    .eq("updated_at",runResult.data.updated_at).eq("status",runResult.data.status).select("id").maybeSingle();
+  if (guard.error || !guard.data) redirect(`/app/imports/${importRunId}?error=Importen ändrades. Läs om innan du mappar igen.`);
+  try {
+    let valid = 0;
+    let warnings = 0;
+    let errors = 0;
+    const pageSize = 500;
+    for (let offset = 0; offset < runResult.data.total_rows; offset += pageSize) {
+      const page = await supabase.from("import_rows").select("id,raw_data").eq("import_run_id", importRunId).order("row_number").range(offset, offset + pageSize - 1);
+      if (page.error) redirect(`/app/imports/${importRunId}?error=${encodeURIComponent(page.error.message)}`);
+      const updates = (page.data ?? []).map((row) => {
+        const result = normalizeImportedRow(row.raw_data as ImportedRow, mapping);
+        if (result.errors.length) errors += 1;
+        else if (result.warnings.length) warnings += 1;
+        else valid += 1;
+        return {
+          id: row.id,
+          normalization_token: normalizationToken,
+          normalized_data: jsonValue(result.normalized),
+          decision: result.errors.length ? "error" : result.warnings.length ? "warning" : "ready",
+          row_status: result.errors.length ? "invalid" : result.warnings.length ? "warning" : "valid",
+          error_code: result.errors[0] ?? null,
+          errors: jsonValue(result.issues.filter((issue) => result.errors.includes(issue.code))),
+          warning_codes: jsonValue(result.warnings),
+          source_external_id: typeof result.normalized.source_external_id === "string" ? result.normalized.source_external_id : null,
+        };
       });
-      if (updateResult.error) redirect(`/app/imports/${importRunId}?error=${encodeURIComponent(updateResult.error.message)}`);
-      if (Number(updateResult.data ?? 0) !== updates.length) {
-        redirect(`/app/imports/${importRunId}?error=${encodeURIComponent("Alla importrader kunde inte uppdateras säkert")}`);
+      if (updates.length) {
+        const updateResult = await supabase.rpc("apply_import_row_normalization", {
+          p_import_run_id: importRunId,
+          p_rows: jsonValue(updates),
+        });
+        if (updateResult.error) redirect(`/app/imports/${importRunId}?error=${encodeURIComponent(updateResult.error.message)}`);
+        if (Number(updateResult.data ?? 0) !== updates.length) {
+          redirect(`/app/imports/${importRunId}?error=${encodeURIComponent("Alla importrader kunde inte uppdateras säkert")}`);
+        }
       }
     }
+    if (valid + warnings + errors !== runResult.data.total_rows) throw new Error("normalization_row_count_changed");
+    // Körningen är skrivskyddad för användare; servern skriver, i användarens tenant.
+    const updated = await createAdminClient().from("import_runs").update({
+      field_mapping: jsonValue(mapping),
+      status: errors === runResult.data.total_rows ? "mapping_required" : "preview_ready",
+      error_count: errors,
+      warning_count: warnings,
+      accepted_row_count: valid + warnings,
+      rejected_row_count: errors,
+      validation_report: jsonValue({ valid_rows: valid, warning_rows: warnings, error_rows: errors, accepted_row_count: valid + warnings, rejected_row_count: errors, mapping_updated_at: new Date().toISOString() }),
+    }).eq("tenant_id", context.tenantId).eq("id", importRunId).eq("status", "validating").contains("validation_report", { normalization_token: normalizationToken }).select("id").maybeSingle();
+    if (!updated.data && !updated.error) throw new Error("normalization_attempt_lost");
+    if (updated.error) redirect(`/app/imports/${importRunId}?error=${encodeURIComponent(updated.error.message)}`);
+    revalidatePath(`/app/imports/${importRunId}`);
+    revalidatePath(`/app/imports/${importRunId}/mapping`);
+    redirect(`/app/imports/${importRunId}?message=${encodeURIComponent(`Mappningen applicerades: ${valid} giltiga, ${warnings} varningar och ${errors} fel.`)}`);
+  } catch (error) {
+    await createAdminClient().from("import_runs").update({ status: "failed" }).eq("tenant_id",context.tenantId).eq("id",importRunId).eq("status","validating").contains("validation_report",{normalization_token:normalizationToken});
+    throw error;
   }
-  // Körningen är skrivskyddad för användare; servern skriver, i användarens tenant.
-  const updated = await createAdminClient().from("import_runs").update({
-    field_mapping: jsonValue(mapping),
-    status: errors === runResult.data.total_rows ? "mapping_required" : "preview_ready",
-    error_count: errors,
-    warning_count: warnings,
-    accepted_row_count: valid + warnings,
-    rejected_row_count: errors,
-    validation_report: jsonValue({ valid_rows: valid, warning_rows: warnings, error_rows: errors, accepted_row_count: valid + warnings, rejected_row_count: errors, mapping_updated_at: new Date().toISOString() }),
-  }).eq("tenant_id", context.tenantId).eq("id", importRunId);
-  if (updated.error) redirect(`/app/imports/${importRunId}?error=${encodeURIComponent(updated.error.message)}`);
-  revalidatePath(`/app/imports/${importRunId}`);
-  revalidatePath(`/app/imports/${importRunId}/mapping`);
-  redirect(`/app/imports/${importRunId}?message=${encodeURIComponent(`Mappningen applicerades: ${valid} giltiga, ${warnings} varningar och ${errors} fel.`)}`);
 }

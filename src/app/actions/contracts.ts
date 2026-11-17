@@ -1,7 +1,7 @@
 "use server";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { freezePdfTemplate, pdfCustomFormValues, type FrozenPdfTemplate } from "@/lib/contracts/pdf-field-template";
+import { freezePdfTemplate, freezeContractCustomFields, pdfCustomFormValues, type FrozenContractFields, type FrozenPdfTemplate } from "@/lib/contracts/pdf-field-template";
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -199,6 +199,7 @@ export async function createContract(form: FormData) {
     price_version: price?.version ?? null,
     additional_terms: additionalTerms,
     pdf_fields: null as FrozenPdfTemplate | null,
+    custom_fields: null as FrozenContractFields | null,
   };
   const sellerSnapshot = {
     id: legalEntity.id,
@@ -257,6 +258,9 @@ export async function createContract(form: FormData) {
   let renderedBody: string;
   let renderedTerms: string;
   try {
+    const customValues = pdfCustomFormValues(templateVersion.signing_configuration, form);
+    commercialTerms.custom_fields = freezeContractCustomFields(templateVersion.signing_configuration, customValues);
+    Object.assign(context, { custom: commercialTerms.custom_fields.values });
     commercialTerms.pdf_fields = freezePdfTemplate(templateVersion.signing_configuration, context, ctx.tenantId, pdfCustomFormValues(templateVersion.signing_configuration, form));
     renderedTitle = renderStrictTemplate(templateVersion.title_template, context);
     renderedBody = renderStrictTemplate(templateVersion.body_template, context);
@@ -272,7 +276,9 @@ export async function createContract(form: FormData) {
       : [];
     const message = missing.length
       ? `Avtalet kräver ${missing.join(", ")}, men det finns inget värde för ${missing.length === 1 ? "det" : "dem"}. Fyll i uppgiften på kundkortet, eller öppna produktens avtal och gör fältet valfritt genom att sätta ett frågetecken sist: {{${missing[0]}?}}`
-      : raw.startsWith("pdf_template_required_value:") ? `Fyll i ${raw.split(":").slice(1).join(":")} på kundkortet innan avtalet skapas.` : "Mallrenderingen misslyckades.";
+      : raw.startsWith("pdf_template_required_value:") ? `Fyll i ${raw.split(":").slice(1).join(":")} under Uppgifter till avtalet innan avtalet skapas.` : raw.startsWith("pdf_template_invalid_date:") ? `Kontrollera datumet för ${raw.split(":").slice(1).join(":")} under Uppgifter till avtalet.`
+      : raw.startsWith("pdf_template_invalid_number:") ? `Kontrollera talet för ${raw.split(":").slice(1).join(":")} under Uppgifter till avtalet.`
+      : "Mallrenderingen misslyckades.";
     back(message);
   }
   const documentHash = sha256(`${renderedTitle}\n${renderedBody}\n${renderedTerms}\n${JSON.stringify(commercialTerms)}\n${JSON.stringify(sellerSnapshot)}\n${JSON.stringify(counterpartySnapshot)}`);

@@ -106,9 +106,10 @@ function closestField(root: TemplateContextRoot, field: string): string | null {
  * Check placeholders against the declaration. Returns one entry per problem,
  * each with the closest real field where there is a plausible one.
  */
-export function validateTemplateVariables(names: readonly string[]): TemplateVariableProblem[] {
+export function validateTemplateVariables(names: readonly string[], customIds: readonly string[] = []): TemplateVariableProblem[] {
   const problems: TemplateVariableProblem[] = [];
   for (const name of names) {
+    if (name.startsWith("custom.") && customIds.includes(name.slice(7))) continue;
     const segments = name.split(".");
     const [root, field] = segments;
 

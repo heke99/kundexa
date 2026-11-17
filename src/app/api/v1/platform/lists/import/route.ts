@@ -100,8 +100,9 @@ export async function POST(request: Request) {
 
     let valid = 0;
     let invalid = 0;
-    const seenHashes = new Set<string>();
-    const seenSourceKeys = new Set<string>();
+    const grouped = new Map<string, PlatformListEntryInsert>();
+    let mergedRows = 0;
+    let contactCount = 0;
     const entries: PlatformListEntryInsert[] = parsed.rows.flatMap((row, index): PlatformListEntryInsert[] => {
       const normalized = normalizeImportedRow(row, firstNormalized.mapping);
       const company = normalized.normalized as Record<string, unknown>;
@@ -115,15 +116,31 @@ export async function POST(request: Request) {
         contact_name: contact.full_name,
         contact_phone: contact.phone_e164,
         source_external_id: company.source_external_id,
+        contacts,
       };
       const dataHash = createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
-      const sourceKey = nullableText(company.source_external_id) ?? nullableText(company.organization_number) ?? nullableText(company.phone_e164) ?? dataHash;
-      if (seenHashes.has(dataHash) || seenSourceKeys.has(sourceKey)) return [];
-      seenHashes.add(dataHash);
-      seenSourceKeys.add(sourceKey);
+      const sourceKey = nullableText(company.organization_number) ?? nullableText(company.source_external_id) ?? nullableText(company.phone_e164) ?? dataHash;
+      const previous = grouped.get(sourceKey);
+      if (previous) {
+        const metadata = previous.metadata as Record<string, unknown>;
+        const combined = [...metadata.contacts as Array<Record<string, unknown>>, ...contacts];
+        const unique = [...new Map(combined.map(value => [JSON.stringify(value), value])).values()];
+        contactCount += unique.length - (metadata.contacts as unknown[]).length;
+        const conflicts = [...metadata.conflicts as unknown[]];
+        for (const key of ["display_name", "organization_number", "phone_e164", "email"] as const) {
+          const incoming = nullableText(company[key]);
+          if (incoming && previous[key] && incoming !== previous[key]) conflicts.push({ row: index + 1, field: key, value: incoming });
+        }
+        previous.metadata = toJson({ ...metadata, contacts: unique, conflicts, source_rows: [...metadata.source_rows as unknown[], { row_number: index + 1, raw_data: row, errors: normalized.errors, warnings: normalized.warnings }] });
+        previous.data_hash = createHash("sha256").update(JSON.stringify({ canonical: previous.data_hash, contacts: unique })).digest("hex");
+        if (normalized.errors.length && previous.state !== "invalid") { previous.state = "invalid"; valid -= 1; invalid += 1; }
+        mergedRows += 1;
+        return [];
+      }
+      contactCount += contacts.length;
       const isValid = normalized.errors.length === 0 && Boolean(nullableText(company.display_name));
       if (isValid) valid += 1; else invalid += 1;
-      return [{
+      const entry: PlatformListEntryInsert = {
         platform_list_id: platformListId,
         source_key: sourceKey,
         organization_number: nullableText(company.organization_number),
@@ -151,8 +168,10 @@ export async function POST(request: Request) {
         state: isValid ? "available" : "invalid",
         data_hash: dataHash,
         raw_data: toJson(row),
-        metadata: toJson({ row_number: index + 1, errors: normalized.errors, warnings: normalized.warnings }),
-      }];
+        metadata: toJson({ row_number: index + 1, errors: normalized.errors, warnings: normalized.warnings, contacts, conflicts: [], source_rows: [{ row_number: index + 1, raw_data: row, errors: normalized.errors, warnings: normalized.warnings }] }),
+      };
+      grouped.set(sourceKey, entry);
+      return [entry];
     });
 
     for (let index = 0; index < entries.length; index += 500) {
@@ -166,6 +185,8 @@ export async function POST(request: Request) {
         source_type: parsed.sourceType,
         imported_rows: parsed.rows.length,
         unique_rows: entries.length,
+        merged_rows: mergedRows,
+        contact_count: contactCount,
         valid_rows: valid,
         invalid_rows: invalid,
         parser_errors: parsed.parserErrors,
@@ -175,7 +196,7 @@ export async function POST(request: Request) {
         malware_scan: { provider: scan.provider, sha256: scan.sha256 },
       },
     }).eq("id", platformListId);
-    return redirectWith(request, "message", `Listan importerades: ${valid} tillgängliga, ${invalid} ogiltiga och ${parsed.rows.length - entries.length} dubletter`);
+    return redirectWith(request, "message", `Listan importerades: ${valid} tillgängliga, ${invalid} ogiltiga och ${mergedRows} sammanförda rader, ${contactCount} kontaktpersoner`);
   } catch (error) {
     const reference = crypto.randomUUID();
     if (createdListId) {

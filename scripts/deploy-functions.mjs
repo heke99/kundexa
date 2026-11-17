@@ -41,10 +41,10 @@ function repositoryFunctions() {
 const extraArgs = process.argv.slice(2);
 const npx = process.platform === "win32" ? "npx.cmd" : "npx";
 
-function supabase(args, { tolerateFailure = false } = {}) {
+function supabase(args) {
   const result = spawnSync(npx, ["supabase@2.109.1", ...args], { stdio: "inherit", shell: false });
   if (result.error) throw result.error;
-  if (result.status !== 0 && !tolerateFailure) process.exit(result.status ?? 1);
+  if (result.status !== 0) process.exit(result.status ?? 1);
   return result.status === 0;
 }
 
@@ -56,21 +56,37 @@ if (functions.length === 0) {
   process.exit(1);
 }
 
+// Fail before the first mutation if the target DB lacks the RPC/schema package.
+// The Management API query is read-only and returns migration versions only.
+const preflight = spawnSync(process.execPath, ["scripts/check-deployment-schema.mjs", ...extraArgs], { stdio: "inherit", shell: false });
+if (preflight.error) throw preflight.error;
+if (preflight.status !== 0) process.exit(preflight.status ?? 1);
+
 for (const functionName of functions) {
   console.log(`\nDeploying ${functionName}...`);
   supabase(["functions", "deploy", functionName, "--no-verify-jwt", ...extraArgs]);
 }
 
+// Read the inventory successfully before interpreting any function as absent.
+const inventoryResult = spawnSync(npx, ["supabase@2.109.1", "functions", "list", ...extraArgs, "--output", "json"], {
+  stdio: ["ignore", "pipe", "inherit"], encoding: "utf8", shell: false,
+});
+if (inventoryResult.error) throw inventoryResult.error;
+if (inventoryResult.status !== 0) process.exit(inventoryResult.status ?? 1);
+const inventory = JSON.parse(inventoryResult.stdout);
+if (!Array.isArray(inventory) || inventory.some((entry) => !entry || typeof entry.name !== "string")) {
+  throw new Error("Unexpected function inventory; refusing cleanup.");
+}
+const deployedNames = new Set(inventory.map((entry) => entry.name));
 for (const functionName of RETIRED) {
   if (functions.includes(functionName)) {
-    // Den ligger både i repot och på listan över borttagna. Att gissa vilken
-    // som gäller vore att antingen radera något som ska köra eller behålla
-    // något som ska bort.
-    console.error(`\n${functionName} is listed as retired but still exists in ${functionsDir}.`);
-    process.exit(1);
+    throw new Error(`${functionName} is retired but still exists in ${functionsDir}.`);
   }
-  console.log(`\nRemoving retired ${functionName}...`);
-  // En redan borttagen funktion är inte ett fel: deployen ska kunna köras om.
-  const removed = supabase(["functions", "delete", functionName, ...extraArgs], { tolerateFailure: true });
-  console.log(removed ? `Removed ${functionName}.` : `${functionName} was already absent.`);
+  if (!deployedNames.has(functionName)) {
+    console.log(`${functionName} is absent in the verified inventory.`);
+    continue;
+  }
+  console.log(`Removing retired ${functionName}...`);
+  supabase(["functions", "delete", functionName, ...extraArgs]);
+  console.log(`Removed ${functionName}.`);
 }

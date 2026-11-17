@@ -28,7 +28,12 @@ export async function changePassword(formData: FormData) {
   const { data: stateRows, error: stateError } = await supabase.rpc("current_user_security_state");
   if (stateError) redirect("/change-password?error=Säkerhetsstatus kunde inte verifieras");
   const state = Array.isArray(stateRows) ? stateRows[0] : stateRows;
-  if (!state?.must_change_password) redirect("/app");
+  if (!state?.must_change_password) {
+    const currentPassword = text(formData, "current_password");
+    if (!currentPassword || !user.email) redirect("/change-password?error=Ange ditt nuvarande lösenord");
+    const verified = await supabase.auth.signInWithPassword({ email: user.email, password: currentPassword });
+    if (verified.error || verified.data.user?.id !== user.id) redirect("/change-password?error=Nuvarande lösenord kunde inte verifieras");
+  }
 
   const { error: authError } = await supabase.auth.updateUser({ password: parsed.data.password });
   if (authError) redirect("/change-password?error=Lösenordet kunde inte uppdateras");

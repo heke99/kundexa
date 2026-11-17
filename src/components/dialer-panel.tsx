@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { Phone, PhoneOff, Radio } from "@/components/icons";
+import { IncomingCallPanel } from "@/components/incoming-call-panel";
 import { useDialerPanel } from "@/hooks/use-dialer";
 import { useCallRealtime } from "@/hooks/use-call-realtime";
 import { WebphoneAudioPanel } from "@/components/webphone-audio-panel";
@@ -240,11 +241,12 @@ export function DialerPanel({
   }
 
   if (contractWorkspace) {
-    const workspace = <ContractWorkspace {...contractWorkspace} onClose={() => setContractWorkspace(null)} />;
+    const workspace = <><IncomingCallPanel {...dialer} /><ContractWorkspace {...contractWorkspace} onClose={() => setContractWorkspace(null)} /></>;
     return liveSlot ? createPortal(workspace, liveSlot) : workspace;
   }
 
   return <div>
+    <IncomingCallPanel {...dialer} />
     <div className="dialer-status">
       <strong>Click-to-call</strong>
       <span className={`badge ${dialer.registered ? "badge-success" : "badge-warning"}`}>
@@ -300,7 +302,7 @@ export function DialerPanel({
       </select>
     </label></details> : <p className="form-error">Företaget har inget utgående nummer ännu. Be en administratör lägga till ett.</p>}
     <button type="button" className="call-button" onClick={call}
-      disabled={!dialer.registered || !selected || callerIdOptions.length === 0 || afterCall || dialer.calling}
+      disabled={!!dialer.incoming || !dialer.registered || !selected || callerIdOptions.length === 0 || afterCall || dialer.calling}
       aria-label="Ring via telefoni">
       <Phone size={25} />
     </button>

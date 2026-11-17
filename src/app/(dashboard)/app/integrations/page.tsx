@@ -9,7 +9,7 @@ import { DataTable } from "@/components/ui/data-table";
 import { Field, SelectField } from "@/components/ui/form-field";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
-import { placeTestCall, saveCallerIdDefault, saveTelephonyPolicy } from "@/app/actions/telephony";
+import { configureInboundNumber, placeTestCall, saveCallerIdDefault, saveTelephonyPolicy } from "@/app/actions/telephony";
 import { getAppContext, isPlatformAdmin } from "@/lib/auth";
 import { describeResendSendingDomain } from "@/lib/email/resend-domains";
 
@@ -33,13 +33,15 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
     { data: features },
     { data: reminderPolicy },
     { data: telephonyPolicy },
+    { data: teams },
   ] = await Promise.all([
     ok(supabase.from("tenant_integrations").select("id,provider_type,provider,name,status,last_verified_at,configuration,credentials_ciphertext").order("created_at")),
     ok(supabase.from("phone_numbers").select("*").order("number_e164")),
     ok(supabase.from("tenant_memberships").select("user_id,role,profiles:user_id(full_name)").eq("status", "active")),
-    ok(supabase.from("tenant_features").select("feature_key,enabled").in("feature_key", ["outbound_email", "contract_delivery_email", "outbound_sms", "contract_delivery_sms"])),
+    ok(supabase.from("tenant_features").select("feature_key,enabled")),
     ok(supabase.from("contract_reminder_policies").select("*").maybeSingle()),
     ok(supabase.from("telephony_policies").select("*").maybeSingle()),
+    ok(supabase.from("teams").select("id,name").eq("status","active")),
   ]);
   // Bara nummer som är aktiva och bär röst kan visas för en mottagare. Att
   // erbjuda de andra i listan vore att låta någon välja ett val som sedan får
@@ -139,6 +141,17 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
 
       <Card><CardHeader><h2><KeyRound size={17} /> SMS</h2></CardHeader><CardContent><div className="notice">SMS bär avtalsutskick och kundsvar, och går via Kundexas konto. Det som skiljer era meddelanden från andras är avsändarnumret.</div><form action={saveSmsIntegration} className="form-stack" style={{ marginTop: 14 }}><SelectField label="Region" name="region"><option value="eu">EU</option><option value="us">US</option></SelectField><button className="button button-primary">Spara</button></form></CardContent></Card>
 
+      {["owner", "admin"].includes(context.role) ? <Card><CardHeader><h2>Inkommande samtal</h2></CardHeader><CardContent>
+        <p>Välj mottagare för varje nummer. Telefonen måste vara startad i Kundexa. Samtal erbjuds en ledig användare i valt team. Användare med en pågående ringsession får inga inkommande samtal.</p>
+        {telephonyPolicy?.recording_enabled ? <p className="notice warning">Inkommande samtal är blockerade så länge obligatorisk inspelning är aktiverad. Inspelningskedjan behöver färdigställas först.</p> : null}
+        {voiceNumbers.map(number => <form key={number.id} action={configureInboundNumber} className="form-grid" style={{marginTop:16}}>
+          <strong>{number.number_e164}</strong><input type="hidden" name="number_id" value={number.id} />
+          <label><input type="checkbox" name="enabled" defaultChecked={featureMap.get(`inbound_calls:${number.id}`) === true} /> Ta emot inkommande samtal</label>
+          <SelectField label="Användare" name="user_id" defaultValue={number.assigned_user_id ?? ""}><option value="">Valfri ledig i valt team</option>{members?.filter(m => ["owner","admin","team_lead","sales"].includes(m.role)).map(m => <option key={m.user_id} value={m.user_id}>{m.profiles?.full_name ?? m.user_id}</option>)}</SelectField>
+          <SelectField label="Team" name="team_id" defaultValue={number.assigned_team_id ?? ""}><option value="">Endast vald användare</option>{teams?.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</SelectField>
+          <button className="button button-primary" type="submit">Spara mottagare</button>
+        </form>)}
+      </CardContent></Card> : null}
       <Card><CardHeader><h2><Phone size={17} /> Telefonnummer</h2><Badge>{numbers?.length ?? 0}</Badge></CardHeader><CardContent style={{ padding: 0 }}><DataTable headers={["Nummer", "Voice", "SMS", "MMS", "Status"]}>{numbers?.map((number) => <tr key={number.id}><td><strong>{number.number_e164}</strong></td><td>{number.supports_voice ? "Ja" : "Nej"}</td><td>{number.supports_sms ? "Ja" : "Nej"}</td><td>{number.supports_mms ? "Ja" : "Nej"}</td><td><Badge className={number.status === "active" ? "badge-success" : ""}>{number.status}</Badge></td></tr>)}</DataTable></CardContent></Card>
       <Card><CardHeader><h2><Phone size={17} /> Nya nummer</h2></CardHeader><CardContent>
         <div className="notice">Nummer beställs av Kundexa. De hyrs i Kundexas leverantörskonto och faktureras Kundexa, så de går inte att hyra härifrån — kontakta oss så läggs numret upp på företaget.</div>

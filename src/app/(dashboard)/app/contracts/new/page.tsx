@@ -1,3 +1,5 @@
+import { pdfCustomFields } from "@/lib/contracts/pdf-field-template";
+import { contractApprovalProblems } from "@/lib/contracts/approval-readiness";
 import { ContractProductSelect, type ContractCustomField } from "@/components/contract-product-select";
 import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
@@ -19,7 +21,7 @@ type CallOption = {
   id: string; ended_at: string; started_at: string; duration_seconds: number; direction: string;
   disposition: string; notes: string | null; user_id: string | null; registered_manually: boolean; has_recording: boolean;
 };
-type ProductContract = { product_id: string | null; audience: string; current_version_id: string | null; current_version: { status: string; signing_configuration: unknown } | null };
+type ProductContract = { product_id: string | null; audience: string; current_version_id: string | null; current_version: { status: string; signing_configuration: unknown; title_template: string; body_template: string; terms_template: string | null } | null };
 type ActivePrice = { product_id: string; version: number; recurring_fee: number; currency: string; binding_months: number | null; notice_months: number | null; payment_terms_days: number };
 
 export default async function NewContractPage({ searchParams }: { searchParams: Promise<{ customer_id?: string; source_call_id?: string; error?: string; message?: string; warning?: string }> }) {
@@ -47,15 +49,15 @@ export default async function NewContractPage({ searchParams }: { searchParams: 
   const supabase = await createClient();
   const selectedCustomer = params.customer_id
     ? (await supabase.from("customers")
-      .select("id,display_name,customer_type,email,phone_e164,organization_number,do_not_call,do_not_sms,do_not_email")
-      .eq("id", params.customer_id).is("deleted_at", null).maybeSingle()).data as CustomerSearchOption | null
+      .select("id,display_name,customer_type,email,phone_e164,organization_number,custom_fields,do_not_call,do_not_sms,do_not_email")
+      .eq("id", params.customer_id).is("deleted_at", null).maybeSingle()).data as (CustomerSearchOption & { custom_fields?: Record<string, unknown> }) | null
     : null;
   const [{ data: products }, { data: prices }, { data: productContracts }, { data: dispositions }, { data: members }, { data: teams }] = await Promise.all([
     ok(supabase.from("products").select("id,name").eq("active", true).order("name")),
-    ok(supabase.from("product_price_versions").select("product_id,version,recurring_fee,currency,binding_months,notice_months,payment_terms_days").eq("active", true).lte("valid_from", new Date().toISOString().slice(0, 10)).or(`valid_to.is.null,valid_to.gte.${new Date().toISOString().slice(0, 10)}`).order("version", { ascending: false })),
+    ok(supabase.from("product_price_versions").select("*").eq("active", true).lte("valid_from", new Date().toISOString().slice(0, 10)).or(`valid_to.is.null,valid_to.gte.${new Date().toISOString().slice(0, 10)}`).order("version", { ascending: false })),
     // Avtalet ligger i produkten. Säljaren väljer produkten, och det här är hur
     // sidan vet vilka produkter som faktiskt har ett avtal att skicka.
-    ok(supabase.from("contract_templates").select("product_id,audience,current_version_id,current_version:contract_template_versions!contract_templates_current_version_tenant_fk(status,signing_configuration)").eq("active", true).not("product_id", "is", null)),
+    ok(supabase.from("contract_templates").select("product_id,audience,current_version_id,current_version:contract_template_versions!contract_templates_current_version_tenant_fk(status,signing_configuration,title_template,body_template,terms_template)").eq("active", true).not("product_id", "is", null)),
     manualContractDispositions(supabase, ctx.tenantId).then((data) => ({ data })),
     ok(supabase.from("tenant_memberships").select("user_id,role,profiles:user_id(full_name)").eq("status", "active").in("role", ["owner", "admin", "team_lead", "sales", "contract_manager"])),
     ok(supabase.from("teams").select("id,name").eq("status", "active").order("name")),
@@ -76,7 +78,11 @@ export default async function NewContractPage({ searchParams }: { searchParams: 
     const contract = contractByProduct.get(productId);
     if (!contract) return "inget avtal";
     if (!contract.current_version_id || contract.current_version?.status !== "approved") return "avtalet väntar på godkännande";
-    if (!activePriceByProduct.has(productId)) return "saknar pris";
+    const version = contract.current_version;
+    const problems = contractApprovalProblems({ productId, productActive: true,
+      title: version.title_template, body: version.body_template, terms: version.terms_template ?? "",
+      price: activePriceByProduct.get(productId) ?? null });
+    if (problems.length) return problems[0];
     if (![audience, "BOTH"].includes(contract.audience)) return contract.audience === "B2B" ? "bara företag" : "bara privatkunder";
     return null;
   };
@@ -187,11 +193,11 @@ export default async function NewContractPage({ searchParams }: { searchParams: 
           {!selectedCustomer ? <div className="notice warning">Välj kund först.</div> : <form action={createContract} className="form-stack">
             <input type="hidden" name="customer_id" value={selectedCustomer.id} />
             <input type="hidden" name="source_call_id" value={selectedCall?.id ?? ""} />
-            <ContractProductSelect defaultValue={sellable.length === 1 ? sellable[0].id : ""} products={(products ?? []).map(product => {
+            <ContractProductSelect key={selectedCustomer?.id ?? "no_customer"} customerId={selectedCustomer?.id ?? ""} customerValues={selectedCustomer?.custom_fields ?? {}} defaultValue={sellable.length === 1 ? sellable[0].id : ""} products={(products ?? []).map(product => {
               const blocker = productBlocker(product.id);
               const price = activePriceByProduct.get(product.id);
               const configuration = contractByProduct.get(product.id)?.current_version?.signing_configuration as { pdf_template?: { customFields?: ContractCustomField[] } } | null;
-              return { id: product.id, disabled: Boolean(blocker), label: `${product.name}${blocker ? ` · ${blocker}` : price ? ` · ${price.recurring_fee} ${price.currency}/mån` : ""}`, customFields: blocker ? [] : configuration?.pdf_template?.customFields ?? [] };
+              return { id: product.id, templateVersionId: contractByProduct.get(product.id)?.current_version_id ?? undefined, disabled: Boolean(blocker), label: `${product.name}${blocker ? ` · ${blocker}` : price ? ` · ${price.recurring_fee} ${price.currency}/mån` : ""}`, customFields: blocker ? [] : pdfCustomFields(configuration) };
             })} />
             <p className="muted">Avtalet som hör till produkten fylls i med {selectedCustomer.display_name}s uppgifter från kundkortet. Du ser det innan det skickas.</p>
             {!sellable.length ? <div className="notice warning">Ingen produkt har ett godkänt avtal för {audience === "B2C" ? "privatkunder" : "företagskunder"} än. En teamledare eller administratör lägger in avtalet under Produkter.</div> : null}

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { PdfTemplateBuilder } from "@/components/pdf-template-builder";
+import { ContractTemplateFields } from "@/components/contract-template-fields";
 import { ok } from "@/lib/supabase/read";
 import { ScrollText } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
@@ -100,7 +100,7 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Pr
             <ContractTemplateDocumentUpload target="terms_template" label="Ladda upp villkoren (.docx)" />
             <TextareaField label="Fullständiga villkor" name="terms_template" defaultValue={"Bindningstid: {{price.binding_months?ingen}}. Uppsägningstid: {{price.notice_months?ingen}}. Avtalet upprättades {{today}}.\n\nHär ska era juridiskt granskade fullständiga villkor anges."} required />
             <SelectField label="Signering" name="signature_method" defaultValue={"simple_click"}><option value="simple_click">Enkel webbacceptans</option><option value="external_esign">Elektronisk underskrift i PDF</option></SelectField>
-              <PdfTemplateBuilder />
+              <ContractTemplateFields />
               <TemplateFieldButtons />
             <TemplateFieldReference />
             <button className="button button-primary" disabled={!legalEntities?.length || !products?.length}>Spara som utkast</button>

@@ -1,3 +1,4 @@
+import { recordingPlaybackPath } from "@/lib/telephony/recording-playback";
 import { NextResponse } from "next/server";
 import { getAppContext } from "@/lib/auth";
 import { assertPermission } from "@/lib/permissions";
@@ -29,11 +30,11 @@ export async function GET(
     if (!allowed) throw new Error("recording_permission_denied");
 
     const { data: recording } = await supabase.from("call_recordings").select("*")
-      .eq("call_id", callId).is("deleted_at", null).maybeSingle();
+      .eq("tenant_id", app.tenantId).eq("call_id", callId).is("deleted_at", null).maybeSingle();
     if (!recording) throw new Error("recording_not_found");
     let target: string;
     if (recording.status === "stored_privately" && recording.storage_path) {
-      const { data, error } = await admin.storage.from("call-recordings").createSignedUrl(recording.storage_path, 60);
+      const { data, error } = await admin.storage.from("call-recordings").createSignedUrl(recordingPlaybackPath(app.tenantId,callId,recording.storage_path), 60);
       if (error || !data?.signedUrl) throw new Error("recording_signed_url_failed");
       target = data.signedUrl;
     } else {
@@ -58,7 +59,10 @@ export async function GET(
         ?? null,
     });
     if (accessLogError) throw new Error("recording_access_log_failed");
-    return NextResponse.redirect(target, 307);
+    const response = NextResponse.redirect(target, 307);
+    response.headers.set("Cache-Control", "private, no-store");
+    response.headers.set("Referrer-Policy", "no-referrer");
+    return response;
   } catch (error) {
     await admin.from("audit_logs").insert({
       tenant_id: app.tenantId,

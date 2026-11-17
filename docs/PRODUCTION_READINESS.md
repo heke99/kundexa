@@ -1,3 +1,5 @@
+> Historiskt leveransunderlag. Aktuell rättningsstatus och verifieringsbegränsning finns i [remediation-status](reviews/2026-11-16/remediation-status.md). Den här texten är inte ett aktuellt driftgodkännande.
+
 # Produktionsberedskap
 
 Arbetsdokument. En punkt markeras `[x]` endast när det finns namngiven verifiering
