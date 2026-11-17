@@ -96,6 +96,7 @@ export const apiScopePermission: Record<string, Permission> = {
   "contracts:manage_expiry": "contracts.manage_expiry",
   "integrations:manage": "integrations.manage",
   "integrations:test": "integrations.test",
+  "calls:read": "calls.read",
   "calls:create": "calls.create",
   "messages:send": "messages.send",
   "imports:write": "imports.manage",
