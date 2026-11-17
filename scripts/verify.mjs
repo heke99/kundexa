@@ -678,7 +678,7 @@ if (/ignoreBuildErrors\s*:\s*true/.test(nextConfig)) {
   assert.equal(packageJson.scripts["build:next"], "next build --webpack", "The internal build command must use the deterministic official Next webpack build");
 }
 
-assert.equal(packageJson.dependencies.next, "16.4.1");
+assert.equal(packageJson.dependencies.next, "16.4.6");
 assert.equal(packageJson.dependencies["@supabase/ssr"], "0.12.3");
 assert.equal(packageJson.dependencies["@supabase/supabase-js"], "2.110.7");
 assert.equal(packageJson.dependencies["pdf-lib"], "1.17.1");
