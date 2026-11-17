@@ -40,6 +40,7 @@ export default async function DashboardPage() {
       .order("occurred_at", { ascending: false }).limit(8)),
   ]);
   const overview = (overviewData ?? { customers: 0, callsToday: 0, pendingContracts: 0, openActivities: 0, openDeals: 0, wonDealValue: 0 }) as DashboardOverview;
+  if (recentContracts.error) throw new Error("Senaste avtal kunde inte hämtas");
   return <>
     <PageHeader title={copy.title} description={copy.description} />
     <div className="grid grid-4">

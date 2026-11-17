@@ -256,3 +256,16 @@ export async function switchTenant(form: FormData) {
   revalidatePath("/app", "layout");
   redirect("/app");
 }
+
+/** Renewal is separate from Auth email delivery; no credential or role changes. */
+export async function renewTenantInvitation(form: FormData) {
+  const context = await getAppContext();
+  if (!["owner", "admin"].includes(context.role)) redirect("/app/users?error=Tenantadmin krävs");
+  const parsed = z.uuid().safeParse(value(form, "invitation_id"));
+  if (!parsed.success) redirect("/app/users?error=Ogiltig inbjudan");
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("renew_tenant_invitation", { p_invitation_id: parsed.data });
+  if (error) redirect(`/app/users?error=${errorText(error)}`);
+  revalidatePath("/app/users");
+  redirect(`/app/users?message=${encodeURIComponent("Inbjudan gäller igen i sju dagar. Personen loggar in med sitt befintliga konto eller använder Glömt lösenord på inloggningssidan. Inget nytt mejl har skickats av den här åtgärden.")}`);
+}

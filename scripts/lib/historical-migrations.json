@@ -1,0 +1,96 @@
+[
+  {
+    "deployed_version": "20261015114020",
+    "statements_sha256": "a4d49d274e5fbb4a728e94cbbfd4acc34959718e927d4d726aefdfa473276380",
+    "files": [
+      {
+        "name": "202610150001_contract_authorization_integrity.sql",
+        "sha256": "50841dfae3ed6d592c796a1f929c9c347a82c7355dd9d138d97863726f6dbe1e"
+      }
+    ]
+  },
+  {
+    "deployed_version": "20261015114050",
+    "statements_sha256": "83da53d8567379ea6aa5e4ad53dd0c93ff8df55ff4cb886c2f94604ef7546733",
+    "files": [
+      {
+        "name": "202610150002_outbox_leases_and_evidence_binding.sql",
+        "sha256": "cba66c830c0402cd5a663820f6080a4b6520a63fa502789df16db85c21639793"
+      }
+    ]
+  },
+  {
+    "deployed_version": "20261015114107",
+    "statements_sha256": "147bcef5a85f188793f566a88673eea850d687d10f0113cc8198daa1a6a81c4e",
+    "files": [
+      {
+        "name": "202610150003_delivery_request_identity.sql",
+        "sha256": "b015ffb9105f0af66e9f375a7fe89406e7dd378225791a422aaf49961b5d47b2"
+      }
+    ]
+  },
+  {
+    "deployed_version": "20261015114242",
+    "statements_sha256": "aa78136cc58ab4463fc2af877ebdf9f943b8730a8c456062f3a6b217df449a8c",
+    "files": [
+      {
+        "name": "202610150005_pdf_template_policy.sql",
+        "sha256": "7cbadc6fa78071e82c505cef7ca07cb87a7409fb51088455f64c9c390b9c279a"
+      },
+      {
+        "name": "202610150006_native_document_signing.sql",
+        "sha256": "811a1cd2d931234530042a9d5dee942d430b31584d537333d69b3e73d6746d93"
+      }
+    ]
+  },
+  {
+    "deployed_version": "20261015114254",
+    "statements_sha256": "d0950451cdb3b258412393e8e26d262a1ba63bd505308f22993337dc3d8c40d0",
+    "files": [
+      {
+        "name": "202610150007_native_signer_and_atomic_cancellation.sql",
+        "sha256": "0ea4416268300b383c586dfbb552cba94d7ab2aee384ed980b29f30a99539408"
+      }
+    ]
+  },
+  {
+    "deployed_version": "20261015114302",
+    "statements_sha256": "f783c267675a46b22a26813082f453fb868d10b010d3a508901f699d9bf1b59a",
+    "files": [
+      {
+        "name": "202610150008_email_provider_credential_binding.sql",
+        "sha256": "9415afa56552011c5cf72420bb3cd5ae49eff5270ca73bf92abf84637a0d7b2f"
+      }
+    ]
+  },
+  {
+    "deployed_version": "20261015114334",
+    "statements_sha256": "653a7ef6cfc68d17811c929b4c19c01ee4b3b4594c65c248bbceff8a21e66b7a",
+    "files": [
+      {
+        "name": "202610150009_postgis_extent_anonymous_execute.sql",
+        "sha256": "e5f82f44ace64051f4134f442dfae878b9651342469dab649e8ac7d5ae17b791"
+      }
+    ]
+  },
+  {
+    "deployed_version": "20261015114717",
+    "statements_sha256": "59fb3b6c511b60f8d8da5bbda9e5079cb956e16f1d375565d183720f64ef1cee",
+    "files": [
+      {
+        "name": "202610150010_canonical_artifact_origin.sql",
+        "sha256": "3c9d4255d4d1b9cfbd870c64c650f39d55b40981b7c1761b785b4045cc480dc1"
+      }
+    ]
+  },
+  {
+    "deployed_version": "20261015121858",
+    "statements_sha256": "c47a030a2de6cf86b00aa0e25f848bb240e848728c3bf142caf7718b0f443102",
+    "files": [
+      {
+        "name": "202610150011_disabled_legacy_signing_links_parity.sql",
+        "sha256": "8d2951e5b6dbc5f6e9e7d191585e4e6a33793390c4f3ac7ca4da76afc4e03286"
+      }
+    ]
+  }
+]

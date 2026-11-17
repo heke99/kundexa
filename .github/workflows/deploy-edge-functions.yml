@@ -8,8 +8,8 @@ name: deploy-edge-functions
 # That gap is not hypothetical: production ran a shared provider client from before
 # 2026-09-07 for 34 days while the repository, the type check and the whole SQL
 # suite were green (FAILURE-0055). This workflow closes it by making the deploy
-# follow the merge, so "merged to main" and "running in production" mean the same
-# thing for Edge Functions the way they already do for the web app on Vercel.
+# follow the merge. Deployment is stopped if the target database lacks the
+# native migration package; a merge alone is not evidence of a coordinated release.
 
 on:
   push:
@@ -17,6 +17,9 @@ on:
     paths:
       - 'supabase/functions/**'
       - 'scripts/deploy-functions.mjs'
+      - 'scripts/check-deployment-schema.mjs'
+      - 'scripts/lib/deployment-schema.mjs'
+      - 'supabase/migrations/**'
       - '.github/workflows/deploy-edge-functions.yml'
   workflow_dispatch:
 
@@ -34,7 +37,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # A missing credential used to be treated as a setup state: the job skipped,
       # main stayed green, and a warning annotation carried the truth. That was
@@ -81,14 +84,14 @@ jobs:
 
       - name: Setup Node
         if: steps.credentials.outputs.ready == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22.16.0'
           cache: npm
 
       - name: Setup Deno
         if: steps.credentials.outputs.ready == 'true'
-        uses: denoland/setup-deno@v2
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: v2.x
 

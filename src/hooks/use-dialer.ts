@@ -113,6 +113,7 @@ export function useDialerPanel() {
   }, [startWebphone]);
 
   const startCall = useCallback(async (payload: Record<string, unknown>) => {
+    if (webphone.incoming) throw new Error("Avsluta det inkommande samtalet innan du ringer ut.");
     // Platsen tas och samtalsraden skrivs på servern innan webbläsaren ringer.
     // Är webbtelefonen inte registrerad blir det en reservation och en
     // misslyckad samtalsrad för ett problem som inte har med samtalet att göra
@@ -216,7 +217,9 @@ export function useDialerPanel() {
       setCalling(false);
       const message = error instanceof Error && error.message === "webphone_not_ready"
         ? "Webbtelefonen är inte klar ännu. Vänta någon sekund och försök igen."
-        : "Samtalet kunde inte kopplas upp i webbtelefonen.";
+        : error instanceof Error && error.message === "RECORDING_CAPTURE_NOT_READY"
+          ? "Samtalet kräver inspelning. Administratören behöver färdigställa inspelningstjänsten innan du kan ringa."
+          : "Samtalet kunde inte kopplas upp i webbtelefonen.";
       setStatus(message);
       throw new Error(message);
     }
@@ -260,6 +263,7 @@ export function useDialerPanel() {
   }, []);
 
   return {
+    incoming:webphone.incoming,incomingError:webphone.incomingError,acceptIncoming:webphone.acceptIncoming,declineIncoming:webphone.declineIncoming,
     activeCallId, registered, automaticReady, calling, ending, status,
     startCall, markEnded, endCall,
     webphone: webphone.state, startWebphone: webphone.start, hangupWebphone: webphone.hangup,

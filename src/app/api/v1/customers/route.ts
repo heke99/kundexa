@@ -23,7 +23,9 @@ export async function GET(request: Request) {
     const identity = await authenticateRequest(request, "customers:read");
     const url = new URL(request.url);
     const q = url.searchParams.get("q");
-    const limit = Math.min(Number(url.searchParams.get("limit") ?? 50), 200);
+    const requestedLimit = Number(url.searchParams.get("limit") ?? 50);
+    if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 200) return NextResponse.json({ error: "invalid_limit" }, { status: 422 });
+    const limit = requestedLimit;
     const db = await dataClientForIdentity(identity);
     let query = db.from("customers")
       .select("id,customer_type,lifecycle,display_name,email,phone_e164,organization_number,city,county,industry,sni_code,assigned_user_id,assigned_team_id,do_not_call,do_not_sms,do_not_email,updated_at")
@@ -85,14 +87,7 @@ export async function POST(request: Request) {
         .order("created_at", { ascending: true })
         .limit(1)
         .maybeSingle();
-      if (legacy?.entity_id) {
-        const { data } = await admin.from("customers")
-          .select("*")
-          .eq("tenant_id", identity.tenantId)
-          .eq("id", legacy.entity_id)
-          .maybeSingle();
-        if (data) return NextResponse.json({ data, idempotent_replay: true }, { status: 200 });
-      }
+      if (legacy?.entity_id) return NextResponse.json({ error: "legacy_idempotency_requires_new_key" }, { status: 409 });
 
       const reservationPayload = { state: "reserved", request_fingerprint: requestFingerprint };
       const reservation = await admin.from("audit_logs").insert({
@@ -122,11 +117,11 @@ export async function POST(request: Request) {
         const metadata = existingReservation.after_data && typeof existingReservation.after_data === "object" && !Array.isArray(existingReservation.after_data)
           ? existingReservation.after_data as Record<string, unknown>
           : {};
-        if (metadata.request_fingerprint && metadata.request_fingerprint !== requestFingerprint) {
+        if (metadata.request_fingerprint !== requestFingerprint) {
           return NextResponse.json({ error: "idempotency_key_reused_with_different_payload" }, { status: 409 });
         }
         customerId = existingReservation.entity_id;
-        const { data: existingCustomer } = await admin.from("customers")
+        const { data: existingCustomer } = await db.from("customers")
           .select("*")
           .eq("tenant_id", identity.tenantId)
           .eq("id", customerId)
@@ -144,7 +139,7 @@ export async function POST(request: Request) {
 
     if (error) {
       if (parsed.idempotency_key && error.code === "23505") {
-        const { data: replay } = await admin.from("customers")
+        const { data: replay } = await db.from("customers")
           .select("*")
           .eq("tenant_id", identity.tenantId)
           .eq("id", customerId)

@@ -35,7 +35,7 @@ export default async function CallsPage({ searchParams }: { searchParams: Promis
     call.list_id ? listEligible.has(`${call.list_id}:${call.disposition}`) : manualEligible.has(String(call.disposition)));
 
   return <>
-    <PageHeader title="Mina samtal" description="Dina samtal och deras utfall." />
+    <PageHeader title="Mina samtal" description="Dina samtal och deras utfall." action={<Link href="/app/calls/history" className="button button-primary">Sök samtal</Link>} />
     {/* The action used to fail silently in both directions: a refusal had nowhere
         to be shown, and a success looked the same as a no-op. */}
     {params.error ? <p className="form-error">{params.error}</p> : null}

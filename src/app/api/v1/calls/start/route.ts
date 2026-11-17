@@ -23,6 +23,7 @@ export async function POST(request: Request) {
       .eq("call_id", input.callId).eq("webphone_session_id", session.id).eq("status", "requested")
       .is("provider_request_started_at", null).is("external_call_id", null)
       .gt("expires_at", new Date().toISOString()).select("id").maybeSingle();
+    if (error?.message.includes("recording_capture_not_ready")) return apiJson(correlationId, { sdkStartAllowed: false, error: "RECORDING_CAPTURE_NOT_READY", message: "Samtalet kräver inspelning, men inspelningstjänsten är inte färdigkonfigurerad. Kontakta administratören." }, { status: 409 });
     if (error) return apiJson(correlationId, { sdkStartAllowed: false, error: "dial_start_claim_unavailable" }, { status: 503 });
     return apiJson(correlationId, { sdkStartAllowed: Boolean(data), callId: input.callId, attemptId: input.attemptId }, { status: data ? 200 : 409 });
   } catch (error) {

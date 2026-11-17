@@ -173,3 +173,11 @@ export function serverEnv() {
     WEBPHONE_CREDENTIAL_TTL_SECONDS: process.env.WEBPHONE_CREDENTIAL_TTL_SECONDS ?? "600",
   });
 }
+
+export function productInformationUrls() {
+  return {
+    privacy: process.env.KUNDEXA_PUBLIC_PRIVACY_URL,
+    terms: process.env.KUNDEXA_PUBLIC_TERMS_URL,
+    support: process.env.KUNDEXA_PUBLIC_SUPPORT_URL,
+  };
+}

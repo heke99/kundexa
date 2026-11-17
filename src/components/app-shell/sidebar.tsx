@@ -133,6 +133,7 @@ export function Sidebar({
       <Link href="/app/platform" className={cn("nav-link", pathname === "/app/platform" && "active")}>
         <ShieldCheck size={17} /><span>Plattformsadmin</span>
       </Link>
+      {["platform_owner","platform_admin"].includes(platformRole) ? <Link href="/app/platform/calls" className={cn("nav-link", pathname === "/app/platform/calls" && "active")}><ShieldCheck size={17}/><span>Sök samtal</span></Link> : null}
       {platformMode && hasActiveTenant ? <Link href="/app" className="nav-link">
         <ShieldCheck size={17} /><span>Tenantdashboard</span>
       </Link> : null}

@@ -13,14 +13,15 @@ export default async function ChangePasswordPage({ searchParams }: { searchParam
   const { data: rows, error: stateError } = await supabase.rpc("current_user_security_state");
   if (stateError) redirect("/login?error=Säkerhetsstatus kunde inte verifieras");
   const state = Array.isArray(rows) ? rows[0] : rows;
-  if (!state?.must_change_password) redirect("/app");
+
 
   return <main className="auth-page">
-    <section className="auth-brand"><Logo /><div><h1>Skapa ditt personliga lösenord.</h1><p>Du har verifierat din Supabase-inbjudan. Välj nu lösenordet som du ska använda när du loggar in i Kundexa.</p></div><small>Kundexa · säker kontoaktivering</small></section>
+    <section className="auth-brand"><Logo /><div><h1>{state?.must_change_password ? "Skapa ditt personliga lösenord." : "Byt ditt lösenord."}</h1><p>Välj lösenordet som du ska använda när du loggar in i Kundexa.</p></div><small>Kundexa · säker kontoaktivering</small></section>
     <section className="auth-form-wrap"><div className="auth-form"><h2>Välj lösenord</h2><p>{passwordPolicyHint()}</p>{params.error ? <p className="form-error">{params.error}</p> : null}<form action={changePassword} className="form-stack">
+      {!state?.must_change_password ? <Field label="Nuvarande lösenord" name="current_password" type="password" autoComplete="current-password" required /> : null}
       <Field label="Nytt lösenord" name="password" type="password" minLength={PASSWORD_MIN_LENGTH} maxLength={PASSWORD_MAX_LENGTH} autoComplete="new-password" required />
       <Field label="Bekräfta nytt lösenord" name="password_confirm" type="password" minLength={PASSWORD_MIN_LENGTH} maxLength={PASSWORD_MAX_LENGTH} autoComplete="new-password" required />
-      <button className="button button-primary" type="submit">Aktivera konto</button>
+      <button className="button button-primary" type="submit">{state?.must_change_password ? "Aktivera konto" : "Ändra lösenord"}</button>
     </form></div></section>
   </main>;
 }

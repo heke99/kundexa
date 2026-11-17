@@ -1,3 +1,4 @@
+import { normalizeOrganizationNumber } from "../_shared/organization-number.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.110.7";
 import { decryptJson } from "../_shared/crypto.ts";
 
@@ -29,6 +30,8 @@ type ClaimedRun = {
   run_token_ciphertext: string;
   idempotency_key: string;
   attempts: number;
+  locked_by: string;
+  metadata: { execution_token: string };
   run_token_hash: string;
 };
 
@@ -50,9 +53,9 @@ function normalizeKey(value: string) {
 }
 function boundedValue(value: unknown): string | number | boolean | null | JsonObject | unknown[] {
   if (value == null || typeof value === "boolean" || typeof value === "number") return value as number | boolean | null;
-  if (typeof value === "string") return value.slice(0, MAX_CELL_CHARACTERS);
-  if (Array.isArray(value)) return value.slice(0, MAX_ROWS).map(boundedValue);
-  if (isRecord(value)) return Object.fromEntries(Object.entries(value).slice(0, MAX_COLUMNS).map(([key, item]) => [normalizeKey(key) || "field", boundedValue(item)]));
+  if (typeof value === "string") { if (value.length > MAX_CELL_CHARACTERS) throw new Error("import_cell_too_large"); return value; }
+  if (Array.isArray(value)) { if (value.length > MAX_ROWS) throw new Error("import_nested_rows_too_large"); return value.map(boundedValue); }
+  if (isRecord(value)) { if (Object.keys(value).length > MAX_COLUMNS) throw new Error("import_nested_columns_too_large"); return Object.fromEntries(Object.entries(value).map(([key, item]) => [normalizeKey(key) || "field", boundedValue(item)])); }
   return String(value).slice(0, MAX_CELL_CHARACTERS);
 }
 function normalizeRow(value: unknown): JsonObject {
@@ -122,12 +125,10 @@ function luhn(value: string) {
   return sum % 10 === 0;
 }
 function normalizeOrg(value: unknown) {
-  let digits = String(value ?? "").trim().toUpperCase().replace(/^SE/, "").replace(/\D/g, "");
-  if (digits.length === 12 && digits.startsWith("16")) digits = digits.slice(2);
-  if (digits.length === 12 && digits.endsWith("01")) digits = digits.slice(0, 10);
-  if (digits.length !== 10 || !luhn(digits)) return null;
-  return digits;
+  const result = normalizeOrganizationNumber(String(value ?? ""));
+  return result.valid ? result.canonical : null;
 }
+
 function normalizePhone(value: unknown) {
   let raw = String(value ?? "").trim().replace(/[\s().-]/g, "");
   if (!raw) return null;
@@ -247,6 +248,10 @@ async function fetchParseHubData(runToken: string, apiKey: string) {
   }
 }
 
+async function command(run: ClaimedRun, operation: string, payload: JsonObject = {}) {
+  return await supabase.rpc("parsehub_command", { p_run_id: run.id, p_worker: run.locked_by, p_attempt: run.attempts,
+    p_token: run.metadata.execution_token, p_operation: operation, p_payload: payload });
+}
 async function processRun(run: ClaimedRun) {
   const projectResult = await supabase.from("parsehub_projects").select("id,tenant_id,provider_account_id,import_profile_id,project_name,source_website,active").eq("id", run.parsehub_project_id).single();
   if (projectResult.error || !projectResult.data?.active) throw new Error("parsehub_project_inactive");
@@ -268,6 +273,8 @@ async function processRun(run: ClaimedRun) {
   const records = recordsFromPayload(downloaded.payload, profile.records_path);
   const mapping = versionResult.data.field_mapping as Mapping;
   const storagePath = `${run.tenant_id}/parsehub/${run.id}-${responseHash}.json`;
+  const permission = await command(run, "ping");
+  if (permission.error) throw new Error(permission.error.message);
   const upload = await supabase.storage.from("imports").upload(storagePath, downloaded.bytes, { contentType: "application/json", upsert: false });
   if (upload.error && !upload.error.message.toLowerCase().includes("already exists")) throw new Error("parsehub_storage_failed");
 
@@ -279,14 +286,18 @@ async function processRun(run: ClaimedRun) {
   // `validating` med en del av raderna. Den läses om från början i stället för
   // att fastna: automatisk commit vägrade den och utan commit märktes
   // ParseHub-körningen ändå som klar (FAILURE-0130).
+  if (importRunId) {
+    const bound = await command(run, "bind_import", { id: importRunId });
+    if (bound.error) throw new Error(bound.error.message);
+  }
   const resumeIncomplete = Boolean(importRunId && existing.data?.status === "validating");
   if (resumeIncomplete) {
-    const cleared = await supabase.from("import_rows").delete().eq("tenant_id", run.tenant_id).eq("import_run_id", importRunId!);
+    const cleared = await command(run,"clear_rows");
     if (cleared.error) throw new Error("parsehub_rows_reset_failed");
   }
   const createdNow = !importRunId;
   if (!importRunId) {
-    const created = await supabase.from("import_runs").insert({
+    const created = await command(run, "create_import", {
       tenant_id: run.tenant_id,
       name: `ParseHub – ${project.project_name}`,
       source_type: "json",
@@ -316,7 +327,7 @@ async function processRun(run: ClaimedRun) {
       records_path: profile.records_path,
       target_list_id: profile.target_list_id,
       validation_report: { response_sha256: responseHash, parsehub_run_id: run.id },
-    }).select("id").single();
+    });
     if (created.error || !created.data) throw new Error("parsehub_import_create_failed");
     importRunId = created.data.id;
   }
@@ -341,27 +352,28 @@ async function processRun(run: ClaimedRun) {
       };
     });
     for (let offset = 0; offset < mappedRows.length; offset += 500) {
-      const inserted = await supabase.from("import_rows").insert(mappedRows.slice(offset, offset + 500));
+      const inserted = await command(run, "insert_rows", { rows: mappedRows.slice(offset, offset + 500) });
       if (inserted.error) throw new Error("parsehub_rows_insert_failed");
     }
     const finalStatus = errorCount === mappedRows.length ? "mapping_required" : "preview_ready";
-    const updated = await supabase.from("import_runs").update({
+    const updated = await command(run, "finalize_import", {
       status: finalStatus,
       total_rows: mappedRows.length,
       error_count: errorCount,
       warning_count: warningCount,
       validation_report: { valid_rows: valid, warning_rows: warningCount, error_rows: errorCount, response_sha256: responseHash, parsehub_run_id: run.id },
-    }).eq("id", importRunId);
+    });
     if (updated.error) throw new Error("parsehub_import_finalize_failed");
   }
 
-  const linked = await supabase.from("parsehub_runs").update({ import_run_id: importRunId, response_sha256: responseHash, response_size_bytes: downloaded.bytes.byteLength, source_retrieved_at: new Date().toISOString() }).eq("id", run.id);
+  const linked = await command(run,"link", { import_run_id: importRunId, response_sha256: responseHash, response_size_bytes: downloaded.bytes.byteLength, source_retrieved_at: new Date().toISOString() });
   if (linked.error) throw new Error("parsehub_run_link_failed");
   if (profile.automatic_commit) {
-    const committed = await supabase.rpc("process_parsehub_import_run", { p_parsehub_run_id: run.id });
+    const committed = await command(run, "commit");
+    if (committed.data && (committed.data.failed === true || committed.data.automaticCommit === false)) throw new Error("parsehub_commit_not_completed");
     if (committed.error) throw new Error(`parsehub_auto_commit_failed:${committed.error.code ?? "rpc"}`);
   }
-  const completed = await supabase.from("parsehub_runs").update({ status: "completed", run_completed_at: new Date().toISOString(), locked_at: null, locked_by: null, last_error_code: null, next_attempt_at: null }).eq("id", run.id);
+  const completed = await command(run,"complete");
   if (completed.error) throw new Error("parsehub_run_complete_failed");
   // `status` gör att schemaläggarens hjärtslag räknar körningen; utan det stod
   // arbetaren som "healthy" även när varje körning felade.
@@ -383,13 +395,8 @@ Deno.serve(async (request) => {
       const retryable = code.includes("retryable") || code.includes("fetch") || code.includes("timeout") || code.includes("storage") || code.includes("insert");
       const exhausted = run.attempts >= 8;
       const delaySeconds = Math.min(3600, 30 * (2 ** Math.max(0, run.attempts - 1)));
-      await supabase.from("parsehub_runs").update({
-        status: retryable && !exhausted ? "queued" : "failed",
-        last_error_code: code,
-        next_attempt_at: retryable && !exhausted ? new Date(Date.now() + delaySeconds * 1000).toISOString() : null,
-        locked_at: null,
-        locked_by: null,
-      }).eq("id", run.id);
+      const failed = await command(run, "fail", { error: code, retryable: retryable && !exhausted, delay: delaySeconds });
+      if (failed.error) { results.push({ runId: run.id, status: "lease_lost", error: failed.error.message }); continue; }
       results.push({ runId: run.id, error: code, retry: retryable && !exhausted, status: retryable && !exhausted ? "requeued" : "failed" });
     }
   }

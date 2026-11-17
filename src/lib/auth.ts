@@ -1,3 +1,5 @@
+import { isTemporaryAuthReadError } from "@/lib/security/auth-read-error";
+import { enforceMfaGate } from "@/lib/security/mfa";
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -51,16 +53,19 @@ async function enforceFirstLoginGate(supabase: Awaited<ReturnType<typeof createC
 /** Tenant workspace context. Authorization comes from database membership, never Auth user metadata. */
 export const getAppContext = cache(async (): Promise<AppContext> => {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (isTemporaryAuthReadError(authError)) throw new Error("authentication_service_unavailable");
   if (!user) redirect("/login");
   await enforceFirstLoginGate(supabase);
+  await enforceMfaGate(supabase);
 
-  const [{ data: profile }, { data: platformMembership, error: platformMembershipError }] = await Promise.all([
+  const [{ data: profile, error: profileError }, { data: platformMembership, error: platformMembershipError }] = await Promise.all([
     supabase.from("profiles").select("active_tenant_id").eq("id", user.id).maybeSingle(),
     supabase.from("platform_memberships").select("role").eq("user_id", user.id).eq("status", "active").maybeSingle(),
   ]);
-  if (platformMembershipError) {
-    console.error("platform_membership_lookup_failed", { userId: user.id, code: platformMembershipError.code ?? null });
+  if (profileError || platformMembershipError) {
+    console.error("workspace_context_lookup_failed", { code: profileError?.code ?? platformMembershipError?.code ?? null });
+    throw new Error("workspace_context_unavailable");
   }
   const platformRole = (platformMembership?.role as PlatformRole | undefined) ?? null;
 
@@ -69,13 +74,15 @@ export const getAppContext = cache(async (): Promise<AppContext> => {
     redirect("/onboarding");
   }
 
-  const { data: membership } = await supabase
+  const { data: membership, error: membershipError } = await supabase
     .from("tenant_memberships")
     .select("role,primary_team_id, tenants(name,legal_name,timezone,status,onboarding_status)")
     .eq("tenant_id", profile.active_tenant_id)
     .eq("user_id", user.id)
     .eq("status", "active")
     .maybeSingle();
+
+  if (membershipError) throw new Error("tenant_membership_unavailable");
 
   if (!membership) {
     if (platformRole) redirect("/app/platform");
@@ -92,11 +99,15 @@ export const getAppContext = cache(async (): Promise<AppContext> => {
     redirect("/login?error=Organisationens onboarding är inte slutförd");
   }
 
-  const { data: teamRows } = await supabase
+  const { data: teamRows, error: teamError } = await supabase
     .from("team_members")
-    .select("team_id")
+    .select("team_id,teams!inner(status)")
     .eq("tenant_id", profile.active_tenant_id)
-    .eq("user_id", user.id);
+    .eq("user_id", user.id)
+    .eq("assignment_paused", false)
+    .eq("teams.status", "active");
+  if (teamError) throw new Error("team_membership_unavailable");
+  const activeTeamIds = (teamRows ?? []).map(row => row.team_id);
 
   return {
     userId: user.id,
@@ -106,8 +117,8 @@ export const getAppContext = cache(async (): Promise<AppContext> => {
     tenantLegalName: tenant.legal_name ?? tenant.name ?? "Kundexa",
     tenantTimezone: tenant.timezone ?? "Europe/Stockholm",
     role: membership.role,
-    primaryTeamId: membership.primary_team_id ?? null,
-    teamIds: (teamRows ?? []).map((row) => row.team_id),
+    primaryTeamId: membership.primary_team_id && activeTeamIds.includes(membership.primary_team_id) ? membership.primary_team_id : null,
+    teamIds: activeTeamIds,
     platformRole,
   };
 });
@@ -120,9 +131,11 @@ export function canReadPlatformAdministration(role: string | null) { return isPl
 /** Platform control-plane authorization is independent of tenant membership. */
 export const getPlatformContext = cache(async (): Promise<PlatformContext> => {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (isTemporaryAuthReadError(authError)) throw new Error("authentication_service_unavailable");
   if (!user) redirect("/login");
   await enforceFirstLoginGate(supabase);
+  await enforceMfaGate(supabase);
 
   const { data: membership, error } = await supabase
     .from("platform_memberships")
@@ -132,7 +145,7 @@ export const getPlatformContext = cache(async (): Promise<PlatformContext> => {
     .maybeSingle();
   if (error) {
     console.error("platform_context_lookup_failed", { userId: user.id, code: error.code ?? null });
-    redirect("/app");
+    throw new Error("platform_context_unavailable");
   }
   if (!membership) redirect("/app");
   return { userId: user.id, email: user.email ?? "", platformRole: membership.role as PlatformRole };

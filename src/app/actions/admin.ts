@@ -1,5 +1,7 @@
 "use server";
 
+import { webhookUrl } from "@/lib/webhook-url";
+
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getAppContext, isAdmin } from "@/lib/auth";
@@ -384,7 +386,7 @@ export async function createWebhookEndpoint(form: FormData) {
   const events = form.getAll("events").map(String).filter(Boolean);
   if (!name || !rawUrl || !events.length) redirect("/app/webhooks?error=Namn, URL och minst ett event krävs");
   let url: string;
-  try { url = publicHttpsUrl(rawUrl); } catch (error) {
+  try { url = webhookUrl(publicHttpsUrl(rawUrl)).toString(); } catch (error) {
     redirect(`/app/webhooks?error=${encodeURIComponent(error instanceof Error ? error.message : "Ogiltig URL")}`);
   }
   const secret = `whsec_${randomToken(32)}`;
@@ -978,7 +980,7 @@ export async function exportDataSubjectRequest(form: FormData) {
   // stays open with no path to the file that answers it — and a data subject
   // request has a statutory deadline, so "looks unhandled" is the expensive
   // failure, not a second attempt.
-  const { error: completionError } = await admin.from("data_subject_requests").update({ status: "completed", completed_at: new Date().toISOString(), handled_by: context.userId, result_storage_path: path, result_hash: resultHash }).eq("tenant_id", context.tenantId).eq("id", requestId);
+  const { error: completionError } = await admin.from("data_subject_requests").update({ status: "processing", completed_at: null, handled_by: context.userId, result_storage_path: path, result_hash: resultHash }).eq("tenant_id", context.tenantId).eq("id", requestId);
   if (completionError) {
     redirect(`/app/compliance?error=${encodeURIComponent(`Exporten skapades (${path}) men begäran kunde inte markeras som besvarad. Försök igen.`)}`);
   }
@@ -995,6 +997,9 @@ export async function executeDataSubjectErasure(form: FormData) {
   const requestId = value(form, "request_id");
   if (!requestId) return;
   const admin = createAdminClient();
+  const { data: request, error: requestError } = await admin.from("data_subject_requests")
+    .select("id").eq("tenant_id", context.tenantId).eq("id", requestId).maybeSingle();
+  if (requestError || !request) redirect("/app/compliance?error=Raderingsärendet kunde inte verifieras för ditt företag");
   const { error } = await admin.rpc("execute_data_subject_erasure", { p_request_id: requestId, p_actor: context.userId });
   if (error) redirect(`/app/compliance?error=${encodeURIComponent(error.message)}`);
   revalidatePath("/app/compliance");
@@ -1033,7 +1038,12 @@ export async function createLegalHold(form: FormData) {
   if (!customerId || !reason) redirect("/app/compliance?error=Kund och skäl krävs för juridisk spärr");
   const admin = createAdminClient();
   const { error } = await admin.from("legal_holds").insert({ tenant_id: context.tenantId, customer_id: customerId, reason, scope: csvValues(value(form, "scope") || "all"), active: true, created_by: context.userId });
-  if (error) redirect(`/app/compliance?error=${encodeURIComponent(error.message)}`);
+  if (error) {
+    const message=error.message.includes("raw_file_deletion_in_flight_requires_reconciliation")
+      ? "En filradering har redan påbörjats och måste stämmas av innan bevarandespärren kan registreras. Ingen spärr har registrerats. Kontakta plattformsadministratören."
+      : error.message;
+    redirect(`/app/compliance?error=${encodeURIComponent(message)}`);
+  }
   revalidatePath("/app/compliance");
 }
 
@@ -1044,5 +1054,14 @@ export async function releaseLegalHold(form: FormData) {
   const admin = createAdminClient();
   const { error } = await admin.from("legal_holds").update({ active: false, released_by: context.userId, released_at: new Date().toISOString() }).eq("tenant_id", context.tenantId).eq("id", id);
   if (error) redirect(`/app/compliance?error=${encodeURIComponent(error.message)}`);
+  revalidatePath("/app/compliance");
+}
+
+export async function confirmDataSubjectExportHandover(form: FormData) {
+  const context = await adminContext();
+  if (value(form,"handover_confirmed") !== "on") redirect("/app/compliance?error=Bekräfta överlämningen");
+  const admin=createAdminClient(); const id=value(form,"request_id");
+  const {data,error}=await admin.from("data_subject_requests").update({status:"completed",completed_at:new Date().toISOString(),handled_by:context.userId,processing_notes:"Export överlämnad enligt operatörens bekräftelse"}).eq("tenant_id",context.tenantId).eq("id",id).eq("status","processing").not("result_storage_path","is",null).not("identity_verified_at","is",null).in("request_type",["access","portability"]).select("id").maybeSingle();
+  if(error||!data) redirect("/app/compliance?error=Överlämningen kunde inte bekräftas");
   revalidatePath("/app/compliance");
 }

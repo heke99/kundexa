@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { PdfTemplateBuilder } from "@/components/pdf-template-builder";
-import type { PdfFieldTemplate } from "@/lib/contracts/pdf-field-template";
+import { ContractTemplateFields } from "@/components/contract-template-fields";
+import type { PdfFieldTemplate, PdfCustomField } from "@/lib/contracts/pdf-field-template";
 import { notFound } from "next/navigation";
 import { ok } from "@/lib/supabase/read";
 import { ArrowLeft, ScrollText } from "@/components/icons";
@@ -18,7 +18,7 @@ import { formatDate } from "@/lib/utils";
 
 type Version = {
   id: string; version: number; status: string; approved_at: string | null; created_at: string;
-  title_template: string; body_template: string; terms_template: string; signing_configuration: { pdf_template?: PdfFieldTemplate; signature_policy?: { method: string } } | null;
+  title_template: string; body_template: string; terms_template: string; signing_configuration: { custom_fields?: PdfCustomField[]; pdf_template?: PdfFieldTemplate; signature_policy?: { method: string } } | null;
 };
 
 /**
@@ -107,6 +107,7 @@ export default async function TemplateDetailPage({
                 </div>
               : null}
             {shown.signing_configuration?.pdf_template ? <p>PDF med {shown.signing_configuration.pdf_template.fields.length} kopplade fält. Öppna redigeringen för att granska placeringarna innan godkännande.</p> : null}
+            {shown.signing_configuration?.custom_fields?.length ? <><h3>Kunduppgifter i den här versionen</h3><ul>{shown.signing_configuration.custom_fields.map(field => <li key={field.id}><strong>{field.label}</strong> · {field.type === "text" ? "Text / ID" : field.type === "date" ? "Datum" : "Tal"} · {field.required ? "Obligatoriskt" : "Valfritt"}{field.customerKey ? " · kan förifyllas från kundkortet" : " · endast detta avtal"}</li>)}</ul></> : null}
             <h3>Avtalstitel</h3>
             <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.7 }}>{shown.title_template}</p>
             <h3 style={{ marginTop: 16 }}>Avtalstext</h3>
@@ -160,7 +161,7 @@ export default async function TemplateDetailPage({
               <ContractTemplateDocumentUpload target="terms_template" label="Ersätt villkoren från .docx" />
               <TextareaField label="Fullständiga villkor" name="terms_template" defaultValue={shown.terms_template} required />
               <SelectField label="Signering" name="signature_method" defaultValue={shown.signing_configuration?.signature_policy?.method ?? "simple_click"}><option value="simple_click">Enkel webbacceptans</option><option value="external_esign">Elektronisk underskrift i PDF</option></SelectField>
-              <PdfTemplateBuilder key={shown.id} initial={shown.signing_configuration?.pdf_template} />
+              <ContractTemplateFields key={shown.id} initial={shown.signing_configuration?.custom_fields ?? []} pdf={shown.signing_configuration?.pdf_template} />
               <TemplateFieldButtons />
               <TemplateFieldReference />
               <button className="button button-secondary">Spara som ny version</button>

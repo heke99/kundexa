@@ -2,7 +2,7 @@ import { ok } from "@/lib/supabase/read";
 import { UserPlus, Users } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
 import { getAppContext } from "@/lib/auth";
-import { createUser, updateTenantMember } from "@/app/actions/organization";
+import { createUser, updateTenantMember, renewTenantInvitation } from "@/app/actions/organization";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DataTable } from "@/components/ui/data-table";
@@ -80,6 +80,10 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
       </form>;
     })}</div></CardContent></Card> : null}
 
-    <Card><CardHeader><h2>Provisioneringshistorik</h2><Badge>{invitations?.length ?? 0}</Badge></CardHeader><CardContent>{(invitations ?? []).map((invitation) => <div className="activity-line" key={invitation.id}><span className="activity-dot"><UserPlus size={14} /></span><div style={{ flex: 1 }}><strong>{invitation.email}</strong><p>{invitation.role} · {(invitation.team_ids ?? []).map((id: string) => teamNames.get(id) ?? id).join(", ") || "Inget team"} · {invitation.orchestration_status} · löper ut {formatDate(invitation.expires_at)}</p></div><Badge className={invitation.status === "accepted" ? "badge-success" : "badge-warning"}>{invitation.status}</Badge></div>)}</CardContent></Card>
+    <Card><CardHeader><h2>Provisioneringshistorik</h2><Badge>{invitations?.length ?? 0}</Badge></CardHeader><CardContent>{(invitations ?? []).map((invitation) => <div className="activity-line" key={invitation.id}><span className="activity-dot"><UserPlus size={14} /></span><div style={{ flex: 1 }}><strong>{invitation.email}</strong><p>{invitation.role} · {(invitation.team_ids ?? []).map((id: string) => teamNames.get(id) ?? id).join(", ") || "Inget team"} · {invitation.orchestration_status} · löper ut {formatDate(invitation.expires_at)}</p></div>{mayManageMembers && invitation.status === "pending" && invitation.orchestration_status === "finalized" && Date.parse(invitation.expires_at) <= Date.now() && (context.role === "owner" || !["owner", "admin"].includes(invitation.role)) ? <form action={renewTenantInvitation}>
+      <input type="hidden" name="invitation_id" value={invitation.id} />
+      <button className="button button-secondary">Förnya i sju dagar</button>
+      <small>För befintligt konto. Inget nytt mejl skickas.</small>
+    </form> : null}<Badge className={invitation.status === "accepted" ? "badge-success" : "badge-warning"}>{invitation.status === "pending" && Date.parse(invitation.expires_at) <= Date.now() ? "Utgången" : invitation.status}</Badge></div>)}</CardContent></Card>
   </>;
 }

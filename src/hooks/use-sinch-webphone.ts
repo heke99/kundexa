@@ -44,6 +44,8 @@ type LegEvent = "ringing" | "answered" | "ended" | "failed";
  * av mikrofonen men inte gör det är värre än ingen knapp: säljaren tror att
  * kunden inte hör henne.
  */
+export type IncomingCall = { callId: string; from: string; expiresAt: string; phase: "offered" | "accepting" | "answered" };
+
 export type CallAudioCapabilities = { mute: boolean; dtmf: boolean };
 
 // Leverantörens avslutsorsak, i den ordning SDK:t numrerar dem (`CallEndCause`).
@@ -107,6 +109,9 @@ export function useSinchWebphone() {
   const clientRef = useRef<unknown>(null);
   const sessionRef = useRef<string | null>(null);
   const callRef = useRef<ProviderCall | null>(null);
+  const [incoming, setIncoming] = useState<IncomingCall | null>(null);
+  const [incomingError, setIncomingError] = useState<string | null>(null);
+  const incomingRef = useRef<{call:ProviderCall;sessionId:string;authorized:boolean;accepted:boolean;answering:boolean;ended:boolean;finish:()=>void} | null>(null);
   const [muted, setMutedState] = useState(false);
   const [capabilities, setCapabilities] = useState<CallAudioCapabilities>({ mute: false, dtmf: false });
   // Registreringen startas en gång. Utan den här spärren bygger en omrendering
@@ -169,6 +174,91 @@ export function useSinchWebphone() {
       callId, sessionId, event, occurredAt: new Date().toISOString(), detail: detail ?? null,
     }).catch(() => null);
   }, []);
+
+  const playRemoteAudio = useCallback(async (call: ProviderCall) => {
+    if (!call.incomingStream) return;
+    const element = remoteAudioRef.current ??= new Audio();
+    try {
+      const outputId = readAudioSelection().outputId;
+      await playRemoteStream(element, call.incomingStream, outputId);
+      setAudioError(null);
+    } catch {
+      setAudioError("Samtalsljudet kunde inte spelas. Tryck på Aktivera samtalsljud och kontrollera högtalaren.");
+    }
+  }, []);
+
+  const incomingCommand = useCallback(async (call: ProviderCall, sessionId: string, action: string) => {
+    return postJson("/api/v1/telephony/webphone/incoming",{sessionId,externalCallId:call.id,action});
+  }, []);
+  const receiveIncoming = useCallback((call: ProviderCall) => {
+    const sessionId = sessionRef.current;
+    if (!sessionId || !registeredRef.current || callRef.current) { call.hangup(); return; }
+    const offer = {call,sessionId,authorized:false,accepted:false,answering:false,ended:false,finish:()=>{}};
+    incomingRef.current = offer; callRef.current = call; setIncomingError(null);
+    offer.finish = () => {
+      if(offer.ended)return;
+        offer.ended=true;
+        if(offer.authorized)void incomingCommand(call,sessionId,"end").catch(()=>null);
+        if(callRef.current===call){
+          callRef.current=null;incomingRef.current=null;setIncoming(null);
+          setMutedState(false);setCapabilities({mute:false,dtmf:false});
+          clearRemoteStream(remoteAudioRef.current);setAudioError(null);
+          setState({phase:registeredRef.current ? "ready" : "idle"});
+        }
+
+    };
+    const reject = () => { try { call.hangup(); } finally { offer.finish(); } };
+    call.addListener({
+      onRemoteTrack: () => { if(offer.accepted && !offer.ended && callRef.current===call)void playRemoteAudio(call); },
+      onCallEstablished: () => {
+        if(!offer.authorized || !offer.accepted){reject();return;}
+        void incomingCommand(call,sessionId,"established").then(result=>{
+          if(!result.ok || result.data?.available!==true || offer.ended || callRef.current!==call){reject();return;}
+          if(incomingRef.current===offer)setIncoming(current=>current ? {...current,phase:"answered"} : null);
+          void playRemoteAudio(call);
+        }).catch(()=>reject());
+      },
+      onCallEnded: () => offer.finish(),
+    });
+    void incomingCommand(call,sessionId,"inspect").then(result=>{
+      if(!result.ok || result.data?.available!==true || sessionRef.current!==sessionId || incomingRef.current!==offer || offer.ended){
+        if(result.data?.available===true && offer.ended)void incomingCommand(call,sessionId,"end").catch(()=>null);
+        reject();return;
+      }
+      const callId=typeof result.data.callId==="string" ? result.data.callId : null;
+      const expiresAt=typeof result.data.expiresAt==="string" ? result.data.expiresAt : null;
+      if(!callId || !expiresAt || !Number.isFinite(Date.parse(expiresAt))){reject();return;}
+      offer.authorized=true;
+      setIncoming({callId,from:String(result.data.from ?? "anonymous"),expiresAt,phase:"offered"});
+      setState({phase:"calling",callId});
+      setCapabilities({mute:typeof call.mute==="function" && typeof call.unmute==="function",dtmf:typeof call.sendDtmf==="function"});
+    }).catch(()=>reject());
+  }, [incomingCommand,playRemoteAudio]);
+  const acceptIncoming = useCallback(async () => {
+    const offer=incomingRef.current;
+    if(!offer?.authorized || offer.accepted || offer.answering || offer.ended)return;
+    offer.answering=true;
+    setIncoming(current=>current ? {...current,phase:"accepting"} : null);
+    try{
+      const result=await incomingCommand(offer.call,offer.sessionId,"accept");
+      if(!result.ok || result.data?.available!==true || incomingRef.current!==offer || offer.ended)throw Error("incoming_offer_lost");
+      offer.accepted=true;
+      await offer.call.answer();
+    }catch{setIncomingError("Samtalet kunde inte besvaras. Det kan ha avslutats eller erbjudandet löpt ut.");try{offer.call.hangup();}finally{offer.finish();}}
+  },[incomingCommand]);
+  const declineIncoming = useCallback(async () => {
+    const offer=incomingRef.current;if(!offer)return;
+    try{await incomingCommand(offer.call,offer.sessionId,"decline");}catch{setIncomingError("Samtalet avvisades lokalt. Historiken uppdateras när telefonitjänsten bekräftar avslutet.");}finally{try{offer.call.hangup();}finally{offer.finish();}}
+  },[incomingCommand]);
+  useEffect(()=>{
+    const offer=incomingRef.current;if(!incoming || !offer)return;
+    const stop = () => { try{offer.call.hangup();}finally{offer.finish();} };
+    const timeout=setTimeout(stop,incoming.phase==="answered" ? 2*60*60_000 : Math.max(0,Date.parse(incoming.expiresAt)-Date.now()));
+    const timer=setInterval(()=>{void incomingCommand(offer.call,offer.sessionId,"inspect").then(result=>{
+      if(result.status===403 || result.status===409 || (result.ok && result.data?.available===false))stop();
+    }).catch(()=>null);},15_000);
+    return()=>{clearTimeout(timeout);clearInterval(timer);};
+  },[incoming?.callId,incoming?.phase,incomingCommand]);
 
   const start = useCallback(async () => {
     if (startedRef.current) return;
@@ -260,11 +350,11 @@ export function useSinchWebphone() {
             ...(sessionRef.current ? { renewSessionId: sessionRef.current } : {}),
           })
             .then((refreshed) => {
-              // Servern svarar med samma session, eller en ny om den gamla
-              // redan var borta; hjärtslaget ska slå mot den som gäller.
-              if (refreshed.data?.sessionId) sessionRef.current = String(refreshed.data.sessionId);
+              // Ett nytt sessions-ID kräver en ny SDK-klient. Förnya endast
+              // samma identitet; byt aldrig JWT-identitet under ett samtal.
+
               const next = refreshed.data?.credentials as SinchCredentials | undefined;
-              if (next?.token) registration.register(next.token);
+              if (next?.token && next.userId === credentials.userId && refreshed.data?.sessionId === sessionRef.current) registration.register(next.token);
               else registration.registerFailed();
             })
             .catch(() => registration.registerFailed());
@@ -295,6 +385,7 @@ export function useSinchWebphone() {
         },
       });
       const inputId = readAudioSelection().inputId;
+      client.callClient.addListener({onIncomingCall:(_client,call)=>receiveIncoming(call)});
       client.callClient.setAudioTrackConstraints(inputId ? { deviceId: { exact: inputId } } : {});
       client.start();
       clientRef.current = client;
@@ -309,7 +400,7 @@ export function useSinchWebphone() {
         message: "Webbtelefonen kunde inte laddas i den här webbläsaren.",
       });
     }
-  }, [beat]);
+  }, [beat,receiveIncoming]);
 
   /**
    * Ringer ett redan reserverat samtal.
@@ -320,17 +411,7 @@ export function useSinchWebphone() {
    * hos mottagaren just nu, och att stänga det som misslyckat skulle släppa
    * platsen mitt i det.
    */
-  const playRemoteAudio = useCallback(async (call: ProviderCall) => {
-    if (!call.incomingStream) return;
-    const element = remoteAudioRef.current ??= new Audio();
-    try {
-      const outputId = readAudioSelection().outputId;
-      await playRemoteStream(element, call.incomingStream, outputId);
-      setAudioError(null);
-    } catch {
-      setAudioError("Samtalsljudet kunde inte spelas. Tryck på Aktivera samtalsljud och kontrollera högtalaren.");
-    }
-  }, []);
+
 
   useEffect(() => {
     const update = () => {
@@ -338,7 +419,7 @@ export function useSinchWebphone() {
       const inputId = readAudioSelection().inputId;
       // Input changes apply to the next call; do not promise an in-call track replacement.
       client?.callClient?.setAudioTrackConstraints(inputId ? { deviceId: { exact: inputId } } : {});
-      if (callRef.current) void playRemoteAudio(callRef.current);
+      if (callRef.current && (!incomingRef.current || incomingRef.current.accepted)) void playRemoteAudio(callRef.current);
     };
     window.addEventListener(AUDIO_DEVICE_EVENT, update);
     window.addEventListener("storage", update);
@@ -349,10 +430,11 @@ export function useSinchWebphone() {
   }, [playRemoteAudio]);
 
   const resumeAudio = useCallback(() => {
-    if (callRef.current) void playRemoteAudio(callRef.current);
+    if (callRef.current && (!incomingRef.current || incomingRef.current.accepted)) void playRemoteAudio(callRef.current);
   }, [playRemoteAudio]);
 
   const placeCall = useCallback(async (input: { callId: string; attemptId: string; to: string }) => {
+    if(callRef.current)throw new Error("webphone_already_in_call");
     const client = clientRef.current as { callClient?: CallClient } | null;
     // Registreringen måste vara klar, inte bara påbörjad. Se `registeredRef`.
     if (!client?.callClient || !registeredRef.current) {
@@ -366,6 +448,10 @@ export function useSinchWebphone() {
     const claim = await postJson("/api/v1/calls/start", {
       callId: input.callId, attemptId: input.attemptId, webphoneSessionId: sessionRef.current,
     }).catch(() => null);
+    if (claim?.data?.error === "RECORDING_CAPTURE_NOT_READY") {
+      await postJson("/api/v1/calls/dialing", {callId:input.callId,attemptId:input.attemptId,outcome:"failed",errorCode:"RECORDING_CAPTURE_NOT_READY",errorMessage:"Samtalet kräver inspelning som ännu inte är konfigurerad."});
+      throw new Error("RECORDING_CAPTURE_NOT_READY");
+    }
     if (!claim?.ok || claim.data?.sdkStartAllowed !== true) {
       throw Object.assign(new Error("webphone_start_claim_unknown"), { outcomeUnknown: true, callId: input.callId });
     }
@@ -392,12 +478,13 @@ export function useSinchWebphone() {
       onCallAnswered: () => void reportLeg(input.callId, "answered"),
       onCallEstablished: () => { void playRemoteAudio(call); void reportLeg(input.callId, "answered"); },
       onCallEnded: (ended: ProviderCall) => {
+        if(callRef.current!==call)return;
         clearRemoteStream(remoteAudioRef.current);
         setAudioError(null);
         callRef.current = null;
         setMutedState(false);
         setCapabilities({ mute: false, dtmf: false });
-        setState({ phase: "ready" });
+        setState({ phase: registeredRef.current ? "ready" : "idle" });
         void reportLeg(input.callId, legEventForSinchEnd(ended?.details?.endCause), describeEnd(ended));
       },
     });
@@ -434,7 +521,8 @@ export function useSinchWebphone() {
 
   /** Lägger på. Samtalet ligger i webbläsaren, så knappen avslutar det på riktigt. */
   const hangup = useCallback(() => {
-    callRef.current?.hangup();
+    const call=callRef.current;
+    try{call?.hangup();}finally{if(incomingRef.current?.call===call)incomingRef.current.finish();}
   }, []);
 
   /**
@@ -476,7 +564,8 @@ export function useSinchWebphone() {
     if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
     for (const timer of retryTimersRef.current) clearTimeout(timer);
     clearRemoteStream(remoteAudioRef.current);
-    callRef.current?.hangup();
+    const call=callRef.current;
+    try{call?.hangup();}finally{if(incomingRef.current?.call===call)incomingRef.current.finish();}
     // Mikrofonen stängs när dialern lämnas, så att lampan inte lyser kvar.
     microphoneRef.current?.release();
     const sessionId = sessionRef.current;
@@ -497,6 +586,7 @@ export function useSinchWebphone() {
   const currentSessionId = useCallback(() => sessionRef.current, []);
 
   return {
+    incoming,incomingError,acceptIncoming,declineIncoming,
     audioError, resumeAudio, state, start, placeCall, hangup, toggleMute, sendDtmf, muted, capabilities,
     providerCallId: callRef.current?.id ?? null,
     currentSessionId,

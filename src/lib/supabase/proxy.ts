@@ -1,3 +1,4 @@
+import { isTemporaryAuthReadError } from "@/lib/security/auth-read-error";
 import { contractFrameAncestors } from "@/lib/call-workspace/frame-policy";
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
@@ -84,9 +85,15 @@ export async function updateSession(request: NextRequest) {
     return securityHeaders(target, contentSecurityPolicy, tenantScoped);
   };
 
-  const { data } = await supabase.auth.getUser();
+  const { data, error: authError } = await supabase.auth.getUser();
   const isApp = request.nextUrl.pathname.startsWith("/app");
   const isAuth = request.nextUrl.pathname.startsWith("/login") || request.nextUrl.pathname.startsWith("/register");
+
+  if (isTemporaryAuthReadError(authError) && (isApp || isAuth || request.nextUrl.pathname.startsWith("/onboarding") || request.nextUrl.pathname.startsWith("/change-password"))) {
+    return withRefreshedSession(new NextResponse('<!doctype html><html lang="sv"><meta charset="utf-8"><title>Anslutningen kunde inte verifieras</title><body><main><h1>Anslutningen kunde inte verifieras</h1><p>Inloggningstjänsten svarar inte just nu. Försök igen om en stund.</p><form method="get"><button type="submit">Försök igen</button></form></main></body></html>', {
+      status:503, headers:{"Content-Type":"text/html; charset=utf-8","Cache-Control":"private, no-store","Retry-After":"5"},
+    }));
+  }
 
   if (!data.user && isApp) {
     const redirectUrl = request.nextUrl.clone();

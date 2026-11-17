@@ -1,3 +1,4 @@
+import { isTemporaryAuthReadError } from "@/lib/security/auth-read-error";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -76,7 +77,8 @@ export async function authenticateRequest(request: Request, requiredScope?: stri
   }
 
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (isTemporaryAuthReadError(authError)) throw jsonError("authentication_service_unavailable",503);
   if (!user) throw jsonError("authentication_required", 401);
 
   const { data: securityRows, error: securityError } = await supabase.rpc("current_user_security_state");
@@ -84,17 +86,35 @@ export async function authenticateRequest(request: Request, requiredScope?: stri
   const securityState = Array.isArray(securityRows) ? securityRows[0] : securityRows;
   if (securityState?.must_change_password) throw jsonError("password_change_required", 403);
 
-  const { data: profile } = await supabase.from("profiles").select("active_tenant_id").eq("id", user.id).single();
+  const mfaRequirement = await supabase.rpc("current_user_mfa_required");
+  if (mfaRequirement.error) throw jsonError("mfa_policy_unavailable",503);
+  if (mfaRequirement.data) {
+    const assurance = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (assurance.error) throw jsonError("mfa_assurance_unavailable",503);
+    if (assurance.data.currentLevel !== "aal2") throw jsonError("mfa_required",403);
+  }
+
+  const { data: profile, error: profileError } = await supabase.from("profiles").select("active_tenant_id").eq("id", user.id).maybeSingle();
+  if (profileError) throw jsonError("workspace_context_unavailable", 503);
   if (!profile?.active_tenant_id) throw jsonError("active_tenant_required", 403);
 
-  const { data: membership } = await supabase
+  const { data: membership, error: membershipError } = await supabase
     .from("tenant_memberships")
     .select("role,status")
     .eq("tenant_id", profile.active_tenant_id)
     .eq("user_id", user.id)
     .eq("status", "active")
-    .single();
+    .maybeSingle();
+  if (membershipError) throw jsonError("tenant_membership_unavailable", 503);
   if (!membership) throw jsonError("active_membership_required", 403);
+  const { data: sessionTenant, error: sessionTenantError } = await admin.from("tenants")
+    .select("status,onboarding_status").eq("id", profile.active_tenant_id).maybeSingle();
+  if (sessionTenantError) throw jsonError("tenant_state_unavailable", 503);
+  if (!sessionTenant || !["trial", "active"].includes(sessionTenant.status)
+      || (sessionTenant.onboarding_status && sessionTenant.onboarding_status !== "active")) {
+    throw jsonError("tenant_inactive", 403);
+  }
+
 
   if (requiredScope) {
     const permission = apiScopePermission[requiredScope];

@@ -222,9 +222,14 @@ async function testOk() {
     return true;
   }, "a genuine read failure must not be rendered as emptiness");
 
-  const noRows = { data: null, error: { message: "no rows", code: "PGRST116", details: "", hint: "", name: "PostgrestError" } };
+  const noRows = { data: null, error: { message: "Cannot coerce the result to a single JSON object", code: "PGRST116", details: "The result contains 0 rows", hint: "", name: "PostgrestError" } };
   const passedThrough = await ok(Promise.resolve(noRows) as never) as unknown as typeof noRows;
   assert.equal(passedThrough.data, null, "`.single()` finding no row stays a null row, not a crash");
+
+  for (const details of ["The result contains 2 rows", "Results contain 20 rows", ""]) {
+    await assert.rejects(() => ok(Promise.resolve({ data:null, error:{...noRows.error,details} }) as never), SupabaseReadError,
+      "duplicate or ambiguous singular results must not render as a missing record");
+  }
 
   // `count` is why ok() returns the whole result rather than just `{ data }`:
   // the paginated customer list reads it.

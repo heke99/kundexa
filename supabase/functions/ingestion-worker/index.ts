@@ -23,6 +23,9 @@ type JsonObject = Record<string, unknown>;
 type Run = {
   id: string;
   tenant_id: string;
+  attempts: number;
+  locked_by: string;
+  metadata: { execution_token: string };
   ingestion_job_id: string;
   parser_version_id: string | null;
   requested_records: number;
@@ -183,6 +186,15 @@ function normalizeCanonical(field: string, value: unknown): string | number | bo
   if (field === "email") return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text) ? text.toLowerCase() : null;
   return text;
 }
+async function command(run: Run, operation: string, payload: JsonObject = {}) {
+  return await supabase.rpc("ingestion_command", { p_run_id: run.id, p_worker: run.locked_by,
+    p_attempt: run.attempts, p_token: run.metadata.execution_token, p_operation: operation, p_payload: payload });
+}
+async function checkedCommand(run: Run, operation: string, payload: JsonObject) {
+  const result = await command(run, operation, payload);
+  if (result.error) throw new WorkerError(result.error.message, false);
+  return result.data;
+}
 async function loadContext(run: Run) {
   const { data: job, error: jobError } = await supabase.from("ingestion_jobs").select("*").eq("id", run.ingestion_job_id).single();
   if (jobError || !job) throw new WorkerError(`ingestion_job_load_failed:${jobError?.message ?? "missing"}`);
@@ -286,7 +298,7 @@ async function executeRun(run: Run) {
 
     // Atomisk kvotreservation per externt anrop; vid uttömd kvot pausas körningen
     // med retry vid nästa kvotfönster och fortsätter från checkpointen.
-    const { data: reservation, error: reserveError } = await supabase.rpc("reserve_provider_ingestion_usage", { p_run_id: run.id, p_units: 1 });
+    const { data: reservation, error: reserveError } = await command(run, "reserve_provider_ingestion_usage", { p_run_id: run.id, p_units: 1 });
     if (reserveError) throw new WorkerError(`usage_reservation_failed:${reserveError.message}`, true, 60);
     if (isRecord(reservation) && reservation.allowed === false) {
       throw new WorkerError("provider_quota_exhausted", true, Math.max(1, Number(reservation.retryAfterSeconds ?? 60)));
@@ -315,7 +327,7 @@ async function executeRun(run: Run) {
     const contentType = response.headers.get("content-type") ?? "application/octet-stream";
     const payloadHash = await sha256(text);
     const encrypted = context.permission.raw_storage_allowed ? await encryptJson({ raw: text }, encryptionKey) : null;
-    const { data: rawPayloadId, error: rawError } = await supabase.rpc("record_ingestion_raw_payload", {
+    const { data: rawPayloadId, error: rawError } = await command(run, "record_ingestion_raw_payload", {
       p_ingestion_run_id: run.id, p_external_identifier: `page:${page}`, p_content_type: contentType, p_http_status: response.status,
       p_request_id: response.headers.get("x-request-id"), p_response_headers: safeHeaders(response.headers), p_source_timestamp: response.headers.get("last-modified"),
       p_payload_sha256: payloadHash, p_payload_ciphertext: encrypted, p_storage_path: null, p_metadata: { url: url.origin + url.pathname, page, adapter: context.job.adapter_key },
@@ -332,11 +344,11 @@ async function executeRun(run: Run) {
       else if (adapter) records = parseWithContract(text, mergeContract(adapter.listContract, { record_regex: config.record_regex, regex_mapping: config.regex_mapping }));
       else records = parseHtmlRegex(text, config);
     } catch (error) {
-      await supabase.from("raw_payloads").update({ parse_status: "failed", parse_error: String(error) }).eq("id", rawPayloadId);
+      await checkedCommand(run, "raw_status", { id: rawPayloadId, error: String(error) });
       throw new WorkerError("provider_parse_failed", false, 0, { cause: String(error), rawPayloadId });
     }
     if (!records.length) {
-      await supabase.from("raw_payloads").update({ parse_status: "failed", parse_error: "no_records" }).eq("id", rawPayloadId);
+      await checkedCommand(run, "raw_status", { id: rawPayloadId, error: "no_records" });
       throw new WorkerError("provider_no_records_returned");
     }
 
@@ -375,37 +387,33 @@ async function executeRun(run: Run) {
       if (!canonical.canonical_name) canonical.canonical_name = String(record.name ?? record.company_name ?? external);
       const sourceTimestampValue = pathValue(record, config.source_timestamp_path);
       const sourceTimestamp = sourceTimestampValue && !Number.isNaN(Date.parse(String(sourceTimestampValue))) ? new Date(String(sourceTimestampValue)).toISOString() : null;
-      const { data: completion, error: completionError } = await supabase.rpc("complete_ingestion_record", {
+      const { data: completion, error: completionError } = await command(run, "complete_ingestion_record", {
         p_ingestion_run_id: run.id, p_raw_payload_id: rawPayloadId, p_external_identifier: String(external), p_facts: facts, p_canonical: canonical,
         p_page_fingerprint: fingerprint, p_source_timestamp: sourceTimestamp,
       });
       if (completionError) throw new WorkerError(`complete_ingestion_record_failed:${completionError.message}`, true, 60, { rawPayloadId });
       if (isRecord(completion) && completion.quarantined === true) return { status: "quarantined", rawPayloadId, completion };
-      if (isRecord(completion) && typeof completion.masterEntityId === "string") {
-        const { error: geographyError } = await supabase.rpc("normalize_master_entity_geography", { p_entity_id: completion.masterEntityId });
-        if (geographyError) throw new WorkerError(`geography_normalization_failed:${geographyError.message}`, true, 60, { rawPayloadId, masterEntityId: completion.masterEntityId });
-      }
       processed++;
     }
 
     const nextValue = config.next_page_path ? pathValue(parsedRoot, config.next_page_path) : null;
     nextPageToken = nextValue == null || nextValue === "" ? null : String(nextValue);
-    await supabase.from("crawl_checkpoints").update({ last_page: String(page), last_successful_step: "page_completed", remaining_capacity: Math.max(0, maxRecords - processed), updated_at: new Date().toISOString() }).eq("ingestion_run_id", run.id).is("crawl_plan_id", null);
-    await supabase.from("ingestion_runs").update({ current_page: String(page), next_page: nextPageToken, parser_fingerprint: fingerprint }).eq("id", run.id);
+    await checkedCommand(run, "checkpoint", { page: String(page), next: nextPageToken, remaining: Math.max(0,maxRecords-processed), fingerprint });
     if (!nextPageToken && !config.page_parameter) break;
     if (nextPageToken) page = Number.isFinite(Number(nextPageToken)) ? Number(nextPageToken) : page + 1;
     else page++;
     if (records.length < Number(config.page_size ?? records.length)) break;
   }
 
-  const { error: completeError } = await supabase.rpc("complete_ingestion_run", { p_run_id: run.id, p_next_page: nextPageToken, p_metadata: { processed } });
+  const { error: completeError } = await command(run, "complete_ingestion_run", { p_run_id: run.id, p_next_page: nextPageToken, p_metadata: { processed } });
   if (completeError) throw new WorkerError(`complete_ingestion_run_failed:${completeError.message}`, true, 60);
   return { status: "completed", processed, nextPage: nextPageToken };
 }
 
 async function failRun(run: Run, error: unknown) {
   const normalized = error instanceof WorkerError ? error : new WorkerError(error instanceof Error ? error.message : String(error), true, 60);
-  await supabase.rpc("fail_ingestion_run", { p_run_id: run.id, p_error: normalized.message, p_retryable: normalized.retryable, p_delay_seconds: normalized.delaySeconds, p_raw_payload_id: normalized.details.rawPayloadId ?? null, p_details: normalized.details });
+  const failed = await command(run, "fail_ingestion_run", { p_run_id: run.id, p_error: normalized.message, p_retryable: normalized.retryable, p_delay_seconds: normalized.delaySeconds, p_raw_payload_id: normalized.details.rawPayloadId ?? null, p_details: normalized.details });
+  if (failed.error) return { id: run.id, status: "lease_lost", error: failed.error.message };
   return { id: run.id, status: normalized.retryable ? "retry_scheduled" : "failed", error: normalized.message };
 }
 

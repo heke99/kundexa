@@ -6,7 +6,7 @@ import { allTemplatePlaceholders } from "./template-context";
 const placement = z.object({ page: z.number().int().min(0).max(99), x: z.number().min(0).max(1), y: z.number().min(0).max(1), width: z.number().positive().max(1), height: z.number().positive().max(1) }).strict();
 export const pdfFieldSchema = z.object({
   id: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/),
-  label: z.string().min(1).max(120),
+  label: z.string().min(1).max(120).refine(value => Boolean(value.trim())),
   providerName: z.string().min(1).max(120),
   type: z.enum(["text", "date", "signature"]),
   source: z.string().max(120),
@@ -16,9 +16,10 @@ export const pdfFieldSchema = z.object({
 }).strict();
 export const pdfCustomFieldSchema = z.object({
   id: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/),
-  label: z.string().min(1).max(120),
+  label: z.string().min(1).max(120).refine(value => Boolean(value.trim())),
   type: z.enum(["text", "date", "number"]),
   required: z.boolean(),
+  customerKey: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/).optional(),
 }).strict();
 export type PdfCustomField = z.infer<typeof pdfCustomFieldSchema>;
 export const pdfTemplateSchema = z.object({
@@ -40,8 +41,9 @@ export function isTenantPdfTemplatePath(path: string, tenantId: string): boolean
   return path.startsWith(prefix) && /^[A-Za-z0-9_-]+\/[a-f0-9]{64}\.pdf$/.test(path.slice(prefix.length));
 }
 
-export function validatePdfTemplate(input: unknown, tenantId: string): PdfFieldTemplate {
+export function validatePdfTemplate(input: unknown, tenantId: string, extraFields: PdfCustomField[] = []): PdfFieldTemplate {
   const template = pdfTemplateSchema.parse(input);
+  template.customFields = mergeCustomFields(parseContractCustomFields(extraFields), parseContractCustomFields(template.customFields));
   if (!isTenantPdfTemplatePath(template.storagePath, tenantId)) throw new Error("pdf_template_tenant_mismatch");
   const ids = new Set<string>();
   const names = new Set<string>();
@@ -63,19 +65,47 @@ export function validatePdfTemplate(input: unknown, tenantId: string): PdfFieldT
       if (!template.pageSizes[area.page] || area.x + area.width > 1.000001 || area.y + area.height > 1.000001) throw new Error("pdf_template_field_outside_page");
     }
   }
+  for (const field of extraFields) if (!template.fields.some(placed => placed.source === `custom.${field.id}`)) throw new Error(`pdf_template_custom_field_not_placed:${field.label}`);
   return template;
 }
 
+export function parseContractCustomFields(input: unknown): PdfCustomField[] {
+  const fields = z.array(pdfCustomFieldSchema).max(50).parse(input ?? []);
+  if (new Set(fields.map(field => field.id)).size !== fields.length) throw new Error("contract_duplicate_custom_field");
+  return fields;
+}
+function mergeCustomFields(first: PdfCustomField[], second: PdfCustomField[]): PdfCustomField[] {
+  const result = [...first];
+  for (const field of second) {
+    const existing = result.find(item => item.id === field.id);
+    if (existing && (existing.label !== field.label || existing.type !== field.type || existing.required !== field.required || existing.customerKey !== field.customerKey)) throw new Error("contract_conflicting_custom_field");
+    if (!existing) result.push(field);
+  }
+  return parseContractCustomFields(result);
+}
 export function pdfCustomFields(configuration: unknown): PdfCustomField[] {
-  const config = configuration as { pdf_template?: unknown } | null;
-  return config?.pdf_template ? pdfTemplateSchema.parse(config.pdf_template).customFields ?? [] : [];
+  const config = configuration as { custom_fields?: unknown; pdf_template?: unknown } | null;
+  return mergeCustomFields(parseContractCustomFields(config?.custom_fields), config?.pdf_template ? parseContractCustomFields(pdfTemplateSchema.parse(config.pdf_template).customFields) : []);
+}
+export function customerFieldPrefill(field: PdfCustomField, customerFields: Record<string, unknown>): { value: string | number; invalid: boolean } {
+  if (!field.customerKey || !Object.hasOwn(customerFields, field.customerKey)) return { value: "", invalid: false };
+  try { return { value: validateCustomValues([{ ...field, required: false }], { [field.id]: customerFields[field.customerKey] })[field.id], invalid: false }; }
+  catch { return { value: "", invalid: true }; }
+}
+export type FrozenContractFields = { definitions: PdfCustomField[]; values: Record<string, string | number> };
+export function freezeContractCustomFields(configuration: unknown, raw: Record<string, unknown>, customerFields: unknown = {}): FrozenContractFields {
+  const definitions = pdfCustomFields(configuration);
+  const defaults = customerFields && typeof customerFields === "object" && !Array.isArray(customerFields) ? customerFields as Record<string, unknown> : {};
+  const resolved = { ...raw };
+  for (const field of definitions) if (!Object.hasOwn(raw, field.id) && field.customerKey && Object.hasOwn(defaults, field.customerKey)) resolved[field.id] = defaults[field.customerKey];
+  return { definitions, values: validateCustomValues(definitions, resolved) };
 }
 
 export function pdfCustomFormValues(configuration: unknown, form: FormData): Record<string, unknown> {
   return Object.fromEntries(pdfCustomFields(configuration).map(definition => [definition.id, form.get(`pdf_custom_${definition.id}`) ?? ""]));
 }
 
-function validateCustomValues(definitions: PdfCustomField[], raw: Record<string, unknown>): Record<string, string | number> {
+export function validateCustomValues(definitions: PdfCustomField[], raw: Record<string, unknown>): Record<string, string | number> {
   const known = new Set(definitions.map(definition => definition.id));
   if (Object.keys(raw).some(key => !known.has(key))) throw new Error("pdf_template_unknown_custom_value");
   const result: Record<string, string | number> = {};
@@ -91,7 +121,7 @@ function validateCustomValues(definitions: PdfCustomField[], raw: Record<string,
       result[definition.id] = Number(value);
     } else {
       if (typeof value !== "string" || value.length > 1000) throw new Error(`pdf_template_invalid_text:${definition.label}`);
-      if (definition.type === "date" && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value)) throw new Error(`pdf_template_invalid_date:${definition.label}`);
+      if (definition.type === "date" && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || value.startsWith("0000-") || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value)) throw new Error(`pdf_template_invalid_date:${definition.label}`);
       result[definition.id] = value;
     }
   }
@@ -99,12 +129,12 @@ function validateCustomValues(definitions: PdfCustomField[], raw: Record<string,
 }
 
 export function freezePdfTemplate(configuration: unknown, context: Record<string, unknown>, tenantId: string, customValues: Record<string, unknown> = {}): FrozenPdfTemplate | null {
-  const config = configuration as { pdf_template?: unknown } | null;
+  const config = configuration as { custom_fields?: unknown; pdf_template?: unknown } | null;
   if (!config?.pdf_template) {
-    if (Object.keys(customValues).length) throw new Error("pdf_template_unknown_custom_value");
+    validateCustomValues(pdfCustomFields(configuration), customValues);
     return null;
   }
-  const template = validatePdfTemplate(config.pdf_template, tenantId);
+  const template = validatePdfTemplate(config.pdf_template, tenantId, parseContractCustomFields(config.custom_fields));
   const renderContext = { ...context, custom: validateCustomValues(template.customFields ?? [], customValues) } as Record<string, unknown>;
   const values: Record<string, string> = {};
   for (const field of template.fields) {

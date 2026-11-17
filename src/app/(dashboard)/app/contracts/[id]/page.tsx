@@ -70,6 +70,8 @@ export default async function ContractDetail({ params, searchParams }: { params:
   const product = Array.isArray(contract.products) ? contract.products[0] : contract.products;
   const legalEntity = Array.isArray(contract.tenant_legal_entities) ? contract.tenant_legal_entities[0] : contract.tenant_legal_entities;
   const activeVersion = versions?.find((version) => version.id === contract.active_version_id);
+  const frozenCustomerFields = (activeVersion?.commercial_terms as { custom_fields?: { definitions?: Array<{id:string;label:string}>;values?:Record<string,string|number> } } | null)?.custom_fields;
+
   const { data: signingTemplate } = activeVersion?.template_version_id ? await supabase.from("contract_template_versions").select("signature_policy").eq("tenant_id", ctx.tenantId).eq("id", activeVersion.template_version_id).maybeSingle() : { data: null };
   const signaturePolicy = (activeVersion?.signature_policy_snapshot ?? signingTemplate?.signature_policy) as { method?: string } | null;
   const externalSigning = signaturePolicy?.method === "external_esign";

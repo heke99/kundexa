@@ -413,7 +413,7 @@ for (const relative of [
   "src/lib/imports/malware-scan.ts",
   "src/lib/imports/normalize-row.ts",
   "src/lib/imports/json-path.ts",
-  "src/lib/imports/organization-number.ts",
+  "supabase/functions/_shared/organization-number.ts",
   "src/lib/imports/field-mapping.ts",
   "src/lib/imports/import-profile.ts",
   "src/components/import-field-mapping-editor.tsx",
@@ -481,7 +481,7 @@ assert.doesNotMatch(importParser, /function parseZipEntries|inflateRawSync|share
 const importMappingEditor = await readFile(join(root, "src/components/import-field-mapping-editor.tsx"), "utf8");
 for (const pattern of [/company\.organization_number/, /contact\.phone_e164/, /entityType/, /fixed_person/, /from_field/, /mergePolicy/, /mapping_json/, /Transformkedja/]) assert.match(importMappingEditor, pattern, `Dynamic import mapping UI invariant missing: ${pattern}`);
 const parseHubWorker = await readFile(join(root, "supabase/functions/parsehub-worker/index.ts"), "utf8");
-for (const pattern of [/x-cron-secret/, /claim_parsehub_runs/, /decryptJson/, /runs\/\$\{encodeURIComponent\(runToken\)\}\/data/, /process_parsehub_import_run/]) assert.match(parseHubWorker, pattern, `ParseHub worker invariant missing: ${pattern}`);
+for (const pattern of [/x-cron-secret/, /claim_parsehub_runs/, /decryptJson/, /runs\/\$\{encodeURIComponent\(runToken\)\}\/data/, /parsehub_command/]) assert.match(parseHubWorker, pattern, `ParseHub worker invariant missing: ${pattern}`);
 const projectionSql = sql.match(/create or replace function public\.directory_entity_projection_for_tenant[\s\S]*?\$\$;/i)?.[0] ?? "";
 assert.match(projectionSql, /directory_visible_fields_for_tenant/, "Directory projection must be based on licensed visible fields");
 assert.doesNotMatch(projectionSql, /current_master/, "Directory projection must not expose the internal master payload");
@@ -715,6 +715,9 @@ assert.match(packageJson.scripts.verify, /typecheck:edge/, "Full verification mu
 const workflowDir = join(root, ".github/workflows");
 for (const name of (await readdir(workflowDir)).filter((file) => file.endsWith(".yml") || file.endsWith(".yaml"))) {
   const workflow = await readFile(join(workflowDir, name), "utf8");
+  for (const [, action] of workflow.matchAll(/uses:\s*([^\s#]+)/g)) {
+    assert.match(action, /@[a-f0-9]{40}$/, `${name} must pin third-party actions to immutable revisions`);
+  }
   for (const [, script] of workflow.matchAll(/npm run ([a-z0-9:_-]+)/g)) {
     assert.ok(script in packageJson.scripts, `${name} runs \`npm run ${script}\`, which package.json does not define`);
   }
@@ -757,6 +760,8 @@ const PROVIDER_NAME_EXEMPT = new Set([
   "scripts/verify.mjs",
   "scripts/verify-sql.mjs",
   "scripts/sinch-unit-tests.mts",
+  // Full-migration provider callback regression fixtures, never product UI.
+  "scripts/audit-access-regressions.mjs",
   "scripts/remediation-regression-tests.mjs",
   "scripts/verify-generated-schema.mjs",
   "src/lib/supabase/database.types.ts",
@@ -915,8 +920,8 @@ assert.match(webphoneHook, /\.fetchApi\(observedFetch\)/,
   "The webphone must observe the provider's own registration responses; the SDK discards the reason");
 assert.match(webphoneHook, /onClientFailed:[\s\S]{0,600}?reportFailure\("webphone_client_failed"/,
   "A failed registration must be recorded on the session, not only in the browser console");
-assert.match(webphoneHook, /if \(refreshed\.data\?\.sessionId\) sessionRef\.current = /,
-  "A token refresh opens a new session; the heartbeat must follow it or the seller is told to reload");
+assert.match(webphoneHook, /next\.userId === credentials\.userId && refreshed\.data\?\.sessionId === sessionRef\.current/,
+  "A token refresh must keep the exact SDK session identity; a replacement requires a new client");
 // Webbläsarens CSP blockerade varje registrering hos telefonitjänsten, medan
 // servern fick 200 på samma begäran. Policyn måste släppa igenom adapterns
 // adresser, annars kan ingen säljare någonsin ringa.

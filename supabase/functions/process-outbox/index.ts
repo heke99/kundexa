@@ -1,3 +1,4 @@
+import { pinnedWebhookFetch, webhookUrl } from "../_shared/pinned-webhook.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.110.7";
 import { permanentResendFailure } from "../_shared/outbox-policy.ts";
 import { decryptJson } from "../_shared/crypto.ts";
@@ -228,10 +229,7 @@ async function processSms(job: Job) {
       }));
       return;
     }
-    const submittingAgeMs = Date.now() - new Date(sms.updated_at).getTime();
-    if (!Number.isFinite(submittingAgeMs) || submittingAgeMs < 15 * 60 * 1000) throw new Error("sms_submission_reconciliation_pending");
-    const { error: resetError } = await supabase.from("sms_messages").update({ status: "queued", error_message: "No provider submission found during reconciliation; retrying safely." }).eq("tenant_id", job.tenant_id).eq("id", sms.id).eq("status", "submitting");
-    if (resetError) throw resetError;
+    throw new Error("sms_submission_requires_provider_reconciliation");
   }
 
   const { data: number, error: numberError } = await supabase.from("phone_numbers").select("webhook_token_ciphertext")
@@ -245,12 +243,17 @@ async function processSms(job: Job) {
   // leverantören", och det tar en kvarts avstämning att ta sig ur -- för ett fel
   // som aldrig rörde leverantören.
   const deliveryCallbackUrl = `${requireAppUrl()}/api/webhooks/sms/delivery?token=${encodeURIComponent(token.token)}&message_id=${encodeURIComponent(sms.id)}&from_number=${encodeURIComponent(sms.from_number)}`;
-  await checked(supabase.from("sms_messages").update({ status: "submitting" }).eq("id", sms.id));
+  const { data: prepared, error: prepareError } = await supabase.rpc("prepare_sms_submission", {
+    p_tenant_id: job.tenant_id, p_message_id: sms.id, p_job_id: job.id,
+    p_worker: job.locked_by, p_attempt: job.attempts,
+  });
+  if (prepareError) throw new Error(prepareError.message);
+  if (!prepared || typeof prepared.from !== "string" || typeof prepared.to !== "string" || typeof prepared.body !== "string" || typeof prepared.clientReference !== "string") throw new Error("sms_prepared_payload_invalid");
   const submission = await provider.send({
-    from: sms.from_number,
-    to: sms.to_number,
-    body: sms.body,
-    clientReference: String(sms.id),
+    from: prepared.from,
+    to: prepared.to,
+    body: prepared.body,
+    clientReference: prepared.clientReference,
     deliveryCallbackUrl,
   });
   await checked(supabase.rpc("record_sms_submission", {
@@ -319,6 +322,10 @@ async function processEmail(job: Job) {
   if (!outboundEmail?.enabled) throw new Error("permanent_email_outbound_feature_disabled");
   if (email.contract_id && !contractEmail?.enabled) throw new Error("permanent_email_contract_delivery_feature_disabled");
 
+  const { data: tenantState, error: tenantStateError } = await supabase.from("tenants").select("status").eq("id", job.tenant_id).single();
+  if (tenantStateError || !tenantState || !["active","trial"].includes(tenantState.status)) throw new Error("email_tenant_inactive");
+  const { data: policy, error: policyError } = await supabase.rpc("evaluate_contact_policy_for_tenant", { p_tenant_id: job.tenant_id, p_customer_id: email.customer_id, p_channel: "email", p_purpose: email.purpose ?? "direct_marketing" });
+  if (policyError || !policy || policy.allowed !== true) throw new Error("email_current_contact_policy_denied");
   const config = await getEmailConfig(job.tenant_id);
   // A contract is issued by one of the tenant's legal entities, not by the tenant
   // as a whole. The customer must see the company that actually sent them the
@@ -852,20 +859,26 @@ ${issuerLegalName}`;
   }
 }
 
-function assertSafeWebhookUrl(value: string) {
-  const url = new URL(value);
-  if (url.protocol !== "https:") throw new Error("webhook_https_required");
-  const host = url.hostname.toLowerCase();
-  if (host === "localhost" || host.endsWith(".local") || host === "127.0.0.1" || host === "::1" || /^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host)) {
-    throw new Error("webhook_private_network_forbidden");
-  }
-  return url;
-}
+const assertSafeWebhookUrl = webhookUrl;
 
 async function hmacSha256(secret: string, value: string) {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value));
   return Array.from(new Uint8Array(signature)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function processRawPayloadDeletion(job: Job) {
+  const args = { p_job_id:job.id,p_worker:job.locked_by,p_attempt:job.attempts };
+  const prepared = await supabase.rpc("raw_payload_deletion_command",{...args,p_operation:"prepare"});
+  if(prepared.error)throw new Error(prepared.error.message);
+  if(prepared.data?.completed)return;
+  if(prepared.data?.bucket!=="raw-payloads" || typeof prepared.data.path!=="string" || !prepared.data.path.startsWith(`${job.tenant_id}/`))throw new Error("raw_payload_storage_contract_required");
+  const storageClient = createClient(supabaseUrl,serviceKey,{auth:{persistSession:false},global:{
+    fetch:(input,init)=>fetch(input,{...init,signal:AbortSignal.timeout(30_000)}),
+  }});
+  const removed = await storageClient.storage.from(prepared.data.bucket).remove([prepared.data.path]);
+  if(removed.error)throw new Error(`raw_payload_storage_delete_failed:${removed.error.message}`);
+  await checked(supabase.rpc("raw_payload_deletion_command",{...args,p_operation:"acknowledge"}));
 }
 
 async function processWebhook(job: Job) {
@@ -881,13 +894,19 @@ async function processWebhook(job: Job) {
   const secret = await decryptJson<{ secret: string }>(endpoint.secret_ciphertext, encryptionKey);
   const body = JSON.stringify({ id: delivery.event_id, type: delivery.event_type, created_at: delivery.created_at, data: delivery.payload });
   const signature = await hmacSha256(secret.secret, body);
-  const response = await fetch(url, {
-    method: "POST",
+  const response = await pinnedWebhookFetch(url, {
     headers: { "content-type": "application/json", "x-kundexa-event": delivery.event_type, "x-kundexa-signature": `sha256=${signature}` },
     body,
-    redirect: "error",
+    signal: AbortSignal.timeout(30_000),
   });
-  const responseBody = (await response.text()).slice(0, 4000);
+  const reader = response.body?.getReader();
+  let responseBody = ""; let total = 0;
+  if (reader) { const decoder = new TextDecoder(); try { while (true) {
+    const part = await reader.read(); if (part.done) break;
+    total += part.value.byteLength; if (total > 16_384) { await reader.cancel(); throw new Error("webhook_response_too_large"); }
+    responseBody += decoder.decode(part.value, { stream: true });
+  } responseBody += decoder.decode(); } finally { reader.releaseLock(); } }
+  responseBody = responseBody.slice(0,4000);
   await checked(supabase.from("webhook_deliveries").update({
     status: response.ok ? "completed" : "failed",
     response_status: response.status,
@@ -1072,6 +1091,7 @@ async function processJob(job: Job) {
   if (job.job_type === "evidence.generate") return processEvidence(job);
   if (job.job_type === "contract.confirmation") return processContractConfirmation(job);
   if (job.job_type === "contract.signed.confirmation") return processSignedContractConfirmation(job);
+  if (job.job_type === "storage.raw_payload_delete") return processRawPayloadDeletion(job);
   if (job.job_type === "webhook.deliver") return processWebhook(job);
   // De gamla leverantörsjobben finns kvar i kön hos tenants som körde dem. De
   // ska dö en gång, inte köra om i evighet.

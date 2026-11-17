@@ -1,8 +1,9 @@
+import { pdfCustomFields, type PdfCustomField } from "@/lib/contracts/pdf-field-template";
 import { ok } from "@/lib/supabase/read";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, Ban, CalendarPlus, ClipboardList, FileSignature, Mail, MessageSquareText, Phone, PhoneOff, StickyNote, Users } from "@/components/icons";
-import { addActivity, addNote, archiveNote, blockCustomer, reportCustomerNix, scheduleCallback, updateCustomerDetails, updateNote } from "@/app/actions/customers";
+import { addActivity, addNote, archiveNote, blockCustomer, reportCustomerNix, scheduleCallback, updateCustomerDetails, updateCustomerCustomField, updateNote } from "@/app/actions/customers";
 import { getAppContext } from "@/lib/auth";
 import { manualContractDispositions } from "@/lib/contracts/manual-dispositions";
 import { countSellableProducts } from "@/lib/contracts/sellable-products";
@@ -48,6 +49,21 @@ export default async function CustomerDetail({ params, searchParams }: { params:
     ok(supabase.rpc("caller_id_options_for_current_user")),
   ]);
   if (!customer) notFound();
+  const customerFieldDefinitions = new Map<string, PdfCustomField>();
+  let invalidFieldTemplate = false;
+  const conflictingCustomerKeys = new Set<string>();
+  const { data: fieldTemplates } = await ok(supabase.from("contract_templates").select("current_version:contract_template_versions!contract_templates_current_version_tenant_fk(status,signing_configuration)").eq("active",true).not("current_version_id","is",null));
+  for (const template of fieldTemplates ?? []) if (template.current_version?.status === "approved") {
+    try { for (const field of pdfCustomFields(template.current_version.signing_configuration)) if (field.customerKey) {
+      const previous = customerFieldDefinitions.get(field.customerKey);
+      if (previous && previous.type !== field.type) conflictingCustomerKeys.add(field.customerKey);
+      if (!previous) customerFieldDefinitions.set(field.customerKey,field);
+    } }
+    catch { invalidFieldTemplate = true; }
+  }
+  for (const key of conflictingCustomerKeys) { customerFieldDefinitions.delete(key); invalidFieldTemplate = true; }
+  const savedCustomerFields = customer.custom_fields && typeof customer.custom_fields === "object" && !Array.isArray(customer.custom_fields) ? customer.custom_fields : {};
+
   // The card is the canonical CRM record, so the person actually responsible has to be
   // named on it. `assigned_user_id` alone said only "Tilldelad användare".
   const { data: owner } = customer.assigned_user_id
@@ -65,7 +81,7 @@ export default async function CustomerDetail({ params, searchParams }: { params:
     <Link href="/app/customers" className="muted back-link"><ArrowLeft size={15} /> Till kunder</Link>
     <PageHeader title={customer.display_name} description={`${customer.customer_type === "company" ? "Företag" : "Privatperson"} · ${lifecycleLabel(customer.lifecycle)}`} action={<div className="toolbar-right">{mayCall && customer.phone_e164 && !customer.do_not_call
       ? <a className="button button-primary" href="#kundkort-dialer"><Phone size={16} /> Ring {customer.phone_e164}</a>
-      : mayCall ? <span className="badge badge-warning">{customer.do_not_call ? "Spärrad för samtal" : "Telefonnummer saknas"}</span> : null}{mayCreateContract ? <Link className="button button-secondary" href={`/app/contracts/new?customer_id=${customer.id}`}><FileSignature size={16} /> Skapa avtal</Link> : null}<Link className="button button-ghost" href={`/app/sms?customer=${customer.id}`}><MessageSquareText size={16} /> SMS</Link><Link className="button button-ghost" href={`/app/email?customer=${customer.id}`}><Mail size={16} /> E-post</Link></div>} />
+      : mayCall ? <span className="badge badge-warning">{customer.do_not_call ? "Spärrad för samtal" : "Telefonnummer saknas"}</span> : null}{mayCreateContract ? <Link className="button button-secondary" href={`/app/contracts/new?customer_id=${customer.id}`}><FileSignature size={16} /> Skapa avtal</Link> : null}{can(context.role, "messages.send") ? <><Link className="button button-ghost" href={`/app/sms?customer=${customer.id}`}><MessageSquareText size={16} /> SMS</Link><Link className="button button-ghost" href={`/app/email?customer=${customer.id}`}><Mail size={16} /> E-post</Link></> : null}</div>} />
     {query.error ? <p className="form-error">{query.error}</p> : null}
     {query.message ? <div className="notice" style={{ marginBottom: 16 }}>{query.message}</div> : null}
     {query.callback ? <div className="notice" style={{ marginBottom: 16 }}>Återkomsten är skapad och syns i säljarens eller teamets återkomstkö.</div> : null}
@@ -127,6 +143,15 @@ export default async function CustomerDetail({ params, searchParams }: { params:
               />}
               <div className="span-2"><button className="button button-primary">Spara kunduppgifter</button></div>
             </form></details> : null}
+            {invalidFieldTemplate ? <p className="form-error">Kundfält i avtalsmallarna behöver granskas. Vissa kopplingar är ogiltiga eller använder olika typer.</p> : null}
+            {customerFieldDefinitions.size ? <details style={{marginTop:14}}><summary>Kompletterande kunduppgifter för avtal</summary>
+              <p className="muted">Kopplade uppgifter kan förifyllas i nya avtal. Befintliga avtal ändras inte.</p>
+              {[...customerFieldDefinitions.entries()].map(([key,field]) => <form action={updateCustomerCustomField} className="form-stack" key={key} style={{marginTop:10}}>
+                <input type="hidden" name="customer_id" value={customer.id}/><input type="hidden" name="field_key" value={key}/><input type="hidden" name="field_type" value={field.type}/>
+                <Field label={field.label} name="field_value" type={field.type} defaultValue={["string","number"].includes(typeof savedCustomerFields[key]) ? savedCustomerFields[key] as string | number : ""} maxLength={field.type === "text" ? 1000 : undefined} step={field.type === "number" ? "any" : undefined} disabled={!mayWrite}/>
+                {mayWrite ? <button className="button button-secondary">Spara kunduppgift</button> : null}
+              </form>)}
+            </details> : null}
           </CardContent>
         </Card>
         <Card>

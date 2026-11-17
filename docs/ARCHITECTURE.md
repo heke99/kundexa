@@ -1,5 +1,7 @@
 # Kanonisk arkitektur
 
+Aktuell implementation och öppna avvikelser: docs/reviews/2026-11-16/remediation-status.md. Nedanstående domänbeskrivningar är målkontrakt; de är inte ett driftgodkännande. Aktuell telefoni är Sinch och signering sker i Kundexas native-motor med utvalda portade DocuSeal-delar, inte en extern DocuSeal-server. Bevisade brister och återstående verifiering anges i system-audit.md.
+
 ```text
 Browser / API client
   -> Next.js BFF/API
@@ -94,3 +96,17 @@ Retentionworker tar hänsyn till leverantörens lagringsrätt, tenantpolicy och 
 - Automatiskt nästa samtal är spärrat tills providerhangup och efterarbete är sparade; paus/avslut släpper både prospekt- och återkomstlås.
 - Supabase Realtime publicerar kanoniska samtals-, återkomst-, list- och ordertabeller; UI uppdaterar berörda vyer och badges utan att duplicera tillståndet.
 - Godkända avtals-, produkt-, pris- och juridikversioner snapshotas; accepterade versioner är immutable.
+
+## 2026-11-16 – implementerade granskningsgränser, ej driftsatta
+
+Kunduppdatering och fältnamnsbaserad audit är atomiska via DB-trigger. Plattformsimport bevarar hela kontaktmängden och ursprungsrader; en tenantbunden tilldelning materialiserar kontakterna till kanoniska contact_people. Ommappning har CAS, validating-status, försökstoken och fullständig radräkning före publicering. SMS har en service-only submissionsgrind för aktuell worker/lease/försök; osäker effekt får endast avstämmas. Retention får inte märka en fysisk blob som raderad genom att glömma dess locator.
+
+Öppna arkitekturgränser: DNS/egress för utgående webhooks, end-to-end generationsfäktning av ingestion samt beständig bucketbunden fysisk råfilsgallring. Se docs/reviews/2026-11-16/remaining32-and-architecture.md. Inga nya parallella kundlager införs.
+
+## Paket5 – kommandogränser och nätverksgräns, ej driftsatt
+
+Detta ersätter föregående pakets öppna kodgränser19/25/44/46/52. Ingestion och ParseHub utför sina DB-effekter genom service-only kommandon som låser och verifierar aktuell worker/försök/generation/lease i samma transaktion. Återtag efter krasch kräver ny generation och återstående budget. Äldre oskyddade worker-RPC:er är återkallade; gamla arbetare ska tömmas före installation.
+
+Fysisk råfilsgallring använder privat, tenantbundet bucketkontrakt, beständig avsikt, Storage-radering och därefter DB-kvittens. En okänd locator rensas inte bort. Bevarandespärrar och deletionens beslut om extern effekt serialiseras; osäkra effekter behöver avstämning.
+
+Admin-MFA finns i app, sessions-API, restriktiv RLS och centrala behörighetshjälpare. Worker-/maskinkontext är separat. Webhooks ansluter till validerad publik IP med certifikatkontroll för originalvärden; Edge använder native Deno TCP/startTls och verifierar handshake före payload. Node-kompatibla transportantaganden räckte inte i äldre runtimeprov. Se docs/reviews/2026-11-16/batch5-14-findings.md för bevis och återstående produktionsgrindar.

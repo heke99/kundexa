@@ -36,9 +36,13 @@ export class SupabaseReadError extends Error {
  * which is a worse answer and a behaviour change rather than a fix.
  */
 const NO_ROWS = "PGRST116";
+function isMissingSingleRow(error: PostgrestError) {
+  // PGRST116 also means MORE than one row: never hide uniqueness/data errors.
+  return error.code === NO_ROWS && /\b(?:contains?|results? contain) 0 rows?\b/i.test(error.details ?? "");
+}
 
 export async function ok<T extends ReadResult>(query: PromiseLike<T>): Promise<T> {
   const result = await query;
-  if (result.error && result.error.code !== NO_ROWS) throw new SupabaseReadError(result.error);
+  if (result.error && !isMissingSingleRow(result.error)) throw new SupabaseReadError(result.error);
   return result;
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { redactProviderNames } from "@/lib/telephony/webphone";
 import { z } from "zod";
+import { authenticateRequest, dataClientForIdentity } from "@/lib/api-auth";
 import { getAppContext } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -192,23 +193,24 @@ function internalDialFailure(error: unknown) {
 
 export async function GET(request: Request) {
   try {
-    const context = await getAppContext();
-    assertPermission(context.role, "calls.read");
+    const identity = await authenticateRequest(request, "calls:read");
     const url = new URL(request.url);
-    const limit = Math.max(1, Math.min(100, Number(url.searchParams.get("limit") ?? 50)));
+    const limit = Number(url.searchParams.get("limit") ?? 50);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) return NextResponse.json({ error: "invalid_limit" }, { status: 422 });
     const callId = url.searchParams.get("id");
-    const supabase = await createClient();
+    const supabase = await dataClientForIdentity(identity);
     const selection = "id,direction,status,end_cause,provider_status,provider_outcome,provider_cause,from_number,to_number,initiated_at,answered_at,ended_at,duration_seconds,disposition,recording_status,transcription_status,insights_status,created_at,customers(display_name)";
     if (callId) {
       const parsedId = z.uuid().safeParse(callId);
       if (!parsedId.success) return NextResponse.json({ error: "invalid_call_id" }, { status: 422 });
-      const { data, error } = await supabase.from("calls").select(selection).eq("id", parsedId.data).maybeSingle();
+      const { data, error } = await supabase.from("calls").select(selection).eq("tenant_id", identity.tenantId).eq("id", parsedId.data).maybeSingle();
       if (error) return NextResponse.json({ error: "call_query_failed" }, { status: 500 });
       if (!data) return NextResponse.json({ error: "call_not_found" }, { status: 404 });
       return NextResponse.json({ data });
     }
     let query = supabase.from("calls")
       .select(selection)
+      .eq("tenant_id", identity.tenantId)
       .order("created_at", { ascending: false })
       .limit(limit);
     const status = url.searchParams.get("status");
@@ -219,6 +221,7 @@ export async function GET(request: Request) {
     if (error) return NextResponse.json({ error: "calls_query_failed" }, { status: 500 });
     return NextResponse.json({ data: data ?? [] });
   } catch (error) {
+    if (error instanceof Response) return error;
     console.error("calls_query_failed", { error: error instanceof Error ? error.name : "unknown" });
     return NextResponse.json({ error: "calls_query_failed" }, { status: 500 });
   }

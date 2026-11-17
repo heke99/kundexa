@@ -15,9 +15,8 @@
  *   hade den som har en inloggad webbtelefon kunnat ringa vem som helst förbi
  *   spärrlistan, NIX och ringtiderna. Numret anges uttryckligen, som i varje
  *   exempel i Sinchs referens (utan det bröts samtalen med GENERALERROR).
- * - ICE för allt annat (inkommande samtal till våra nummer, app-till-app): `hangup`.
- *   Inkommande samtal stöds inte, och att koppla ett inkommande samtal till det
- *   nummer som ringdes hade skickat det i en slinga.
+ * - Inkommande PSTN: `connectMxp` till en uttryckligen reserverad sessionsidentitet.
+ *   Utan databasbeslut eller för app-till-app: `hangup`.
  * - ACE: `continue`.
  * - DiCE och notify tar inget SVAML.
  *
@@ -31,7 +30,7 @@ type Payload = Record<string, unknown>;
 export type SinchSvaml = { instructions: unknown[]; action: Record<string, unknown> };
 
 /** Beskedet `ingest_sinch_voice_event` ger en ICE, ur den reserverade försöksraden. */
-export type SinchIceDecision = { connect?: unknown; destination?: unknown; callerId?: unknown };
+export type SinchIceDecision = { connect?: unknown; destination?: unknown; callerId?: unknown; incoming?: unknown; sessionId?: unknown };
 
 const HANGUP: SinchSvaml = { instructions: [], action: { name: "hangup" } };
 
@@ -49,7 +48,13 @@ export function sinchSvamlFor(event: string, payload: Payload, decision?: SinchI
     const toType = String(to.type ?? "").toLowerCase();
     const origination = String(payload.originationType ?? "").toLowerCase();
     const endpoint = typeof to.endpoint === "string" ? to.endpoint : "";
-    if (toType !== "number" || origination === "pstn" || !E164.test(endpoint)) return HANGUP;
+    if (origination === "pstn") {
+      const destination = e164(decision?.destination);
+      const session = typeof decision?.sessionId === "string" ? decision.sessionId : "";
+      if (toType !== "number" || !destination || destination !== e164(endpoint) || decision?.incoming !== true || decision.connect !== true || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(session)) return HANGUP;
+      return { instructions: [], action: { name: "connectMxp", destination: { type: "userName", endpoint: session } } };
+    }
+    if (toType !== "number" || !E164.test(endpoint)) return HANGUP;
     // Ingen reservation, fel säljare eller fel nummer: lägg på.
     if (decision?.connect !== true) return HANGUP;
     const destination = e164(decision.destination);

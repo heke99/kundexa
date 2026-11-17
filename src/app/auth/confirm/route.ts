@@ -3,7 +3,7 @@ import type { EmailOtpType } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 
 function safeNext(value: string | null) {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/change-password";
+  if (!value || !value.startsWith("/") || value.startsWith("//") || /[\\\x00-\x1f]/.test(value)) return "/change-password";
   return value;
 }
 

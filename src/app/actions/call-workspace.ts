@@ -184,16 +184,7 @@ export async function saveCallCustomer(customerId: string, patch: CallCustomerPa
   if (error) return { ok: false, error: error.message.includes("duplicate") ? "Ett annat kundkort har redan samma nummer eller id-nummer." : "Uppgifterna kunde inte sparas." };
   if (!data) return { ok: false, error: "Kunden kunde inte uppdateras. Kontrollera att du har åtkomst till kundkortet." };
 
-  const { error: auditError } = await supabase.from("audit_logs").insert({
-    tenant_id: ctx.tenantId,
-    actor_user_id: ctx.userId,
-    action: "customer.details_updated",
-    entity_type: "customer",
-    entity_id: customerId,
-    after_data: { fields: Object.keys(update), source: "call_workspace", ...(update.customer_type ? { customer_type: update.customer_type } : {}) },
-  });
-  if (auditError) return { ok: false, error: "Uppgifterna sparades men auditloggen kunde inte skrivas." };
-
+  // Database trigger commits customer changes and their field-only audit atomically.
   revalidatePath(`/app/customers/${customerId}`);
   return { ok: true, customer: toCallCustomer(data as CustomerRow, true) };
 }

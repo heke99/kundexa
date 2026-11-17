@@ -1,0 +1,3 @@
+import { productInformationUrls } from "@/lib/env";
+import { informationDestination } from "@/lib/product-information";
+export default function TermsPage(){const terms=informationDestination(productInformationUrls().terms);return <><h1>Villkor och avtal</h1><p>För användning av Kundexa gäller det avtal som din organisation har ingått. Produktinformationen på webbplatsen anger inte pris, bindningstid eller andra kommersiella villkor för ett enskilt avtal.</p><p>Har du fått ett kundavtal för signering ska du läsa dokumentet och dess villkor före ditt beslut. Kontakta avsändaren om uppgifter saknas eller behöver rättas.</p>{terms?<p><a href={terms}>Läs de publicerade tjänstevillkoren</a></p>:null}</>;}

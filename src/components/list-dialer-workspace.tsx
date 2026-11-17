@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Phone, PhoneOff, Pause, Play, StickyNote } from "@/components/icons";
+import { IncomingCallPanel } from "@/components/incoming-call-panel";
 import { useDialerPanel } from "@/hooks/use-dialer";
 import { useCallRealtime } from "@/hooks/use-call-realtime";
 import { WebphoneAudioPanel } from "@/components/webphone-audio-panel";
@@ -382,9 +383,10 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
     } catch (caught) { setError(cleanError(caught instanceof Error ? caught.message : "after_call_failed")); setPhase("after_call"); } finally { completingRef.current = false; setCompleting(false); }
   }
 
-  if (contractWorkspace) return <ContractWorkspace {...contractWorkspace} onClose={() => setContractWorkspace(null)} />;
+  if (contractWorkspace) return <><IncomingCallPanel {...voice} /><ContractWorkspace {...contractWorkspace} onClose={() => setContractWorkspace(null)} /></>;
 
   return <div className="dialer-workspace">
+    <IncomingCallPanel {...voice} />
     <div className="dialer-workspace-header">
       <div><span className="eyebrow">{mode === "automatic" ? "Automatisk uppringning" : "Manuell lista"}</span><h2>{listName}</h2></div>
       <div className="toolbar-right">
@@ -396,7 +398,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
     </div>
     {error ? <p className="form-error">{error}</p> : null}
     {autoOutcome ? <div className="notice">{autoOutcome}</div> : null}
-    {phase === "idle" || phase === "paused" || phase === "error" ? <div className="dialer-start"><Play size={34} /><h3>{phase === "paused" ? "Ringsessionen är pausad" : "Starta ringsession"}</h3><p>{mode === "automatic" ? "Första samtalet startar när du klickar. Sedan arbetar dialern listan själv: inget svar, upptaget och telefonsvarare registreras automatiskt och nästa prospekt rings upp. Den stannar för efterarbete först när någon svarar." : "Systemet låser nästa prospekt åt dig. Du bestämmer när varje samtal startar."}</p><button className="button button-primary" type="button" onClick={begin} disabled={!voice.registered}><Play size={16} /> {phase === "paused" ? "Fortsätt" : "Starta"}</button></div> : null}
+    {phase === "idle" || phase === "paused" || phase === "error" ? <div className="dialer-start"><Play size={34} /><h3>{phase === "paused" ? "Ringsessionen är pausad" : "Starta ringsession"}</h3><p>{mode === "automatic" ? "Första samtalet startar när du klickar. Sedan arbetar dialern listan själv: inget svar, upptaget och telefonsvarare registreras automatiskt och nästa prospekt rings upp. Den stannar för efterarbete först när någon svarar." : "Systemet låser nästa prospekt åt dig. Du bestämmer när varje samtal startar."}</p><button className="button button-primary" type="button" onClick={begin} disabled={!voice.registered || !!voice.incoming}><Play size={16} /> {phase === "paused" ? "Fortsätt" : "Starta"}</button></div> : null}
     {phase === "loading" ? <div className="dialer-start"><span className="spinner" /><h3>Synkroniserar nästa arbetsuppgift…</h3></div> : null}
     {phase === "ended" ? <div className="dialer-start"><h3>Ringsessionen är avslutad</h3><p>Alla lås är släppta och sessionens sluttid är sparad.</p><Link className="button button-secondary" href="/app/dialer">Till dialern</Link></div> : null}
     {phase === "empty" ? <div className="dialer-start"><h3>Listan är färdig för tillfället</h3><p>Det finns inga tillgängliga prospekt eller förfallna återkomster just nu.</p><button className="button button-secondary" type="button" onClick={() => sessionId && claimNext(sessionId, false)}>Kontrollera igen</button></div> : null}
@@ -423,7 +425,7 @@ export function ListDialerWorkspace({ listId, listName, mode, dispositions, prod
         {phase === "ready" || phase === "dialing" ? <dl className="key-value"><dt>Telefon</dt><dd>{claim.customer.phone ?? "—"}</dd><dt>E-post</dt><dd>{claim.customer.email ?? "—"}</dd><dt>Adress</dt><dd>{claim.customer.address || "—"}</dd><dt>Bransch / SNI</dt><dd>{[claim.customer.industry, claim.customer.sniCode].filter(Boolean).join(" · ") || "—"}</dd><dt>Tidigare försök</dt><dd>{claim.customer.callAttempts}</dd><dt>Senast kontaktad</dt><dd>{claim.customer.lastContactAt ? new Date(claim.customer.lastContactAt).toLocaleString("sv-SE") : "Aldrig"}</dd></dl> : null}
         {phase !== "ready" && phase !== "dialing" ? null : claim.phoneOptions?.length ? <label className="field"><span>Nummer att ringa</span><select value={selectedTargetKey} onChange={(event) => setSelectedTargetKey(event.target.value)} disabled={phase !== "ready"}>{claim.phoneOptions.map((option) => <option key={phoneOptionKey(option)} value={phoneOptionKey(option)} disabled={option.eligibility !== "eligible"}>{option.label} · {option.phone}{option.eligibility === "pending_nix" ? " · inväntar NIX" : option.eligibility === "blocked" ? " · blockerad" : ""}</option>)}</select></label> : <p className="form-error">Inget ringbart nummer finns.</p>}
         <div className="dialer-call-controls">
-          {phase === "ready" ? <button className="call-button" type="button" onClick={() => dial()} disabled={!voice.registered}><Phone size={25} /></button> : null}
+          {phase === "ready" ? <button className="call-button" type="button" onClick={() => dial()} disabled={!voice.registered || !!voice.incoming}><Phone size={25} /></button> : null}
           {phase === "dialing" ? <Badge className="badge-info">Kopplar samtalet…</Badge> : null}
           {phase === "calling" ? <div className="notice">Samtalet är uppkopplat i webbläsaren. {mode === "automatic" ? "Svarar ingen registreras utfallet automatiskt och nästa prospekt rings upp." : "Kundexa inväntar slutstatus innan efterarbetet öppnas."}</div> : null}
           <WebphoneAudioPanel

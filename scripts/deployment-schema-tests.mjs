@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict';
+import { requiredMigrationVersions, missingMigrationVersions, verifyDeploymentSchema, verifiedHistoricalMigrations, deploymentInventoryQuery } from './lib/deployment-schema.mjs';
+const required = await requiredMigrationVersions(new URL('../supabase/migrations/', import.meta.url));
+assert(required.includes('20261117010000'));
+assert(!required.includes('202610150004'));
+assert.deepEqual(missingMigrationVersions(['1','2'],[{version:'1'}]),['2']);
+for(const invalid of [null,{},[{version:1}],[{}],[{version:'x'}]])assert.throws(()=>missingMigrationVersions(['1'],invalid),/invalid_database_migration_inventory/);
+const input={projectRef:'abcdefghijklmnopqrst',accessToken:'test-secret',requiredVersions:['1','2']};
+const request=async (url,options)=>{
+ assert.equal(url,'https://api.supabase.com/v1/projects/abcdefghijklmnopqrst/database/query/read-only');
+ assert.equal(options.method,'POST'); assert.equal(options.redirect,'error');
+ assert.equal(JSON.parse(options.body).query,'select version from supabase_migrations.schema_migrations order by version');
+ return Response.json([{version:'1'},{version:'2'}]);
+};
+assert.deepEqual(await verifyDeploymentSchema({...input,request}),{required:2,applied:2});
+await assert.rejects(verifyDeploymentSchema({...input,projectRef:'https://elsewhere.test',request}),/explicit_supabase_project_ref_required/);
+await assert.rejects(verifyDeploymentSchema({...input,accessToken:'',request}),/supabase_management_access_token_required/);
+await assert.rejects(verifyDeploymentSchema({...input,request:async()=>Response.json([{version:'1'}])}),/database_migrations_required_before_edge_deploy:2/);
+await assert.rejects(verifyDeploymentSchema({...input,request:async()=>new Response('secret provider body',{status:403})}),/database_preflight_http_403/);
+await assert.rejects(verifyDeploymentSchema({...input,request:async()=>new Response('not-json')}),/invalid_database_migration_inventory/);
+await assert.rejects(verifyDeploymentSchema({...input,request:async()=>new Response('x'.repeat(128*1024+1))}),/database_preflight_response_too_large/);
+await assert.rejects(verifyDeploymentSchema({...input,request:async()=>{throw Error('network failure');}}),/network failure/);
+console.log('PASS: catalog-only deploy preflight, explicit project, native migration inventory, missing/invalid/error/oversized responses fail before mutation.');
+
+const proofs=await verifiedHistoricalMigrations(new URL('../supabase/migrations/',import.meta.url));
+assert.equal(proofs.length,9);assert.equal(proofs.flatMap(p=>p.covered_versions).length,10);
+const proof={deployed_version:'99',statements_sha256:'a'.repeat(64),covered_versions:['1','2']};
+assert.deepEqual(missingMigrationVersions(['1','2','3'],[{version:'99',statements_sha256:'a'.repeat(64)}],[proof]),['3']);
+assert.throws(()=>missingMigrationVersions(['1'],[{version:'99',statements_sha256:'b'.repeat(64)}],[proof]),/proof_mismatch/);
+assert.deepEqual(missingMigrationVersions(['1'],[{version:'99'}]),['1'],'Matching version/name alone never waives required schema');
+assert.throws(()=>deploymentInventoryQuery([{deployed_version:"x'"}]),/invalid_historical/);
+assert(deploymentInventoryQuery(proofs).includes('statements_sha256'));assert(!deploymentInventoryQuery(proofs).includes('tenant_id'));
+console.log('PASS: historical aliases require exact recorded SQL hash AND pinned local source; changed/missing proofs cannot bypass missing native migrations.');

@@ -1,3 +1,4 @@
+import { confirmDataSubjectExportHandover } from "@/app/actions/admin";
 import { ShieldCheck } from "@/components/icons";
 import { createClient } from "@/lib/supabase/server";
 import { getAppContext, isAdmin } from "@/lib/auth";
@@ -111,7 +112,7 @@ export default async function CompliancePage({ searchParams }: { searchParams: S
         </form>
         <DataTable headers={["Kund / referens", "Typ", "Status", "Förfallo", "Resultat", "Åtgärder"]}>
           {(requests.data ?? []).map((request) => { const customer = Array.isArray(request.customers) ? request.customers[0] : request.customers; return <tr key={request.id}>
-            <td><strong>{customer?.display_name ?? "–"}</strong><div className="muted">{request.subject_reference}</div></td><td>{request.request_type}</td><td><Badge>{request.status}</Badge></td><td>{formatDate(request.due_at)}</td><td>{request.result_storage_path ?? request.processing_notes ?? "–"}</td>
+            <td><strong>{customer?.display_name ?? "–"}</strong><div className="muted">{request.subject_reference}</div></td><td>{request.request_type}</td><td><Badge>{request.status}</Badge></td><td>{formatDate(request.due_at)}</td><td>{request.result_storage_path ? <><a className="button secondary" href={`/api/v1/compliance/exports/${request.id}`}>Hämta export</a>{request.status !== "completed" ? <form action={confirmDataSubjectExportHandover}><input type="hidden" name="request_id" value={request.id}/><label><input type="checkbox" name="handover_confirmed" required/> Exporten är överlämnad</label><button type="submit">Bekräfta</button></form> : null}</> : request.processing_notes ?? "–"}</td>
             <td><div className="button-row">
               {!request.identity_verified_at ? <form action={verifyDataSubjectIdentity}><input type="hidden" name="request_id" value={request.id} /><input type="hidden" name="verification_method" value="manual_admin_verification" /><button className="button secondary" type="submit">Verifiera identitet</button></form> : null}
               {request.identity_verified_at && ["access", "portability"].includes(request.request_type) && request.status !== "completed" ? <form action={exportDataSubjectRequest}><input type="hidden" name="request_id" value={request.id} /><button className="button secondary" type="submit">Skapa export</button></form> : null}
